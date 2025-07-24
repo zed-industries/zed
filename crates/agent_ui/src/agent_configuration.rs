@@ -186,6 +186,7 @@ impl AgentConfiguration {
         };
 
         v_flex()
+            .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
                 div()
@@ -216,6 +217,7 @@ impl AgentConfiguration {
                             .hover(|hover| hover.bg(cx.theme().colors().element_hover))
                             .child(
                                 h_flex()
+                                    .w_full()
                                     .gap_2()
                                     .child(
                                         Icon::new(provider.icon())
@@ -224,6 +226,7 @@ impl AgentConfiguration {
                                     )
                                     .child(
                                         h_flex()
+                                            .w_full()
                                             .gap_1()
                                             .child(
                                                 Label::new(provider_name.clone())
@@ -307,6 +310,7 @@ impl AgentConfiguration {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
+            .w_full()
             .child(
                 h_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
@@ -317,50 +321,67 @@ impl AgentConfiguration {
                     .justify_between()
                     .child(
                         v_flex()
+                            .w_full()
                             .gap_0p5()
-                            .child(Headline::new("LLM Providers"))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Headline::new("LLM Providers"))
+                                    .child(
+                                        PopoverMenu::new("add-provider-popover")
+                                            .trigger(
+                                                Button::new("add-provider", "Add Provider")
+                                                    .icon_position(IconPosition::Start)
+                                                    .icon(IconName::Plus)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .label_size(LabelSize::Small),
+                                            )
+                                            .anchor(gpui::Corner::TopRight)
+                                            .menu({
+                                                let workspace = self.workspace.clone();
+                                                move |window, cx| {
+                                                    Some(ContextMenu::build(
+                                                        window,
+                                                        cx,
+                                                        |menu, _window, _cx| {
+                                                            menu.header("Compatible APIs").entry(
+                                                                "OpenAI",
+                                                                None,
+                                                                {
+                                                                    let workspace =
+                                                                        workspace.clone();
+                                                                    move |window, cx| {
+                                                                        workspace
+                                                        .update(cx, |workspace, cx| {
+                                                            AddLlmProviderModal::toggle(
+                                                                LlmCompatibleProvider::OpenAi,
+                                                                workspace,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                                    }
+                                                                },
+                                                            )
+                                                        },
+                                                    ))
+                                                }
+                                            }),
+                                    ),
+                            )
                             .child(
                                 Label::new("Add at least one provider to use AI-powered features.")
                                     .color(Color::Muted),
                             ),
-                    )
-                    .child(
-                        PopoverMenu::new("add-provider-popover")
-                            .trigger(
-                                Button::new("add-provider", "Add Provider")
-                                    .icon_position(IconPosition::Start)
-                                    .icon(IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .label_size(LabelSize::Small),
-                            )
-                            .anchor(gpui::Corner::TopRight)
-                            .menu({
-                                let workspace = self.workspace.clone();
-                                move |window, cx| {
-                                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                        menu.header("Compatible APIs").entry("OpenAI", None, {
-                                            let workspace = workspace.clone();
-                                            move |window, cx| {
-                                                workspace
-                                                    .update(cx, |workspace, cx| {
-                                                        AddLlmProviderModal::toggle(
-                                                            LlmCompatibleProvider::OpenAi,
-                                                            workspace,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .log_err();
-                                            }
-                                        })
-                                    }))
-                                }
-                            }),
                     ),
             )
             .child(
                 div()
+                    .w_full()
                     .pl(DynamicSpacing::Base08.rems(cx))
                     .pr(DynamicSpacing::Base20.rems(cx))
                     .children(
