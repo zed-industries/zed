@@ -110,7 +110,6 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
             let connection: Rc<dyn AgentConnection> = Rc::new(OldAcpAgentConnection {
                 connection,
                 child_status,
-                thread: thread_rc,
             });
 
             Ok(connection)

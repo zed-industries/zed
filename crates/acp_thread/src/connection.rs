@@ -1,9 +1,9 @@
-use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
+use std::{error::Error, fmt, path::Path, rc::Rc};
 
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest};
 use anyhow::Result;
-use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, Entity, Task};
 use project::Project;
 use ui::App;
 
@@ -38,7 +38,6 @@ impl fmt::Display for Unauthenticated {
 pub struct OldAcpAgentConnection {
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
-    pub thread: Rc<RefCell<WeakEntity<AcpThread>>>,
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -55,7 +54,6 @@ impl AgentConnection for OldAcpAgentConnection {
             }
             .into_any(),
         );
-        let current_thread = self.thread.clone();
         cx.spawn(async move |cx| {
             let result = task.await?;
             let result = acp_old::InitializeParams::response_from_any(result)?;
@@ -67,9 +65,8 @@ impl AgentConnection for OldAcpAgentConnection {
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(connection, "Gemini".into(), None, project, session_id, cx)
+                    AcpThread::new(connection, "Gemini".into(), project, session_id, cx)
                 });
-                current_thread.replace(thread.downgrade());
                 thread
             })
         })

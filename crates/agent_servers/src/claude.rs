@@ -205,16 +205,8 @@ impl AgentConnection for ClaudeAgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let session_id = self.session_id.clone();
-        let thread_result = cx.new(|cx| {
-            AcpThread::new(
-                connection,
-                "Claude".into(),
-                None,
-                project,
-                session_id.clone(),
-                cx,
-            )
-        });
+        let thread_result = cx
+            .new(|cx| AcpThread::new(connection, "Claude".into(), project, session_id.clone(), cx));
 
         if let Ok(thread) = &thread_result {
             self.threads_map

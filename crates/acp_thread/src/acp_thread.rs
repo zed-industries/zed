@@ -529,7 +529,6 @@ pub struct AcpThread {
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
-    child_status: Option<Task<Result<()>>>,
     session_id: acp::SessionId,
 }
 
@@ -575,8 +574,6 @@ impl AcpThread {
         connection: Rc<dyn AgentConnection>,
         // todo! remove me
         title: SharedString,
-        // todo! remove this?
-        child_status: Option<Task<Result<()>>>,
         project: Entity<Project>,
         session_id: acp::SessionId,
         cx: &mut Context<Self>,
@@ -592,7 +589,6 @@ impl AcpThread {
             project,
             send_task: None,
             connection,
-            child_status,
             session_id,
         }
     }
@@ -1119,10 +1115,6 @@ impl AcpThread {
                 .update(cx, |project, cx| project.save_buffer(buffer, cx))?
                 .await
         })
-    }
-
-    pub fn child_status(&mut self) -> Option<Task<Result<()>>> {
-        self.child_status.take()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
@@ -1793,13 +1785,11 @@ mod tests {
             let connection = OldAcpAgentConnection {
                 connection,
                 child_status: io_task,
-                thread: thread_rc,
             };
 
             AcpThread::new(
                 Rc::new(connection),
                 "Test".into(),
-                None,
                 project,
                 acp::SessionId("test".into()),
                 cx,
