@@ -1064,7 +1064,6 @@ impl AcpThreadView {
                                                 )
                                                 .into_any_element()
                                         }))
-                                        // todo! confirm this looks ok
                                         .child(self.render_permission_buttons(
                                             options,
                                             entry_ix,

@@ -734,7 +734,8 @@ impl AcpThread {
     }
 
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
-        // todo! use map
+        // The tool call we are looking for is typically the last one, or very close to the end.
+        // At the moment, it doesn't seem like a hashmap would be a good fit for this use case.
         self.entries
             .iter_mut()
             .enumerate()
