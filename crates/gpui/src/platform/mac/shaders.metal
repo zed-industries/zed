@@ -701,20 +701,22 @@ fragment float4 polychrome_sprite_fragment(
 struct PathRasterizationVertexOutput {
   float4 position [[position]];
   float2 st_position;
+  uint vertex_id [[flat]];
   float clip_rect_distance [[clip_distance]][4];
 };
 
 struct PathRasterizationFragmentInput {
   float4 position [[position]];
   float2 st_position;
+  uint vertex_id [[flat]];
 };
 
 vertex PathRasterizationVertexOutput path_rasterization_vertex(
   uint vertex_id [[vertex_id]],
-  constant PathVertex_ScaledPixels *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]],
   constant Size_DevicePixels *atlas_size [[buffer(PathRasterizationInputIndex_ViewportSize)]]
 ) {
-  PathVertex_ScaledPixels v = vertices[vertex_id];
+  PathRasterizationVertex v = vertices[vertex_id];
   float2 vertex_position = float2(v.xy_position.x, v.xy_position.y);
   float4 position = float4(
     vertex_position * float2(2. / atlas_size->width, -2. / atlas_size->height) + float2(-1., 1.),
@@ -724,6 +726,7 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
   return PathRasterizationVertexOutput{
       position,
       float2(v.st_position.x, v.st_position.y),
+      vertex_id,
       // TODO(max): correctly apply context mask
       // {
       //   v.xy_position.x - v.content_mask.bounds.origin.x,
@@ -738,12 +741,14 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
 
 fragment float4 path_rasterization_fragment(
   PathRasterizationFragmentInput input [[stage_in]],
-  constant Background *background [[buffer(PathRasterizationInputIndex_PathColor)]],
-  constant Bounds_ScaledPixels *path_bounds [[buffer(PathRasterizationInputIndex_PathBounds)]]
+  constant PathRasterizationVertex *vertices [[buffer(PathRasterizationInputIndex_Vertices)]]
 ) {
   float2 dx = dfdx(input.st_position);
   float2 dy = dfdy(input.st_position);
 
+  PathRasterizationVertex v = vertices[input.vertex_id];
+  Background background = v.color;
+  Bounds_ScaledPixels path_bounds = v.bounds;
   float alpha;
   if (length(float2(dx.x, dy.x)) < 0.001) {
     alpha = 1.0;
@@ -758,17 +763,17 @@ fragment float4 path_rasterization_fragment(
   }
 
   GradientColor gradient_color = prepare_fill_color(
-    background->tag,
-    background->color_space,
-    background->solid,
-    background->colors[0].color,
-    background->colors[1].color
+    background.tag,
+    background.color_space,
+    background.solid,
+    background.colors[0].color,
+    background.colors[1].color
   );
 
   float4 color = fill_color(
-    *background,
+    background,
     input.position.xy,
-    *path_bounds,
+    path_bounds,
     gradient_color.solid,
     gradient_color.color0,
     gradient_color.color1

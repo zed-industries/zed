@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Surface,
-    Underline, point, size,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -114,6 +114,14 @@ pub(crate) struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
+}
+
+#[repr(C)]
+pub struct PathRasterizationVertex {
+    pub xy_position: Point<ScaledPixels>,
+    pub st_position: Point<f32>,
+    pub color: Background,
+    pub bounds: Bounds<ScaledPixels>,
 }
 
 impl MetalRenderer {
@@ -584,59 +592,53 @@ impl MetalRenderer {
         let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
         command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
 
+        align_offset(instance_offset);
+        let mut vertices = Vec::new();
         // Render each path individually with its own color
         for path in paths {
-            if path.vertices.is_empty() {
-                continue;
-            }
-
-            align_offset(instance_offset);
-            let vertices_bytes_len = mem::size_of_val(path.vertices.as_slice());
-            let next_offset = *instance_offset + vertices_bytes_len;
-            if next_offset > instance_buffer.size {
-                continue;
-            }
-
-            command_encoder.set_vertex_buffer(
-                PathRasterizationInputIndex::Vertices as u64,
-                Some(&instance_buffer.metal_buffer),
-                *instance_offset as u64,
-            );
-            command_encoder.set_vertex_bytes(
-                PathRasterizationInputIndex::ViewportSize as u64,
-                mem::size_of_val(&viewport_size) as u64,
-                &viewport_size as *const Size<DevicePixels> as *const _,
-            );
-            command_encoder.set_fragment_bytes(
-                PathRasterizationInputIndex::PathColor as u64,
-                mem::size_of_val(&path.color) as u64,
-                &path.color as *const _ as *const _,
-            );
-            let path_bounds = path.bounds.intersect(&path.content_mask.bounds);
-            command_encoder.set_fragment_bytes(
-                PathRasterizationInputIndex::PathBounds as u64,
-                mem::size_of_val(&path_bounds) as u64,
-                &path_bounds as *const _ as *const _,
-            );
-
-            let buffer_contents = unsafe {
-                (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset)
-            };
-            unsafe {
-                ptr::copy_nonoverlapping(
-                    path.vertices.as_ptr() as *const u8,
-                    buffer_contents,
-                    vertices_bytes_len,
-                );
-            }
-
-            command_encoder.draw_primitives(
-                metal::MTLPrimitiveType::Triangle,
-                0,
-                path.vertices.len() as u64,
-            );
-            *instance_offset = next_offset;
+            vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
+                xy_position: v.xy_position,
+                st_position: v.st_position,
+                color: path.color,
+                bounds: path.bounds.intersect(&path.content_mask.bounds),
+            }));
         }
+        let vertices_bytes_len = mem::size_of_val(vertices.as_slice());
+        let next_offset = *instance_offset + vertices_bytes_len;
+        if next_offset > instance_buffer.size {
+            command_encoder.end_encoding();
+            return false;
+        }
+        command_encoder.set_vertex_buffer(
+            PathRasterizationInputIndex::Vertices as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            PathRasterizationInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_buffer(
+            PathRasterizationInputIndex::Vertices as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
+        unsafe {
+            ptr::copy_nonoverlapping(
+                vertices.as_ptr() as *const u8,
+                buffer_contents,
+                vertices_bytes_len,
+            );
+        }
+        command_encoder.draw_primitives(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            vertices.len() as u64,
+        );
+        *instance_offset = next_offset;
 
         command_encoder.end_encoding();
         true
@@ -1278,8 +1280,6 @@ enum SurfaceInputIndex {
 enum PathRasterizationInputIndex {
     Vertices = 0,
     ViewportSize = 1,
-    PathColor = 2,
-    PathBounds = 3,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
