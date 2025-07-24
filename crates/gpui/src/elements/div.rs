@@ -1706,6 +1706,7 @@ impl Interactivity {
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
                 scroll_handle_state.max_offset = scroll_max;
+                scroll_handle_state.bounds = bounds;
             }
 
             *scroll_offset
