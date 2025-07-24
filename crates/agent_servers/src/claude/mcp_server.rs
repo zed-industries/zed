@@ -161,6 +161,7 @@ impl ClaudeZedMcpServer {
                     }],
                     is_error: None,
                     meta: None,
+                    structured_content: None,
                 })
             } else if request.name.as_str() == READ_TOOL {
                 let input =
@@ -171,6 +172,7 @@ impl ClaudeZedMcpServer {
                     content,
                     is_error: None,
                     meta: None,
+                    structured_content: None,
                 })
             } else if request.name.as_str() == EDIT_TOOL {
                 let input =
@@ -181,6 +183,7 @@ impl ClaudeZedMcpServer {
                     content: vec![],
                     is_error: None,
                     meta: None,
+                    structured_content: None,
                 })
             } else {
                 anyhow::bail!("Unsupported tool");

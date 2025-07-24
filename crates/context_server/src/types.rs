@@ -679,6 +679,12 @@ pub struct CallToolResponse {
     pub is_error: Option<bool>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+    #[serde(
+        rename = "structuredContent",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub structured_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
