@@ -2,7 +2,6 @@ mod claude;
 mod codex;
 mod gemini;
 mod settings;
-mod stdio_agent_server;
 
 #[cfg(test)]
 mod e2e_tests;
@@ -11,7 +10,6 @@ pub use claude::*;
 pub use codex::*;
 pub use gemini::*;
 pub use settings::*;
-pub use stdio_agent_server::*;
 
 use acp_thread::AgentConnection;
 use anyhow::Result;

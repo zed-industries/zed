@@ -49,7 +49,7 @@ impl UserMessage {
     }
 
     fn to_markdown(&self, cx: &App) -> String {
-        format!("## User\n{}\n", self.content.to_markdown(cx))
+        format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
     }
 }
 
@@ -1711,7 +1711,7 @@ mod tests {
             .unwrap();
 
         drop(end_turn_tx);
-        request.await.unwrap();
+        assert!(request.await.unwrap_err().to_string().contains("canceled"));
 
         thread.read_with(cx, |thread, _| {
             assert!(matches!(
@@ -1816,6 +1816,7 @@ mod tests {
     struct FakeAgent {
         server: Entity<FakeAcpServer>,
         cx: AsyncApp,
+        cancel_tx: Rc<RefCell<Option<oneshot::Sender<()>>>>,
     }
 
     impl acp_old::Agent for FakeAgent {
@@ -1834,6 +1835,9 @@ mod tests {
         }
 
         async fn cancel_send_message(&self) -> Result<(), acp_old::Error> {
+            if let Some(cancel_tx) = self.cancel_tx.take() {
+                cancel_tx.send(()).log_err();
+            }
             Ok(())
         }
 
@@ -1841,6 +1845,9 @@ mod tests {
             &self,
             request: acp_old::SendUserMessageParams,
         ) -> Result<(), acp_old::Error> {
+            let (cancel_tx, cancel_rx) = oneshot::channel();
+            self.cancel_tx.replace(Some(cancel_tx));
+
             let mut cx = self.cx.clone();
             let handler = self
                 .server
@@ -1848,7 +1855,10 @@ mod tests {
                 .ok()
                 .flatten();
             if let Some(handler) = handler {
-                handler(request, self.server.clone(), self.cx.clone()).await
+                select! {
+                    _ = cancel_rx.fuse() => Err(anyhow::anyhow!("Message sending canceled").into()),
+                    _ = handler(request, self.server.clone(), self.cx.clone()).fuse() => Ok(()),
+                }
             } else {
                 Err(anyhow::anyhow!("No handler for on_user_message").into())
             }
@@ -1860,6 +1870,7 @@ mod tests {
             let agent = FakeAgent {
                 server: cx.entity(),
                 cx: cx.to_async(),
+                cancel_tx: Default::default(),
             };
             let foreground_executor = cx.foreground_executor().clone();
 

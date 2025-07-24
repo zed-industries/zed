@@ -27,12 +27,14 @@ futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true
 log.workspace = true
+parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+shlex.workspace = true
 smol.workspace = true
 strum.workspace = true
 tempfile.workspace = true
@@ -41,7 +43,6 @@ util.workspace = true
 uuid.workspace = true
 watch.workspace = true
 which.workspace = true
-shlex.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(unix)'.dependencies]

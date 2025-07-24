@@ -68,6 +68,7 @@ pub struct AcpThreadView {
     plan_expanded: bool,
     editor_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
+    _cancel_task: Option<Task<()>>,
 }
 
 enum ThreadState {
@@ -183,6 +184,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             message_history,
+            _cancel_task: None,
         }
     }
 
@@ -299,7 +301,7 @@ impl AcpThreadView {
         self.last_error.take();
 
         if let Some(thread) = self.thread() {
-            thread.update(cx, |thread, cx| thread.cancel(cx)).detach();
+            self._cancel_task = Some(thread.update(cx, |thread, cx| thread.cancel(cx)));
         }
     }
 

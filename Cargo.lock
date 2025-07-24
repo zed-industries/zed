@@ -164,6 +164,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "parking_lot",
  "paths",
  "project",
  "schemars",

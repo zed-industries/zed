@@ -291,8 +291,15 @@ impl AgentConnection for ClaudeAgentConnection {
             .log_err()
             .is_some()
         {
+            let end_turn_tx = session.end_turn_tx.clone();
             cx.foreground_executor()
-                .spawn(async move { done_rx.await? })
+                .spawn(async move {
+                    done_rx.await??;
+                    if let Some(end_turn_tx) = end_turn_tx.take() {
+                        end_turn_tx.send(Ok(())).ok();
+                    }
+                    anyhow::Ok(())
+                })
                 .detach_and_log_err(cx);
         }
     }
