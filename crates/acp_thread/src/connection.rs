@@ -11,10 +11,9 @@ use crate::AcpThread;
 
 pub trait AgentConnection {
     fn new_thread(
-        &self,
+        self: Rc<Self>,
         project: Entity<Project>,
         cwd: &Path,
-        connection: Rc<dyn AgentConnection>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -42,10 +41,9 @@ pub struct OldAcpAgentConnection {
 
 impl AgentConnection for OldAcpAgentConnection {
     fn new_thread(
-        &self,
+        self: Rc<Self>,
         project: Entity<Project>,
         _cwd: &Path,
-        connection: Rc<dyn AgentConnection>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(
@@ -65,7 +63,7 @@ impl AgentConnection for OldAcpAgentConnection {
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(connection, "Gemini".into(), project, session_id, cx)
+                    AcpThread::new(self.clone(), "Gemini".into(), project, session_id, cx)
                 });
                 thread
             })

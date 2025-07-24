@@ -213,10 +213,7 @@ impl AcpThreadView {
                 }
             };
 
-            let result = match connection
-                .new_thread(project.clone(), &root_dir, connection.clone(), cx)
-                .await
-            {
+            let result = match connection.new_thread(project.clone(), &root_dir, cx).await {
                 Err(e) => {
                     let mut cx = cx.clone();
                     if e.downcast_ref::<oneshot::Canceled>().is_some() {

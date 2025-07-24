@@ -376,12 +376,7 @@ pub async fn new_test_thread(
         .unwrap();
 
     let thread = connection
-        .new_thread(
-            project.clone(),
-            current_dir.as_ref(),
-            connection.clone(),
-            &mut cx.to_async(),
-        )
+        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
         .await
         .unwrap();
 
