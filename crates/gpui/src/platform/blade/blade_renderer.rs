@@ -1,7 +1,7 @@
 // Doing `if let` gives you nice scoping with passes/encoders
 #![allow(irrefutable_let_patterns)]
 
-use super::{BladeAtlas, BladeContext, PATH_TEXTURE_FORMAT};
+use super::{BladeAtlas, BladeContext};
 use crate::{
     AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
@@ -115,7 +115,6 @@ struct ShaderSurfacesData {
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
     color: Background,
-    tile: AtlasTile,
 }
 
 struct BladePipelines {
@@ -205,11 +204,12 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_path_rasterization")),
-                color_targets: &[gpu::ColorTargetState {
-                    format: PATH_TEXTURE_FORMAT,
-                    blend: Some(gpu::BlendState::ADDITIVE),
-                    write_mask: gpu::ColorWrites::default(),
-                }],
+                // color_targets: &[gpu::ColorTargetState {
+                //     format: PATH_TEXTURE_FORMAT,
+                //     blend: Some(gpu::BlendState::ADDITIVE),
+                //     write_mask: gpu::ColorWrites::default(),
+                // }],
+                color_targets,
                 multisample_state: gpu::MultisampleState {
                     sample_count: path_sample_count,
                     ..Default::default()
@@ -317,12 +317,15 @@ pub struct BladeRenderer {
     last_sync_point: Option<gpu::SyncPoint>,
     pipelines: BladePipelines,
     instance_belt: BufferBelt,
-    path_tiles: HashMap<PathId, AtlasTile>,
     atlas: Arc<BladeAtlas>,
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
     path_sample_count: u32,
+    path_intermediate_texture: gpu::Texture,
+    path_intermediate_texture_view: gpu::TextureView,
+    path_intermediate_msaa_texture: Option<gpu::Texture>,
+    path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
 }
 
 impl BladeRenderer {
@@ -352,20 +355,42 @@ impl BladeRenderer {
         let path_sample_count = std::env::var("ZED_PATH_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_PATH_SAMPLE_COUNT);
+            .or_else(|| {
+                [4, 2, 1]
+                    .into_iter()
+                    .find(|count| context.gpu.supports_texture_sample_count(*count))
+            })
+            .unwrap_or(1);
         let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu, path_sample_count));
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
             min_filter: gpu::FilterMode::Linear,
             ..Default::default()
         });
+
+        let (path_intermediate_texture, path_intermediate_texture_view) =
+            create_path_intermediate_texture(
+                &context.gpu,
+                surface.info().format,
+                config.size.width,
+                config.size.height,
+            );
+        let (path_intermediate_msaa_texture, path_intermediate_msaa_texture_view) =
+            create_msaa_texture_if_needed(
+                &context.gpu,
+                surface.info().format,
+                config.size.width,
+                config.size.height,
+                path_sample_count,
+            )
+            .unzip();
 
         #[cfg(target_os = "macos")]
         let core_video_texture_cache = unsafe {
@@ -383,12 +408,15 @@ impl BladeRenderer {
             last_sync_point: None,
             pipelines,
             instance_belt,
-            path_tiles: HashMap::default(),
             atlas,
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
             path_sample_count,
+            path_intermediate_texture,
+            path_intermediate_texture_view,
+            path_intermediate_msaa_texture,
+            path_intermediate_msaa_texture_view,
         })
     }
 
@@ -491,67 +519,48 @@ impl BladeRenderer {
     }
 
     #[profiling::function]
-    fn rasterize_paths(&mut self, paths: &[Path<ScaledPixels>]) {
-        self.path_tiles.clear();
-        let mut vertices_by_texture_id = HashMap::default();
-
-        for path in paths {
-            let clipped_bounds = path
-                .bounds
-                .intersect(&path.content_mask.bounds)
-                .map_origin(|origin| origin.floor())
-                .map_size(|size| size.ceil());
-            let tile = self.atlas.allocate_for_rendering(
-                clipped_bounds.size.map(Into::into),
-                AtlasTextureKind::Path,
-                &mut self.command_encoder,
-            );
-            vertices_by_texture_id
-                .entry(tile.texture_id)
-                .or_insert(Vec::new())
-                .extend(path.vertices.iter().map(|vertex| PathVertex {
-                    xy_position: vertex.xy_position - clipped_bounds.origin
-                        + tile.bounds.origin.map(Into::into),
-                    st_position: vertex.st_position,
-                    content_mask: ContentMask {
-                        bounds: tile.bounds.map(Into::into),
-                    },
-                }));
-            self.path_tiles.insert(path.id, tile);
+    fn rasterize_paths_to_intermediate(
+        &mut self,
+        paths: &[Path<ScaledPixels>],
+        width: f32,
+        height: f32,
+    ) {
+        self.command_encoder
+            .init_texture(self.path_intermediate_texture);
+        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
+            self.command_encoder.init_texture(msaa_texture);
         }
 
-        for (texture_id, vertices) in vertices_by_texture_id {
-            let tex_info = self.atlas.get_texture_info(texture_id);
+        let target = if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
+            gpu::RenderTarget {
+                view: msaa_view,
+                init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                finish_op: gpu::FinishOp::ResolveTo(self.path_intermediate_texture_view),
+            }
+        } else {
+            gpu::RenderTarget {
+                view: self.path_intermediate_texture_view,
+                init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                finish_op: gpu::FinishOp::Store,
+            }
+        };
+        if let mut pass = self.command_encoder.render(
+            "rasterize paths",
+            gpu::RenderTargetSet {
+                colors: &[target],
+                depth_stencil: None,
+            },
+        ) {
             let globals = GlobalParams {
-                viewport_size: [tex_info.size.width as f32, tex_info.size.height as f32],
+                viewport_size: [width, height],
                 premultiplied_alpha: 0,
                 pad: 0,
             };
+            let mut encoder = pass.with(&self.pipelines.path_rasterization);
 
-            let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-            let frame_view = tex_info.raw_view;
-            let color_target = if let Some(msaa_view) = tex_info.msaa_view {
-                gpu::RenderTarget {
-                    view: msaa_view,
-                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                    finish_op: gpu::FinishOp::ResolveTo(frame_view),
-                }
-            } else {
-                gpu::RenderTarget {
-                    view: frame_view,
-                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                    finish_op: gpu::FinishOp::Store,
-                }
-            };
-
-            if let mut pass = self.command_encoder.render(
-                "paths",
-                gpu::RenderTargetSet {
-                    colors: &[color_target],
-                    depth_stencil: None,
-                },
-            ) {
-                let mut encoder = pass.with(&self.pipelines.path_rasterization);
+            for path in paths {
+                let vertex_buf =
+                    unsafe { self.instance_belt.alloc_typed(&path.vertices, &self.gpu) };
                 encoder.bind(
                     0,
                     &ShaderPathRasterizationData {
@@ -559,7 +568,7 @@ impl BladeRenderer {
                         b_path_vertices: vertex_buf,
                     },
                 );
-                encoder.draw(0, vertices.len() as u32, 0, 1);
+                encoder.draw(0, path.vertices.len() as u32, 0, 1);
             }
         }
     }
@@ -572,12 +581,20 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
         self.pipelines.destroy(&self.gpu);
         self.gpu.destroy_surface(&mut self.surface);
+        self.gpu.destroy_texture(self.path_intermediate_texture);
+        self.gpu
+            .destroy_texture_view(self.path_intermediate_texture_view);
+        if let Some(msaa_texture) = self.path_intermediate_msaa_texture {
+            self.gpu.destroy_texture(msaa_texture);
+        }
+        if let Some(msaa_view) = self.path_intermediate_msaa_texture_view {
+            self.gpu.destroy_texture_view(msaa_view);
+        }
     }
 
     pub fn draw(&mut self, scene: &Scene) {
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
-        self.rasterize_paths(scene.paths());
 
         let frame = {
             profiling::scope!("acquire frame");
@@ -597,7 +614,7 @@ impl BladeRenderer {
             pad: 0,
         };
 
-        if let mut pass = self.command_encoder.render(
+        let mut pass = self.command_encoder.render(
             "main",
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
@@ -607,7 +624,8 @@ impl BladeRenderer {
                 }],
                 depth_stencil: None,
             },
-        ) {
+        );
+        {
             profiling::scope!("render pass");
             for batch in scene.batches() {
                 match batch {
@@ -638,28 +656,28 @@ impl BladeRenderer {
                         encoder.draw(0, 4, 0, shadows.len() as u32);
                     }
                     PrimitiveBatch::Paths(paths) => {
+                        self.rasterize_paths_to_intermediate(
+                            paths,
+                            self.surface_config.size.width as f32,
+                            self.surface_config.size.height as f32,
+                        );
                         let mut encoder = pass.with(&self.pipelines.paths);
                         // todo(linux): group by texture ID
                         for path in paths {
-                            let tile = &self.path_tiles[&path.id];
-                            let tex_info = self.atlas.get_texture_info(tile.texture_id);
-                            let origin = path.bounds.intersect(&path.content_mask.bounds).origin;
                             let sprites = [PathSprite {
-                                bounds: Bounds {
-                                    origin: origin.map(|p| p.floor()),
-                                    size: tile.bounds.size.map(Into::into),
-                                },
+                                bounds: path
+                                    .bounds
+                                    .intersect(&path.content_mask.bounds)
+                                    .map(|p| p.floor()),
                                 color: path.color,
-                                tile: (*tile).clone(),
                             }];
-
                             let instance_buf =
                                 unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
                             encoder.bind(
                                 0,
                                 &ShaderPathsData {
                                     globals,
-                                    t_sprite: tex_info.raw_view,
+                                    t_sprite: self.path_intermediate_texture_view,
                                     s_sprite: self.atlas_sampler,
                                     b_path_sprites: instance_buf,
                                 },
@@ -817,9 +835,79 @@ impl BladeRenderer {
         profiling::scope!("finish");
         self.instance_belt.flush(&sync_point);
         self.atlas.after_frame(&sync_point);
-        self.atlas.clear_textures(AtlasTextureKind::Path);
 
         self.wait_for_gpu();
         self.last_sync_point = Some(sync_point);
     }
+}
+
+fn create_path_intermediate_texture(
+    gpu: &gpu::Context,
+    format: gpu::TextureFormat,
+    width: u32,
+    height: u32,
+) -> (gpu::Texture, gpu::TextureView) {
+    let texture = gpu.create_texture(gpu::TextureDesc {
+        name: "path intermediate",
+        format,
+        size: gpu::Extent {
+            width,
+            height,
+            depth: 1,
+        },
+        array_layer_count: 1,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: gpu::TextureDimension::D2,
+        usage: gpu::TextureUsage::COPY | gpu::TextureUsage::RESOURCE | gpu::TextureUsage::TARGET,
+        external: None,
+    });
+    let texture_view = gpu.create_texture_view(
+        texture,
+        gpu::TextureViewDesc {
+            name: "path intermediate view",
+            format,
+            dimension: gpu::ViewDimension::D2,
+            subresources: &Default::default(),
+        },
+    );
+    (texture, texture_view)
+}
+
+fn create_msaa_texture_if_needed(
+    gpu: &gpu::Context,
+    format: gpu::TextureFormat,
+    width: u32,
+    height: u32,
+    sample_count: u32,
+) -> Option<(gpu::Texture, gpu::TextureView)> {
+    if sample_count <= 1 {
+        return None;
+    }
+    let texture_msaa = gpu.create_texture(gpu::TextureDesc {
+        name: "path intermediate msaa",
+        format,
+        size: gpu::Extent {
+            width,
+            height,
+            depth: 1,
+        },
+        array_layer_count: 1,
+        mip_level_count: 1,
+        sample_count,
+        dimension: gpu::TextureDimension::D2,
+        usage: gpu::TextureUsage::TARGET,
+        external: None,
+    });
+    let texture_view_msaa = gpu.create_texture_view(
+        texture_msaa,
+        gpu::TextureViewDesc {
+            name: "path intermediate msaa view",
+            format,
+            dimension: gpu::ViewDimension::D2,
+            subresources: &Default::default(),
+        },
+    );
+
+    Some((texture_msaa, texture_view_msaa))
 }
