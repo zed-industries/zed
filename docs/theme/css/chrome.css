@@ -177,34 +177,35 @@ a > .hljs {
   display: none;
 }
 
-.nav-wrapper {
-  margin-block-start: 50px;
-  display: block;
-}
-
-.nav-buttons {
+.footer-buttons {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin: 20px 0;
-  padding: 0 10px;
+  gap: 1rem;
+  padding: 24px 0;
 }
 
-.nav-button {
+.footer-button {
+  width: 100%;
+  padding: 12px;
+  display: flex;
   align-items: center;
-  padding: 8px 12px;
-  background-color: var(--bg);
-  color: var(--fg) !important;
-  text-decoration: none;
+  justify-content: center;
+  gap: 0.5rem;
+  background-color: var(--footer-btn-bg);
+  border: 1px solid var(--footer-btn-border);
+  border-radius: 0.5rem;
+  font-size: 0.9em;
 }
 
-.nav-button:hover {
-  background-color: var(--theme-hover);
-  color: var(--icons-hover) !important;
+.footer-button:hover {
+  background-color: var(--footer-btn-bg-hover);
+  border-color: var(--footer-btn-border-hover);
 }
 
-.nav-button i {
-  padding: 0 6px;
+.footer-button i {
+  text-decoration: underline !important;
+  text-decoration-color: transparent !important;
 }
 
 .mobile-nav-chapters {

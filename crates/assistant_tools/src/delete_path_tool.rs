@@ -37,12 +37,16 @@ impl Tool for DeletePathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./delete_path_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
-        IconName::FileDelete
+        IconName::ToolDeleteFile
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
     ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Size, Task,
-    TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
+    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
 };
 use anyhow::Result;
 use collections::VecDeque;
@@ -44,11 +44,17 @@ pub(crate) struct TestPlatform {
 /// A fake screen capture source, used for testing.
 pub struct TestScreenCaptureSource {}
 
+/// A fake screen capture stream, used for testing.
 pub struct TestScreenCaptureStream {}
 
 impl ScreenCaptureSource for TestScreenCaptureSource {
-    fn resolution(&self) -> Result<Size<DevicePixels>> {
-        Ok(size(DevicePixels(1), DevicePixels(1)))
+    fn metadata(&self) -> Result<SourceMetadata> {
+        Ok(SourceMetadata {
+            id: 0,
+            is_main: None,
+            label: None,
+            resolution: size(DevicePixels(1), DevicePixels(1)),
+        })
     }
 
     fn stream(
@@ -64,7 +70,11 @@ impl ScreenCaptureSource for TestScreenCaptureSource {
     }
 }
 
-impl ScreenCaptureStream for TestScreenCaptureStream {}
+impl ScreenCaptureStream for TestScreenCaptureStream {
+    fn metadata(&self) -> Result<SourceMetadata> {
+        TestScreenCaptureSource {}.metadata()
+    }
+}
 
 struct TestPrompt {
     msg: String,
@@ -165,10 +175,10 @@ impl TestPlatform {
         &self,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> oneshot::Receiver<usize> {
         let (tx, rx) = oneshot::channel();
-        let answers: Vec<String> = answers.iter().map(|&s| s.to_string()).collect();
+        let answers: Vec<String> = answers.iter().map(|s| s.label().to_string()).collect();
         self.background_executor()
             .set_waiting_hint(Some(format!("PROMPT: {:?} {:?}", msg, detail)));
         self.prompts
@@ -263,19 +273,21 @@ impl Platform for TestPlatform {
         Some(self.active_display.clone())
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
         true
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (mut tx, rx) = oneshot::channel();
         tx.send(Ok(self
             .screen_capture_sources
             .borrow()
             .iter()
-            .map(|source| Box::new(source.clone()) as Box<dyn ScreenCaptureSource>)
+            .map(|source| Rc::new(source.clone()) as Rc<dyn ScreenCaptureSource>)
             .collect()))
             .ok();
         rx

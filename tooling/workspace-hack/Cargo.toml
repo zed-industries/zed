@@ -107,11 +107,12 @@ rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
+schemars = { version = "1", features = ["chrono04", "indexmap2", "semver1"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
-serde_json = { version = "1", features = ["preserve_order", "raw_value", "unbounded_depth"] }
+serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
 sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union", "write"] }
@@ -134,7 +135,6 @@ unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
-wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
@@ -240,12 +240,13 @@ rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
+schemars = { version = "1", features = ["chrono04", "indexmap2", "semver1"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_derive = { version = "1", features = ["deserialize_in_place"] }
-serde_json = { version = "1", features = ["preserve_order", "raw_value", "unbounded_depth"] }
+serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
 sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }
 smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union", "write"] }
@@ -273,7 +274,6 @@ unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
-wasm-encoder = { version = "0.221", features = ["wasmparser"] }
 wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
@@ -291,8 +291,9 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
@@ -320,8 +321,9 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
@@ -349,8 +351,9 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
@@ -378,8 +381,9 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal"] }
+nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }

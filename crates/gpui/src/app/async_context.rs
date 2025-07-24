@@ -1,9 +1,9 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation,
-    Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
+    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
-use anyhow::Context as _;
+use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
 use futures::channel::oneshot;
 use std::{future::Future, rc::Weak};
@@ -56,6 +56,15 @@ impl AppContext for AsyncApp {
         let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot as_mut with an async context. Try calling update() first"
+        ))
     }
 
     fn read_entity<T, R>(
@@ -314,13 +323,16 @@ impl AsyncWindowContext {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+        answers: &[T],
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         self.window
             .update(self, |_, window, cx| {
                 window.prompt(level, message, detail, answers, cx)
@@ -359,6 +371,15 @@ impl AppContext for AsyncWindowContext {
     ) -> Result<R> {
         self.window
             .update(self, |_, _, cx| cx.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot use as_mut() from an async context, call `update`"
+        ))
     }
 
     fn read_entity<T, R>(

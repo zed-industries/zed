@@ -26,6 +26,7 @@ actions!(
         Paste,
         Cut,
         Copy,
+        Quit,
     ]
 );
 
@@ -486,7 +487,7 @@ impl Element for TextElement {
         let font_size = style.font_size.to_pixels(window.rem_size());
         let line = window
             .text_system()
-            .shape_line(display_text, font_size, &runs);
+            .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
         let (selection, cursor) = if selected_range.is_empty() {
@@ -741,5 +742,7 @@ fn main() {
                 cx.activate(true);
             })
             .unwrap();
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
     });
 }

@@ -59,12 +59,16 @@ impl Tool for FindPathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./find_path_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
-        IconName::SearchCode
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -119,14 +123,16 @@ impl Tool for FindPathTool {
                     )
                     .unwrap();
                 }
-                let output = FindPathToolOutput {
-                    glob,
-                    paths: matches.clone(),
-                };
 
-                for mat in matches.into_iter().skip(offset).take(RESULTS_PER_PAGE) {
+                for mat in matches.iter().skip(offset).take(RESULTS_PER_PAGE) {
                     write!(&mut message, "\n{}", mat.display()).unwrap();
                 }
+
+                let output = FindPathToolOutput {
+                    glob,
+                    paths: matches,
+                };
+
                 Ok(ToolResultOutput {
                     content: ToolResultContent::Text(message),
                     output: Some(serde_json::to_value(output)?),
@@ -235,8 +241,6 @@ impl ToolCard for FindPathToolCard {
             format!("{} matches", self.paths.len()).into()
         };
 
-        let glob_label = self.glob.to_string();
-
         let content = if !self.paths.is_empty() && self.expanded {
             Some(
                 v_flex()
@@ -309,8 +313,8 @@ impl ToolCard for FindPathToolCard {
             .mb_2()
             .gap_1()
             .child(
-                ToolCallCardHeader::new(IconName::SearchCode, matches_label)
-                    .with_code_path(glob_label)
+                ToolCallCardHeader::new(IconName::ToolSearch, matches_label)
+                    .with_code_path(&self.glob)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)
                             .opened_icon(IconName::ChevronUp)

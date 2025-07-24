@@ -48,12 +48,16 @@ impl Tool for CopyPathTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> String {
         include_str!("./copy_path_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
-        IconName::Clipboard
+        IconName::ToolCopy
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

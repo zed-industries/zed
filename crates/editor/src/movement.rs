@@ -2,7 +2,7 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{CharKind, DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
+use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -58,8 +58,8 @@ pub fn saturating_left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displa
     map.clip_point(point, Bias::Left)
 }
 
-/// Returns a column to the right of the current point, doing nothing
-// if that point is at the end of the line.
+/// Returns a column to the right of the current point, wrapping
+/// to the next line if that point is at the end of line.
 pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     if point.column() < map.line_len(point.row()) {
         *point.column_mut() += 1;
@@ -264,7 +264,19 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
+    let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
+        if is_first_iteration
+            && classifier.is_punctuation(right)
+            && !classifier.is_punctuation(left)
+            && left != '\n'
+        {
+            is_first_iteration = false;
+            return false;
+        }
+        is_first_iteration = false;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
     })
@@ -305,8 +317,19 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-
+    let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
+        if is_first_iteration
+            && classifier.is_punctuation(left)
+            && !classifier.is_punctuation(right)
+            && right != '\n'
+        {
+            is_first_iteration = false;
+            return false;
+        }
+        is_first_iteration = false;
+
         (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
             || right == '\n'
     })
@@ -698,38 +721,6 @@ pub fn chars_before(
         })
 }
 
-pub(crate) fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
-    let raw_point = point.to_point(map);
-    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
-    let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
-    let text = &map.buffer_snapshot;
-    let next_char_kind = text.chars_at(ix).next().map(|c| classifier.kind(c));
-    let prev_char_kind = text
-        .reversed_chars_at(ix)
-        .next()
-        .map(|c| classifier.kind(c));
-    prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
-}
-
-pub(crate) fn surrounding_word(
-    map: &DisplaySnapshot,
-    position: DisplayPoint,
-) -> Range<DisplayPoint> {
-    let position = map
-        .clip_point(position, Bias::Left)
-        .to_offset(map, Bias::Left);
-    let (range, _) = map.buffer_snapshot.surrounding_word(position, false);
-    let start = range
-        .start
-        .to_point(&map.buffer_snapshot)
-        .to_display_point(map);
-    let end = range
-        .end
-        .to_point(&map.buffer_snapshot)
-        .to_display_point(map);
-    start..end
-}
-
 /// Returns a list of lines (represented as a [`DisplayPoint`] range) contained
 /// within a passed range.
 ///
@@ -766,7 +757,7 @@ pub fn split_display_range_by_lines(
 mod tests {
     use super::*;
     use crate::{
-        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, InlayId, MultiBuffer,
+        Buffer, DisplayMap, DisplayRow, ExcerptRange, FoldPlaceholder, MultiBuffer,
         display_map::Inlay,
         test::{editor_test_context::EditorTestContext, marked_display_snapshot},
     };
@@ -782,10 +773,15 @@ mod tests {
 
         fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                previous_word_start(&snapshot, display_points[1]),
-                display_points[0]
-            );
+            let actual = previous_word_start(&snapshot, display_points[1]);
+            let expected = display_points[0];
+            if actual != expected {
+                eprintln!(
+                    "previous_word_start mismatch for '{}': actual={:?}, expected={:?}",
+                    marked_text, actual, expected
+                );
+            }
+            assert_eq!(actual, expected);
         }
 
         assert("\nˇ   ˇlorem", cx);
@@ -796,12 +792,17 @@ mod tests {
         assert("\nlorem\nˇ   ˇipsum", cx);
         assert("\n\nˇ\nˇ", cx);
         assert("    ˇlorem  ˇipsum", cx);
-        assert("loremˇ-ˇipsum", cx);
+        assert("ˇlorem-ˇipsum", cx);
         assert("loremˇ-#$@ˇipsum", cx);
         assert("ˇlorem_ˇipsum", cx);
         assert(" ˇdefγˇ", cx);
         assert(" ˇbcΔˇ", cx);
-        assert(" abˇ——ˇcd", cx);
+        // Test punctuation skipping behavior
+        assert("ˇhello.ˇ", cx);
+        assert("helloˇ...ˇ", cx);
+        assert("helloˇ.---..ˇtest", cx);
+        assert("test  ˇ.--ˇtest", cx);
+        assert("oneˇ,;:!?ˇtwo", cx);
     }
 
     #[gpui::test]
@@ -906,26 +907,26 @@ mod tests {
         let inlays = (0..buffer_snapshot.len())
             .flat_map(|offset| {
                 [
-                    Inlay {
-                        id: InlayId::InlineCompletion(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::InlineCompletion(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::Hint(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Left),
-                        text: "test".into(),
-                    },
-                    Inlay {
-                        id: InlayId::Hint(post_inc(&mut id)),
-                        position: buffer_snapshot.anchor_at(offset, Bias::Right),
-                        text: "test".into(),
-                    },
+                    Inlay::inline_completion(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        "test",
+                    ),
+                    Inlay::inline_completion(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        "test",
+                    ),
+                    Inlay::mock_hint(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Left),
+                        "test",
+                    ),
+                    Inlay::mock_hint(
+                        post_inc(&mut id),
+                        buffer_snapshot.anchor_at(offset, Bias::Right),
+                        "test",
+                    ),
                 ]
             })
             .collect();
@@ -955,10 +956,15 @@ mod tests {
 
         fn assert(marked_text: &str, cx: &mut gpui::App) {
             let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                next_word_end(&snapshot, display_points[0]),
-                display_points[1]
-            );
+            let actual = next_word_end(&snapshot, display_points[0]);
+            let expected = display_points[1];
+            if actual != expected {
+                eprintln!(
+                    "next_word_end mismatch for '{}': actual={:?}, expected={:?}",
+                    marked_text, actual, expected
+                );
+            }
+            assert_eq!(actual, expected);
         }
 
         assert("\nˇ   loremˇ", cx);
@@ -967,11 +973,18 @@ mod tests {
         assert("    loremˇ    ˇ\nipsum\n", cx);
         assert("\nˇ\nˇ\n\n", cx);
         assert("loremˇ    ipsumˇ   ", cx);
-        assert("loremˇ-ˇipsum", cx);
+        assert("loremˇ-ipsumˇ", cx);
         assert("loremˇ#$@-ˇipsum", cx);
         assert("loremˇ_ipsumˇ", cx);
         assert(" ˇbcΔˇ", cx);
         assert(" abˇ——ˇcd", cx);
+        // Test punctuation skipping behavior
+        assert("ˇ.helloˇ", cx);
+        assert("display_pointsˇ[0ˇ]", cx);
+        assert("ˇ...ˇhello", cx);
+        assert("helloˇ.---..ˇtest", cx);
+        assert("testˇ.--ˇ test", cx);
+        assert("oneˇ,;:!?ˇtwo", cx);
     }
 
     #[gpui::test]
@@ -1044,30 +1057,6 @@ mod tests {
                 false
             }
         });
-    }
-
-    #[gpui::test]
-    fn test_surrounding_word(cx: &mut gpui::App) {
-        init_test(cx);
-
-        fn assert(marked_text: &str, cx: &mut gpui::App) {
-            let (snapshot, display_points) = marked_display_snapshot(marked_text, cx);
-            assert_eq!(
-                surrounding_word(&snapshot, display_points[1]),
-                display_points[0]..display_points[2],
-                "{}",
-                marked_text
-            );
-        }
-
-        assert("ˇˇloremˇ  ipsum", cx);
-        assert("ˇloˇremˇ  ipsum", cx);
-        assert("ˇloremˇˇ  ipsum", cx);
-        assert("loremˇ ˇ  ˇipsum", cx);
-        assert("lorem\nˇˇˇ\nipsum", cx);
-        assert("lorem\nˇˇipsumˇ", cx);
-        assert("loremˇ,ˇˇ ipsum", cx);
-        assert("ˇloremˇˇ, ipsum", cx);
     }
 
     #[gpui::test]

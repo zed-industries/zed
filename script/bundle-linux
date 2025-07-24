@@ -10,17 +10,36 @@ Usage: ${0##*/} [options]
 Build a release .tar.gz for Linux.
 
 Options:
-  -h    Display this help and exit.
+  -h, --help     Display this help and exit.
+  --flatpak      Set ZED_BUNDLE_TYPE=flatpak so that this can be included in system info
   "
 }
 
-while getopts 'h' flag
-do
-    case "${flag}" in
-        h)
-           help_info
-           exit 0
-           ;;
+# Parse all arguments manually
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            help_info
+            exit 0
+            ;;
+        --flatpak)
+            export ZED_BUNDLE_TYPE=flatpak
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            help_info
+            exit 1
+            ;;
+        *)
+            echo "Error: Unexpected argument: $1" >&2
+            help_info
+            exit 1
+            ;;
     esac
 done
 
@@ -87,7 +106,11 @@ fi
 
 # Ensure that remote_server does not depend on libssl nor libcrypto, as we got rid of these deps.
 if ldd "${target_dir}/${remote_server_triple}/release/remote_server" | grep -q 'libcrypto\|libssl'; then
-    echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
+    if [[ "$remote_server_triple" == *-musl ]]; then
+        echo "Error: remote_server still depends on libssl or libcrypto" && exit 1
+    else
+        echo "Info: Using non-musl remote-server build."
+    fi
 fi
 
 suffix=""

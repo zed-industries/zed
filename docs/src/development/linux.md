@@ -16,20 +16,9 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-## Backend dependencies
+### Backend Dependencies (optional) {#backend-dependencies}
 
-> This section is still in development. The instructions are not yet complete.
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://www.postgresql.org/download/linux/)
-- Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
+If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ## Building from source
 
@@ -154,9 +143,3 @@ When this zed instance is exited, terminal output will include a command to run 
 ### Cargo errors claiming that a dependency is using unstable features
 
 Try `cargo clean` and `cargo build`.
-
-### Vulkan/GPU issues
-
-If Zed crashes at runtime due to GPU or vulkan issues, you can try running [vkcube](https://github.com/krh/vkcube) (usually available as part of the `vulkaninfo` package on various distributions) to try to troubleshoot where the issue is coming from. Try running in both X11 and wayland modes by running `vkcube -m [x11|wayland]`. Some versions of `vkcube` use `vkcube` to run in X11 and `vkcube-wayland` to run in wayland.
-
-If you have multiple GPUs, you can also try running Zed on a different one (for example, with [vkdevicechooser](https://github.com/jiriks74/vkdevicechooser)) to figure out where the issue comes from.

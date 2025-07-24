@@ -2,11 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use dap::{DapLocator, DebugRequest, adapters::DebugAdapterName};
 use gpui::SharedString;
-use serde_json::Value;
+use serde_json::{Value, json};
 use smol::{
+    Timer,
     io::AsyncReadExt,
     process::{Command, Stdio},
 };
+use std::time::Duration;
 use task::{BuildTaskDefinition, DebugScenario, ShellBuilder, SpawnInTerminal, TaskTemplate};
 
 pub(crate) struct CargoLocator;
@@ -25,14 +27,29 @@ async fn find_best_executable(executables: &[String], test_name: &str) -> Option
             continue;
         };
         let mut test_lines = String::default();
-        if let Some(mut stdout) = child.stdout.take() {
-            stdout.read_to_string(&mut test_lines).await.ok();
+        let exec_result = smol::future::race(
+            async {
+                if let Some(mut stdout) = child.stdout.take() {
+                    stdout.read_to_string(&mut test_lines).await?;
+                }
+                Ok(())
+            },
+            async {
+                Timer::after(Duration::from_secs(3)).await;
+                anyhow::bail!("Timed out waiting for executable stdout")
+            },
+        );
+
+        if let Err(err) = exec_result.await {
+            log::warn!("Failed to list tests for {executable}: {err}");
+        } else {
             for line in test_lines.lines() {
                 if line.contains(&test_name) {
                     return Some(executable.clone());
                 }
             }
         }
+        let _ = child.kill();
     }
     None
 }
@@ -41,11 +58,11 @@ impl DapLocator for CargoLocator {
     fn name(&self) -> SharedString {
         SharedString::new_static("rust-cargo-locator")
     }
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "cargo" {
             return None;
@@ -57,10 +74,10 @@ impl DapLocator for CargoLocator {
         }
 
         match cargo_action.as_ref() {
-            "run" => {
+            "run" | "r" => {
                 *cargo_action = "build".to_owned();
             }
-            "test" | "bench" => {
+            "test" | "t" | "bench" => {
                 let delimiter = task_template
                     .args
                     .iter()
@@ -75,14 +92,22 @@ impl DapLocator for CargoLocator {
             }
             _ => {}
         }
+
+        let config = if adapter.as_ref() == "CodeLLDB" {
+            json!({
+                "sourceLanguages": ["rust"]
+            })
+        } else {
+            Value::Null
+        };
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: Some(BuildTaskDefinition::Template {
                 task_template,
                 locator_name: Some(self.name()),
             }),
-            config: serde_json::Value::Null,
+            config,
             tcp_connection: None,
         })
     }
@@ -94,7 +119,7 @@ impl DapLocator for CargoLocator {
             .context("Couldn't get cwd from debug config which is needed for locators")?;
         let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
         let (program, args) = builder.build(
-            "cargo".into(),
+            Some("cargo".into()),
             &build_config
                 .args
                 .iter()
@@ -118,10 +143,28 @@ impl DapLocator for CargoLocator {
         let status = child.status().await?;
         anyhow::ensure!(status.success(), "Cargo command failed");
 
+        let is_test = build_config
+            .args
+            .first()
+            .map_or(false, |arg| arg == "test" || arg == "t");
+
         let executables = output
             .lines()
             .filter(|line| !line.trim().is_empty())
             .filter_map(|line| serde_json::from_str(line).ok())
+            .filter(|json: &Value| {
+                let is_test_binary = json
+                    .get("profile")
+                    .and_then(|profile| profile.get("test"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+
+                if is_test {
+                    is_test_binary
+                } else {
+                    !is_test_binary
+                }
+            })
             .filter_map(|json: Value| {
                 json.get("executable")
                     .and_then(Value::as_str)
@@ -132,7 +175,6 @@ impl DapLocator for CargoLocator {
             !executables.is_empty(),
             "Couldn't get executable in cargo locator"
         );
-        let is_test = build_config.args.first().map_or(false, |arg| arg == "test");
 
         let mut test_name = None;
         if is_test {
@@ -160,7 +202,10 @@ impl DapLocator for CargoLocator {
             anyhow::bail!("Couldn't get executable in cargo locator");
         };
 
-        let args = test_name.into_iter().collect();
+        let mut args: Vec<_> = test_name.into_iter().collect();
+        if is_test {
+            args.push("--nocapture".to_owned());
+        }
 
         Ok(DebugRequest::Launch(task::LaunchRequest {
             program: executable,

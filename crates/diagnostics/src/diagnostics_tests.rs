@@ -1,7 +1,7 @@
 use super::*;
 use collections::{HashMap, HashSet};
 use editor::{
-    DisplayPoint, EditorSettings, InlayId,
+    DisplayPoint, EditorSettings,
     actions::{GoToDiagnostic, GoToPreviousDiagnostic, Hover, MoveToBeginning},
     display_map::{DisplayRow, Inlay},
     test::{
@@ -11,10 +11,13 @@ use editor::{
 };
 use gpui::{TestAppContext, VisualTestContext};
 use indoc::indoc;
-use language::Rope;
+use language::{DiagnosticSourceKind, Rope};
 use lsp::LanguageServerId;
 use pretty_assertions::assert_eq;
-use project::FakeFs;
+use project::{
+    FakeFs,
+    project_settings::{GoToDiagnosticSeverity, GoToDiagnosticSeverityFilter},
+};
 use rand::{Rng, rngs::StdRng, seq::IteratorRandom as _};
 use serde_json::json;
 use settings::SettingsStore;
@@ -27,9 +30,7 @@ use util::{RandomCharIter, path, post_inc};
 
 #[ctor::ctor]
 fn init_logger() {
-    if env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -107,7 +108,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
             }
             ],
             version: None
-        }, &[], cx).unwrap();
+        }, None, DiagnosticSourceKind::Pushed, &[], cx).unwrap();
     });
 
     // Open the project diagnostics view while there are already diagnostics.
@@ -178,6 +179,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -263,6 +266,8 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -370,6 +375,8 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -467,6 +474,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -509,6 +518,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -550,6 +561,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -562,6 +575,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     diagnostics: vec![],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -602,6 +617,8 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
                     }],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -734,6 +751,8 @@ async fn test_random_diagnostics_blocks(cx: &mut TestAppContext, mut rng: StdRng
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            None,
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -854,11 +873,11 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
                         editor.splice_inlays(
                             &[],
-                            vec![Inlay {
-                                id: InlayId::InlineCompletion(post_inc(&mut next_inlay_id)),
-                                position: snapshot.buffer_snapshot.anchor_before(position),
-                                text: Rope::from(format!("Test inlay {next_inlay_id}")),
-                            }],
+                            vec![Inlay::inline_completion(
+                                post_inc(&mut next_inlay_id),
+                                snapshot.buffer_snapshot.anchor_before(position),
+                                format!("Test inlay {next_inlay_id}"),
+                            )],
                             cx,
                         );
                     }
@@ -921,6 +940,8 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
                                 diagnostics: diagnostics.clone(),
                                 version: None,
                             },
+                            None,
+                            DiagnosticSourceKind::Pushed,
                             &[],
                             cx,
                         )
@@ -976,6 +997,8 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                             ..Default::default()
                         }],
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -985,7 +1008,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
     cx.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
         assert_eq!(
             editor
                 .active_diagnostic_group()
@@ -1009,6 +1032,8 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
                         version: None,
                         diagnostics: Vec::new(),
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1025,7 +1050,7 @@ async fn active_diagnostics_dismiss_after_invalidation(cx: &mut TestAppContext) 
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
         assert_eq!(editor.active_diagnostic_group(), None);
     });
     cx.assert_editor_state(indoc! {"
@@ -1090,6 +1115,8 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
                             },
                         ],
                     },
+                    None,
+                    DiagnosticSourceKind::Pushed,
                     &[],
                     cx,
                 )
@@ -1102,7 +1129,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -1111,7 +1138,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Third diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -1120,7 +1147,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Second diagnostic, same place
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -1129,7 +1156,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // First diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -1138,7 +1165,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Wrapped over, fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -1157,7 +1184,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // First diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -1166,7 +1193,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Second diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -1175,7 +1202,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Third diagnostic, same place
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc ˇdef: i32) -> u32 {
@@ -1184,7 +1211,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Fourth diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abc def: i32) -> ˇu32 {
@@ -1193,7 +1220,7 @@ async fn cycle_through_same_place_diagnostics(cx: &mut TestAppContext) {
 
     // Wrapped around, first diagnostic
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_diagnostic(&GoToDiagnostic, window, cx);
+        editor.go_to_diagnostic(&GoToDiagnostic::default(), window, cx);
     });
     cx.assert_editor_state(indoc! {"
         fn func(abcˇ def: i32) -> u32 {
@@ -1228,6 +1255,8 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1279,6 +1308,8 @@ async fn test_hover_diagnostic_and_info_popovers(cx: &mut gpui::TestAppContext) 
                         ..Default::default()
                     }],
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1380,6 +1411,8 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
                     ],
                     version: None,
                 },
+                None,
+                DiagnosticSourceKind::Pushed,
                 &[],
                 cx,
             )
@@ -1411,9 +1444,131 @@ async fn test_diagnostics_with_code(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn go_to_diagnostic_with_severity(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+
+    cx.set_state(indoc! {"error warning info hiˇnt"});
+
+    cx.update(|_, cx| {
+        lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store
+                .update_diagnostics(
+                    LanguageServerId(0),
+                    lsp::PublishDiagnosticsParams {
+                        uri: lsp::Url::from_file_path(path!("/root/file")).unwrap(),
+                        version: None,
+                        diagnostics: vec![
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 0),
+                                    lsp::Position::new(0, 5),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 6),
+                                    lsp::Position::new(0, 13),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::WARNING),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 14),
+                                    lsp::Position::new(0, 18),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                                ..Default::default()
+                            },
+                            lsp::Diagnostic {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(0, 19),
+                                    lsp::Position::new(0, 23),
+                                ),
+                                severity: Some(lsp::DiagnosticSeverity::HINT),
+                                ..Default::default()
+                            },
+                        ],
+                    },
+                    None,
+                    DiagnosticSourceKind::Pushed,
+                    &[],
+                    cx,
+                )
+                .unwrap()
+        });
+    });
+    cx.run_until_parked();
+
+    macro_rules! go {
+        ($severity:expr) => {
+            cx.update_editor(|editor, window, cx| {
+                editor.go_to_diagnostic(
+                    &GoToDiagnostic {
+                        severity: $severity,
+                    },
+                    window,
+                    cx,
+                );
+            });
+        };
+    }
+
+    // Default, should cycle through all diagnostics
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"error warning info ˇhint"});
+    go!(GoToDiagnosticSeverityFilter::default());
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+
+    let only_info = GoToDiagnosticSeverityFilter::Only(GoToDiagnosticSeverity::Information);
+    go!(only_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(only_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+
+    let no_hints = GoToDiagnosticSeverityFilter::Range {
+        min: GoToDiagnosticSeverity::Information,
+        max: GoToDiagnosticSeverity::Error,
+    };
+
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(no_hints);
+    cx.assert_editor_state(indoc! {"ˇerror warning info hint"});
+
+    let warning_info = GoToDiagnosticSeverityFilter::Range {
+        min: GoToDiagnosticSeverity::Information,
+        max: GoToDiagnosticSeverity::Warning,
+    };
+
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error warning ˇinfo hint"});
+    go!(warning_info);
+    cx.assert_editor_state(indoc! {"error ˇwarning info hint"});
+}
+
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
-        env_logger::try_init().ok();
+        zlog::init_test();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         theme::init(theme::LoadThemes::JustBase, cx);

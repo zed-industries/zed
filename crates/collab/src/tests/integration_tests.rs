@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{Result, anyhow};
-use assistant_context_editor::ContextStore;
+use assistant_context::ContextStore;
 use assistant_slash_command::SlashCommandWorkingSet;
 use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, assert_hunks};
 use call::{ActiveCall, ParticipantLocation, Room, room};
@@ -20,8 +20,8 @@ use gpui::{
     UpdateGlobal, px, size,
 };
 use language::{
-    Diagnostic, DiagnosticEntry, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher,
-    LineEnding, OffsetRangeExt, Point, Rope,
+    Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
+    LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
     language_settings::{
         AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
     },
@@ -51,14 +51,12 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, separator, uri};
+use util::{path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test(iterations = 10)]
@@ -279,11 +277,19 @@ async fn test_basic_calls(
     let events_b = active_call_events(cx_b);
     let events_c = active_call_events(cx_c);
     cx_a.set_screen_capture_sources(vec![display]);
+    let screen_a = cx_a
+        .update(|cx| cx.screen_capture_sources())
+        .await
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
     active_call_a
         .update(cx_a, |call, cx| {
             call.room()
                 .unwrap()
-                .update(cx, |room, cx| room.share_screen(cx))
+                .update(cx, |room, cx| room.share_screen(screen_a, cx))
         })
         .await
         .unwrap();
@@ -1678,13 +1684,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1711,13 +1717,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/i.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1808,13 +1814,13 @@ async fn test_project_reconnect(
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("subdir2"),
-                separator!("subdir2/f.txt"),
-                separator!("subdir2/g.txt"),
-                separator!("subdir2/h.txt"),
-                separator!("subdir2/j.txt")
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("subdir2"),
+                path!("subdir2/f.txt"),
+                path!("subdir2/g.txt"),
+                path!("subdir2/h.txt"),
+                path!("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1878,7 +1884,6 @@ async fn test_active_call_events(
                 github_login: "user_a".to_string(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1898,7 +1903,6 @@ async fn test_active_call_events(
                 github_login: "user_b".to_string(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
-                email: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -2626,6 +2630,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), committed_text.clone())],
+        "deadbeef",
     );
 
     // Create the buffer
@@ -2719,6 +2724,7 @@ async fn test_git_diff_base_change(
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt".into(), new_committed_text.clone())],
+        "deadbeef",
     );
 
     // Wait for buffer_local_a to receive it
@@ -3008,6 +3014,7 @@ async fn test_git_status_sync(
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
         &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
@@ -3316,13 +3323,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3334,13 +3341,13 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt")
             ]
         );
     });
@@ -3360,14 +3367,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -3379,14 +3386,14 @@ async fn test_fs_operations(
                 .map(|p| p.to_string_lossy())
                 .collect::<Vec<_>>(),
             [
-                separator!("DIR"),
-                separator!("DIR/SUBDIR"),
-                separator!("DIR/SUBDIR/f.txt"),
-                separator!("DIR/e.txt"),
-                separator!("a.txt"),
-                separator!("b.txt"),
-                separator!("d.txt"),
-                separator!("f.txt")
+                path!("DIR"),
+                path!("DIR/SUBDIR"),
+                path!("DIR/SUBDIR/f.txt"),
+                path!("DIR/e.txt"),
+                path!("a.txt"),
+                path!("b.txt"),
+                path!("d.txt"),
+                path!("f.txt")
             ]
         );
     });
@@ -4236,7 +4243,8 @@ async fn test_collaborating_with_diagnostics(
                         message: "message 1".to_string(),
                         severity: lsp::DiagnosticSeverity::ERROR,
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 },
                 DiagnosticEntry {
@@ -4246,7 +4254,8 @@ async fn test_collaborating_with_diagnostics(
                         severity: lsp::DiagnosticSeverity::WARNING,
                         message: "message 2".to_string(),
                         is_primary: true,
-                        ..Default::default()
+                        source_kind: DiagnosticSourceKind::Pushed,
+                        ..Diagnostic::default()
                     }
                 }
             ]
@@ -4258,7 +4267,7 @@ async fn test_collaborating_with_diagnostics(
         &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path(path!("/a/a.rs")).unwrap(),
             version: None,
-            diagnostics: vec![],
+            diagnostics: Vec::new(),
         },
     );
     executor.run_until_parked();
@@ -4590,14 +4599,13 @@ async fn test_formatting_buffer(
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                        vec![Formatter::External {
+                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                        Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        }]
-                        .into(),
+                        },
                     )));
                 });
             });
@@ -4698,8 +4706,8 @@ async fn test_prettier_formatting_buffer(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList(
-                    vec![Formatter::LanguageServer { name: None }].into(),
+                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
+                    Formatter::LanguageServer { name: None },
                 )));
                 file.defaults.prettier = Some(PrettierSettings {
                     allowed: true,
@@ -4821,7 +4829,7 @@ async fn test_definition(
     );
 
     let definitions_1 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 23, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4852,7 +4860,7 @@ async fn test_definition(
     );
 
     let definitions_2 = project_b
-        .update(cx_b, |p, cx| p.definition(&buffer_b, 33, cx))
+        .update(cx_b, |p, cx| p.definitions(&buffer_b, 33, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -4889,7 +4897,7 @@ async fn test_definition(
     );
 
     let type_definitions = project_b
-        .update(cx_b, |p, cx| p.type_definition(&buffer_b, 7, cx))
+        .update(cx_b, |p, cx| p.type_definitions(&buffer_b, 7, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
@@ -5057,7 +5065,7 @@ async fn test_references(
     lsp_response_tx
         .unbounded_send(Err(anyhow!("can't find references")))
         .unwrap();
-    references.await.unwrap_err();
+    assert_eq!(references.await.unwrap(), []);
 
     // User is informed that the request is no longer pending.
     executor.run_until_parked();
@@ -5641,7 +5649,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let definitions;
     let buffer_b2;
     if rng.r#gen() {
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
                 p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
@@ -5655,7 +5663,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
             })
             .await
             .unwrap();
-        definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
     let definitions = definitions.await.unwrap();
@@ -6312,11 +6320,20 @@ async fn test_join_call_after_screen_was_shared(
     // User A shares their screen
     let display = gpui::TestScreenCaptureSource::new();
     cx_a.set_screen_capture_sources(vec![display]);
+    let screen_a = cx_a
+        .update(|cx| cx.screen_capture_sources())
+        .await
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+
     active_call_a
         .update(cx_a, |call, cx| {
             call.room()
                 .unwrap()
-                .update(cx, |room, cx| room.share_screen(cx))
+                .update(cx, |room, cx| room.share_screen(screen_a, cx))
         })
         .await
         .unwrap();

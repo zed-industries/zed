@@ -28,8 +28,10 @@ const EXPECT_MESSAGE: &str = "we should avoid taffy layout errors by constructio
 
 impl TaffyLayoutEngine {
     pub fn new() -> Self {
+        let mut taffy = TaffyTree::new();
+        taffy.disable_rounding();
         TaffyLayoutEngine {
-            taffy: TaffyTree::new(),
+            taffy,
             absolute_layout_bounds: FxHashMap::default(),
             computed_layouts: FxHashSet::default(),
         }
@@ -180,7 +182,7 @@ impl TaffyLayoutEngine {
             .compute_layout_with_measure(
                 id.into(),
                 available_space.into(),
-                |known_dimensions, available_space, _id, node_context| {
+                |known_dimensions, available_space, _id, node_context, _style| {
                     let Some(node_context) = node_context else {
                         return taffy::geometry::Size::default();
                     };
@@ -281,7 +283,7 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::LengthPercentageAuto {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::LengthPercentageAuto::Auto,
+            Length::Auto => taffy::prelude::LengthPercentageAuto::auto(),
         }
     }
 }
@@ -290,7 +292,7 @@ impl ToTaffy<taffy::style::Dimension> for Length {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::prelude::Dimension {
         match self {
             Length::Definite(length) => length.to_taffy(rem_size),
-            Length::Auto => taffy::prelude::Dimension::Auto,
+            Length::Auto => taffy::prelude::Dimension::auto(),
         }
     }
 }
@@ -300,14 +302,14 @@ impl ToTaffy<taffy::style::LengthPercentage> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentage::Length(pixels.into())
+                    taffy::style::LengthPercentage::length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentage::Length((*rems * rem_size).into())
+                    taffy::style::LengthPercentage::length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentage::Percent(*fraction)
+                taffy::style::LengthPercentage::percent(*fraction)
             }
         }
     }
@@ -318,14 +320,14 @@ impl ToTaffy<taffy::style::LengthPercentageAuto> for DefiniteLength {
         match self {
             DefiniteLength::Absolute(length) => match length {
                 AbsoluteLength::Pixels(pixels) => {
-                    taffy::style::LengthPercentageAuto::Length(pixels.into())
+                    taffy::style::LengthPercentageAuto::length(pixels.into())
                 }
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::LengthPercentageAuto::Length((*rems * rem_size).into())
+                    taffy::style::LengthPercentageAuto::length((*rems * rem_size).into())
                 }
             },
             DefiniteLength::Fraction(fraction) => {
-                taffy::style::LengthPercentageAuto::Percent(*fraction)
+                taffy::style::LengthPercentageAuto::percent(*fraction)
             }
         }
     }
@@ -335,12 +337,12 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Dimension {
         match self {
             DefiniteLength::Absolute(length) => match length {
-                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::Length(pixels.into()),
+                AbsoluteLength::Pixels(pixels) => taffy::style::Dimension::length(pixels.into()),
                 AbsoluteLength::Rems(rems) => {
-                    taffy::style::Dimension::Length((*rems * rem_size).into())
+                    taffy::style::Dimension::length((*rems * rem_size).into())
                 }
             },
-            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::Percent(*fraction),
+            DefiniteLength::Fraction(fraction) => taffy::style::Dimension::percent(*fraction),
         }
     }
 }
@@ -348,9 +350,9 @@ impl ToTaffy<taffy::style::Dimension> for DefiniteLength {
 impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::LengthPercentage {
         match self {
-            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::Length(pixels.into()),
+            AbsoluteLength::Pixels(pixels) => taffy::style::LengthPercentage::length(pixels.into()),
             AbsoluteLength::Rems(rems) => {
-                taffy::style::LengthPercentage::Length((*rems * rem_size).into())
+                taffy::style::LengthPercentage::length((*rems * rem_size).into())
             }
         }
     }
@@ -359,7 +361,7 @@ impl ToTaffy<taffy::style::LengthPercentage> for AbsoluteLength {
 impl<T, T2> From<TaffyPoint<T>> for Point<T2>
 where
     T: Into<T2>,
-    T2: Clone + Default + Debug,
+    T2: Clone + Debug + Default + PartialEq,
 {
     fn from(point: TaffyPoint<T>) -> Point<T2> {
         Point {
@@ -371,7 +373,7 @@ where
 
 impl<T, T2> From<Point<T>> for TaffyPoint<T2>
 where
-    T: Into<T2> + Clone + Default + Debug,
+    T: Into<T2> + Clone + Debug + Default + PartialEq,
 {
     fn from(val: Point<T>) -> Self {
         TaffyPoint {
@@ -383,7 +385,7 @@ where
 
 impl<T, U> ToTaffy<TaffySize<U>> for Size<T>
 where
-    T: ToTaffy<U> + Clone + Default + Debug,
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffySize<U> {
         TaffySize {
@@ -395,7 +397,7 @@ where
 
 impl<T, U> ToTaffy<TaffyRect<U>> for Edges<T>
 where
-    T: ToTaffy<U> + Clone + Default + Debug,
+    T: ToTaffy<U> + Clone + Debug + Default + PartialEq,
 {
     fn to_taffy(&self, rem_size: Pixels) -> TaffyRect<U> {
         TaffyRect {
@@ -410,7 +412,7 @@ where
 impl<T, U> From<TaffySize<T>> for Size<U>
 where
     T: Into<U>,
-    U: Clone + Default + Debug,
+    U: Clone + Debug + Default + PartialEq,
 {
     fn from(taffy_size: TaffySize<T>) -> Self {
         Size {
@@ -422,7 +424,7 @@ where
 
 impl<T, U> From<Size<T>> for TaffySize<U>
 where
-    T: Into<U> + Clone + Default + Debug,
+    T: Into<U> + Clone + Debug + Default + PartialEq,
 {
     fn from(size: Size<T>) -> Self {
         TaffySize {

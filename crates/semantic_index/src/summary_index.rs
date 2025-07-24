@@ -560,6 +560,7 @@ impl SummaryIndex {
             thread_id: None,
             prompt_id: None,
             mode: None,
+            intent: None,
             messages: vec![LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![prompt.into()],
@@ -569,6 +570,7 @@ impl SummaryIndex {
             tool_choice: None,
             stop: Vec::new(),
             temperature: None,
+            thinking_allowed: true,
         };
 
         let code_len = code.len();

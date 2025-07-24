@@ -28,12 +28,16 @@ impl Tool for ThinkingTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./thinking_tool/description.md").to_string()
     }
 
     fn icon(&self) -> IconName {
-        IconName::LightBulb
+        IconName::ToolBulb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

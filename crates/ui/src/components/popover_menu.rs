@@ -2,9 +2,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     AnyElement, AnyView, App, Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId,
-    Entity, Focusable as _, GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId,
-    Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point, Style, Window, anchored,
-    deferred, div, point, prelude::FluentBuilder, px, size,
+    Entity, Focusable as _, GlobalElementId, HitboxBehavior, HitboxId, InteractiveElement,
+    IntoElement, LayoutId, Length, ManagedView, MouseDownEvent, ParentElement, Pixels, Point,
+    Style, Window, anchored, deferred, div, point, prelude::FluentBuilder, px, size,
 };
 
 use crate::prelude::*;
@@ -104,6 +104,24 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
                 .as_ref()
                 .map_or(false, |model| model.focus_handle(cx).is_focused(window))
         })
+    }
+
+    pub fn refresh_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        new_menu_builder: Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
+    ) {
+        let show_menu = if let Some(state) = self.0.borrow_mut().as_mut() {
+            state.menu_builder = new_menu_builder;
+            state.menu.borrow().is_some()
+        } else {
+            false
+        };
+
+        if show_menu {
+            self.show(window, cx);
+        }
     }
 }
 
@@ -421,7 +439,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 ((), element_state)
             });
 
-            window.insert_hitbox(bounds, false).id
+            window.insert_hitbox(bounds, HitboxBehavior::Normal).id
         })
     }
 

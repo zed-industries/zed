@@ -81,7 +81,17 @@ pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-actions!(client, [SignIn, SignOut, Reconnect]);
+actions!(
+    client,
+    [
+        /// Signs in to Zed account.
+        SignIn,
+        /// Signs out of Zed account.
+        SignOut,
+        /// Reconnects to the collaboration server.
+        Reconnect
+    ]
+);
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ClientSettingsContent {
@@ -141,6 +151,7 @@ impl Settings for ProxySettings {
 
 pub fn init_settings(cx: &mut App) {
     TelemetrySettings::register(cx);
+    DisableAiSettings::register(cx);
     ClientSettings::register(cx);
     ProxySettings::register(cx);
 }
@@ -289,6 +300,13 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn is_signing_in(&self) -> bool {
+        matches!(
+            self,
+            Self::Authenticating | Self::Reauthenticating | Self::Connecting | Self::Reconnecting
+        )
     }
 
     pub fn is_signed_out(&self) -> bool {
@@ -529,6 +547,33 @@ impl settings::Settings for TelemetrySettings {
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
     }
+}
+
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Client {
@@ -1850,7 +1895,7 @@ mod tests {
         let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_entity_message_handler(
             move |entity: Entity<TestEntity>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
-                match entity.update(&mut cx, |entity, _| entity.id).unwrap() {
+                match entity.read_with(&mut cx, |entity, _| entity.id).unwrap() {
                     1 => done_tx1.try_send(()).unwrap(),
                     2 => done_tx2.try_send(()).unwrap(),
                     _ => unreachable!(),
@@ -1887,8 +1932,16 @@ mod tests {
             .set_entity(&entity3, &mut cx.to_async());
         drop(subscription3);
 
-        server.send(proto::JoinProject { project_id: 1 });
-        server.send(proto::JoinProject { project_id: 2 });
+        server.send(proto::JoinProject {
+            project_id: 1,
+            committer_name: None,
+            committer_email: None,
+        });
+        server.send(proto::JoinProject {
+            project_id: 2,
+            committer_name: None,
+            committer_email: None,
+        });
         done_rx1.recv().await.unwrap();
         done_rx2.recv().await.unwrap();
     }

@@ -34,6 +34,11 @@ impl ExtensionSlashCommandProxy for SlashCommandRegistryProxy {
         self.slash_command_registry
             .register_command(ExtensionSlashCommand::new(extension, command), false)
     }
+
+    fn unregister_slash_command(&self, command_name: Arc<str>) {
+        self.slash_command_registry
+            .unregister_command_by_name(&command_name)
+    }
 }
 
 /// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].

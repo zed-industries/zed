@@ -51,6 +51,8 @@ pub struct ThemeColors {
     ///
     /// This could include a selected checkbox, a toggleable button that is toggled on, etc.
     pub element_selected: Hsla,
+    /// Background Color. Used for the background of selections in a UI element.
+    pub element_selection_background: Hsla,
     /// Background Color. Used for the disabled state of an element that should have a different background than the surface it's on.
     ///
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
@@ -129,6 +131,12 @@ pub struct ThemeColors {
     pub panel_indent_guide: Hsla,
     pub panel_indent_guide_hover: Hsla,
     pub panel_indent_guide_active: Hsla,
+
+    /// The color of the overlay surface on top of panel.
+    pub panel_overlay_background: Hsla,
+    /// The color of the overlay surface on top of panel when hovered over.
+    pub panel_overlay_hover: Hsla,
+
     pub pane_focused_border: Hsla,
     pub pane_group_border: Hsla,
     /// The color of the scrollbar thumb.
@@ -143,6 +151,14 @@ pub struct ThemeColors {
     pub scrollbar_track_background: Hsla,
     /// The border color of the scrollbar track.
     pub scrollbar_track_border: Hsla,
+    /// The color of the minimap thumb.
+    pub minimap_thumb_background: Hsla,
+    /// The color of the minimap thumb when hovered over.
+    pub minimap_thumb_hover_background: Hsla,
+    /// The color of the minimap thumb whilst being actively dragged.
+    pub minimap_thumb_active_background: Hsla,
+    /// The border color of the minimap thumb.
+    pub minimap_thumb_border: Hsla,
 
     // ===
     // Editor
@@ -265,12 +281,9 @@ pub struct ThemeColors {
     pub version_control_ignored: Hsla,
 
     /// Represents the "ours" region of a merge conflict.
-    pub version_control_conflict_ours_background: Hsla,
+    pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
-    pub version_control_conflict_theirs_background: Hsla,
-    pub version_control_conflict_ours_marker_background: Hsla,
-    pub version_control_conflict_theirs_marker_background: Hsla,
-    pub version_control_conflict_divider_background: Hsla,
+    pub version_control_conflict_marker_theirs: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]
@@ -319,6 +332,8 @@ pub enum ThemeColorField {
     PanelIndentGuide,
     PanelIndentGuideHover,
     PanelIndentGuideActive,
+    PanelOverlayBackground,
+    PanelOverlayHover,
     PaneFocusedBorder,
     PaneGroupBorder,
     ScrollbarThumbBackground,
@@ -327,6 +342,10 @@ pub enum ThemeColorField {
     ScrollbarThumbBorder,
     ScrollbarTrackBackground,
     ScrollbarTrackBorder,
+    MinimapThumbBackground,
+    MinimapThumbHoverBackground,
+    MinimapThumbActiveBackground,
+    MinimapThumbBorder,
     EditorForeground,
     EditorBackground,
     EditorGutterBackground,
@@ -427,6 +446,8 @@ impl ThemeColors {
             ThemeColorField::PanelIndentGuide => self.panel_indent_guide,
             ThemeColorField::PanelIndentGuideHover => self.panel_indent_guide_hover,
             ThemeColorField::PanelIndentGuideActive => self.panel_indent_guide_active,
+            ThemeColorField::PanelOverlayBackground => self.panel_overlay_background,
+            ThemeColorField::PanelOverlayHover => self.panel_overlay_hover,
             ThemeColorField::PaneFocusedBorder => self.pane_focused_border,
             ThemeColorField::PaneGroupBorder => self.pane_group_border,
             ThemeColorField::ScrollbarThumbBackground => self.scrollbar_thumb_background,
@@ -437,6 +458,10 @@ impl ThemeColors {
             ThemeColorField::ScrollbarThumbBorder => self.scrollbar_thumb_border,
             ThemeColorField::ScrollbarTrackBackground => self.scrollbar_track_background,
             ThemeColorField::ScrollbarTrackBorder => self.scrollbar_track_border,
+            ThemeColorField::MinimapThumbBackground => self.minimap_thumb_background,
+            ThemeColorField::MinimapThumbHoverBackground => self.minimap_thumb_hover_background,
+            ThemeColorField::MinimapThumbActiveBackground => self.minimap_thumb_active_background,
+            ThemeColorField::MinimapThumbBorder => self.minimap_thumb_border,
             ThemeColorField::EditorForeground => self.editor_foreground,
             ThemeColorField::EditorBackground => self.editor_background,
             ThemeColorField::EditorGutterBackground => self.editor_gutter_background,
@@ -520,7 +545,7 @@ pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
         .collect()
 }
 
-#[derive(Refineable, Clone, PartialEq)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 pub struct ThemeStyles {
     /// The background appearance of the window.
     pub window_background_appearance: WindowBackgroundAppearance,

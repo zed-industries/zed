@@ -71,7 +71,13 @@ struct SerializedChatPanel {
     width: Option<Pixels>,
 }
 
-actions!(chat_panel, [ToggleFocus]);
+actions!(
+    chat_panel,
+    [
+        /// Toggles focus on the chat panel.
+        ToggleFocus
+    ]
+);
 
 impl ChatPanel {
     pub fn new(
@@ -90,7 +96,7 @@ impl ChatPanel {
                 languages.clone(),
                 user_store.clone(),
                 None,
-                cx.new(|cx| Editor::auto_height(4, window, cx)),
+                cx.new(|cx| Editor::auto_height(1, 4, window, cx)),
                 window,
                 cx,
             )
@@ -1218,7 +1224,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
@@ -1274,7 +1279,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),
@@ -1323,7 +1327,6 @@ mod tests {
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
                 name: None,
-                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),

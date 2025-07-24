@@ -18,6 +18,7 @@ pub enum Sound {
     Unmute,
     StartScreenshare,
     StopScreenshare,
+    AgentDone,
 }
 
 impl Sound {
@@ -29,6 +30,7 @@ impl Sound {
             Self::Unmute => "unmute",
             Self::StartScreenshare => "start_screenshare",
             Self::StopScreenshare => "stop_screenshare",
+            Self::AgentDone => "agent_done",
         }
     }
 }

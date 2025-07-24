@@ -36,6 +36,10 @@ impl Tool for WebSearchTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         "Search the web for information using your query. Use this when you need real-time information, facts, or data that might not be in your training. Results will include snippets and links from relevant web pages.".into()
     }
@@ -139,6 +143,8 @@ impl ToolCard for WebSearchToolCard {
         _workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let icon = IconName::ToolWeb;
+
         let header = match self.response.as_ref() {
             Some(Ok(response)) => {
                 let text: SharedString = if response.results.len() == 1 {
@@ -146,13 +152,12 @@ impl ToolCard for WebSearchToolCard {
                 } else {
                     format!("{} results", response.results.len()).into()
                 };
-                ToolCallCardHeader::new(IconName::Globe, "Searched the Web")
-                    .with_secondary_text(text)
+                ToolCallCardHeader::new(icon, "Searched the Web").with_secondary_text(text)
             }
             Some(Err(error)) => {
-                ToolCallCardHeader::new(IconName::Globe, "Web Search").with_error(error.to_string())
+                ToolCallCardHeader::new(icon, "Web Search").with_error(error.to_string())
             }
-            None => ToolCallCardHeader::new(IconName::Globe, "Searching the Web").loading(),
+            None => ToolCallCardHeader::new(icon, "Searching the Web").loading(),
         };
 
         let content = self.response.as_ref().and_then(|response| match response {
@@ -166,7 +171,7 @@ impl ToolCard for WebSearchToolCard {
                     .gap_1()
                     .children(response.results.iter().enumerate().map(|(index, result)| {
                         let title = result.title.clone();
-                        let url = result.url.clone();
+                        let url = SharedString::from(result.url.clone());
 
                         Button::new(("result", index), title)
                             .label_size(LabelSize::Small)

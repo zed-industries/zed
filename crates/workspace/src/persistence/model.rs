@@ -410,7 +410,10 @@ impl SerializedPaneGroup {
                     .await
                     .log_err()?;
 
-                if pane.update(cx, |pane, _| pane.items_len() != 0).log_err()? {
+                if pane
+                    .read_with(cx, |pane, _| pane.items_len() != 0)
+                    .log_err()?
+                {
                     let pane = pane.upgrade()?;
                     Some((
                         Member::Pane(pane.clone()),

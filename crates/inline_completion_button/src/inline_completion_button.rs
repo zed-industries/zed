@@ -1,8 +1,8 @@
 use anyhow::Result;
-use client::{UserStore, zed_urls};
+use client::{DisableAiSettings, UserStore, zed_urls};
 use copilot::{Copilot, Status};
 use editor::{
-    Editor,
+    Editor, SelectionEffects,
     actions::{ShowEditPrediction, ToggleEditPrediction},
     scroll::Autoscroll,
 };
@@ -33,13 +33,20 @@ use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
     notifications::NotificationId,
 };
-use zed_actions::{OpenBrowser, OpenZedUrl};
+use zed_actions::OpenBrowser;
 use zed_llm_client::UsageLimit;
 use zeta::RateCompletions;
 
-actions!(edit_prediction, [ToggleMenu]);
+actions!(
+    edit_prediction,
+    [
+        /// Toggles the inline completion menu.
+        ToggleMenu
+    ]
+);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
+const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
 
@@ -65,6 +72,11 @@ enum SupermavenButtonStatus {
 
 impl Render for InlineCompletionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Return empty div if AI is disabled
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return div();
+        }
+
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.edit_predictions.provider {
@@ -187,13 +199,13 @@ impl Render for InlineCompletionButton {
                                         cx.open_url(activate_url.as_str())
                                     })
                                     .entry(
-                                        "Use Copilot",
+                                        "Use Zed AI",
                                         None,
                                         move |_, cx| {
                                             set_completion_provider(
                                                 fs.clone(),
                                                 cx,
-                                                EditPredictionProvider::Copilot,
+                                                EditPredictionProvider::Zed,
                                             )
                                         },
                                     )
@@ -233,22 +245,13 @@ impl Render for InlineCompletionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                let current_user_terms_accepted =
-                    self.user_store.read(cx).current_user_has_accepted_terms();
-                let has_subscription = self.user_store.read(cx).current_plan().is_some()
-                    && self.user_store.read(cx).subscription_period().is_some();
-
-                if !has_subscription || !current_user_terms_accepted.unwrap_or(false) {
-                    let signed_in = current_user_terms_accepted.is_some();
-                    let tooltip_meta = if signed_in {
-                        if has_subscription {
-                            "Read Terms of Service"
-                        } else {
-                            "Choose a Plan"
-                        }
-                    } else {
-                        "Sign in to use"
-                    };
+                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                    let tooltip_meta =
+                        match self.user_store.read(cx).current_user_has_accepted_terms() {
+                            Some(true) => "Choose a Plan",
+                            Some(false) => "Accept the Terms of Service",
+                            None => "Sign In",
+                        };
 
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
@@ -397,15 +400,16 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, _, _| {
-            menu.entry("Sign In", None, copilot::initiate_sign_in)
+            menu.entry("Sign In to Copilot", None, copilot::initiate_sign_in)
                 .entry("Disable Copilot", None, {
                     let fs = fs.clone();
                     move |_window, cx| hide_copilot(fs.clone(), cx)
                 })
-                .entry("Use Supermaven", None, {
+                .separator()
+                .entry("Use Zed AI", None, {
                     let fs = fs.clone();
                     move |_window, cx| {
-                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Supermaven)
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
                     }
                 })
         })
@@ -512,7 +516,7 @@ impl InlineCompletionButton {
                 );
         }
 
-        menu = menu.separator().header("Privacy Settings");
+        menu = menu.separator().header("Privacy");
         if let Some(provider) = &self.edit_prediction_provider {
             let data_collection = provider.data_collection_state(cx);
             if data_collection.is_supported() {
@@ -563,13 +567,15 @@ impl InlineCompletionButton {
                                 .child(
                                     Label::new(indoc!{
                                         "Help us improve our open dataset model by sharing data from open source repositories. \
-                                        Zed must detect a license file in your repo for this setting to take effect."
+                                        Zed must detect a license file in your repo for this setting to take effect. \
+                                        Files with sensitive data and secrets are excluded by default."
                                     })
                                 )
                                 .child(
                                     h_flex()
                                         .items_start()
                                         .pt_2()
+                                        .pr_1()
                                         .flex_1()
                                         .gap_1p5()
                                         .border_t_1()
@@ -629,6 +635,13 @@ impl InlineCompletionButton {
                             .detach_and_log_err(cx);
                     }
                 }),
+        ).item(
+            ContextMenuEntry::new("View Documentation")
+                .icon(IconName::FileGeneric)
+                .icon_color(Color::Muted)
+                .handler(move |_, cx| {
+                    cx.open_url(PRIVACY_DOCS);
+                })
         );
 
         if !self.editor_enabled.unwrap_or(true) {
@@ -666,6 +679,13 @@ impl InlineCompletionButton {
     ) -> Entity<ContextMenu> {
         ContextMenu::build(window, cx, |menu, window, cx| {
             self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Use Zed AI instead", None, {
+                    let fs = self.fs.clone();
+                    move |_window, cx| {
+                        set_completion_provider(fs.clone(), cx, EditPredictionProvider::Zed)
+                    }
+                })
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -735,13 +755,8 @@ impl InlineCompletionButton {
                         move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
                     .when(usage.over_limit(), |menu| -> ContextMenu {
-                        menu.entry("Subscribe to increase your limit", None, |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        menu.entry("Subscribe to increase your limit", None, |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         })
                     })
                     .separator();
@@ -749,79 +764,35 @@ impl InlineCompletionButton {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new("Your GitHub account is less than 30 days old")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                )
+                            Label::new("Your GitHub account is less than 30 days old.")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
                                 .into_any_element()
                         },
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
-                        },
+                        |_window, cx| cx.open_url(&zed_urls::account_url(cx)),
                     )
-                    .entry(
-                        "You need to upgrade to Zed Pro or contact us.",
-                        None,
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
-                        },
-                    )
+                    .entry("Upgrade to Zed Pro or contact us.", None, |_window, cx| {
+                        cx.open_url(&zed_urls::account_url(cx))
+                    })
                     .separator();
             } else if self.user_store.read(cx).has_overdue_invoices() {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Warning)
-                                        .size(IconSize::Small)
-                                        .color(Color::Warning),
-                                )
-                                .child(
-                                    Label::new("You have an outstanding invoice")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Warning),
-                                )
+                            Label::new("You have an outstanding invoice")
+                                .size(LabelSize::Small)
+                                .color(Color::Warning)
                                 .into_any_element()
                         },
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         },
                     )
                     .entry(
                         "Check your payment status or contact us at billing-support@zed.dev to continue using this feature.",
                         None,
-                        |window, cx| {
-                            window.dispatch_action(
-                                Box::new(OpenZedUrl {
-                                    url: zed_urls::account_url(cx),
-                                }),
-                                cx,
-                            );
+                        |_window, cx| {
+                            cx.open_url(&zed_urls::account_url(cx))
                         },
                     )
                     .separator();
@@ -857,10 +828,6 @@ impl InlineCompletionButton {
         self.editor_focus_handle = Some(editor.focus_handle(cx));
 
         cx.notify();
-    }
-
-    pub fn toggle_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.popover_menu_handle.toggle(window, cx);
     }
 }
 
@@ -958,9 +925,14 @@ async fn open_disabled_globs_setting_in_editor(
                     .map(|inner_match| inner_match.start()..inner_match.end())
             });
             if let Some(range) = range {
-                item.change_selections(Some(Autoscroll::newest()), window, cx, |selections| {
-                    selections.select_ranges(vec![range]);
-                });
+                item.change_selections(
+                    SelectionEffects::scroll(Autoscroll::newest()),
+                    window,
+                    cx,
+                    |selections| {
+                        selections.select_ranges(vec![range]);
+                    },
+                );
             }
         })?;
 
@@ -991,6 +963,7 @@ fn toggle_show_inline_completions_for_language(
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
+            .0
             .entry(language.name())
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);

@@ -18,6 +18,7 @@ fn elevated_borderless<E: Styled>(this: E, cx: &mut App, index: ElevationIndex) 
 }
 
 /// Extends [`gpui::Styled`] with Zed-specific styling methods.
+#[cfg_attr(debug_assertions, gpui_macros::derive_inspector_reflection)]
 pub trait StyledExt: Styled + Sized {
     /// Horizontally stacks elements.
     ///
@@ -38,7 +39,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
-    fn elevation_1(self, cx: &mut App) -> Self {
+    fn elevation_1(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::Surface)
     }
 
