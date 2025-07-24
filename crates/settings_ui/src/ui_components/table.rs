@@ -531,6 +531,43 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         initial_sizes: [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> [f32; COLS] {
+        // RESET:
+        // Part 1:
+        // Figure out if we should shrink/grow the selected column
+        // Get diff which represents the change in column we want to make initial size delta curr_size = diff
+        //
+        // Part 2: We need to decide which side column we should move and where
+        //
+        // If we want to grow our column we should check the left/right columns diff to see what side
+        // has a greater delta than their initial size. Likewise, if we shrink our column we should check
+        // the left/right column diffs to see what side has the smallest delta.
+        //
+        // Part 3: resize
+        //
+        // col_idx represents the column handle to the right of an active column
+        //
+        // If growing and right has the greater delta {
+        //    shift col_idx to the right
+        // } else if growing and left has the greater delta {
+        //  shift col_idx - 1 to the left
+        // } else if shrinking and the right has the greater delta {
+        //  shift
+        // } {
+        //
+        // }
+        // }
+        //
+        // if we need to shrink, then if the right
+        //
+
+        // DRAGGING
+        // we get diff which represents the change in the _drag handle_ position
+        // -diff => dragging left ->
+        //      grow the column to the right of the handle as much as we can shrink columns to the left of the handle
+        // +diff => dragging right -> growing handles column
+        //      grow the column to the left of the handle as much as we can shrink columns to the right of the handle
+        //
+
         let mut diff = initial_sizes[col_idx] - widths[col_idx];
 
         let left_diff =
@@ -538,41 +575,39 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let right_diff = initial_sizes[col_idx + 1..].iter().sum::<f32>()
             - widths[col_idx + 1..].iter().sum::<f32>();
 
-        let go_left_first = left_diff < right_diff;
-
         let mut shrinking = diff < 0.0;
-        if go_left_first != (diff < 0.0) {
-            diff = -diff;
-        }
+        let go_left_first = if (diff < 0.0) {
+            left_diff < right_diff
+        } else {
+            left_diff > right_diff
+        };
 
         if col_idx == COLS - 1 {
             shrinking = !shrinking;
             col_idx -= 1;
         }
 
-        if diff > 0.0 {
+        if !go_left_first {
+            dbg!(diff, col_idx, widths);
             let diff_remaining =
                 Self::propagate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
+            dbg!(widths, diff_remaining);
 
-            if diff_remaining > 0.0 && col_idx > 0 {
+            if diff_remaining != 0.0 && col_idx > 0 {
                 Self::propagate_resize_diff_left(
-                    -diff_remaining,
+                    diff_remaining,
                     col_idx,
                     &mut widths,
                     resize_behavior,
                 );
             }
-        } else if col_idx > 0 {
-            let diff_remaining = Self::propagate_resize_diff_left(
-                diff,
-                if shrinking { col_idx } else { col_idx - 1 },
-                &mut widths,
-                resize_behavior,
-            );
+        } else {
+            let diff_remaining =
+                Self::propagate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
 
-            if diff_remaining < 0.0 {
+            if diff_remaining != 0.0 {
                 Self::propagate_resize_diff_right(
-                    -diff_remaining,
+                    diff_remaining,
                     col_idx,
                     &mut widths,
                     resize_behavior,
@@ -620,7 +655,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         if is_dragging_right {
             Self::propagate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
         } else {
-            Self::propagate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
+            Self::propagate_resize_diff_left(-diff, col_idx + 1, &mut widths, resize_behavior);
         }
         self.widths = widths.map(DefiniteLength::Fraction);
     }
@@ -634,36 +669,44 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let mut diff_remaining = diff;
         let mut curr_column = col_idx + 1;
 
-        while diff_remaining > 0.0 && curr_column < COLS {
+        let diff_positive = diff > 0.0;
+
+        while diff_remaining != 0.0 && curr_column < COLS {
             let Some(min_size) = resize_behavior[curr_column - 1].min_size() else {
                 curr_column += 1;
                 continue;
             };
 
-            let mut curr_width = widths[curr_column] - diff_remaining;
+            let curr_width = widths[curr_column] - diff_remaining;
 
-            diff_remaining = 0.0;
-            if min_size > curr_width {
-                diff_remaining += min_size - curr_width;
-                curr_width = min_size;
+            if min_size >= curr_width {
+                diff_remaining = min_size - curr_width;
+                widths[curr_column] = min_size;
+            } else {
+                widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
+                widths[curr_column] = curr_width;
+                return 0.0;
             }
-            widths[curr_column] = curr_width;
             curr_column += 1;
         }
-
         widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
+
         return diff_remaining;
     }
 
     fn propagate_resize_diff_left(
         diff: f32,
-        mut curr_column: usize,
+        col_idx: usize,
         widths: &mut [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> f32 {
+        let summation = widths.iter().sum::<f32>();
         let mut diff_remaining = diff;
-        let col_idx = curr_column;
-        while diff_remaining < 0.0 {
+        if col_idx == 0 {
+            return diff_remaining;
+        }
+        let mut curr_column = col_idx - 1;
+        while diff_remaining != 0.0 {
             let Some(min_size) = resize_behavior[curr_column].min_size() else {
                 if curr_column == 0 {
                     break;
@@ -672,22 +715,26 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 continue;
             };
 
-            let mut curr_width = widths[curr_column] + diff_remaining;
+            let curr_width = widths[curr_column] - diff_remaining;
 
-            diff_remaining = 0.0;
-            if curr_width < min_size {
-                diff_remaining = curr_width - min_size;
-                curr_width = min_size
+            if min_size >= curr_width {
+                diff_remaining = min_size - curr_width;
+                widths[curr_column] = min_size;
+            } else {
+                widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
+                widths[curr_column] = curr_width;
+                return 0.0;
             }
 
-            widths[curr_column] = curr_width;
             if curr_column == 0 {
                 break;
             }
             curr_column -= 1;
         }
-        widths[col_idx + 1] = widths[col_idx + 1] - (diff - diff_remaining);
+        widths[col_idx] = widths[col_idx] + dbg!((diff - diff_remaining));
 
+        let summation_2 = widths.iter().sum::<f32>();
+        dbg!(summation == summation_2);
         return diff_remaining;
     }
 }
@@ -1559,7 +1606,7 @@ mod test {
             reset_col6_right,
             columns: 6,
             starting: "*|***|**|***|***|**",
-            snapshot: "*|***|**|***|**|X**",
+            snapshot: "*|***|**|***|**|XXX",
             expected: "*|***|**|***|***|**",
             minimums: "X|*|*|*|*|*",
         );
