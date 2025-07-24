@@ -55,7 +55,7 @@ use util::{
     uri,
 };
 use workspace::{
-    CloseActiveItem, CloseAllItems, CloseInactiveItems, MoveItemToPaneInDirection, NavigationEntry,
+    CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
     item::{FollowEvent, FollowableItem, Item, ItemHandle, SaveOptions},
 };
@@ -2875,11 +2875,11 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     let language = Arc::new(
         Language::new(
             LanguageConfig {
-                documentation: Some(language::DocumentationConfig {
+                documentation_comment: Some(language::BlockCommentConfig {
                     start: "/**".into(),
                     end: "*/".into(),
                     prefix: "* ".into(),
-                    tab_size: NonZeroU32::new(1).unwrap(),
+                    tab_size: 1,
                 }),
 
                 ..LanguageConfig::default()
@@ -3076,6 +3076,50 @@ async fn test_newline_documentation_comments(cx: &mut TestAppContext) {
     cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
     cx.assert_editor_state(indoc! {"
         /**
+        ˇ
+    "});
+}
+
+#[gpui::test]
+async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+
+    let lua_language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["--".into()],
+            block_comment: Some(language::BlockCommentConfig {
+                start: "--[[".into(),
+                prefix: "".into(),
+                end: "]]".into(),
+                tab_size: 0,
+            }),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(lua_language), cx));
+
+    // Line with line comment should extend
+    cx.set_state(indoc! {"
+        --ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --
+        --ˇ
+    "});
+
+    // Line with block comment that matches line comment should not extend
+    cx.set_state(indoc! {"
+        --[[ˇ
+    "});
+    cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+    cx.assert_editor_state(indoc! {"
+        --[[
         ˇ
     "});
 }
@@ -4681,6 +4725,23 @@ async fn test_toggle_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «implement-windows-supportˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «Implement windows supportˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5026,6 +5087,33 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("\n\n\n\n\n\naaaa\nbbbb\ncccc", cx);
+        build_editor(buffer, window, cx)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.fold_creases(
+            vec![Crease::simple(
+                Point::new(6, 4)..Point::new(7, 4),
+                FoldPlaceholder::test(),
+            )],
+            true,
+            window,
+            cx,
+        );
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(7, 4)..Point::new(7, 4)])
+        });
+        assert_eq!(editor.display_text(cx), "\n\n\n\n\n\naaaa⋯\ncccc");
+        editor.move_line_up(&MoveLineUp, window, cx);
+        let buffer_text = editor.buffer.read(cx).snapshot(cx).text();
+        assert_eq!(buffer_text, "\n\n\n\n\naaaa\nbbbb\n\ncccc");
+    });
+}
+
+#[gpui::test]
 fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -5042,7 +5130,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             Some(Autoscroll::fit()),
             cx,
@@ -5085,7 +5172,6 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
                 style: BlockStyle::Sticky,
                 render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
-                render_in_minimap: true,
             }],
             None,
             cx,
@@ -9534,6 +9620,74 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.txt"), "foo".into()).await;
+
+    let project = Project::test(fs, [path!("/file.txt").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([0..0])
+        });
+    });
+    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.handle_input("\n", window, cx)
+    });
+    cx.run_until_parked();
+    save(&editor, &project, cx).await;
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.undo(&Default::default(), window, cx);
+    });
+    save(&editor, &project, cx).await;
+    assert_eq!("foo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.redo(&Default::default(), window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!("\nfoo", editor.read_with(cx, |editor, cx| editor.text(cx)));
+
+    async fn save(editor: &Entity<Editor>, project: &Entity<Project>, cx: &mut VisualTestContext) {
+        let save = editor
+            .update_in(cx, |editor, window, cx| {
+                editor.save(
+                    SaveOptions {
+                        format: true,
+                        autosave: false,
+                    },
+                    project.clone(),
+                    window,
+                    cx,
+                )
+            })
+            .unwrap();
+        cx.executor().start_waiting();
+        save.await;
+        assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    }
+}
+
+#[gpui::test]
 async fn test_multibuffer_format_during_save(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -13701,7 +13855,12 @@ async fn test_toggle_block_comment(cx: &mut TestAppContext) {
         Language::new(
             LanguageConfig {
                 name: "HTML".into(),
-                block_comment: Some(("<!-- ".into(), " -->".into())),
+                block_comment: Some(BlockCommentConfig {
+                    start: "<!-- ".into(),
+                    prefix: "".into(),
+                    end: " -->".into(),
+                    tab_size: 0,
+                }),
                 ..Default::default()
             },
             Some(tree_sitter_html::LANGUAGE.into()),
@@ -14697,7 +14856,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     executor.run_until_parked();
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14706,7 +14865,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14715,7 +14874,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -14724,7 +14883,7 @@ async fn go_to_prev_overlapping_diagnostic(executor: BackgroundExecutor, cx: &mu
     "});
 
     cx.update_editor(|editor, window, cx| {
-        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic, window, cx);
+        editor.go_to_prev_diagnostic(&GoToPreviousDiagnostic::default(), window, cx);
     });
 
     cx.assert_editor_state(indoc! {"
@@ -16722,7 +16881,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
+async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;
@@ -21426,7 +21585,7 @@ println!("5");
         .unwrap();
     pane_1
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -21462,7 +21621,7 @@ println!("5");
         .unwrap();
     pane_2
         .update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(&CloseInactiveItems::default(), window, cx)
+            pane.close_other_items(&CloseOtherItems::default(), None, window, cx)
         })
         .await
         .unwrap();
@@ -22671,7 +22830,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
         workspace::init_settings(cx);
         crate::init(cx);
     });
-
+    zlog::init_test();
     update_test_language_settings(cx, f);
 }
 

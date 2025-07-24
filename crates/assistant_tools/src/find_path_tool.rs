@@ -68,7 +68,7 @@ impl Tool for FindPathTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::SearchCode
+        IconName::ToolSearch
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -313,7 +313,7 @@ impl ToolCard for FindPathToolCard {
             .mb_2()
             .gap_1()
             .child(
-                ToolCallCardHeader::new(IconName::SearchCode, matches_label)
+                ToolCallCardHeader::new(IconName::ToolSearch, matches_label)
                     .with_code_path(&self.glob)
                     .disclosure_slot(
                         Disclosure::new("path-search-disclosure", self.expanded)

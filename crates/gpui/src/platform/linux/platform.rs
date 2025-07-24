@@ -56,7 +56,7 @@ pub trait LinuxClient {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>>;
 
     fn open_window(
         &self,
@@ -245,7 +245,7 @@ impl<P: LinuxClient + 'static> Platform for P {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn crate::ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn crate::ScreenCaptureSource>>>> {
         self.screen_capture_sources()
     }
 
@@ -707,6 +707,60 @@ pub(super) fn log_cursor_icon_warning(message: impl std::fmt::Display) {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
+fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+    let c = match (keycode.raw(), shift) {
+        (24, _) => 'q',
+        (25, _) => 'w',
+        (26, _) => 'e',
+        (27, _) => 'r',
+        (28, _) => 't',
+        (29, _) => 'y',
+        (30, _) => 'u',
+        (31, _) => 'i',
+        (32, _) => 'o',
+        (33, _) => 'p',
+        (34, false) => '[',
+        (34, true) => '{',
+        (35, false) => ']',
+        (35, true) => '}',
+        (38, _) => 'a',
+        (39, _) => 's',
+        (40, _) => 'd',
+        (41, _) => 'f',
+        (42, _) => 'g',
+        (43, _) => 'h',
+        (44, _) => 'j',
+        (45, _) => 'k',
+        (46, _) => 'l',
+        (47, false) => ';',
+        (47, true) => ':',
+        (48, false) => '\'',
+        (48, true) => '"',
+        (49, false) => '`',
+        (49, true) => '~',
+        (51, false) => '\\',
+        (51, true) => '|',
+        (52, _) => 'z',
+        (53, _) => 'x',
+        (54, _) => 'c',
+        (55, _) => 'v',
+        (56, _) => 'b',
+        (57, _) => 'n',
+        (58, _) => 'm',
+        (59, false) => ',',
+        (59, true) => '>',
+        (60, false) => '.',
+        (60, true) => '<',
+        (61, false) => '/',
+        (61, true) => '?',
+
+        _ => return None,
+    };
+
+    Some(c)
+}
+
+#[cfg(any(feature = "wayland", feature = "x11"))]
 impl crate::Keystroke {
     pub(super) fn from_xkb(
         state: &State,
@@ -768,11 +822,43 @@ impl crate::Keystroke {
             Keysym::underscore => "_".to_owned(),
             Keysym::equal => "=".to_owned(),
             Keysym::plus => "+".to_owned(),
+            Keysym::space => "space".to_owned(),
+            Keysym::BackSpace => "backspace".to_owned(),
+            Keysym::Tab => "tab".to_owned(),
+            Keysym::Delete => "delete".to_owned(),
+            Keysym::Escape => "escape".to_owned(),
+
+            Keysym::Left => "left".to_owned(),
+            Keysym::Right => "right".to_owned(),
+            Keysym::Up => "up".to_owned(),
+            Keysym::Down => "down".to_owned(),
+            Keysym::Home => "home".to_owned(),
+            Keysym::End => "end".to_owned(),
 
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
                     name.replace("kp_", "")
+                } else if let Some(key) = key_utf8.chars().next()
+                    && key_utf8.len() == 1
+                    && key.is_ascii()
+                {
+                    if key.is_ascii_graphic() {
+                        key_utf8.to_lowercase()
+                    // map ctrl-a to `a`
+                    // ctrl-0..9 may emit control codes like ctrl-[, but
+                    // we don't want to map them to `[`
+                    } else if key_utf32 <= 0x1f
+                        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+                    {
+                        ((key_utf32 as u8 + 0x40) as char)
+                            .to_ascii_lowercase()
+                            .to_string()
+                    } else {
+                        name
+                    }
+                } else if let Some(key_en) = guess_ascii(keycode, modifiers.shift) {
+                    String::from(key_en)
                 } else {
                     name
                 }

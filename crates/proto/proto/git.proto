@@ -294,9 +294,11 @@ message Commit {
     optional string email = 5;
     string message = 6;
     optional CommitOptions options = 7;
+    reserved 8;
 
     message CommitOptions {
         bool amend = 1;
+        bool signoff = 2;
     }
 }
 

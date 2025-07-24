@@ -35,7 +35,7 @@ dashmap.workspace = true
 derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
-gpui = { workspace = true, features = ["screen-capture"] }
+gpui.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
@@ -94,6 +94,7 @@ context_server.workspace = true
 ctor.workspace = true
 dap = { workspace = true, features = ["test-support"] }
 dap_adapters = { workspace = true, features = ["test-support"] }
+dap-types.workspace = true
 debugger_ui = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 extension.workspace = true
@@ -126,6 +127,7 @@ sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme.workspace = true

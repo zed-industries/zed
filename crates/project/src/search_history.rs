@@ -45,12 +45,6 @@ impl SearchHistory {
     }
 
     pub fn add(&mut self, cursor: &mut SearchHistoryCursor, search_string: String) {
-        if let Some(selected_ix) = cursor.selection {
-            if self.history.get(selected_ix) == Some(&search_string) {
-                return;
-            }
-        }
-
         if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains {
             if let Some(previously_searched) = self.history.back_mut() {
                 if search_string.contains(previously_searched.as_str()) {
@@ -72,18 +66,12 @@ impl SearchHistory {
     }
 
     pub fn next(&mut self, cursor: &mut SearchHistoryCursor) -> Option<&str> {
-        let history_size = self.history.len();
-        if history_size == 0 {
-            return None;
-        }
-
         let selected = cursor.selection?;
-        if selected == history_size - 1 {
-            return None;
-        }
         let next_index = selected + 1;
+
+        let next = self.history.get(next_index)?;
         cursor.selection = Some(next_index);
-        Some(&self.history[next_index])
+        Some(next)
     }
 
     pub fn current(&self, cursor: &SearchHistoryCursor) -> Option<&str> {
@@ -92,25 +80,17 @@ impl SearchHistory {
             .and_then(|selected_ix| self.history.get(selected_ix).map(|s| s.as_str()))
     }
 
+    /// Get the previous history entry using the given `SearchHistoryCursor`.
+    /// Uses the last element in the history when there is no cursor.
     pub fn previous(&mut self, cursor: &mut SearchHistoryCursor) -> Option<&str> {
-        let history_size = self.history.len();
-        if history_size == 0 {
-            return None;
-        }
-
         let prev_index = match cursor.selection {
-            Some(selected_index) => {
-                if selected_index == 0 {
-                    return None;
-                } else {
-                    selected_index - 1
-                }
-            }
-            None => history_size - 1,
+            Some(index) => index.checked_sub(1)?,
+            None => self.history.len().checked_sub(1)?,
         };
 
+        let previous = self.history.get(prev_index)?;
         cursor.selection = Some(prev_index);
-        Some(&self.history[prev_index])
+        Some(previous)
     }
 }
 
@@ -156,6 +136,14 @@ mod tests {
             1,
             "Should replace previous item if it's a substring"
         );
+        assert_eq!(search_history.current(&cursor), Some("rustlang"));
+
+        // add item when it equals to current item if it's not the last one
+        search_history.add(&mut cursor, "php".to_string());
+        search_history.previous(&mut cursor);
+        assert_eq!(search_history.current(&cursor), Some("rustlang"));
+        search_history.add(&mut cursor, "rustlang".to_string());
+        assert_eq!(search_history.history.len(), 3, "Should add item");
         assert_eq!(search_history.current(&cursor), Some("rustlang"));
 
         // push enough items to test SEARCH_HISTORY_LIMIT

@@ -139,6 +139,8 @@ impl ContextMenuEntry {
     }
 }
 
+impl FluentBuilder for ContextMenuEntry {}
+
 impl From<ContextMenuEntry> for ContextMenuItem {
     fn from(entry: ContextMenuEntry) -> Self {
         ContextMenuItem::Entry(entry)
@@ -159,6 +161,7 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     documentation_aside: Option<(usize, DocumentationAside)>,
     fixed_width: Option<DefiniteLength>,
+    align_popover_top: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -215,6 +218,7 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
+                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -257,6 +261,7 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
+                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -297,6 +302,7 @@ impl ContextMenu {
                     |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
                 ),
                 keep_open_on_confirm: false,
+                align_popover_top: true,
                 documentation_aside: None,
                 fixed_width: None,
                 end_slot_action: None,
@@ -347,6 +353,10 @@ impl ContextMenu {
     pub fn item(mut self, item: impl Into<ContextMenuItem>) -> Self {
         self.items.push(item.into());
         self
+    }
+
+    pub fn push_item(&mut self, item: impl Into<ContextMenuItem>) {
+        self.items.push(item.into());
     }
 
     pub fn entry(
@@ -664,7 +674,7 @@ impl ContextMenu {
         }
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(ix) = self.selected_index {
             let next_index = ix + 1;
             if self.items.len() <= next_index {
@@ -775,6 +785,11 @@ impl ContextMenu {
 
     pub fn on_blur_subscription(mut self, new_subscription: Subscription) -> Self {
         self._on_blur_subscription = new_subscription;
+        self
+    }
+
+    pub fn align_popover_bottom(mut self) -> Self {
+        self.align_popover_top = false;
         self
     }
 
@@ -963,12 +978,10 @@ impl ContextMenu {
                             .children(action.as_ref().and_then(|action| {
                                 self.action_context
                                     .as_ref()
-                                    .map(|focus| {
+                                    .and_then(|focus| {
                                         KeyBinding::for_action_in(&**action, focus, window, cx)
                                     })
-                                    .unwrap_or_else(|| {
-                                        KeyBinding::for_action(&**action, window, cx)
-                                    })
+                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside.is_some(),
@@ -1100,7 +1113,13 @@ impl Render for ContextMenu {
             .when(is_wide_window, |this| this.flex_row())
             .when(!is_wide_window, |this| this.flex_col())
             .w_full()
-            .items_start()
+            .map(|div| {
+                if self.align_popover_top {
+                    div.items_start()
+                } else {
+                    div.items_end()
+                }
+            })
             .gap_1()
             .child(div().children(aside.clone().and_then(|(_, aside)| {
                 (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))

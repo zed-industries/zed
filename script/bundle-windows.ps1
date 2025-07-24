@@ -44,8 +44,6 @@ function CheckEnvironmentVariables {
     }
 }
 
-$innoDir = "$env:ZED_WORKSPACE\inno"
-
 function PrepareForBundle {
     if (Test-Path "$innoDir") {
         Remove-Item -Path "$innoDir" -Recurse -Force
@@ -56,6 +54,13 @@ function PrepareForBundle {
     New-Item -Path "$innoDir\appx" -ItemType Directory -Force
     New-Item -Path "$innoDir\bin" -ItemType Directory -Force
     New-Item -Path "$innoDir\tools" -ItemType Directory -Force
+}
+
+function GenerateLicenses {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    . $PSScriptRoot/generate-licenses.ps1
+    $ErrorActionPreference = $oldErrorActionPreference
 }
 
 function BuildZedAndItsFriends {
@@ -128,57 +133,57 @@ function BuildInstaller {
         "stable" {
             $appId = "{{2DB0DA96-CA55-49BB-AF4F-64AF36A86712}"
             $appIconName = "app-icon"
-            $appName = "Zed Editor"
-            $appDisplayName = "Zed Editor"
+            $appName = "Zed"
+            $appDisplayName = "Zed"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
-            $appMutex = "Zed-Editor-Stable-Instance-Mutex"
+            $appMutex = "Zed-Stable-Instance-Mutex"
             $appExeName = "Zed"
-            $regValueName = "ZedEditor"
+            $regValueName = "Zed"
             $appUserId = "ZedIndustries.Zed"
-            $appShellNameShort = "Z&ed Editor"
+            $appShellNameShort = "Z&ed"
             $appAppxFullName = "ZedIndustries.Zed_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "preview" {
             $appId = "{{F70E4811-D0E2-4D88-AC99-D63752799F95}"
             $appIconName = "app-icon-preview"
-            $appName = "Zed Editor Preview"
-            $appDisplayName = "Zed Editor Preview"
+            $appName = "Zed Preview"
+            $appDisplayName = "Zed Preview"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-preview"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
-            $appMutex = "Zed-Editor-Preview-Instance-Mutex"
+            $appMutex = "Zed-Preview-Instance-Mutex"
             $appExeName = "Zed"
-            $regValueName = "ZedEditorPreview"
+            $regValueName = "ZedPreview"
             $appUserId = "ZedIndustries.Zed.Preview"
-            $appShellNameShort = "Z&ed Editor Preview"
+            $appShellNameShort = "Z&ed Preview"
             $appAppxFullName = "ZedIndustries.Zed.Preview_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "nightly" {
             $appId = "{{1BDB21D3-14E7-433C-843C-9C97382B2FE0}"
             $appIconName = "app-icon-nightly"
-            $appName = "Zed Editor Nightly"
-            $appDisplayName = "Zed Editor Nightly"
+            $appName = "Zed Nightly"
+            $appDisplayName = "Zed Nightly"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-nightly"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
-            $appMutex = "Zed-Editor-Nightly-Instance-Mutex"
+            $appMutex = "Zed-Nightly-Instance-Mutex"
             $appExeName = "Zed"
-            $regValueName = "ZedEditorNightly"
+            $regValueName = "ZedNightly"
             $appUserId = "ZedIndustries.Zed.Nightly"
             $appShellNameShort = "Z&ed Editor Nightly"
             $appAppxFullName = "ZedIndustries.Zed.Nightly_1.0.0.0_neutral__japxn1gcva8rg"
         }
         "dev" {
             $appId = "{{8357632E-24A4-4F32-BA97-E575B4D1FE5D}"
-            $appIconName = "app-icon-nightly"
-            $appName = "Zed Editor Dev"
-            $appDisplayName = "Zed Editor Dev"
+            $appIconName = "app-icon-dev"
+            $appName = "Zed Dev"
+            $appDisplayName = "Zed Dev"
             $appSetupName = "ZedEditorUserSetup-x64-$env:RELEASE_VERSION-dev"
             # The mutex name here should match the mutex name in crates\zed\src\zed\windows_only_instance.rs
-            $appMutex = "Zed-Editor-Dev-Instance-Mutex"
+            $appMutex = "Zed-Dev-Instance-Mutex"
             $appExeName = "Zed"
-            $regValueName = "ZedEditorDev"
+            $regValueName = "ZedDev"
             $appUserId = "ZedIndustries.Zed.Dev"
-            $appShellNameShort = "Z&ed Editor Dev"
+            $appShellNameShort = "Z&ed Dev"
             $appAppxFullName = "ZedIndustries.Zed.Dev_1.0.0.0_neutral__japxn1gcva8rg"
         }
         default {
@@ -236,8 +241,11 @@ function BuildInstaller {
 }
 
 ParseZedWorkspace
+$innoDir = "$env:ZED_WORKSPACE\inno"
+
 CheckEnvironmentVariables
 PrepareForBundle
+GenerateLicenses
 BuildZedAndItsFriends
 MakeAppx
 SignZedAndItsFriends
