@@ -2322,9 +2322,8 @@ impl AgentPanel {
 
         Some(
             div()
-                .size_full()
                 .when(thread_view, |this| {
-                    this.bg(cx.theme().colors().panel_background)
+                    this.size_full().bg(cx.theme().colors().panel_background)
                 })
                 .when(text_thread_view, |this| {
                     this.bg(cx.theme().colors().editor_background)
