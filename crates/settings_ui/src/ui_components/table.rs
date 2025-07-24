@@ -678,14 +678,14 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             };
 
             let curr_width = widths[curr_column] - diff_remaining;
+            widths[curr_column] = curr_width;
 
-            if min_size >= curr_width {
+            if min_size > curr_width {
                 diff_remaining = min_size - curr_width;
                 widths[curr_column] = min_size;
             } else {
-                widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
-                widths[curr_column] = curr_width;
-                return 0.0;
+                diff_remaining = 0.0;
+                break;
             }
             curr_column += 1;
         }
@@ -716,14 +716,14 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             };
 
             let curr_width = widths[curr_column] - diff_remaining;
+            widths[curr_column] = curr_width;
 
-            if min_size >= curr_width {
+            if min_size > curr_width {
                 diff_remaining = min_size - curr_width;
                 widths[curr_column] = min_size;
             } else {
-                widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
-                widths[curr_column] = curr_width;
-                return 0.0;
+                diff_remaining = 0.0;
+                break;
             }
 
             if curr_column == 0 {
