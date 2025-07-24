@@ -774,6 +774,7 @@ impl BufferSearchBar {
 
     pub fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
         self.dismissed = true;
+        self.query_error = None;
         for searchable_item in self.searchable_items_with_matches.keys() {
             if let Some(searchable_item) =
                 WeakSearchableItemHandle::upgrade(searchable_item.as_ref(), cx)
@@ -854,6 +855,7 @@ impl BufferSearchBar {
         }
 
         self.dismissed = false;
+        self.query_error = None;
         self.adjust_query_regex_language(cx);
         handle.search_bar_visibility_changed(true, window, cx);
         cx.notify();
