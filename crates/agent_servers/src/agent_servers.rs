@@ -1,7 +1,6 @@
 mod claude;
 mod codex;
 mod gemini;
-mod mcp_server;
 mod settings;
 mod stdio_agent_server;
 

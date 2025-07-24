@@ -1,3 +1,4 @@
+mod mcp_server;
 pub mod tools;
 
 use collections::HashMap;
@@ -25,8 +26,8 @@ use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
 
+use crate::claude::mcp_server::{McpConfig, ZedMcpServer};
 use crate::claude::tools::ClaudeTool;
-use crate::mcp_server::{self, McpConfig, ZedMcpServer};
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
 use acp_thread::{AcpThread, AgentConnection};
 
@@ -64,7 +65,7 @@ impl AgentServer for ClaudeCode {
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
-                crate::mcp_server::SERVER_NAME.to_string(),
+                mcp_server::SERVER_NAME.to_string(),
                 permission_mcp_server.server_config()?,
             );
             let mcp_config = McpConfig { mcp_servers };

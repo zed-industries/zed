@@ -1,5 +1,3 @@
-// todo! move this back to claude since, it won't share any of the tools with other agents
-
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 
 use acp_thread::AcpThread;
