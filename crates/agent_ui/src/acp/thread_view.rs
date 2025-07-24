@@ -1,4 +1,4 @@
-use acp_thread::Plan;
+use acp_thread::{AgentConnection, Plan};
 use agent_servers::AgentServer;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -16,7 +16,6 @@ use editor::{
     EditorStyle, MinimapVisibility, MultiBuffer, PathKey,
 };
 use file_icons::FileIcons;
-use futures::channel::oneshot;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
     FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement,
@@ -80,7 +79,9 @@ enum ThreadState {
         _subscription: [Subscription; 2],
     },
     LoadError(LoadError),
-    Unauthenticated,
+    Unauthenticated {
+        connection: Rc<dyn AgentConnection>,
+    },
 }
 
 impl AcpThreadView {
@@ -213,26 +214,16 @@ impl AcpThreadView {
                 }
             };
 
-            let result = match connection.new_thread(project.clone(), &root_dir, cx).await {
+            let result = match connection
+                .clone()
+                .new_thread(project.clone(), &root_dir, cx)
+                .await
+            {
                 Err(e) => {
                     let mut cx = cx.clone();
-                    if e.downcast_ref::<oneshot::Canceled>().is_some() {
-                        // todo! get from connection
-                        // let child_status = thread
-                        //     .update(&mut cx, |thread, _| thread.child_status())
-                        //     .ok()
-                        //     .flatten();
-                        // if let Some(child_status) = child_status {
-                        //     match child_status.await {
-                        //         Ok(_) => Err(e),
-                        //         Err(e) => Err(e),
-                        //     }
-                        // } else {
-                        Err(e)
-                        // }
-                    } else if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
+                    if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
                         this.update(&mut cx, |this, cx| {
-                            this.thread_state = ThreadState::Unauthenticated;
+                            this.thread_state = ThreadState::Unauthenticated { connection };
                             cx.notify();
                         })
                         .ok();
@@ -289,8 +280,7 @@ impl AcpThreadView {
     pub fn thread(&self) -> Option<&Entity<AcpThread>> {
         match &self.thread_state {
             ThreadState::Ready { thread, .. } => Some(thread),
-            // todo! we were previously returning a thread from Unauthenticated. check it's ok not to.
-            ThreadState::Unauthenticated
+            ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
             | ThreadState::LoadError(..) => None,
         }
@@ -641,12 +631,12 @@ impl AcpThreadView {
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(thread) = self.thread().cloned() else {
+        let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
             return;
         };
 
         self.last_error.take();
-        let authenticate = thread.update(cx, |thread, cx| thread.authenticate(cx));
+        let authenticate = connection.authenticate(cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
             let agent = self.agent.clone();
