@@ -572,8 +572,6 @@ impl Error for LoadError {}
 impl AcpThread {
     pub fn new(
         connection: Rc<dyn AgentConnection>,
-        // todo! remove me
-        title: SharedString,
         project: Entity<Project>,
         session_id: acp::SessionId,
         cx: &mut Context<Self>,
@@ -585,7 +583,7 @@ impl AcpThread {
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
-            title,
+            title: connection.name().into(),
             project,
             send_task: None,
             connection,
@@ -1783,13 +1781,13 @@ mod tests {
                 }
             });
             let connection = OldAcpAgentConnection {
+                name: "test",
                 connection,
                 child_status: io_task,
             };
 
             AcpThread::new(
                 Rc::new(connection),
-                "Test".into(),
                 project,
                 acp::SessionId("test".into()),
                 cx,

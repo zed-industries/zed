@@ -10,6 +10,8 @@ use ui::App;
 use crate::AcpThread;
 
 pub trait AgentConnection {
+    fn name(&self) -> &'static str;
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -35,11 +37,16 @@ impl fmt::Display for Unauthenticated {
 }
 
 pub struct OldAcpAgentConnection {
+    pub name: &'static str,
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
 }
 
 impl AgentConnection for OldAcpAgentConnection {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -63,7 +70,7 @@ impl AgentConnection for OldAcpAgentConnection {
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.clone(), "Gemini".into(), project, session_id, cx)
+                    AcpThread::new(self.clone(), project, session_id, cx)
                 });
                 thread
             })

@@ -51,6 +51,7 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
         let root_dir = root_dir.to_path_buf();
         let project = project.clone();
         let this = self.clone();
+        let name = self.name();
 
         cx.spawn(async move |cx| {
             let command = this.command(&project, cx).await?;
@@ -108,6 +109,7 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
             });
 
             let connection: Rc<dyn AgentConnection> = Rc::new(OldAcpAgentConnection {
+                name,
                 connection,
                 child_status,
             });

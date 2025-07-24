@@ -197,6 +197,10 @@ fn send_interrupt(_pid: i32) -> anyhow::Result<()> {
 }
 
 impl AgentConnection for ClaudeAgentConnection {
+    fn name(&self) -> &'static str {
+        ClaudeCode.name()
+    }
+
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -204,15 +208,8 @@ impl AgentConnection for ClaudeAgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let session_id = self.session_id.clone();
-        let thread_result = cx.new(|cx| {
-            AcpThread::new(
-                self.clone(),
-                "Claude".into(),
-                project,
-                session_id.clone(),
-                cx,
-            )
-        });
+        let thread_result =
+            cx.new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx));
 
         if let Ok(thread) = &thread_result {
             self.threads_map
