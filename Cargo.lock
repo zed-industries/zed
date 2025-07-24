@@ -6,6 +6,7 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
@@ -136,10 +137,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "agent-client-protocol"
+version = "0.0.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fb7f39671e02f8a1aeb625652feae40b6fc2597baaa97e028a98863477aecbd"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "agent_servers"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "agent-client-protocol",
  "agentic-coding-protocol",
  "anyhow",
  "collections",
@@ -195,9 +208,9 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent",
+ "agent-client-protocol",
  "agent_servers",
  "agent_settings",
- "agentic-coding-protocol",
  "ai_onboarding",
  "anyhow",
  "assistant_context",

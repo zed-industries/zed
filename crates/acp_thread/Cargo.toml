@@ -16,6 +16,7 @@ doctest = false
 test-support = ["gpui/test-support", "project/test-support"]
 
 [dependencies]
+agent-client-protocol.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
