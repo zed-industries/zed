@@ -1987,13 +1987,6 @@ impl AgentPanel {
                                                 );
                                             }),
                                     )
-                                    .action(
-                                        "New Codex Thread",
-                                        NewExternalAgentThread {
-                                            agent: Some(crate::ExternalAgent::Codex),
-                                        }
-                                        .boxed_clone(),
-                                    )
                             });
                         menu
                     }))

@@ -1,5 +1,4 @@
 mod claude;
-mod codex;
 mod gemini;
 mod settings;
 
@@ -7,7 +6,6 @@ mod settings;
 mod e2e_tests;
 
 pub use claude::*;
-pub use codex::*;
 pub use gemini::*;
 pub use settings::*;
 

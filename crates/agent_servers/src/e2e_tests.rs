@@ -348,9 +348,6 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 claude: Some(AgentServerSettings {
                     command: crate::claude::tests::local_command(),
                 }),
-                codex: Some(AgentServerSettings {
-                    command: crate::codex::tests::local_command(),
-                }),
                 gemini: Some(AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
                 }),
