@@ -1639,6 +1639,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
+                Mode::HelixNormal => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {
