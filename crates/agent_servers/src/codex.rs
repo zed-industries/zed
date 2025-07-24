@@ -1,6 +1,5 @@
 use project::Project;
-use std::path::Path;
-use std::sync::Arc;
+use std::{path::Path, rc::Rc};
 
 use anyhow::Result;
 use gpui::{App, Entity, Task};
@@ -33,7 +32,7 @@ impl AgentServer for Codex {
         _root_dir: &Path,
         _project: &Entity<Project>,
         _cx: &mut App,
-    ) -> Task<Result<Arc<dyn AgentConnection>>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         // re-implement using ACP
         todo!()
     }

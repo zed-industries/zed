@@ -4,7 +4,7 @@ use agentic_coding_protocol as acp_old;
 use anyhow::{Result, anyhow};
 use gpui::{App, AsyncApp, Entity, Task, WeakEntity, prelude::*};
 use project::Project;
-use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 use util::ResultExt;
 
 pub trait StdioAgentServer: Send + Clone {
@@ -47,7 +47,7 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn AgentConnection>>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let root_dir = root_dir.to_path_buf();
         let project = project.clone();
         let this = self.clone();
@@ -107,7 +107,7 @@ impl<T: StdioAgentServer + 'static> AgentServer for T {
                 result
             });
 
-            let connection: Arc<dyn AgentConnection> = Arc::new(OldAcpAgentConnection {
+            let connection: Rc<dyn AgentConnection> = Rc::new(OldAcpAgentConnection {
                 connection,
                 child_status,
                 thread: thread_rc,

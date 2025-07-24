@@ -9,7 +9,6 @@ use std::fmt::Display;
 use std::path::Path;
 use std::pin::pin;
 use std::rc::Rc;
-use std::sync::Arc;
 use uuid::Uuid;
 
 use agent_client_protocol as acp;
@@ -56,7 +55,7 @@ impl AgentServer for ClaudeCode {
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn AgentConnection>>> {
+    ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let project = project.clone();
         let root_dir = root_dir.to_path_buf();
         cx.spawn(async move |cx| {
@@ -179,7 +178,7 @@ impl AgentServer for ClaudeCode {
                 _mcp_server: Some(permission_mcp_server),
             };
 
-            Ok(Arc::new(connection) as _)
+            Ok(Rc::new(connection) as _)
         })
     }
 }
@@ -202,7 +201,7 @@ impl AgentConnection for ClaudeAgentConnection {
         &self,
         project: Entity<Project>,
         _cwd: &Path,
-        connection: Arc<dyn AgentConnection>,
+        connection: Rc<dyn AgentConnection>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let session_id = self.session_id.clone();

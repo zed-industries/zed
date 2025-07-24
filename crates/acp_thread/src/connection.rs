@@ -1,4 +1,4 @@
-use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
 
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest};
@@ -14,7 +14,7 @@ pub trait AgentConnection {
         &self,
         project: Entity<Project>,
         cwd: &Path,
-        connection: Arc<dyn AgentConnection>,
+        connection: Rc<dyn AgentConnection>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
@@ -46,7 +46,7 @@ impl AgentConnection for OldAcpAgentConnection {
         &self,
         project: Entity<Project>,
         _cwd: &Path,
-        connection: Arc<dyn AgentConnection>,
+        connection: Rc<dyn AgentConnection>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(

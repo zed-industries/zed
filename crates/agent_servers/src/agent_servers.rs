@@ -23,6 +23,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::ResultExt as _;
@@ -42,7 +43,7 @@ pub trait AgentServer: Send {
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Arc<dyn AgentConnection>>>;
+    ) -> Task<Result<Rc<dyn AgentConnection>>>;
 }
 
 impl std::fmt::Debug for AgentServerCommand {

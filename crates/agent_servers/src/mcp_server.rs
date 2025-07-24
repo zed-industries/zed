@@ -197,9 +197,12 @@ impl ZedMcpServer {
     ) -> Task<Result<Vec<ToolResponseContent>>> {
         cx.spawn(async move |cx| {
             // todo! get session id somehow
-            let threads_map = threads_map.borrow();
-            let Some((_, thread)) = threads_map.iter().next() else {
-                anyhow::bail!("Server not available");
+            let thread = {
+                let threads_map = threads_map.borrow();
+                let Some((_, thread)) = threads_map.iter().next() else {
+                    anyhow::bail!("Server not available");
+                };
+                thread.clone()
             };
 
             let content = thread
@@ -219,9 +222,12 @@ impl ZedMcpServer {
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
             // todo! get session id somehow
-            let threads_map = threads_map.borrow();
-            let Some((_, thread)) = threads_map.iter().next() else {
-                anyhow::bail!("Server not available");
+            let thread = {
+                let threads_map = threads_map.borrow();
+                let Some((_, thread)) = threads_map.iter().next() else {
+                    anyhow::bail!("Server not available");
+                };
+                thread.clone()
             };
 
             let content = thread
@@ -252,9 +258,12 @@ impl ZedMcpServer {
     ) -> Task<Result<PermissionToolResponse>> {
         cx.spawn(async move |cx| {
             // todo! get session id somehow
-            let threads_map = threads_map.borrow();
-            let Some((_, thread)) = threads_map.iter().next() else {
-                anyhow::bail!("Server not available");
+            let thread = {
+                let threads_map = threads_map.borrow();
+                let Some((_, thread)) = threads_map.iter().next() else {
+                    anyhow::bail!("Server not available");
+                };
+                thread.clone()
             };
 
             let claude_tool = ClaudeTool::infer(&params.tool_name, params.input.clone());

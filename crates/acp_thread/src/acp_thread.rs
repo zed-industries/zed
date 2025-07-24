@@ -111,14 +111,7 @@ pub enum AssistantMessageChunk {
 impl AssistantMessageChunk {
     pub fn from_str(chunk: &str, language_registry: &Arc<LanguageRegistry>, cx: &mut App) -> Self {
         Self::Message {
-            block: ContentBlock::new(
-                acp::ContentBlock::Text(acp::TextContent {
-                    text: chunk.to_owned().into(),
-                    annotations: None,
-                }),
-                language_registry,
-                cx,
-            ),
+            block: ContentBlock::new(chunk.into(), language_registry, cx),
         }
     }
 
@@ -562,7 +555,7 @@ pub struct AcpThread {
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
     send_task: Option<Task<()>>,
-    connection: Arc<dyn AgentConnection>,
+    connection: Rc<dyn AgentConnection>,
     child_status: Option<Task<Result<()>>>,
     session_id: acp::SessionId,
 }
@@ -606,7 +599,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
-        connection: Arc<dyn AgentConnection>,
+        connection: Rc<dyn AgentConnection>,
         // todo! remove me
         title: SharedString,
         // todo! remove this?
@@ -1294,7 +1287,7 @@ impl acp_old::Client for OldAcpClientDelegate {
             .await;
 
         let outcome = match response {
-            Ok(option_id) => outcomes[option_id.0.parse::<usize>().unwrap_or(0)].clone(),
+            Ok(option_id) => outcomes[option_id.0.parse::<usize>().unwrap_or(0)],
             Err(oneshot::Canceled) => acp_old::ToolCallConfirmationOutcome::Cancel,
         };
 
@@ -1831,7 +1824,7 @@ mod tests {
             };
 
             AcpThread::new(
-                Arc::new(connection),
+                Rc::new(connection),
                 "Test".into(),
                 None,
                 project,
