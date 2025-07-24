@@ -2038,7 +2038,7 @@ impl Thread {
                                             Thread::get_retry_strategy(completion_error)
                                         {
                                             log::info!(
-                                                "Retrying with {:?} for language model completion error",
+                                                "Retrying with {:?} for language model completion error {:?}",
                                                 retry_strategy,
                                                 completion_error
                                             );
