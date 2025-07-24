@@ -112,6 +112,14 @@ struct PathSprite {
     color: Background,
 }
 
+#[derive(Clone, Debug)]
+#[repr(C)]
+struct PathRasterizationVertex {
+    vertex: PathVertex<ScaledPixels>,
+    color: Background,
+    bounds: Bounds<ScaledPixels>,
+}
+
 struct BladePipelines {
     quads: gpu::RenderPipeline,
     shadows: gpu::RenderPipeline,
@@ -138,10 +146,11 @@ impl BladePipelines {
         shader.check_struct_size::<SurfaceParams>();
         shader.check_struct_size::<Quad>();
         shader.check_struct_size::<Shadow>();
-        assert_eq!(
-            mem::size_of::<PathVertex<ScaledPixels>>(),
-            shader.get_struct_size("PathVertex") as usize,
-        );
+        // assert_eq!(
+        //     mem::size_of::<PathVertex<ScaledPixels>>(),
+        //     shader.get_struct_size("PathVertex") as usize,
+        // );
+        shader.check_struct_size::<PathRasterizationVertex>();
         shader.check_struct_size::<PathSprite>();
         shader.check_struct_size::<Underline>();
         shader.check_struct_size::<MonochromeSprite>();
@@ -583,8 +592,16 @@ impl BladeRenderer {
             let mut encoder = pass.with(&self.pipelines.path_rasterization);
 
             for path in paths {
-                let vertex_buf =
-                    unsafe { self.instance_belt.alloc_typed(&path.vertices, &self.gpu) };
+                let vertices = path
+                    .vertices
+                    .iter()
+                    .map(|v| PathRasterizationVertex {
+                        vertex: v.clone(),
+                        color: path.color,
+                        bounds: path.bounds.intersect(&path.content_mask.bounds),
+                    })
+                    .collect::<Vec<_>>();
+                let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
                 encoder.bind(
                     0,
                     &ShaderPathRasterizationData {

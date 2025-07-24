@@ -924,16 +924,20 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 
 // --- path rasterization --- //
 
-struct PathVertex {
+struct PathRasterizationVertex {
     xy_position: vec2<f32>,
     st_position: vec2<f32>,
     content_mask: Bounds,
+    color: Background,
+    bounds: Bounds,
 }
-var<storage, read> b_path_vertices: array<PathVertex>;
+
+var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
 
 struct PathRasterizationVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) st_position: vec2<f32>,
+    @location(1) vertex_id: u32,
     //TODO: use `clip_distance` once Naga supports it
     @location(3) clip_distances: vec4<f32>,
 }
@@ -945,23 +949,42 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
     var out = PathRasterizationVarying();
     out.position = to_device_position_impl(v.xy_position);
     out.st_position = v.st_position;
+    out.vertex_id = vertex_id;
     out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
     return out;
 }
 
 @fragment
 fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
-    // let dx = dpdx(input.st_position);
-    // let dy = dpdy(input.st_position);
+    let dx = dpdx(input.st_position);
+    let dy = dpdy(input.st_position);
     // if (any(input.clip_distances < vec4<f32>(0.0))) {
-    //     return 0.0;
+    //     return vec4<f32>(0.0);
     // }
 
-    // let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
-    // let f = input.st_position.x * input.st_position.x - input.st_position.y;
-    // let distance = f / length(gradient);
-    // return saturate(0.5 - distance);
-    return vec4<f32>(0.7, 0.2, 0.2, 1.0); // Placeholder for path rasterization
+    let v = b_path_vertices[input.vertex_id];
+    let background = v.color;
+    let bounds = v.bounds;
+
+    var alpha: f32;
+    if (length(vec2<f32>(dx.x, dy.x)) < 0.001) {
+        // If the gradient is too small, return a solid color.
+        alpha = 1.0;
+    } else {
+        let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+        let f = input.st_position.x * input.st_position.x - input.st_position.y;
+        let distance = f / length(gradient);
+        alpha = saturate(0.5 - distance);
+    }
+    let gradient_color = prepare_gradient_color(
+        background.tag,
+        background.color_space,
+        background.solid,
+        background.colors,
+    );
+    let color = gradient_color(background, input.position.xy, bounds,
+        gradient_color.solid, gradient_color.color0, gradient_color.color1);
+    return vec4<f32>(color.rgb * alpha, alpha);
 }
 
 // --- paths --- //
@@ -984,8 +1007,8 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     // Don't apply content mask because it was already accounted for when rasterizing the path.
     let device_position = to_device_position(unit_vertex, sprite.bounds);
     // For screen-space intermediate texture, convert screen position to texture coordinates
-    let screen_position = vec2<f32>(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * vec2<f32>(sprite.bounds.size.x, sprite.bounds.size.y);
-    let texture_coords = screen_position / vec2<f32>(globals.viewport_size.x, globals.viewport_size.y);
+    let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+    let texture_coords = screen_position / globals.viewport_size;
 
     var out = PathVarying();
     out.position = device_position;
@@ -997,12 +1020,6 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
-    // let mask = 1.0 - abs(1.0 - sample % 2.0);
-    // let sprite = b_path_sprites[input.instance_id];
-    // let background = sprite.color;
-    // let color = gradient_color(background, input.position.xy, sprite.bounds,
-    //     input.color_solid, input.color0, input.color1);
-    // return blend_color(color, mask);
     return sample;
 }
 
