@@ -1,12 +1,11 @@
 use ::serde::{Deserialize, Serialize};
 use anyhow::Context as _;
-use gpui::{App, Entity, PromptLevel, Task, WeakEntity};
+use gpui::{App, Entity, Task, WeakEntity};
+use language::ServerHealth;
 use lsp::LanguageServer;
 use rpc::proto;
 
-use crate::{
-    LanguageServerPromptRequest, LspStore, LspStoreEvent, Project, ProjectPath, lsp_store,
-};
+use crate::{LspStore, LspStoreEvent, Project, ProjectPath, lsp_store};
 
 pub const RUST_ANALYZER_NAME: &str = "rust-analyzer";
 pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
@@ -17,20 +16,10 @@ pub const CARGO_DIAGNOSTICS_SOURCE_NAME: &str = "rustc";
 #[derive(Debug)]
 enum ServerStatus {}
 
-/// Other(String) variant to handle unknown values due to this still being experimental
-#[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-enum ServerHealthStatus {
-    Ok,
-    Warning,
-    Error,
-    Other(String),
-}
-
 #[derive(Debug, PartialEq, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct ServerStatusParams {
-    pub health: ServerHealthStatus,
+    pub health: ServerHealth,
     pub message: Option<String>,
 }
 
@@ -45,40 +34,49 @@ pub fn register_notifications(lsp_store: WeakEntity<LspStore>, language_server: 
 
     language_server
         .on_notification::<ServerStatus, _>({
-            let name = name.to_string();
+            let name = name.clone();
             move |params, cx| {
-                let name = name.to_string();
-                if let Some(ref message) = params.message {
-                    let message = message.trim();
-                    if !message.is_empty() {
-                        let formatted_message = format!(
-                            "Language server {name} (id {server_id}) status update: {message}"
-                        );
-                        match params.health {
-                            ServerHealthStatus::Ok => log::info!("{formatted_message}"),
-                            ServerHealthStatus::Warning => log::warn!("{formatted_message}"),
-                            ServerHealthStatus::Error => {
-                                log::error!("{formatted_message}");
-                                let (tx, _rx) = smol::channel::bounded(1);
-                                let request = LanguageServerPromptRequest {
-                                    level: PromptLevel::Critical,
-                                    message: params.message.unwrap_or_default(),
-                                    actions: Vec::new(),
-                                    response_channel: tx,
-                                    lsp_name: name.clone(),
-                                };
-                                lsp_store
-                                    .update(cx, |_, cx| {
-                                        cx.emit(LspStoreEvent::LanguageServerPrompt(request));
-                                    })
-                                    .ok();
-                            }
-                            ServerHealthStatus::Other(status) => {
-                                log::info!("Unknown server health: {status}\n{formatted_message}")
-                            }
+                let message = params.message;
+                let log_message = message.as_ref().map(|message| {
+                    format!("Language server {name} (id {server_id}) status update: {message}")
+                });
+                let status = match &params.health {
+                    ServerHealth::Ok => {
+                        if let Some(log_message) = log_message {
+                            log::info!("{log_message}");
                         }
+                        proto::ServerHealth::Ok
                     }
-                }
+                    ServerHealth::Warning => {
+                        if let Some(log_message) = log_message {
+                            log::warn!("{log_message}");
+                        }
+                        proto::ServerHealth::Warning
+                    }
+                    ServerHealth::Error => {
+                        if let Some(log_message) = log_message {
+                            log::error!("{log_message}");
+                        }
+                        proto::ServerHealth::Error
+                    }
+                };
+
+                lsp_store
+                    .update(cx, |_, cx| {
+                        cx.emit(LspStoreEvent::LanguageServerUpdate {
+                            language_server_id: server_id,
+                            name: Some(name.clone()),
+                            message: proto::update_language_server::Variant::StatusUpdate(
+                                proto::StatusUpdate {
+                                    message,
+                                    status: Some(proto::status_update::Status::Health(
+                                        status as i32,
+                                    )),
+                                },
+                            ),
+                        });
+                    })
+                    .ok();
             }
         })
         .detach();
@@ -109,7 +107,7 @@ pub fn cancel_flycheck(
         else {
             return Ok(());
         };
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto())?;
 
         if let Some((client, project_id)) = upstream_client {
             let request = proto::LspExtCancelFlycheck {
@@ -123,7 +121,7 @@ pub fn cancel_flycheck(
                 .context("lsp ext cancel flycheck proto request")?;
         } else {
             lsp_store
-                .update(cx, |lsp_store, _| {
+                .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtCancelFlycheck>(&())?;
                     }
@@ -160,7 +158,7 @@ pub fn run_flycheck(
         else {
             return Ok(());
         };
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto())?;
 
         if let Some((client, project_id)) = upstream_client {
             let request = proto::LspExtRunFlycheck {
@@ -175,7 +173,7 @@ pub fn run_flycheck(
                 .context("lsp ext run flycheck proto request")?;
         } else {
             lsp_store
-                .update(cx, |lsp_store, _| {
+                .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtRunFlycheck>(
                             &lsp_store::lsp_ext_command::RunFlycheckParams {
@@ -216,7 +214,7 @@ pub fn clear_flycheck(
         else {
             return Ok(());
         };
-        let buffer_id = buffer.update(cx, |buffer, _| buffer.remote_id().to_proto())?;
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id().to_proto())?;
 
         if let Some((client, project_id)) = upstream_client {
             let request = proto::LspExtClearFlycheck {
@@ -230,7 +228,7 @@ pub fn clear_flycheck(
                 .context("lsp ext clear flycheck proto request")?;
         } else {
             lsp_store
-                .update(cx, |lsp_store, _| {
+                .read_with(cx, |lsp_store, _| {
                     if let Some(server) = lsp_store.language_server_for_id(rust_analyzer_server) {
                         server.notify::<lsp_store::lsp_ext_command::LspExtClearFlycheck>(&())?;
                     }

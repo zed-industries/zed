@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -179,6 +179,7 @@ impl LspAdapter for TailwindLspAdapter {
             ("Elixir".to_string(), "phoenix-heex".to_string()),
             ("HEEX".to_string(), "phoenix-heex".to_string()),
             ("ERB".to_string(), "erb".to_string()),
+            ("HTML/ERB".to_string(), "erb".to_string()),
             ("PHP".to_string(), "php".to_string()),
             ("Vue.js".to_string(), "vue".to_string()),
         ])
@@ -198,20 +199,17 @@ async fn get_cached_server_binary(
                 last_version_dir = Some(entry.path());
             }
         }
-        let last_version_dir = last_version_dir.ok_or_else(|| anyhow!("no cached binary"))?;
+        let last_version_dir = last_version_dir.context("no cached binary")?;
         let server_path = last_version_dir.join(SERVER_PATH);
-        if server_path.exists() {
-            Ok(LanguageServerBinary {
-                path: node.binary_path().await?,
-                env: None,
-                arguments: server_binary_arguments(&server_path),
-            })
-        } else {
-            Err(anyhow!(
-                "missing executable in directory {:?}",
-                last_version_dir
-            ))
-        }
+        anyhow::ensure!(
+            server_path.exists(),
+            "missing executable in directory {last_version_dir:?}"
+        );
+        Ok(LanguageServerBinary {
+            path: node.binary_path().await?,
+            env: None,
+            arguments: server_binary_arguments(&server_path),
+        })
     })
     .await
     .log_err()

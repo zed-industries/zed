@@ -1,5 +1,4 @@
 use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
-use anyhow::anyhow;
 use resvg::tiny_skia::Pixmap;
 use std::{
     hash::Hash,
@@ -28,7 +27,7 @@ pub enum SvgSize {
 
 impl SvgRenderer {
     pub fn new(asset_source: Arc<dyn AssetSource>) -> Self {
-        let font_db = LazyLock::new(|| {
+        static FONT_DB: LazyLock<Arc<usvg::fontdb::Database>> = LazyLock::new(|| {
             let mut db = usvg::fontdb::Database::new();
             db.load_system_fonts();
             Arc::new(db)
@@ -37,7 +36,7 @@ impl SvgRenderer {
         let font_resolver = Box::new(
             move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
                 if db.is_empty() {
-                    *db = font_db.clone();
+                    *db = FONT_DB.clone();
                 }
                 default_font_resolver(font, db)
             },
@@ -56,9 +55,7 @@ impl SvgRenderer {
     }
 
     pub(crate) fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
-        if params.size.is_zero() {
-            return Err(anyhow!("can't render at a zero size"));
-        }
+        anyhow::ensure!(!params.size.is_zero(), "can't render at a zero size");
 
         // Load the tree.
         let Some(bytes) = self.asset_source.load(&params.path)? else {

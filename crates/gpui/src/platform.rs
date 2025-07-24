@@ -25,8 +25,14 @@ mod test;
 mod windows;
 
 #[cfg(all(
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11"),
+    feature = "screen-capture",
+    any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            any(feature = "wayland", feature = "x11"),
+        )
+    )
 ))]
 pub(crate) mod scap_screen_capture;
 
@@ -36,7 +42,7 @@ use crate::{
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
     ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    hash, point, px, size,
+    WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -45,6 +51,7 @@ use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder as _, Frame};
 use parking::Unparker;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use schemars::JsonSchema;
 use seahash::SeaHasher;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -78,7 +85,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource};
+pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -92,6 +99,9 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
+    #[cfg(feature = "x11")]
+    use anyhow::Context as _;
+
     if headless {
         return Rc::new(HeadlessClient::new());
     }
@@ -101,7 +111,11 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
         "Wayland" => Rc::new(WaylandClient::new()),
 
         #[cfg(feature = "x11")]
-        "X11" => Rc::new(X11Client::new()),
+        "X11" => Rc::new(
+            X11Client::new()
+                .context("Failed to initialize X11 client.")
+                .unwrap(),
+        ),
 
         "Headless" => Rc::new(HeadlessClient::new()),
         _ => unreachable!(),
@@ -141,7 +155,11 @@ pub fn guess_compositor() -> &'static str {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn current_platform(_headless: bool) -> Rc<dyn Platform> {
-    Rc::new(WindowsPlatform::new())
+    Rc::new(
+        WindowsPlatform::new()
+            .inspect_err(|err| show_error("Failed to launch", err.to_string()))
+            .unwrap(),
+    )
 }
 
 pub(crate) trait Platform: 'static {
@@ -164,10 +182,27 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool;
+    #[cfg(not(feature = "screen-capture"))]
+    fn is_screen_capture_supported(&self) -> bool {
+        false
+    }
+    #[cfg(feature = "screen-capture")]
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
+    #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+        let (sources_tx, sources_rx) = oneshot::channel();
+        sources_tx
+            .send(Err(anyhow::anyhow!(
+                "gpui was compiled without the screen-capture feature"
+            )))
+            .ok();
+        sources_rx
+    }
 
     fn open_window(
         &self,
@@ -257,10 +292,23 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     }
 }
 
+/// Metadata for a given [ScreenCaptureSource]
+#[derive(Clone)]
+pub struct SourceMetadata {
+    /// Opaque identifier of this screen.
+    pub id: u64,
+    /// Human-readable label for this source.
+    pub label: Option<SharedString>,
+    /// Whether this source is the main display.
+    pub is_main: Option<bool>,
+    /// Video resolution of this source.
+    pub resolution: Size<DevicePixels>,
+}
+
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
-    /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<DevicePixels>>;
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
@@ -272,7 +320,10 @@ pub trait ScreenCaptureSource {
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream {}
+pub trait ScreenCaptureStream {
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
+}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
@@ -410,6 +461,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>>;
     fn mouse_position(&self) -> Point<Pixels>;
     fn modifiers(&self) -> Modifiers;
+    fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
     fn prompt(
@@ -417,7 +469,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         level: PromptLevel,
         msg: &str,
         detail: Option<&str>,
-        answers: &[&str],
+        answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
     fn is_active(&self) -> bool;
@@ -435,6 +487,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>);
     fn on_moved(&self, callback: Box<dyn FnMut()>);
     fn on_should_close(&self, callback: Box<dyn FnMut() -> bool>);
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>);
     fn on_close(&self, callback: Box<dyn FnOnce()>);
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>);
     fn draw(&self, scene: &Scene);
@@ -444,6 +497,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     // macOS specific methods
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
+    fn titlebar_double_click(&self) {}
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;
@@ -715,7 +769,7 @@ impl<T> ops::Index<usize> for AtlasTextureList<T> {
 
 impl<T> AtlasTextureList<T> {
     #[allow(unused)]
-    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+    fn drain(&mut self) -> std::vec::Drain<'_, Option<T>> {
         self.free_list.clear();
         self.textures.drain(..)
     }
@@ -836,7 +890,7 @@ impl PlatformInputHandler {
             .ok();
     }
 
-    fn replace_and_mark_text_in_range(
+    pub fn replace_and_mark_text_in_range(
         &mut self,
         range_utf16: Option<Range<usize>>,
         new_text: &str,
@@ -1243,8 +1297,60 @@ pub enum PromptLevel {
     Critical,
 }
 
+/// Prompt Button
+#[derive(Clone, Debug, PartialEq)]
+pub enum PromptButton {
+    /// Ok button
+    Ok(SharedString),
+    /// Cancel button
+    Cancel(SharedString),
+    /// Other button
+    Other(SharedString),
+}
+
+impl PromptButton {
+    /// Create a button with label
+    pub fn new(label: impl Into<SharedString>) -> Self {
+        PromptButton::Other(label.into())
+    }
+
+    /// Create an Ok button
+    pub fn ok(label: impl Into<SharedString>) -> Self {
+        PromptButton::Ok(label.into())
+    }
+
+    /// Create a Cancel button
+    pub fn cancel(label: impl Into<SharedString>) -> Self {
+        PromptButton::Cancel(label.into())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn is_cancel(&self) -> bool {
+        matches!(self, PromptButton::Cancel(_))
+    }
+
+    /// Returns the label of the button
+    pub fn label(&self) -> &SharedString {
+        match self {
+            PromptButton::Ok(label) => label,
+            PromptButton::Cancel(label) => label,
+            PromptButton::Other(label) => label,
+        }
+    }
+}
+
+impl From<&str> for PromptButton {
+    fn from(value: &str) -> Self {
+        match value.to_lowercase().as_str() {
+            "ok" => PromptButton::Ok("Ok".into()),
+            "cancel" => PromptButton::Cancel("Cancel".into()),
+            _ => PromptButton::Other(SharedString::from(value.to_owned())),
+        }
+    }
+}
+
 /// The style of the cursor (pointer)
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub enum CursorStyle {
     /// The default cursor
     Arrow,

@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, App, AppCell, AppContext, BackgroundExecutor, BorrowAppContext,
-    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptLevel, Render, Reservation,
-    Result, Subscription, Task, VisualContext, Window, WindowHandle,
+    Entity, EventEmitter, Focusable, ForegroundExecutor, Global, PromptButton, PromptLevel, Render,
+    Reservation, Result, Subscription, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::{Context as _, anyhow};
 use derive_more::{Deref, DerefMut};
@@ -27,19 +27,13 @@ impl AppContext for AsyncApp {
         &mut self,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Self::Result<Entity<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.new(build_entity))
     }
 
     fn reserve_entity<T: 'static>(&mut self) -> Result<Reservation<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.reserve_entity())
     }
@@ -49,10 +43,7 @@ impl AppContext for AsyncApp {
         reservation: Reservation<T>,
         build_entity: impl FnOnce(&mut Context<T>) -> T,
     ) -> Result<Entity<T>> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.insert_entity(reservation, build_entity))
     }
@@ -62,12 +53,18 @@ impl AppContext for AsyncApp {
         handle: &Entity<T>,
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> Self::Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot as_mut with an async context. Try calling update() first"
+        ))
     }
 
     fn read_entity<T, R>(
@@ -88,7 +85,7 @@ impl AppContext for AsyncApp {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         let app = self.app.upgrade().context("app was released")?;
-        let mut lock = app.borrow_mut();
+        let mut lock = app.try_borrow_mut()?;
         lock.update_window(window, f)
     }
 
@@ -125,10 +122,7 @@ impl AppContext for AsyncApp {
 impl AsyncApp {
     /// Schedules all windows in the application to be redrawn.
     pub fn refresh(&self) -> Result<()> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         lock.refresh_windows();
         Ok(())
@@ -146,10 +140,7 @@ impl AsyncApp {
 
     /// Invoke the given function in the context of the app, then flush any effects produced during its invocation.
     pub fn update<R>(&self, f: impl FnOnce(&mut App) -> R) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         Ok(lock.update(f))
     }
@@ -165,10 +156,7 @@ impl AsyncApp {
         T: 'static + EventEmitter<Event>,
         Event: 'static,
     {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         let subscription = lock.subscribe(entity, on_event);
         Ok(subscription)
@@ -183,10 +171,7 @@ impl AsyncApp {
     where
         V: 'static + Render,
     {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut lock = app.borrow_mut();
         lock.open_window(options, build_root_view)
     }
@@ -206,10 +191,7 @@ impl AsyncApp {
     /// Determine whether global state of the specified type has been assigned.
     /// Returns an error if the `App` has been dropped.
     pub fn has_global<G: Global>(&self) -> Result<bool> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
         Ok(app.has_global::<G>())
     }
@@ -219,10 +201,7 @@ impl AsyncApp {
     /// Panics if no global state of the specified type has been assigned.
     /// Returns an error if the `App` has been dropped.
     pub fn read_global<G: Global, R>(&self, read: impl FnOnce(&G, &App) -> R) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let app = app.borrow_mut();
         Ok(read(app.global(), &app))
     }
@@ -245,10 +224,7 @@ impl AsyncApp {
         &self,
         update: impl FnOnce(&mut G, &mut App) -> R,
     ) -> Result<R> {
-        let app = self
-            .app
-            .upgrade()
-            .ok_or_else(|| anyhow!("app was released"))?;
+        let app = self.app.upgrade().context("app was released")?;
         let mut app = app.borrow_mut();
         Ok(app.update(|cx| cx.update_global(update)))
     }
@@ -347,13 +323,16 @@ impl AsyncWindowContext {
     /// Present a platform dialog.
     /// The provided message will be presented, along with buttons for each answer.
     /// When a button is clicked, the returned Receiver will receive the index of the clicked button.
-    pub fn prompt(
+    pub fn prompt<T>(
         &mut self,
         level: PromptLevel,
         message: &str,
         detail: Option<&str>,
-        answers: &[&str],
-    ) -> oneshot::Receiver<usize> {
+        answers: &[T],
+    ) -> oneshot::Receiver<usize>
+    where
+        T: Clone + Into<PromptButton>,
+    {
         self.window
             .update(self, |_, window, cx| {
                 window.prompt(level, message, detail, answers, cx)
@@ -392,6 +371,15 @@ impl AppContext for AsyncWindowContext {
     ) -> Result<R> {
         self.window
             .update(self, |_, _, cx| cx.update_entity(handle, update))
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        Err(anyhow!(
+            "Cannot use as_mut() from an async context, call `update`"
+        ))
     }
 
     fn read_entity<T, R>(

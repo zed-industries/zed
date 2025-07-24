@@ -3,7 +3,7 @@ use crate::{
     pane_group::element::pane_axis,
     workspace_settings::{PaneSplitDirectionHorizontal, PaneSplitDirectionVertical},
 };
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use call::{ActiveCall, ParticipantLocation};
 use collections::HashMap;
 use gpui::{
@@ -58,7 +58,7 @@ impl PaneGroup {
                     self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                     Ok(())
                 } else {
-                    Err(anyhow!("Pane not found"))
+                    anyhow::bail!("Pane not found");
                 }
             }
             Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
@@ -538,7 +538,7 @@ impl PaneAxis {
                 }
             }
         }
-        Err(anyhow!("Pane not found"))
+        anyhow::bail!("Pane not found");
     }
 
     fn remove(&mut self, pane_to_remove: &Entity<Pane>) -> Result<Option<Member>> {
@@ -579,7 +579,7 @@ impl PaneAxis {
                 Ok(None)
             }
         } else {
-            Err(anyhow!("Pane not found"))
+            anyhow::bail!("Pane not found");
         }
     }
 
@@ -902,9 +902,9 @@ mod element {
     use std::{cell::RefCell, iter, rc::Rc, sync::Arc};
 
     use gpui::{
-        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId, IntoElement,
-        MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Size, Style,
-        WeakEntity, Window, px, relative, size,
+        Along, AnyElement, App, Axis, BorderStyle, Bounds, Element, GlobalElementId,
+        HitboxBehavior, IntoElement, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+        Pixels, Point, Size, Style, WeakEntity, Window, px, relative, size,
     };
     use gpui::{CursorStyle, Hitbox};
     use parking_lot::Mutex;
@@ -943,6 +943,8 @@ mod element {
     pub struct PaneAxisElement {
         axis: Axis,
         basis: usize,
+        /// Equivalent to ColumnWidths (but in terms of flexes instead of percentages)
+        /// For example, flexes "1.33, 1, 1", instead of "40%, 30%, 30%"
         flexes: Arc<Mutex<Vec<f32>>>,
         bounding_boxes: Arc<Mutex<Vec<Option<Bounds<Pixels>>>>>,
         children: SmallVec<[AnyElement; 2]>,
@@ -998,6 +1000,7 @@ mod element {
             let mut flexes = flexes.lock();
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
+            // Math to convert a flex value to a pixel value
             let size = move |ix, flexes: &[f32]| {
                 container_size.along(axis) * (flexes[ix] / flexes.len() as f32)
             };
@@ -1007,9 +1010,13 @@ mod element {
                 return;
             }
 
+            // This is basically a "bucket" of pixel changes that need to be applied in response to this
+            // mouse event. Probably a small, fractional number like 0.5 or 1.5 pixels
             let mut proposed_current_pixel_change =
                 (e.position - child_start).along(axis) - size(ix, flexes.as_slice());
 
+            // This takes a pixel change, and computes the flex changes that correspond to this pixel change
+            // as well as the next one, for some reason
             let flex_changes = |pixel_dx, target_ix, next: isize, flexes: &[f32]| {
                 let flex_change = pixel_dx / container_size.along(axis);
                 let current_target_flex = flexes[target_ix] + flex_change;
@@ -1017,6 +1024,9 @@ mod element {
                 (current_target_flex, next_target_flex)
             };
 
+            // Generate the list of flex successors, from the current index.
+            // If you're dragging column 3 forward, out of 6 columns, then this code will produce [4, 5, 6]
+            // If you're dragging column 3 backward, out of 6 columns, then this code will produce [2, 1, 0]
             let mut successors = iter::from_fn({
                 let forward = proposed_current_pixel_change > px(0.);
                 let mut ix_offset = 0;
@@ -1034,6 +1044,7 @@ mod element {
                 }
             });
 
+            // Now actually loop over these, and empty our bucket of pixel changes
             while proposed_current_pixel_change.abs() > px(0.) {
                 let Some(current_ix) = successors.next() else {
                     break;
@@ -1091,7 +1102,7 @@ mod element {
             };
 
             PaneAxisHandleLayout {
-                hitbox: window.insert_hitbox(handle_bounds, true),
+                hitbox: window.insert_hitbox(handle_bounds, HitboxBehavior::BlockMouse),
                 divider_bounds,
             }
         }
@@ -1113,9 +1124,14 @@ mod element {
             Some(self.basis.into())
         }
 
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             window: &mut Window,
             cx: &mut App,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
@@ -1132,6 +1148,7 @@ mod element {
         fn prepaint(
             &mut self,
             global_id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: Bounds<Pixels>,
             _state: &mut Self::RequestLayoutState,
             window: &mut Window,
@@ -1149,16 +1166,7 @@ mod element {
             debug_assert!(flexes.len() == len);
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
-            let active_pane_magnification = WorkspaceSettings::get(None, cx)
-                .active_pane_modifiers
-                .magnification
-                .and_then(|val| if val == 1.0 { None } else { Some(val) });
-
-            let total_flex = if let Some(flex) = active_pane_magnification {
-                self.children.len() as f32 - 1. + flex
-            } else {
-                len as f32
-            };
+            let total_flex = len as f32;
 
             let mut origin = bounds.origin;
             let space_per_flex = bounds.size.along(self.axis) / total_flex;
@@ -1171,15 +1179,7 @@ mod element {
                 children: Vec::new(),
             };
             for (ix, mut child) in mem::take(&mut self.children).into_iter().enumerate() {
-                let child_flex = active_pane_magnification
-                    .map(|magnification| {
-                        if self.active_pane_ix == Some(ix) {
-                            magnification
-                        } else {
-                            1.
-                        }
-                    })
-                    .unwrap_or_else(|| flexes[ix]);
+                let child_flex = flexes[ix];
 
                 let child_size = bounds
                     .size
@@ -1208,7 +1208,7 @@ mod element {
             }
 
             for (ix, child_layout) in layout.children.iter_mut().enumerate() {
-                if active_pane_magnification.is_none() && ix < len - 1 {
+                if ix < len - 1 {
                     child_layout.handle = Some(Self::layout_handle(
                         self.axis,
                         child_layout.bounds,
@@ -1224,6 +1224,7 @@ mod element {
         fn paint(
             &mut self,
             _id: Option<&GlobalElementId>,
+            _inspector_id: Option<&gpui::InspectorElementId>,
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
@@ -1291,7 +1292,17 @@ mod element {
                         Axis::Vertical => CursorStyle::ResizeRow,
                         Axis::Horizontal => CursorStyle::ResizeColumn,
                     };
-                    window.set_cursor_style(cursor_style, Some(&handle.hitbox));
+
+                    if layout
+                        .dragged_handle
+                        .borrow()
+                        .is_some_and(|dragged_ix| dragged_ix == ix)
+                    {
+                        window.set_window_cursor_style(cursor_style);
+                    } else {
+                        window.set_cursor_style(cursor_style, &handle.hitbox);
+                    }
+
                     window.paint_quad(gpui::fill(
                         handle.divider_bounds,
                         cx.theme().colors().pane_group_border,

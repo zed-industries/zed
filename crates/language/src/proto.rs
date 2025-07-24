@@ -1,7 +1,7 @@
 //! Handles conversions of `language` items to and from the [`rpc`] protocol.
 
-use crate::{CursorShape, Diagnostic, diagnostic_set::DiagnosticEntry};
-use anyhow::{Context as _, Result, anyhow};
+use crate::{CursorShape, Diagnostic, DiagnosticSourceKind, diagnostic_set::DiagnosticEntry};
+use anyhow::{Context as _, Result};
 use clock::ReplicaId;
 use lsp::{DiagnosticSeverity, LanguageServerId};
 use rpc::proto;
@@ -10,6 +10,8 @@ use std::{ops::Range, str::FromStr, sync::Arc};
 use text::*;
 
 pub use proto::{BufferState, File, Operation};
+
+use super::{point_from_lsp, point_to_lsp};
 
 /// Deserializes a `[text::LineEnding]` from the RPC representation.
 pub fn deserialize_line_ending(message: proto::LineEnding) -> text::LineEnding {
@@ -200,6 +202,11 @@ pub fn serialize_diagnostics<'a>(
         .into_iter()
         .map(|entry| proto::Diagnostic {
             source: entry.diagnostic.source.clone(),
+            source_kind: match entry.diagnostic.source_kind {
+                DiagnosticSourceKind::Pulled => proto::diagnostic::SourceKind::Pulled,
+                DiagnosticSourceKind::Pushed => proto::diagnostic::SourceKind::Pushed,
+                DiagnosticSourceKind::Other => proto::diagnostic::SourceKind::Other,
+            } as i32,
             start: Some(serialize_anchor(&entry.range.start)),
             end: Some(serialize_anchor(&entry.range.end)),
             message: entry.diagnostic.message.clone(),
@@ -213,6 +220,7 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
+            underline: entry.diagnostic.underline,
             code: entry.diagnostic.code.as_ref().map(|s| s.to_string()),
             code_description: entry
                 .diagnostic
@@ -259,10 +267,7 @@ pub fn deserialize_anchor_range(range: proto::AnchorRange) -> Result<Range<Ancho
 /// Deserializes an [`crate::Operation`] from the RPC representation.
 pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operation> {
     Ok(
-        match message
-            .variant
-            .ok_or_else(|| anyhow!("missing operation variant"))?
-        {
+        match message.variant.context("missing operation variant")? {
             proto::operation::Variant::Edit(edit) => {
                 crate::Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
             }
@@ -312,7 +317,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     line_mode: message.line_mode,
                     cursor_shape: deserialize_cursor_shape(
                         proto::CursorShape::from_i32(message.cursor_shape)
-                            .ok_or_else(|| anyhow!("Missing cursor shape"))?,
+                            .context("Missing cursor shape")?,
                     ),
                 }
             }
@@ -432,6 +437,14 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     is_disk_based: diagnostic.is_disk_based,
                     is_unnecessary: diagnostic.is_unnecessary,
+                    underline: diagnostic.underline,
+                    source_kind: match proto::diagnostic::SourceKind::from_i32(
+                        diagnostic.source_kind,
+                    )? {
+                        proto::diagnostic::SourceKind::Pulled => DiagnosticSourceKind::Pulled,
+                        proto::diagnostic::SourceKind::Pushed => DiagnosticSourceKind::Pushed,
+                        proto::diagnostic::SourceKind::Other => DiagnosticSourceKind::Other,
+                    },
                     data,
                 },
             })
@@ -510,11 +523,7 @@ pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
 /// Deserializes a [`Transaction`] from the RPC representation.
 pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transaction> {
     Ok(Transaction {
-        id: deserialize_timestamp(
-            transaction
-                .id
-                .ok_or_else(|| anyhow!("missing transaction id"))?,
-        ),
+        id: deserialize_timestamp(transaction.id.context("missing transaction id")?),
         edit_ids: transaction
             .edit_ids
             .into_iter()
@@ -574,4 +583,34 @@ pub fn serialize_version(version: &clock::Global) -> Vec<proto::VectorClockEntry
             timestamp: entry.value,
         })
         .collect()
+}
+
+pub fn serialize_lsp_edit(edit: lsp::TextEdit) -> proto::TextEdit {
+    let start = point_from_lsp(edit.range.start).0;
+    let end = point_from_lsp(edit.range.end).0;
+    proto::TextEdit {
+        new_text: edit.new_text,
+        lsp_range_start: Some(proto::PointUtf16 {
+            row: start.row,
+            column: start.column,
+        }),
+        lsp_range_end: Some(proto::PointUtf16 {
+            row: end.row,
+            column: end.column,
+        }),
+    }
+}
+
+pub fn deserialize_lsp_edit(edit: proto::TextEdit) -> Option<lsp::TextEdit> {
+    let start = edit.lsp_range_start?;
+    let start = PointUtf16::new(start.row, start.column);
+    let end = edit.lsp_range_end?;
+    let end = PointUtf16::new(end.row, end.column);
+    Some(lsp::TextEdit {
+        range: lsp::Range {
+            start: point_to_lsp(start),
+            end: point_to_lsp(end),
+        },
+        new_text: edit.new_text,
+    })
 }

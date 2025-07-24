@@ -6,7 +6,9 @@ use crate::{
     kernels::{Kernel, KernelSpecification, NativeRunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
 };
+use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use editor::SelectionEffects;
 use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
@@ -57,13 +59,8 @@ impl EditorBlock {
         on_close: CloseBlockFn,
         cx: &mut Context<Session>,
     ) -> anyhow::Result<Self> {
-        let editor = editor
-            .upgrade()
-            .ok_or_else(|| anyhow::anyhow!("editor is not open"))?;
-        let workspace = editor
-            .read(cx)
-            .workspace()
-            .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
+        let editor = editor.upgrade().context("editor is not open")?;
+        let workspace = editor.read(cx).workspace().context("workspace dropped")?;
 
         let execution_view = cx.new(|cx| ExecutionView::new(status, workspace.downgrade(), cx));
 
@@ -93,7 +90,6 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
-                render_in_minimap: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
@@ -166,7 +162,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
-                .block_mouse_down()
+                .block_mouse_except_scroll()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -481,7 +477,7 @@ impl Session {
         if move_down {
             editor.update(cx, move |editor, cx| {
                 editor.change_selections(
-                    Some(Autoscroll::top_relative(8)),
+                    SelectionEffects::scroll(Autoscroll::top_relative(8)),
                     window,
                     cx,
                     |selections| {

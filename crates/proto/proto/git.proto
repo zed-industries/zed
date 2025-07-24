@@ -294,9 +294,11 @@ message Commit {
     optional string email = 5;
     string message = 6;
     optional CommitOptions options = 7;
+    reserved 8;
 
     message CommitOptions {
         bool amend = 1;
+        bool signoff = 2;
     }
 }
 
@@ -326,6 +328,7 @@ message Fetch {
     reserved 2;
     uint64 repository_id = 3;
     uint64 askpass_id = 4;
+    optional string remote = 5;
 }
 
 message GetRemotes {

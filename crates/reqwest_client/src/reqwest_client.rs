@@ -61,7 +61,8 @@ impl ReqwestClient {
                 })
                 .ok()
         }) {
-            client = client.proxy(proxy);
+            // Respect NO_PROXY env var
+            client = client.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
             client_has_proxy = true;
         } else {
             client_has_proxy = false;
@@ -220,7 +221,7 @@ impl http_client::HttpClient for ReqwestClient {
         req: http::Request<http_client::AsyncBody>,
     ) -> futures::future::BoxFuture<
         'static,
-        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+        anyhow::Result<http_client::Response<http_client::AsyncBody>>,
     > {
         let (parts, body) = req.into_parts();
 

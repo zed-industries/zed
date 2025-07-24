@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context as _, Result, bail};
 use async_trait::async_trait;
 use collections::{HashSet, VecDeque};
 use fs::Fs;

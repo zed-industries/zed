@@ -2,7 +2,6 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 use crate::stories::*;
-use anyhow::anyhow;
 use clap::ValueEnum;
 use clap::builder::PossibleValue;
 use gpui::AnyView;
@@ -32,6 +31,7 @@ pub enum ComponentStory {
     ToggleButton,
     ViewportUnits,
     WithRemSize,
+    IndentGuides,
 }
 
 impl ComponentStory {
@@ -61,6 +61,7 @@ impl ComponentStory {
             Self::ToggleButton => cx.new(|_| ui::ToggleButtonStory).into(),
             Self::ViewportUnits => cx.new(|_| crate::stories::ViewportUnitsStory).into(),
             Self::WithRemSize => cx.new(|_| crate::stories::WithRemSizeStory).into(),
+            Self::IndentGuides => crate::stories::IndentGuidesStory::model(window, cx).into(),
         }
     }
 }
@@ -90,7 +91,7 @@ impl FromStr for StorySelector {
             return Ok(Self::Component(component_story));
         }
 
-        Err(anyhow!("story not found for '{raw_story_name}'"))
+        anyhow::bail!("story not found for '{raw_story_name}'")
     }
 }
 

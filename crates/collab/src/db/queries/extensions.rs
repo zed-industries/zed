@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use anyhow::Context;
 use chrono::Utc;
 use sea_orm::sea_query::IntoCondition;
 use util::ResultExt;
@@ -166,7 +167,7 @@ impl Database {
                 .filter(extension::Column::ExternalId.eq(extension_id))
                 .one(&*tx)
                 .await?
-                .ok_or_else(|| anyhow!("no such extension: {extension_id}"))?;
+                .with_context(|| format!("no such extension: {extension_id}"))?;
 
             let extensions = [extension];
             let mut versions = self
@@ -274,7 +275,7 @@ impl Database {
                         .filter(extension::Column::ExternalId.eq(*external_id))
                         .one(&*tx)
                         .await?
-                        .ok_or_else(|| anyhow!("failed to insert extension"))?
+                        .context("failed to insert extension")?
                 };
 
                 extension_version::Entity::insert_many(versions.iter().map(|version| {
@@ -319,6 +320,9 @@ impl Database {
                         ),
                         provides_snippets: ActiveValue::Set(
                             version.provides.contains(&ExtensionProvides::Snippets),
+                        ),
+                        provides_debug_adapters: ActiveValue::Set(
+                            version.provides.contains(&ExtensionProvides::DebugAdapters),
                         ),
                         download_count: ActiveValue::NotSet,
                     }
@@ -428,6 +432,10 @@ fn apply_provides_filter(
 
     if provides_filter.contains(&ExtensionProvides::Snippets) {
         condition = condition.add(extension_version::Column::ProvidesSnippets.eq(true));
+    }
+
+    if provides_filter.contains(&ExtensionProvides::DebugAdapters) {
+        condition = condition.add(extension_version::Column::ProvidesDebugAdapters.eq(true));
     }
 
     condition

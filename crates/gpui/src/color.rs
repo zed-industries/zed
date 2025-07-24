@@ -1,5 +1,10 @@
-use anyhow::{Context, bail};
-use serde::de::{self, Deserialize, Deserializer, Visitor};
+use anyhow::{Context as _, bail};
+use schemars::{JsonSchema, json_schema};
+use serde::{
+    Deserialize, Deserializer, Serialize, Serializer,
+    de::{self, Visitor},
+};
+use std::borrow::Cow;
 use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
@@ -7,18 +12,13 @@ use std::{
 
 /// Convert an RGB hex color code number to a color type
 pub fn rgb(hex: u32) -> Rgba {
-    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let b = (hex & 0xFF) as f32 / 255.0;
+    let [_, r, g, b] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a: 1.0 }
 }
 
 /// Convert an RGBA hex color code number to [`Rgba`]
 pub fn rgba(hex: u32) -> Rgba {
-    let r = ((hex >> 24) & 0xFF) as f32 / 255.0;
-    let g = ((hex >> 16) & 0xFF) as f32 / 255.0;
-    let b = ((hex >> 8) & 0xFF) as f32 / 255.0;
-    let a = (hex & 0xFF) as f32 / 255.0;
+    let [r, g, b, a] = hex.to_be_bytes().map(|b| (b as f32) / 255.0);
     Rgba { r, g, b, a }
 }
 
@@ -58,14 +58,14 @@ impl Rgba {
         if other.a >= 1.0 {
             other
         } else if other.a <= 0.0 {
-            return *self;
+            *self
         } else {
-            return Rgba {
+            Rgba {
                 r: (self.r * (1.0 - other.a)) + (other.r * other.a),
                 g: (self.g * (1.0 - other.a)) + (other.g * other.a),
                 b: (self.b * (1.0 - other.a)) + (other.b * other.a),
                 a: self.a,
-            };
+            }
         }
     }
 }
@@ -94,9 +94,37 @@ impl Visitor<'_> for RgbaVisitor {
     }
 }
 
+impl JsonSchema for Rgba {
+    fn schema_name() -> Cow<'static, str> {
+        "Rgba".into()
+    }
+
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+        })
+    }
+}
+
 impl<'de> Deserialize<'de> for Rgba {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_str(RgbaVisitor)
+    }
+}
+
+impl Serialize for Rgba {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let r = (self.r * 255.0).round() as u8;
+        let g = (self.g * 255.0).round() as u8;
+        let b = (self.b * 255.0).round() as u8;
+        let a = (self.a * 255.0).round() as u8;
+
+        let s = format!("#{r:02x}{g:02x}{b:02x}{a:02x}");
+        serializer.serialize_str(&s)
     }
 }
 
@@ -461,12 +489,12 @@ impl Hsla {
         if alpha >= 1.0 {
             other
         } else if alpha <= 0.0 {
-            return self;
+            self
         } else {
             let converted_self = Rgba::from(self);
             let converted_other = Rgba::from(other);
             let blended_rgb = converted_self.blend(converted_other);
-            return Hsla::from(blended_rgb);
+            Hsla::from(blended_rgb)
         }
     }
 
@@ -588,20 +616,35 @@ impl From<Rgba> for Hsla {
     }
 }
 
+impl JsonSchema for Hsla {
+    fn schema_name() -> Cow<'static, str> {
+        Rgba::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        Rgba::json_schema(generator)
+    }
+}
+
+impl Serialize for Hsla {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        Rgba::from(*self).serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Hsla {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        // First, deserialize it into Rgba
-        let rgba = Rgba::deserialize(deserializer)?;
-
-        // Then, use the From<Rgba> for Hsla implementation to convert it
-        Ok(Hsla::from(rgba))
+        Ok(Rgba::deserialize(deserializer)?.into())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub(crate) enum BackgroundTag {
     Solid = 0,
@@ -614,7 +657,7 @@ pub(crate) enum BackgroundTag {
 /// References:
 /// - <https://developer.mozilla.org/en-US/docs/Web/CSS/color-interpolation-method>
 /// - <https://www.w3.org/TR/css-color-4/#typedef-color-space>
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub enum ColorSpace {
     #[default]
@@ -634,7 +677,7 @@ impl Display for ColorSpace {
 }
 
 /// A background color, which can be either a solid color or a linear gradient.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct Background {
     pub(crate) tag: BackgroundTag,
@@ -727,7 +770,7 @@ pub fn linear_gradient(
 /// A color stop in a linear gradient.
 ///
 /// <https://developer.mozilla.org/en-US/docs/Web/CSS/gradient/linear-gradient#linear-color-stop>
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[repr(C)]
 pub struct LinearColorStop {
     /// The color of the color stop.

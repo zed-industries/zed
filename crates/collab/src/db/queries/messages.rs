@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context as _;
 use rpc::Notification;
 use sea_orm::{SelectColumns, TryInsertResult};
 use time::OffsetDateTime;
@@ -330,7 +331,7 @@ impl Database {
                         .filter(channel_message::Column::Nonce.eq(Uuid::from_u128(nonce)))
                         .one(&*tx)
                         .await?
-                        .ok_or_else(|| anyhow!("failed to insert message"))?
+                        .context("failed to insert message")?
                         .id;
                 }
             }

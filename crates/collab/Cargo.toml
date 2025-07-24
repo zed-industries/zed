@@ -20,6 +20,7 @@ test-support = ["sqlite"]
 [dependencies]
 anyhow.workspace = true
 async-stripe.workspace = true
+async-trait.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
 aws-sdk-s3 = { version = "1.15.0" }
@@ -34,6 +35,7 @@ dashmap.workspace = true
 derive_more.workspace = true
 envy = "0.4.2"
 futures.workspace = true
+gpui.workspace = true
 hex.workspace = true
 http_client.workspace = true
 jsonwebtoken.workspace = true
@@ -76,10 +78,9 @@ workspace-hack.workspace = true
 zed_llm_client.workspace = true
 
 [dev-dependencies]
-assistant_context_editor.workspace = true
-assistant_settings.workspace = true
+agent_settings.workspace = true
+assistant_context.workspace = true
 assistant_slash_command.workspace = true
-assistant_tool.workspace = true
 async-trait.workspace = true
 audio.workspace = true
 buffer_diff.workspace = true
@@ -92,9 +93,10 @@ command_palette_hooks.workspace = true
 context_server.workspace = true
 ctor.workspace = true
 dap = { workspace = true, features = ["test-support"] }
+dap_adapters = { workspace = true, features = ["test-support"] }
+dap-types.workspace = true
 debugger_ui = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
-env_logger.workspace = true
 extension.workspace = true
 file_finder.workspace = true
 fs = { workspace = true, features = ["test-support"] }
@@ -125,6 +127,7 @@ sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-sqlite"] }
 serde_json.workspace = true
 session = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+smol.workspace = true
 sqlx = { version = "0.8", features = ["sqlite"] }
 task.workspace = true
 theme.workspace = true
@@ -132,6 +135,7 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zlog.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]

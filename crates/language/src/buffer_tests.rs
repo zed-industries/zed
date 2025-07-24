@@ -39,9 +39,7 @@ pub static TRAILING_WHITESPACE_REGEX: LazyLock<regex::Regex> = LazyLock::new(|| 
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 #[gpui::test]
@@ -87,6 +85,17 @@ fn test_select_language(cx: &mut App) {
     )));
     registry.add(Arc::new(Language::new(
         LanguageConfig {
+            name: "Rust with longer extension".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["longer.rs".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    )));
+    registry.add(Arc::new(Language::new(
+        LanguageConfig {
             name: LanguageName::new("Make"),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
@@ -109,6 +118,14 @@ fn test_select_language(cx: &mut App) {
             .language_for_file(&file("src/lib.mk"), None, cx)
             .map(|l| l.name()),
         Some("Make".into())
+    );
+
+    // matching longer, compound extension, part of which could also match another lang
+    assert_eq!(
+        registry
+            .language_for_file(&file("src/lib.longer.rs"), None, cx)
+            .map(|l| l.name()),
+        Some("Rust with longer extension".into())
     );
 
     // matching filename
@@ -183,7 +200,11 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         init_settings(cx, |settings| {
             settings.file_types.extend([
                 ("TypeScript".into(), vec!["js".into()]),
-                ("C++".into(), vec!["c".into()]),
+                (
+                    "JavaScript".into(),
+                    vec!["*longer.ts".into(), "ecmascript".into()],
+                ),
+                ("C++".into(), vec!["c".into(), "*.dev".into()]),
                 (
                     "Dockerfile".into(),
                     vec!["Dockerfile".into(), "Dockerfile.*".into()],
@@ -206,7 +227,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         LanguageConfig {
             name: "TypeScript".into(),
             matcher: LanguageMatcher {
-                path_suffixes: vec!["js".to_string()],
+                path_suffixes: vec!["ts".to_string(), "ts.ecmascript".to_string()],
                 ..Default::default()
             },
             ..Default::default()
@@ -239,6 +260,21 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         languages.add(Arc::new(Language::new(config, None)));
     }
 
+    // matches system-provided lang extension
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ts"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "TypeScript".into());
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ts.ecmascript"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "TypeScript".into());
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.cpp"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "C++".into());
+
+    // user configured lang extension, same length as system-provided
     let language = cx
         .read(|cx| languages.language_for_file(&file("foo.js"), None, cx))
         .unwrap();
@@ -247,6 +283,25 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         .read(|cx| languages.language_for_file(&file("foo.c"), None, cx))
         .unwrap();
     assert_eq!(language.name(), "C++".into());
+
+    // user configured lang extension, longer than system-provided
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.longer.ts"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "JavaScript".into());
+
+    // user configured lang extension, shorter than system-provided
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("foo.ecmascript"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "JavaScript".into());
+
+    // user configured glob matches
+    let language = cx
+        .read(|cx| languages.language_for_file(&file("c-plus-plus.dev"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "C++".into());
+    // should match Dockerfile.* => Dockerfile, not *.dev => C++
     let language = cx
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
@@ -1951,7 +2006,7 @@ fn test_autoindent_language_without_indents_query(cx: &mut App) {
 #[gpui::test]
 fn test_autoindent_with_injected_languages(cx: &mut App) {
     init_settings(cx, |settings| {
-        settings.languages.extend([
+        settings.languages.0.extend([
             (
                 "HTML".into(),
                 LanguageSettingsContent {
@@ -2218,6 +2273,12 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             LanguageConfig {
                 name: "JavaScript".into(),
                 line_comments: vec!["// ".into()],
+                block_comment: Some(BlockCommentConfig {
+                    start: "/*".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: 1,
+                }),
                 brackets: BracketPairConfig {
                     pairs: vec![
                         BracketPair {
@@ -2244,7 +2305,12 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
                     "element".into(),
                     LanguageConfigOverride {
                         line_comments: Override::Remove { remove: true },
-                        block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                        block_comment: Override::Set(BlockCommentConfig {
+                            start: "{/*".into(),
+                            prefix: "".into(),
+                            end: "*/}".into(),
+                            tab_size: 0,
+                        }),
                         ..Default::default()
                     },
                 )]
@@ -2281,6 +2347,16 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
 
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefixes(), &[Arc::from("// ")]);
+        assert_eq!(
+            config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
+        );
+
         // Both bracket pairs are enabled
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2299,6 +2375,15 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .language_scope_at(text.find("b\"").unwrap())
             .unwrap();
         assert_eq!(string_config.line_comment_prefixes(), &[Arc::from("// ")]);
+        assert_eq!(
+            string_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
+        );
         // Second bracket pair is disabled
         assert_eq!(
             string_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2327,6 +2412,15 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .unwrap();
         assert_eq!(tag_config.line_comment_prefixes(), &[Arc::from("// ")]);
         assert_eq!(
+            tag_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
+        );
+        assert_eq!(
             tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
         );
@@ -2338,6 +2432,15 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         assert_eq!(
             expression_in_element_config.line_comment_prefixes(),
             &[Arc::from("// ")]
+        );
+        assert_eq!(
+            expression_in_element_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
         );
         assert_eq!(
             expression_in_element_config
@@ -2456,13 +2559,18 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
         assert_eq!(html_config.line_comment_prefixes(), &[]);
         assert_eq!(
-            html_config.block_comment_delimiters(),
-            Some((&"<!--".into(), &"-->".into()))
+            html_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "<!--".into(),
+                end: "-->".into(),
+                prefix: "".into(),
+                tab_size: 0,
+            })
         );
 
         let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
         assert_eq!(ruby_config.line_comment_prefixes(), &[Arc::from("# ")]);
-        assert_eq!(ruby_config.block_comment_delimiters(), None);
+        assert_eq!(ruby_config.block_comment(), None);
 
         buffer
     });
@@ -3418,7 +3526,12 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: LanguageName::new("HTML"),
-            block_comment: Some(("<!--".into(), "-->".into())),
+            block_comment: Some(BlockCommentConfig {
+                start: "<!--".into(),
+                prefix: "".into(),
+                end: "-->".into(),
+                tab_size: 0,
+            }),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -3449,7 +3562,12 @@ fn erb_lang() -> Language {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
             },
-            block_comment: Some(("<%#".into(), "%>".into())),
+            block_comment: Some(BlockCommentConfig {
+                start: "<%#".into(),
+                prefix: "".into(),
+                end: "%>".into(),
+                tab_size: 0,
+            }),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),
@@ -3629,6 +3747,7 @@ fn get_tree_sexp(buffer: &Entity<Buffer>, cx: &mut gpui::TestAppContext) -> Stri
 }
 
 // Assert that the enclosing bracket ranges around the selection match the pairs indicated by the marked text in `range_markers`
+#[track_caller]
 fn assert_bracket_pairs(
     selection_text: &'static str,
     bracket_pair_texts: Vec<&'static str>,

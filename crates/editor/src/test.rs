@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::LazyLock};
 
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects,
     display_map::{
         Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
         ToDisplayPoint,
@@ -25,9 +25,7 @@ use util::test::{marked_text_offsets, marked_text_ranges};
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::init();
-    }
+    zlog::init_test();
 }
 
 pub fn test_font() -> Font {
@@ -47,6 +45,7 @@ pub fn test_font() -> Font {
 }
 
 // Returns a snapshot from text containing '|' character markers with the markers removed, and DisplayPoints for each one.
+#[track_caller]
 pub fn marked_display_snapshot(
     text: &str,
     cx: &mut gpui::App,
@@ -85,6 +84,7 @@ pub fn marked_display_snapshot(
     (snapshot, markers)
 }
 
+#[track_caller]
 pub fn select_ranges(
     editor: &mut Editor,
     marked_text: &str,
@@ -93,7 +93,9 @@ pub fn select_ranges(
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
-    editor.change_selections(None, window, cx, |s| s.select_ranges(text_ranges));
+    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+        s.select_ranges(text_ranges)
+    });
 }
 
 #[track_caller]

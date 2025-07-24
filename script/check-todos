@@ -8,7 +8,7 @@ result=$(git grep --no-color --ignore-case --line-number --extended-regexp -e $p
   ':(exclude).github/workflows/ci.yml' \
   ':(exclude)*criteria.md' \
   ':(exclude)*prompt.md' || true)
-echo "${result}"
 if [[ -n "${result}" ]]; then
+  echo "${result}"
   exit 1
 fi

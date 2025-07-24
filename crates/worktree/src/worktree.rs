@@ -107,6 +107,15 @@ pub struct LoadedBinaryFile {
     pub content: Vec<u8>,
 }
 
+impl fmt::Debug for LoadedBinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LoadedBinaryFile")
+            .field("file", &self.file)
+            .field("content_bytes", &self.content.len())
+            .finish()
+    }
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -243,13 +252,7 @@ impl WorkDirectory {
         match self {
             WorkDirectory::InProject { relative_path } => Ok(path
                 .strip_prefix(relative_path)
-                .map_err(|_| {
-                    anyhow!(
-                        "could not relativize {:?} against {:?}",
-                        path,
-                        relative_path
-                    )
-                })?
+                .map_err(|_| anyhow!("could not relativize {path:?} against {relative_path:?}"))?
                 .into()),
             WorkDirectory::AboveProject {
                 location_in_repo, ..
@@ -877,7 +880,7 @@ impl Worktree {
                             .await
                             .map(CreatedEntry::Included),
                         None => {
-                            let abs_path = this.update(cx, |worktree, _| {
+                            let abs_path = this.read_with(cx, |worktree, _| {
                                 worktree
                                     .absolutize(&path)
                                     .with_context(|| format!("absolutizing {path:?}"))
@@ -1084,7 +1087,7 @@ impl Worktree {
                 ),
             )
         })?;
-        task.ok_or_else(|| anyhow!("invalid entry"))?.await?;
+        task.context("invalid entry")?.await?;
         Ok(proto::ProjectEntryResponse {
             entry: None,
             worktree_scan_id: scan_id as u64,
@@ -1099,7 +1102,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1114,7 +1117,7 @@ impl Worktree {
         let task = this.update(&mut cx, |this, cx| {
             this.expand_all_for_entry(ProjectEntryId::from_proto(request.entry_id), cx)
         })?;
-        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        task.context("no such entry")?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandAllForProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
@@ -1478,9 +1481,7 @@ impl LocalWorktree {
             let abs_path = abs_path?;
             let content = fs.load_bytes(&abs_path).await?;
 
-            let worktree = worktree
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = worktree.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1535,9 +1536,7 @@ impl LocalWorktree {
             }
             let text = fs.load(&abs_path).await?;
 
-            let worktree = this
-                .upgrade()
-                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let worktree = this.upgrade().context("worktree was dropped")?;
             let file = match entry.await? {
                 Some(entry) => File::for_entry(entry, worktree),
                 None => {
@@ -1674,7 +1673,7 @@ impl LocalWorktree {
                         .refresh_entry(path.clone(), None, cx)
                 })?
                 .await?;
-            let worktree = this.upgrade().ok_or_else(|| anyhow!("worktree dropped"))?;
+            let worktree = this.upgrade().context("worktree dropped")?;
             if let Some(entry) = entry {
                 Ok(File::for_entry(entry, worktree))
             } else {
@@ -1921,17 +1920,17 @@ impl LocalWorktree {
                     )
                     .await
                     .with_context(|| {
-                        anyhow!("Failed to copy file from {source:?} to {target:?}")
+                        format!("Failed to copy file from {source:?} to {target:?}")
                     })?;
                 }
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
             let mut refresh = cx.read_entity(
                 &this.upgrade().with_context(|| "Dropped worktree")?,
                 |this, _| {
-                    Ok::<postage::barrier::Receiver, anyhow::Error>(
+                    anyhow::Ok::<postage::barrier::Receiver>(
                         this.as_local()
                             .with_context(|| "Worktree is not local")?
                             .refresh_entries_for_paths(paths_to_refresh.clone()),
@@ -1941,7 +1940,7 @@ impl LocalWorktree {
 
             cx.background_spawn(async move {
                 refresh.next().await;
-                Ok::<(), anyhow::Error>(())
+                anyhow::Ok(())
             })
             .await
             .log_err();
@@ -2028,10 +2027,10 @@ impl LocalWorktree {
         cx.spawn(async move |this, cx| {
             refresh.recv().await;
             log::trace!("refreshed entry {path:?} in {:?}", t0.elapsed());
-            let new_entry = this.update(cx, |this, _| {
+            let new_entry = this.read_with(cx, |this, _| {
                 this.entry_for_path(path)
                     .cloned()
-                    .ok_or_else(|| anyhow!("failed to read path after update"))
+                    .context("reading path after update")
             })??;
             Ok(Some(new_entry))
         })
@@ -2275,7 +2274,7 @@ impl RemoteWorktree {
                     .await
                     .map(CreatedEntry::Included),
                 None => {
-                    let abs_path = this.update(cx, |worktree, _| {
+                    let abs_path = this.read_with(cx, |worktree, _| {
                         worktree
                             .absolutize(&new_path)
                             .with_context(|| format!("absolutizing {new_path:?}"))
@@ -2292,7 +2291,7 @@ impl RemoteWorktree {
         paths_to_copy: Vec<Arc<Path>>,
         local_fs: Arc<dyn Fs>,
         cx: &Context<Worktree>,
-    ) -> Task<Result<Vec<ProjectEntryId>, anyhow::Error>> {
+    ) -> Task<anyhow::Result<Vec<ProjectEntryId>>> {
         let client = self.client.clone();
         let worktree_id = self.id().to_proto();
         let project_id = self.project_id;
@@ -2415,7 +2414,7 @@ impl Snapshot {
             .components()
             .any(|component| !matches!(component, std::path::Component::Normal(_)))
         {
-            return Err(anyhow!("invalid path"));
+            anyhow::bail!("invalid path");
         }
         if path.file_name().is_some() {
             Ok(self.abs_path.as_path().join(path))
@@ -2455,16 +2454,16 @@ impl Snapshot {
         self.entries_by_path = {
             let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(&());
             let mut new_entries_by_path =
-                cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left, &());
+                cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left);
             while let Some(entry) = cursor.item() {
                 if entry.path.starts_with(&removed_entry.path) {
                     self.entries_by_id.remove(&entry.id, &());
-                    cursor.next(&());
+                    cursor.next();
                 } else {
                     break;
                 }
             }
-            new_entries_by_path.append(cursor.suffix(&()), &());
+            new_entries_by_path.append(cursor.suffix(), &());
             new_entries_by_path
         };
 
@@ -2567,7 +2566,7 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         start_offset: usize,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         let mut cursor = self.entries_by_path.cursor(&());
         cursor.seek(
             &TraversalTarget::Count {
@@ -2577,7 +2576,6 @@ impl Snapshot {
                 include_ignored,
             },
             Bias::Right,
-            &(),
         );
         Traversal {
             snapshot: self,
@@ -2594,19 +2592,19 @@ impl Snapshot {
         include_dirs: bool,
         include_ignored: bool,
         path: &Path,
-    ) -> Traversal {
+    ) -> Traversal<'_> {
         Traversal::new(self, include_files, include_dirs, include_ignored, path)
     }
 
-    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn files(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, false, include_ignored, start)
     }
 
-    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn directories(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(false, true, include_ignored, start)
     }
 
-    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal {
+    pub fn entries(&self, include_ignored: bool, start: usize) -> Traversal<'_> {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
 
@@ -2633,7 +2631,7 @@ impl Snapshot {
         options: ChildEntriesOptions,
     ) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
-        cursor.seek(&TraversalTarget::path(parent_path), Bias::Right, &());
+        cursor.seek(&TraversalTarget::path(parent_path), Bias::Right);
         let traversal = Traversal {
             snapshot: self,
             cursor,
@@ -3057,9 +3055,9 @@ impl BackgroundScannerState {
                 .snapshot
                 .entries_by_path
                 .cursor::<TraversalProgress>(&());
-            new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left, &());
-            removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left, &());
-            new_entries.append(cursor.suffix(&()), &());
+            new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left);
+            removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left);
+            new_entries.append(cursor.suffix(), &());
         }
         self.snapshot.entries_by_path = new_entries;
 
@@ -3293,7 +3291,7 @@ impl fmt::Debug for Snapshot {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct File {
     pub worktree: Entity<Worktree>,
     pub path: Arc<Path>,
@@ -3393,15 +3391,12 @@ impl File {
         worktree: Entity<Worktree>,
         cx: &App,
     ) -> Result<Self> {
-        let worktree_id = worktree
-            .read(cx)
-            .as_remote()
-            .ok_or_else(|| anyhow!("not remote"))?
-            .id();
+        let worktree_id = worktree.read(cx).as_remote().context("not remote")?.id();
 
-        if worktree_id.to_proto() != proto.worktree_id {
-            return Err(anyhow!("worktree id does not match file"));
-        }
+        anyhow::ensure!(
+            worktree_id.to_proto() == proto.worktree_id,
+            "worktree id does not match file"
+        );
 
         let disk_state = if proto.is_deleted {
             DiskState::Deleted
@@ -3915,7 +3910,7 @@ impl BackgroundScanner {
                     let Ok(request) = path_prefix_request else { break };
                     log::trace!("adding path prefix {:?}", request.path);
 
-                    let did_scan = self.forcibly_load_paths(&[request.path.clone()]).await;
+                    let did_scan = self.forcibly_load_paths(std::slice::from_ref(&request.path)).await;
                     if did_scan {
                         let abs_path =
                         {
@@ -3952,7 +3947,7 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
             Ok(path) => SanitizedPath::from(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path: {}", err);
+                log::error!("failed to canonicalize root path {root_path:?}: {err}");
                 return true;
             }
         };
@@ -4929,15 +4924,15 @@ fn build_diff(
     let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(&());
     let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(&());
     let mut last_newly_loaded_dir_path = None;
-    old_paths.next(&());
-    new_paths.next(&());
+    old_paths.next();
+    new_paths.next();
     for path in event_paths {
         let path = PathKey(path.clone());
         if old_paths.item().map_or(false, |e| e.path < path.0) {
-            old_paths.seek_forward(&path, Bias::Left, &());
+            old_paths.seek_forward(&path, Bias::Left);
         }
         if new_paths.item().map_or(false, |e| e.path < path.0) {
-            new_paths.seek_forward(&path, Bias::Left, &());
+            new_paths.seek_forward(&path, Bias::Left);
         }
         loop {
             match (old_paths.item(), new_paths.item()) {
@@ -4953,7 +4948,7 @@ fn build_diff(
                     match Ord::cmp(&old_entry.path, &new_entry.path) {
                         Ordering::Less => {
                             changes.push((old_entry.path.clone(), old_entry.id, Removed));
-                            old_paths.next(&());
+                            old_paths.next();
                         }
                         Ordering::Equal => {
                             if phase == EventsReceivedDuringInitialScan {
@@ -4979,8 +4974,8 @@ fn build_diff(
                                     changes.push((new_entry.path.clone(), new_entry.id, Updated));
                                 }
                             }
-                            old_paths.next(&());
-                            new_paths.next(&());
+                            old_paths.next();
+                            new_paths.next();
                         }
                         Ordering::Greater => {
                             let is_newly_loaded = phase == InitialScan
@@ -4992,13 +4987,13 @@ fn build_diff(
                                 new_entry.id,
                                 if is_newly_loaded { Loaded } else { Added },
                             ));
-                            new_paths.next(&());
+                            new_paths.next();
                         }
                     }
                 }
                 (Some(old_entry), None) => {
                     changes.push((old_entry.path.clone(), old_entry.id, Removed));
-                    old_paths.next(&());
+                    old_paths.next();
                 }
                 (None, Some(new_entry)) => {
                     let is_newly_loaded = phase == InitialScan
@@ -5010,7 +5005,7 @@ fn build_diff(
                         new_entry.id,
                         if is_newly_loaded { Loaded } else { Added },
                     ));
-                    new_paths.next(&());
+                    new_paths.next();
                 }
                 (None, None) => break,
             }
@@ -5086,7 +5081,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path) = self.update(cx, |tree, _| {
+        let (fs, root_path) = self.read_with(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             (tree.fs.clone(), tree.abs_path().clone())
         });
@@ -5098,7 +5093,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
 
             let mut events = cx.events(&tree);
             while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
+                if tree.read_with(cx, |tree, _| tree.entry_for_path(file_name).is_some()) {
                     break;
                 }
             }
@@ -5107,7 +5102,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
                 .await
                 .unwrap();
             while events.next().await.is_some() {
-                if tree.update(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
+                if tree.read_with(cx, |tree, _| tree.entry_for_path(file_name).is_none()) {
                     break;
                 }
             }
@@ -5132,7 +5127,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
         let file_name = "fs-event-sentinel";
 
         let tree = self.clone();
-        let (fs, root_path, mut git_dir_scan_id) = self.update(cx, |tree, _| {
+        let (fs, root_path, mut git_dir_scan_id) = self.read_with(cx, |tree, _| {
             let tree = tree.as_local().unwrap();
             let local_repo_entry = tree
                 .git_repositories
@@ -5259,7 +5254,7 @@ impl<'a> Traversal<'a> {
         start_path: &Path,
     ) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor(&());
-        cursor.seek(&TraversalTarget::path(start_path), Bias::Left, &());
+        cursor.seek(&TraversalTarget::path(start_path), Bias::Left);
         let mut traversal = Self {
             snapshot,
             cursor,
@@ -5286,14 +5281,13 @@ impl<'a> Traversal<'a> {
                 include_ignored: self.include_ignored,
             },
             Bias::Left,
-            &(),
         )
     }
 
     pub fn advance_to_sibling(&mut self) -> bool {
         while let Some(entry) = self.cursor.item() {
             self.cursor
-                .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left, &());
+                .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left);
             if let Some(entry) = self.cursor.item() {
                 if (self.include_files || !entry.is_file())
                     && (self.include_dirs || !entry.is_dir())
@@ -5311,7 +5305,7 @@ impl<'a> Traversal<'a> {
             return false;
         };
         self.cursor
-            .seek(&TraversalTarget::path(parent_path), Bias::Left, &())
+            .seek(&TraversalTarget::path(parent_path), Bias::Left)
     }
 
     pub fn entry(&self) -> Option<&'a Entry> {
@@ -5330,7 +5324,7 @@ impl<'a> Traversal<'a> {
 
     pub fn end_offset(&self) -> usize {
         self.cursor
-            .end(&())
+            .end()
             .count(self.include_files, self.include_dirs, self.include_ignored)
     }
 }
@@ -5550,7 +5544,7 @@ impl CreatedEntry {
 fn parse_gitfile(content: &str) -> anyhow::Result<&Path> {
     let path = content
         .strip_prefix("gitdir:")
-        .ok_or_else(|| anyhow!("failed to parse gitfile content {content:?}"))?;
+        .with_context(|| format!("parsing gitfile content {content:?}"))?;
     Ok(Path::new(path.trim()))
 }
 

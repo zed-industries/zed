@@ -15,6 +15,7 @@ pub struct SystemSpecs {
     memory: u64,
     architecture: &'static str,
     commit_sha: Option<String>,
+    bundle_type: Option<String>,
     gpu_specs: Option<String>,
 }
 
@@ -30,10 +31,11 @@ impl SystemSpecs {
         let architecture = env::consts::ARCH;
         let commit_sha = match release_channel {
             ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-                AppCommitSha::try_global(cx).map(|sha| sha.0.clone())
+                AppCommitSha::try_global(cx).map(|sha| sha.full().clone())
             }
             _ => None,
         };
+        let bundle_type = bundle_type();
 
         let gpu_specs = window.gpu_specs().map(|specs| {
             format!(
@@ -47,6 +49,7 @@ impl SystemSpecs {
             SystemSpecs {
                 app_version,
                 release_channel: release_channel.display_name(),
+                bundle_type,
                 os_name,
                 os_version,
                 memory,
@@ -70,11 +73,10 @@ impl SystemSpecs {
         let memory = system.total_memory();
         let architecture = env::consts::ARCH;
         let commit_sha = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly => {
-                app_commit_sha.map(|sha| sha.0.clone())
-            }
+            ReleaseChannel::Dev | ReleaseChannel::Nightly => app_commit_sha.map(|sha| sha.full()),
             _ => None,
         };
+        let bundle_type = bundle_type();
 
         Self {
             app_version: app_version.to_string(),
@@ -84,6 +86,7 @@ impl SystemSpecs {
             memory,
             architecture,
             commit_sha,
+            bundle_type,
             gpu_specs: try_determine_available_gpus(),
         }
     }
@@ -93,11 +96,16 @@ impl Display for SystemSpecs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let os_information = format!("OS: {} {}", self.os_name, self.os_version);
         let app_version_information = format!(
-            "Zed: v{} ({}) {}",
+            "Zed: v{} ({}) {}{}",
             self.app_version,
             match &self.commit_sha {
                 Some(commit_sha) => format!("{} {}", self.release_channel, commit_sha),
                 None => self.release_channel.to_string(),
+            },
+            if let Some(bundle_type) = &self.bundle_type {
+                format!("({bundle_type})")
+            } else {
+                "".to_string()
             },
             if cfg!(debug_assertions) {
                 "(Taylor's Version)"
@@ -125,7 +133,7 @@ impl Display for SystemSpecs {
 }
 
 fn try_determine_available_gpus() -> Option<String> {
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         return std::process::Command::new("vulkaninfo")
             .args(&["--summary"])
@@ -144,8 +152,21 @@ fn try_determine_available_gpus() -> Option<String> {
             })
             .or(Some("Failed to run `vulkaninfo --summary`".to_string()));
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         return None;
     }
+}
+
+/// Returns value of `ZED_BUNDLE_TYPE` set at compiletime or else at runtime.
+///
+/// The compiletime value is used by flatpak since it doesn't seem to have a way to provide a
+/// runtime environment variable.
+///
+/// The runtime value is used by snap since the Zed snaps use release binaries directly, and so
+/// cannot have this baked in.
+fn bundle_type() -> Option<String> {
+    option_env!("ZED_BUNDLE_TYPE")
+        .map(|bundle_type| bundle_type.to_string())
+        .or_else(|| env::var("ZED_BUNDLE_TYPE").ok())
 }

@@ -46,7 +46,13 @@ use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(
+    terminal_panel,
+    [
+        /// Toggles focus on the terminal panel.
+        ToggleFocus
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -325,7 +331,6 @@ impl TerminalPanel {
                     .ok();
             }
         }
-
         Ok(terminal_panel)
     }
 
@@ -393,6 +398,9 @@ impl TerminalPanel {
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
             }
+            pane::Event::ItemPinned | pane::Event::ItemUnpinned => {
+                self.serialize(cx);
+            }
 
             _ => {}
         }
@@ -437,7 +445,6 @@ impl TerminalPanel {
                 weak_workspace.clone(),
                 database_id,
                 project.downgrade(),
-                false,
                 window,
                 cx,
             )
@@ -498,7 +505,7 @@ impl TerminalPanel {
 
         let task = SpawnInTerminal {
             command_label,
-            command,
+            command: Some(command),
             args,
             ..task.clone()
         };
@@ -675,7 +682,6 @@ impl TerminalPanel {
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
-                        false,
                         window,
                         cx,
                     )
@@ -702,7 +708,7 @@ impl TerminalPanel {
                 terminal_panel.pending_terminals_to_add += 1;
                 terminal_panel.active_pane.clone()
             })?;
-            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
             let window_handle = cx.window_handle();
             let terminal = project
                 .update(cx, |project, cx| {
@@ -716,7 +722,6 @@ impl TerminalPanel {
                         workspace.weak_handle(),
                         workspace.database_id(),
                         workspace.project().downgrade(),
-                        false,
                         window,
                         cx,
                     )
@@ -754,7 +759,7 @@ impl TerminalPanel {
         let width = self.width;
         let Some(serialization_key) = self
             .workspace
-            .update(cx, |workspace, _| {
+            .read_with(cx, |workspace, _| {
                 TerminalPanel::serialization_key(workspace)
             })
             .ok()
@@ -972,7 +977,7 @@ pub fn new_terminal_pane(
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
                 let is_current_pane = tab.pane == cx.entity();
                 let Some(can_drag_away) = split_closure_terminal_panel
-                    .update(cx, |terminal_panel, _| {
+                    .read_with(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
                         !current_panes.contains(&&tab.pane)
                             || current_panes.len() > 1
@@ -1063,6 +1068,7 @@ pub fn new_terminal_pane(
                                             &new_pane,
                                             item_id_to_move,
                                             new_pane.read(cx).active_item_index(),
+                                            true,
                                             window,
                                             cx,
                                         );
@@ -1431,7 +1437,7 @@ impl Panel for TerminalPanel {
         if (self.is_enabled(cx) || !self.has_no_terminals(cx))
             && TerminalSettings::get_global(cx).button
         {
-            Some(IconName::Terminal)
+            Some(IconName::TerminalAlt)
         } else {
             None
         }

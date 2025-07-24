@@ -1,11 +1,17 @@
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
-use crate::{AnyElement, App, Element, ElementId, GlobalElementId, IntoElement, Window};
+use crate::{
+    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement, Window,
+};
 
 pub use easing::*;
 use smallvec::SmallVec;
 
 /// An animation that can be applied to an element.
+#[derive(Clone)]
 pub struct Animation {
     /// The amount of time for which this animation should run
     pub duration: Duration,
@@ -13,7 +19,7 @@ pub struct Animation {
     pub oneshot: bool,
     /// A function that takes a delta between 0 and 1 and returns a new delta
     /// between 0 and 1 based on the given easing function.
-    pub easing: Box<dyn Fn(f32) -> f32>,
+    pub easing: Rc<dyn Fn(f32) -> f32>,
 }
 
 impl Animation {
@@ -23,7 +29,7 @@ impl Animation {
         Self {
             duration,
             oneshot: true,
-            easing: Box::new(linear),
+            easing: Rc::new(linear),
         }
     }
 
@@ -37,7 +43,7 @@ impl Animation {
     /// The easing function will take a time delta between 0 and 1 and return a new delta
     /// between 0 and 1
     pub fn with_easing(mut self, easing: impl Fn(f32) -> f32 + 'static) -> Self {
-        self.easing = Box::new(easing);
+        self.easing = Rc::new(easing);
         self
     }
 }
@@ -121,9 +127,14 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         Some(self.id.clone())
     }
 
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
@@ -172,6 +183,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn prepaint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         window: &mut Window,
@@ -183,6 +195,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn paint(
         &mut self,
         _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,

@@ -234,10 +234,7 @@ fn rotate_log_file<PathRef>(
             .map(|err| anyhow::anyhow!(err)),
     };
     if let Some(err) = rotation_error {
-        eprintln!(
-            "Log file rotation failed. Truncating log file anyways: {}",
-            err,
-        );
+        eprintln!("Log file rotation failed. Truncating log file anyways: {err}",);
     }
     _ = file.set_len(0);
 

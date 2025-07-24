@@ -73,7 +73,7 @@ impl Render for HelloWorld {
                     .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
-                    .text_overflow(TextOverflow::Ellipsis(""))
+                    .text_overflow(TextOverflow::Truncate("".into()))
                     .border_1()
                     .border_color(gpui::green())
                     .child("TRUNCATE: ".to_owned() + text),
@@ -83,7 +83,7 @@ impl Render for HelloWorld {
                     .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
-                    .text_overflow(TextOverflow::Ellipsis(""))
+                    .text_overflow(TextOverflow::Truncate("".into()))
                     .line_clamp(3)
                     .border_1()
                     .border_color(gpui::green())

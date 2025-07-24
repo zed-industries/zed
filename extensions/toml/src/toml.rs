@@ -62,7 +62,7 @@ impl TomlExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "taplo-full-{os}-{arch}.gz",
+            "taplo-{os}-{arch}.gz",
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",

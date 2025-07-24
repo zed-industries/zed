@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -25,11 +25,15 @@ use ui::{
     ActiveTheme, Color, Context, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
     LabelCommon, Styled, Window, prelude::*,
 };
+use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
 #[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    /// Whether to read ~/.ssh/config for ssh connection sources.
+    #[serde(default = "default_true")]
+    pub read_ssh_config: bool,
 }
 
 impl SshSettings {
@@ -115,6 +119,7 @@ pub struct SshProject {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    pub read_ssh_config: Option<bool>,
 }
 
 impl Settings for SshSettings {
@@ -243,7 +248,7 @@ impl Render for SshPrompt {
         text_style.refine(&refinement);
         let markdown_style = MarkdownStyle {
             base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
+            selection_background_color: cx.theme().colors().element_selection_background,
             ..Default::default()
         };
 
@@ -284,6 +289,9 @@ impl Render for SshPrompt {
                         .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
+                .when(window.capslock().on, |el| {
+                    el.child(Label::new("⚠️ ⇪ is on"))
+                })
             })
     }
 }
@@ -479,15 +487,14 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 cx,
             )
             .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+            .with_context(|| {
+                format!(
+                    "Downloading remote server binary (version: {}, os: {}, arch: {})",
                     version
                         .map(|v| format!("{}", v))
                         .unwrap_or("unknown".to_string()),
                     platform.os,
                     platform.arch,
-                    e
                 )
             })?;
             Ok(binary_path)

@@ -5,7 +5,10 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
     net::TcpStream,
 };
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 use tokio_native_tls::{TlsConnector, native_tls};
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+use tokio_rustls::TlsConnector;
 use url::Url;
 
 use super::AsyncReadWrite;
@@ -61,6 +64,7 @@ where
     Ok(Box::new(stream))
 }
 
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 async fn https_connect<T>(
     stream: T,
     target: (&str, u16),
@@ -71,6 +75,24 @@ where
     T: AsyncReadWrite,
 {
     let tls_connector = TlsConnector::from(native_tls::TlsConnector::new()?);
+    let stream = tls_connector.connect(proxy_domain, stream).await?;
+    http_connect(stream, target, auth).await
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+async fn https_connect<T>(
+    stream: T,
+    target: (&str, u16),
+    auth: Option<HttpProxyAuthorization<'_>>,
+    proxy_domain: &str,
+) -> Result<Box<dyn AsyncReadWrite>>
+where
+    T: AsyncReadWrite,
+{
+    let proxy_domain = rustls_pki_types::ServerName::try_from(proxy_domain)
+        .context("Address resolution failed")?
+        .to_owned();
+    let tls_connector = TlsConnector::from(std::sync::Arc::new(http_client_tls::tls_config()));
     let stream = tls_connector.connect(proxy_domain, stream).await?;
     http_connect(stream, target, auth).await
 }

@@ -5,7 +5,7 @@ use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use menu::Confirm;
 use project::{FakeFs, Project};
 use serde_json::json;
-use task::{AttachRequest, TcpArgumentsTemplate};
+use task::AttachRequest;
 use tests::{init_test, init_test_workspace};
 use util::path;
 
@@ -27,18 +27,17 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = start_debug_session_with(
+    let _session = start_debug_session_with(
         &workspace,
         cx,
         DebugTaskDefinition {
             adapter: "fake-adapter".into(),
-            request: dap::DebugRequest::Attach(AttachRequest {
-                process_id: Some(10),
-            }),
             label: "label".into(),
-            initialize_args: None,
+            config: json!({
+               "request": "attach",
+              "process_id": 10,
+            }),
             tcp_connection: None,
-            stop_on_entry: None,
         },
         |client| {
             client.on_request::<dap::requests::Attach, _>(move |_, args| {
@@ -60,14 +59,6 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]
@@ -107,13 +98,10 @@ async fn test_show_attach_modal_and_select_process(
             workspace.toggle_modal(window, cx, |window, cx| {
                 AttachModal::with_processes(
                     workspace_handle,
-                    DebugTaskDefinition {
+                    task::ZedDebugConfig {
                         adapter: FakeAdapter::ADAPTER_NAME.into(),
-
                         request: dap::DebugRequest::Attach(AttachRequest::default()),
                         label: "attach example".into(),
-                        initialize_args: None,
-                        tcp_connection: Some(TcpArgumentsTemplate::default()),
                         stop_on_entry: None,
                     },
                     vec![

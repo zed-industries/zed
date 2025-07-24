@@ -225,6 +225,18 @@ impl<'a, T: 'static> Context<'a, T> {
         }
     }
 
+    /// Convenience method for producing view state in a closure.
+    /// See `listener` for more details.
+    pub fn processor<E, R>(
+        &self,
+        f: impl Fn(&mut T, E, &mut Window, &mut Context<T>) -> R + 'static,
+    ) -> impl Fn(E, &mut Window, &mut App) -> R + 'static {
+        let view = self.entity();
+        move |e: E, window: &mut Window, cx: &mut App| {
+            view.update(cx, |view, cx| f(view, e, window, cx))
+        }
+    }
+
     /// Run something using this entity and cx, when the returned struct is dropped
     pub fn on_drop(
         &self,
@@ -712,6 +724,13 @@ impl<T> AppContext for Context<'_, T> {
         update: impl FnOnce(&mut U, &mut Context<U>) -> R,
     ) -> R {
         self.app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, E>(&'a mut self, handle: &Entity<E>) -> Self::Result<super::GpuiBorrow<'a, E>>
+    where
+        E: 'static,
+    {
+        self.app.as_mut(handle)
     }
 
     fn read_entity<U, R>(

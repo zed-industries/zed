@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
-use language::{CachedLspAdapter, Diagnostic};
+use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
 use lsp::LanguageServer;
 use util::ResultExt as _;
 
@@ -10,6 +10,7 @@ use crate::LspStore;
 
 pub const CLANGD_SERVER_NAME: &str = "clangd";
 const INACTIVE_REGION_MESSAGE: &str = "inactive region";
+const INACTIVE_DIAGNOSTIC_SEVERITY: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::INFORMATION;
 
 #[derive(Debug, Eq, PartialEq, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,7 +29,16 @@ impl lsp::notification::Notification for InactiveRegions {
 
 pub fn is_inactive_region(diag: &Diagnostic) -> bool {
     diag.is_unnecessary
-        && diag.severity == lsp::DiagnosticSeverity::INFORMATION
+        && diag.severity == INACTIVE_DIAGNOSTIC_SEVERITY
+        && diag.message == INACTIVE_REGION_MESSAGE
+        && diag
+            .source
+            .as_ref()
+            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+}
+
+pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
+    diag.severity == Some(INACTIVE_DIAGNOSTIC_SEVERITY)
         && diag.message == INACTIVE_REGION_MESSAGE
         && diag
             .source
@@ -59,11 +69,11 @@ pub fn register_notifications(
                         .into_iter()
                         .map(|range| lsp::Diagnostic {
                             range,
-                            severity: Some(lsp::DiagnosticSeverity::INFORMATION),
+                            severity: Some(INACTIVE_DIAGNOSTIC_SEVERITY),
                             source: Some(CLANGD_SERVER_NAME.to_string()),
                             message: INACTIVE_REGION_MESSAGE.to_string(),
                             tags: Some(vec![lsp::DiagnosticTag::UNNECESSARY]),
-                            ..Default::default()
+                            ..lsp::Diagnostic::default()
                         })
                         .collect();
                     let mapped_diagnostics = lsp::PublishDiagnosticsParams {
@@ -74,8 +84,10 @@ pub fn register_notifications(
                     this.merge_diagnostics(
                         server_id,
                         mapped_diagnostics,
+                        None,
+                        DiagnosticSourceKind::Pushed,
                         &adapter.disk_based_diagnostic_sources,
-                        |diag, _| !is_inactive_region(diag),
+                        |_, diag, _| !is_inactive_region(diag),
                         cx,
                     )
                     .log_err();

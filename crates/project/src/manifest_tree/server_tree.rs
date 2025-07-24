@@ -16,7 +16,7 @@ use std::{
 use collections::{HashMap, IndexMap};
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate,
+    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
@@ -74,6 +74,7 @@ impl LanguageServerTreeNode {
     pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
         self.0.upgrade()?.id.get().copied()
     }
+
     /// Returns a language server ID for this node if it has already been initialized; otherwise runs the provided closure to initialize the language server node in a tree.
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
@@ -86,6 +87,11 @@ impl LanguageServerTreeNode {
                 .id
                 .get_or_init(|| init(LaunchDisposition::from(&*this))),
         )
+    }
+
+    /// Returns a language server name as the language server adapter would return.
+    pub fn name(&self) -> Option<LanguageServerName> {
+        self.0.upgrade().map(|node| node.name.clone())
     }
 }
 
@@ -151,7 +157,7 @@ impl LanguageServerTree {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {
@@ -181,7 +187,7 @@ impl LanguageServerTree {
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
@@ -401,7 +407,7 @@ impl<'tree> ServerTreeRebase<'tree> {
         &'a mut self,
         path: ProjectPath,
         query: AdapterQuery<'_>,
-        delegate: Arc<dyn LspAdapterDelegate>,
+        delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let settings_location = SettingsLocation {

@@ -121,6 +121,10 @@ impl PtyProcessInfo {
         }
     }
 
+    pub(crate) fn kill_current_process(&mut self) -> bool {
+        self.refresh().map_or(false, |process| process.kill())
+    }
+
     fn load(&mut self) -> Option<ProcessInfo> {
         let process = self.refresh()?;
         let cwd = process.cwd().map_or(PathBuf::new(), |p| p.to_owned());

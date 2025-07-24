@@ -1,5 +1,5 @@
 use crate::{Channel, ChannelStore};
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result};
 use client::{
     ChannelId, Client, Subscription, TypedEnvelope, UserId, proto,
     user::{User, UserStore},
@@ -170,15 +170,16 @@ impl ChannelChat {
         message: MessageParams,
         cx: &mut Context<Self>,
     ) -> Result<Task<Result<u64>>> {
-        if message.text.trim().is_empty() {
-            Err(anyhow!("message body can't be empty"))?;
-        }
+        anyhow::ensure!(
+            !message.text.trim().is_empty(),
+            "message body can't be empty"
+        );
 
         let current_user = self
             .user_store
             .read(cx)
             .current_user()
-            .ok_or_else(|| anyhow!("current_user is not present"))?;
+            .context("current_user is not present")?;
 
         let channel_id = self.channel_id;
         let pending_id = ChannelMessageId::Pending(post_inc(&mut self.next_pending_message_id));
@@ -215,7 +216,7 @@ impl ChannelChat {
             });
             let response = request.await?;
             drop(outgoing_message_guard);
-            let response = response.message.ok_or_else(|| anyhow!("invalid message"))?;
+            let response = response.message.context("invalid message")?;
             let id = response.id;
             let message = ChannelMessage::from_proto(response, &user_store, cx).await?;
             this.update(cx, |this, cx| {
@@ -332,7 +333,7 @@ impl ChannelChat {
                         if first_id <= message_id {
                             let mut cursor = chat.messages.cursor::<(ChannelMessageId, Count)>(&());
                             let message_id = ChannelMessageId::Saved(message_id);
-                            cursor.seek(&message_id, Bias::Left, &());
+                            cursor.seek(&message_id, Bias::Left);
                             return ControlFlow::Break(
                                 if cursor
                                     .item()
@@ -386,7 +387,7 @@ impl ChannelChat {
         let loaded_messages = messages_from_proto(proto_messages, &user_store, cx).await?;
 
         let first_loaded_message_id = loaded_messages.first().map(|m| m.id);
-        let loaded_message_ids = this.update(cx, |this, _| {
+        let loaded_message_ids = this.read_with(cx, |this, _| {
             let mut loaded_message_ids: HashSet<u64> = HashSet::default();
             for message in loaded_messages.iter() {
                 if let Some(saved_message_id) = message.id.into() {
@@ -456,7 +457,7 @@ impl ChannelChat {
                 )
                 .await?;
 
-                let pending_messages = this.update(cx, |this, _| {
+                let pending_messages = this.read_with(cx, |this, _| {
                     this.pending_messages().cloned().collect::<Vec<_>>()
                 })?;
 
@@ -470,7 +471,7 @@ impl ChannelChat {
                     });
                     let response = request.await?;
                     let message = ChannelMessage::from_proto(
-                        response.message.ok_or_else(|| anyhow!("invalid message"))?,
+                        response.message.context("invalid message")?,
                         &user_store,
                         cx,
                     )
@@ -498,7 +499,7 @@ impl ChannelChat {
 
     pub fn message(&self, ix: usize) -> &ChannelMessage {
         let mut cursor = self.messages.cursor::<Count>(&());
-        cursor.seek(&Count(ix), Bias::Right, &());
+        cursor.seek(&Count(ix), Bias::Right);
         cursor.item().unwrap()
     }
 
@@ -515,13 +516,13 @@ impl ChannelChat {
 
     pub fn messages_in_range(&self, range: Range<usize>) -> impl Iterator<Item = &ChannelMessage> {
         let mut cursor = self.messages.cursor::<Count>(&());
-        cursor.seek(&Count(range.start), Bias::Right, &());
+        cursor.seek(&Count(range.start), Bias::Right);
         cursor.take(range.len())
     }
 
     pub fn pending_messages(&self) -> impl Iterator<Item = &ChannelMessage> {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
-        cursor.seek(&ChannelMessageId::Pending(0), Bias::Left, &());
+        cursor.seek(&ChannelMessageId::Pending(0), Bias::Left);
         cursor
     }
 
@@ -530,11 +531,8 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageSent>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
-        let message = message
-            .payload
-            .message
-            .ok_or_else(|| anyhow!("empty message"))?;
+        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
+        let message = message.payload.message.context("empty message")?;
         let message_id = message.id;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
@@ -565,11 +563,8 @@ impl ChannelChat {
         message: TypedEnvelope<proto::ChannelMessageUpdate>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        let user_store = this.update(&mut cx, |this, _| this.user_store.clone())?;
-        let message = message
-            .payload
-            .message
-            .ok_or_else(|| anyhow!("empty message"))?;
+        let user_store = this.read_with(&mut cx, |this, _| this.user_store.clone())?;
+        let message = message.payload.message.context("empty message")?;
 
         let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
 
@@ -593,9 +588,9 @@ impl ChannelChat {
                 .collect::<HashSet<_>>();
 
             let mut old_cursor = self.messages.cursor::<(ChannelMessageId, Count)>(&());
-            let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left, &());
+            let mut new_messages = old_cursor.slice(&first_message.id, Bias::Left);
             let start_ix = old_cursor.start().1.0;
-            let removed_messages = old_cursor.slice(&last_message.id, Bias::Right, &());
+            let removed_messages = old_cursor.slice(&last_message.id, Bias::Right);
             let removed_count = removed_messages.summary().count;
             let new_count = messages.summary().count;
             let end_ix = start_ix + removed_count;
@@ -604,10 +599,10 @@ impl ChannelChat {
 
             let mut ranges = Vec::<Range<usize>>::new();
             if new_messages.last().unwrap().is_pending() {
-                new_messages.append(old_cursor.suffix(&()), &());
+                new_messages.append(old_cursor.suffix(), &());
             } else {
                 new_messages.append(
-                    old_cursor.slice(&ChannelMessageId::Pending(0), Bias::Left, &()),
+                    old_cursor.slice(&ChannelMessageId::Pending(0), Bias::Left),
                     &(),
                 );
 
@@ -622,7 +617,7 @@ impl ChannelChat {
                     } else {
                         new_messages.push(message.clone(), &());
                     }
-                    old_cursor.next(&());
+                    old_cursor.next();
                 }
             }
 
@@ -646,12 +641,12 @@ impl ChannelChat {
 
     fn message_removed(&mut self, id: u64, cx: &mut Context<Self>) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
-        let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left, &());
+        let mut messages = cursor.slice(&ChannelMessageId::Saved(id), Bias::Left);
         if let Some(item) = cursor.item() {
             if item.id == ChannelMessageId::Saved(id) {
                 let deleted_message_ix = messages.summary().count;
-                cursor.next(&());
-                messages.append(cursor.suffix(&()), &());
+                cursor.next();
+                messages.append(cursor.suffix(), &());
                 drop(cursor);
                 self.messages = messages;
 
@@ -685,7 +680,7 @@ impl ChannelChat {
         cx: &mut Context<Self>,
     ) {
         let mut cursor = self.messages.cursor::<ChannelMessageId>(&());
-        let mut messages = cursor.slice(&id, Bias::Left, &());
+        let mut messages = cursor.slice(&id, Bias::Left);
         let ix = messages.summary().count;
 
         if let Some(mut message_to_update) = cursor.item().cloned() {
@@ -693,10 +688,10 @@ impl ChannelChat {
             message_to_update.mentions = mentions;
             message_to_update.edited_at = edited_at;
             messages.push(message_to_update, &());
-            cursor.next(&());
+            cursor.next();
         }
 
-        messages.append(cursor.suffix(&()), &());
+        messages.append(cursor.suffix(), &());
         drop(cursor);
         self.messages = messages;
 
@@ -753,10 +748,7 @@ impl ChannelMessage {
                 .collect(),
             timestamp: OffsetDateTime::from_unix_timestamp(message.timestamp as i64)?,
             sender,
-            nonce: message
-                .nonce
-                .ok_or_else(|| anyhow!("nonce is required"))?
-                .into(),
+            nonce: message.nonce.context("nonce is required")?.into(),
             reply_to_message_id: message.reply_to_message_id,
             edited_at,
         })

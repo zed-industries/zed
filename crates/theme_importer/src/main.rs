@@ -1,4 +1,3 @@
-mod assets;
 mod color;
 mod vscode;
 

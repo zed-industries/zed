@@ -50,12 +50,16 @@ impl Tool for DiagnosticsTool {
         false
     }
 
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn description(&self) -> String {
         include_str!("./diagnostics_tool/description.md").into()
     }
 
     fn icon(&self) -> IconName {
-        IconName::XCircle
+        IconName::ToolDiagnostics
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

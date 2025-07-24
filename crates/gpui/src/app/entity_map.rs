@@ -1,5 +1,5 @@
-use crate::{App, AppContext, VisualContext, Window, seal::Sealed};
-use anyhow::{Result, anyhow};
+use crate::{App, AppContext, GpuiBorrow, VisualContext, Window, seal::Sealed};
+use anyhow::{Context as _, Result};
 use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
@@ -20,10 +20,10 @@ use std::{
     thread::panicking,
 };
 
+use super::Context;
+use crate::util::atomic_incr_if_not_zero;
 #[cfg(any(test, feature = "leak-detection"))]
 use collections::HashMap;
-
-use super::Context;
 
 slotmap::new_key_type! {
     /// A unique identifier for a entity across the application.
@@ -105,7 +105,7 @@ impl EntityMap {
 
     /// Move an entity to the stack.
     #[track_caller]
-    pub fn lease<'a, T>(&mut self, pointer: &'a Entity<T>) -> Lease<'a, T> {
+    pub fn lease<T>(&mut self, pointer: &Entity<T>) -> Lease<T> {
         self.assert_valid_context(pointer);
         let mut accessed_entities = self.accessed_entities.borrow_mut();
         accessed_entities.insert(pointer.entity_id);
@@ -117,15 +117,14 @@ impl EntityMap {
         );
         Lease {
             entity,
-            pointer,
+            id: pointer.entity_id,
             entity_type: PhantomData,
         }
     }
 
     /// Returns an entity after moving it to the stack.
     pub fn end_lease<T>(&mut self, mut lease: Lease<T>) {
-        self.entities
-            .insert(lease.pointer.entity_id, lease.entity.take().unwrap());
+        self.entities.insert(lease.id, lease.entity.take().unwrap());
     }
 
     pub fn read<T: 'static>(&self, entity: &Entity<T>) -> &T {
@@ -187,13 +186,13 @@ fn double_lease_panic<T>(operation: &str) -> ! {
     )
 }
 
-pub(crate) struct Lease<'a, T> {
+pub(crate) struct Lease<T> {
     entity: Option<Box<dyn Any>>,
-    pub pointer: &'a Entity<T>,
+    pub id: EntityId,
     entity_type: PhantomData<T>,
 }
 
-impl<T: 'static> core::ops::Deref for Lease<'_, T> {
+impl<T: 'static> core::ops::Deref for Lease<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -201,13 +200,13 @@ impl<T: 'static> core::ops::Deref for Lease<'_, T> {
     }
 }
 
-impl<T: 'static> core::ops::DerefMut for Lease<'_, T> {
+impl<T: 'static> core::ops::DerefMut for Lease<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.entity.as_mut().unwrap().downcast_mut().unwrap()
     }
 }
 
-impl<T> Drop for Lease<'_, T> {
+impl<T> Drop for Lease<T> {
     fn drop(&mut self) {
         if self.entity.is_some() && !panicking() {
             panic!("Leases must be ended with EntityMap::end_lease")
@@ -371,7 +370,7 @@ impl std::fmt::Debug for AnyEntity {
     }
 }
 
-/// A strong, well typed reference to a struct which is managed
+/// A strong, well-typed reference to a struct which is managed
 /// by GPUI
 #[derive(Deref, DerefMut)]
 pub struct Entity<T> {
@@ -435,6 +434,19 @@ impl<T: 'static> Entity<T> {
         update: impl FnOnce(&mut T, &mut Context<T>) -> R,
     ) -> C::Result<R> {
         cx.update_entity(self, update)
+    }
+
+    /// Updates the entity referenced by this handle with the given function.
+    pub fn as_mut<'a, C: AppContext>(&self, cx: &'a mut C) -> C::Result<GpuiBorrow<'a, T>> {
+        cx.as_mut(self)
+    }
+
+    /// Updates the entity referenced by this handle with the given function.
+    pub fn write<C: AppContext>(&self, cx: &mut C, value: T) -> C::Result<()> {
+        self.update(cx, |entity, cx| {
+            *entity = value;
+            cx.notify();
+        })
     }
 
     /// Updates the entity referenced by this handle with the given function if
@@ -529,11 +541,10 @@ impl AnyWeakEntity {
         let ref_counts = ref_counts.read();
         let ref_count = ref_counts.counts.get(self.entity_id)?;
 
-        // entity_id is in dropped_entity_ids
-        if ref_count.load(SeqCst) == 0 {
+        if atomic_incr_if_not_zero(ref_count) == 0 {
+            // entity_id is in dropped_entity_ids
             return None;
         }
-        ref_count.fetch_add(1, SeqCst);
         drop(ref_counts);
 
         Some(AnyEntity {
@@ -585,7 +596,7 @@ impl AnyWeakEntity {
             // Safety:
             //   Docs say this is safe but can be unspecified if slotmap changes the representation
             //   after `1.0.7`, that said, providing a valid entity_id here is not necessary as long
-            //   as we guarantee that that `entity_id` is never used if `entity_ref_counts` equals
+            //   as we guarantee that `entity_id` is never used if `entity_ref_counts` equals
             //   to `Weak::new()` (that is, it's unable to upgrade), that is the invariant that
             //   actually needs to be hold true.
             //
@@ -692,7 +703,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity released"))
+                .context("entity released")
                 .map(|this| cx.update_entity(&this, update)),
         )
     }
@@ -710,7 +721,7 @@ impl<T: 'static> WeakEntity<T> {
         Result<C::Result<R>>: crate::Flatten<R>,
     {
         let window = cx.window_handle();
-        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+        let this = self.upgrade().context("entity released")?;
 
         crate::Flatten::flatten(window.update(cx, |_, window, cx| {
             this.update(cx, |entity, cx| update(entity, window, cx))
@@ -727,7 +738,7 @@ impl<T: 'static> WeakEntity<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .context("entity released")
                 .map(|this| cx.read_entity(&this, read)),
         )
     }
