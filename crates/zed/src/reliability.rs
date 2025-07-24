@@ -12,6 +12,7 @@ use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
+    borrow::Cow,
     env,
     ffi::{OsStr, c_void},
     sync::{Arc, atomic::Ordering},
@@ -22,6 +23,7 @@ use url::Url;
 use util::ResultExt;
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
+const SENTRY_DSN: &str = "https://63c6474f7e8152fe89b05795f1763e72@o4509715134283776.ingest.us.sentry.io/4509715135987712";
 
 pub fn init_panic_hook(
     app_version: SemanticVersion,
@@ -150,6 +152,15 @@ pub fn init_panic_hook(
 
         std::process::abort();
     }));
+}
+
+pub fn init_sentry(app_commit_sha: Option<AppCommitSha>, cx: &mut App) {
+    let mut options = sentry::ClientOptions::default();
+    options.release = app_commit_sha.map(|sha| Cow::Owned(sha.short()));
+    if TelemetrySettings::get_global(cx).diagnostics {
+        std::mem::forget(sentry::init((SENTRY_DSN, options)));
+    }
+    panic!("another panic");
 }
 
 #[cfg(not(target_os = "windows"))]

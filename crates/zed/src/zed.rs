@@ -125,7 +125,7 @@ pub fn init(cx: &mut App) {
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
     if ReleaseChannel::global(cx) == ReleaseChannel::Dev || cx.has_flag::<PanicFeatureFlag>() {
-        cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
+        cx.on_action(|_: &TestPanic, _| panic!("You Ran the TestPanic action"));
     }
     cx.on_action(|_: &OpenLog, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {

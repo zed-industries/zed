@@ -374,7 +374,7 @@ pub fn main() {
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);
-        if let Some(app_commit_sha) = app_commit_sha {
+        if let Some(app_commit_sha) = app_commit_sha.clone() {
             AppCommitSha::set_global(app_commit_sha, cx);
         }
         settings::init(cx);
@@ -534,6 +534,7 @@ pub fn main() {
             session_id.clone(),
             cx,
         );
+        reliability::init_sentry(app_commit_sha, cx);
 
         SystemAppearance::init(cx);
         theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
