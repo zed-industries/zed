@@ -182,31 +182,23 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         cx.update(|cx| {
             self.thread.borrow().update(cx, |thread, cx| {
-                let languages = thread.project.read(cx).languages().clone();
-
-                if let Some((ix, tool_call)) = thread
-                    .tool_call_mut(&acp::ToolCallId(request.tool_call_id.0.to_string().into()))
-                {
-                    tool_call.status = ToolCallStatus::Allowed {
-                        status: into_new_tool_call_status(request.status),
-                    };
-                    tool_call.content = request
-                        .content
-                        .into_iter()
-                        .map(|content| {
-                            ToolCallContent::from_acp(
-                                into_new_tool_call_content(content),
-                                languages.clone(),
-                                cx,
-                            )
-                        })
-                        .collect();
-
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    anyhow::Ok(())
-                } else {
-                    anyhow::bail!("Tool call not found")
-                }
+                thread.update_tool_call(
+                    acp::ToolCallUpdate {
+                        id: acp::ToolCallId(request.tool_call_id.0.to_string().into()),
+                        fields: acp::ToolCallUpdateFields {
+                            status: Some(into_new_tool_call_status(request.status)),
+                            content: Some(
+                                request
+                                    .content
+                                    .into_iter()
+                                    .map(into_new_tool_call_content)
+                                    .collect::<Vec<_>>(),
+                            ),
+                            ..Default::default()
+                        },
+                    },
+                    cx,
+                )
             })
         })?
         .context("Failed to update thread")??;
@@ -312,12 +304,7 @@ fn into_new_tool_call_status(status: acp_old::ToolCallStatus) -> acp::ToolCallSt
 
 fn into_new_tool_call_content(content: acp_old::ToolCallContent) -> acp::ToolCallContent {
     match content {
-        acp_old::ToolCallContent::Markdown { markdown } => acp::ToolCallContent::ContentBlock {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                annotations: None,
-                text: markdown,
-            }),
-        },
+        acp_old::ToolCallContent::Markdown { markdown } => markdown.into(),
         acp_old::ToolCallContent::Diff { diff } => acp::ToolCallContent::Diff {
             diff: into_new_diff(diff),
         },

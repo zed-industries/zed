@@ -75,8 +75,8 @@ impl AgentServer for Codex {
                     move |notification, _cx| {
                         let notification_tx = notification_tx.clone();
                         log::trace!(
-                            "ACP Notification: {:?}",
-                            serde_json::to_string_pretty(&notification)
+                            "ACP Notification: {}",
+                            serde_json::to_string_pretty(&notification).unwrap()
                         );
 
                         if let Some(notification) =
@@ -182,7 +182,7 @@ impl AgentConnection for CodexConnection {
     ) -> Task<Result<()>> {
         let client = self.client.client();
 
-        cx.spawn(async move |cx| {
+        cx.foreground_executor().spawn(async move {
             let client = client.context("MCP server is not initialized yet")?;
 
             let response = client
@@ -244,10 +244,18 @@ impl CodexConnection {
                     .log_err();
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
-                // todo!
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.upsert_tool_call(tool_call, cx);
+                    })
+                    .log_err();
             }
             acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
-                // todo!
+                thread
+                    .update(cx, |thread, cx| {
+                        thread.update_tool_call(tool_call_update, cx)
+                    })
+                    .log_err();
             }
             acp::SessionUpdate::Plan(plan) => {
                 thread
@@ -263,5 +271,25 @@ impl CodexConnection {
 impl Drop for CodexConnection {
     fn drop(&mut self) {
         self.client.stop().log_err();
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::AgentServerCommand;
+    use std::path::Path;
+
+    crate::common_e2e_tests!(Codex);
+
+    pub fn local_command() -> AgentServerCommand {
+        let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../codex/codex-rs/target/debug/codex");
+
+        AgentServerCommand {
+            path: cli_path,
+            args: vec!["mcp".into()],
+            env: None,
+        }
     }
 }

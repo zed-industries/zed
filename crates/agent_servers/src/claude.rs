@@ -430,9 +430,15 @@ impl ClaudeAgentSession {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.update_tool_call(
-                                        acp::ToolCallId(tool_use_id.into()),
-                                        acp::ToolCallStatus::Completed,
-                                        (!content.is_empty()).then(|| vec![content.into()]),
+                                        acp::ToolCallUpdate {
+                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            fields: acp::ToolCallUpdateFields {
+                                                status: Some(acp::ToolCallStatus::Completed),
+                                                content: (!content.is_empty())
+                                                    .then(|| vec![content.into()]),
+                                                ..Default::default()
+                                            },
+                                        },
                                         cx,
                                     )
                                 })

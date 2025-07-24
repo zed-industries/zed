@@ -166,6 +166,7 @@ pub struct ToolCall {
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
+    pub structured_content: Option<serde_json::Value>,
 }
 
 impl ToolCall {
@@ -193,6 +194,50 @@ impl ToolCall {
                 .collect(),
             locations: tool_call.locations,
             status,
+            structured_content: tool_call.structured_content,
+        }
+    }
+
+    fn update(
+        &mut self,
+        fields: acp::ToolCallUpdateFields,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        let acp::ToolCallUpdateFields {
+            kind,
+            status,
+            label,
+            content,
+            locations,
+            structured_content,
+        } = fields;
+
+        if let Some(kind) = kind {
+            self.kind = kind;
+        }
+
+        if let Some(status) = status {
+            self.status = ToolCallStatus::Allowed { status };
+        }
+
+        if let Some(label) = label {
+            self.label = cx.new(|cx| Markdown::new_text(label.into(), cx));
+        }
+
+        if let Some(content) = content {
+            self.content = content
+                .into_iter()
+                .map(|chunk| ToolCallContent::from_acp(chunk, language_registry.clone(), cx))
+                .collect();
+        }
+
+        if let Some(locations) = locations {
+            self.locations = locations;
+        }
+
+        if let Some(structured_content) = structured_content {
+            self.structured_content = Some(structured_content);
         }
     }
 
@@ -345,7 +390,7 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::ContentBlock { content } => Self::ContentBlock {
+            acp::ToolCallContent::ContentBlock(content) => Self::ContentBlock {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
@@ -630,7 +675,7 @@ impl AcpThread {
         false
     }
 
-    pub fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+    fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
         self.entries.push(entry);
         cx.emit(AcpThreadEvent::NewEntry);
     }
@@ -680,21 +725,15 @@ impl AcpThread {
 
     pub fn update_tool_call(
         &mut self,
-        id: acp::ToolCallId,
-        status: acp::ToolCallStatus,
-        content: Option<Vec<acp::ToolCallContent>>,
+        update: acp::ToolCallUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let languages = self.project.read(cx).languages().clone();
-        let (ix, current_call) = self.tool_call_mut(&id).context("Tool call not found")?;
 
-        if let Some(content) = content {
-            current_call.content = content
-                .into_iter()
-                .map(|chunk| ToolCallContent::from_acp(chunk, languages.clone(), cx))
-                .collect();
-        }
-        current_call.status = ToolCallStatus::Allowed { status };
+        let (ix, current_call) = self
+            .tool_call_mut(&update.id)
+            .context("Tool call not found")?;
+        current_call.update(update.fields, languages, cx);
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
