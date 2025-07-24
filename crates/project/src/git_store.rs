@@ -1084,7 +1084,7 @@ impl GitStore {
         match event {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, updated_entries) => {
                 let paths_by_git_repo =
-                    self.process_updated_entries(*worktree_id, updated_entries, cx);
+                    self.process_updated_entries(updated_entries, cx);
                 for (repo, paths) in paths_by_git_repo {
                     repo.update(cx, |repo, cx| {
                         repo.paths_changed(
@@ -2185,7 +2185,6 @@ impl GitStore {
 
     fn process_updated_entries(
         &self,
-        worktree_id: worktree::WorktreeId,
         updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) -> HashMap<Entity<Repository>, Vec<RepoPath>> {
@@ -2193,6 +2192,7 @@ impl GitStore {
         let mut updated_copy: Vec<_> = updated_entries.as_ref().to_vec();
         updated_copy.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
 
+        let mut path_was_used = vec![false; updated_copy.len()];
         let mut repo_paths = self
             .repositories
             .values()
@@ -2209,10 +2209,11 @@ impl GitStore {
             }
             let mut paths = paths_by_git_repo
                 .entry(repo.clone()).or_default();
-            while let Some((path, _, _)) = updated_copy.get(ix)
+            while let Some((path, _, _)) = updated_copy.get(ix) && path_was_used[ix] == false
                 && let Some(repo_path) = repo.read(cx).abs_path_to_repo_path(&path)
             {
                 ix += 1;
+                path_was_used[ix] = true;
                 paths
                     .push(repo_path);
             }
