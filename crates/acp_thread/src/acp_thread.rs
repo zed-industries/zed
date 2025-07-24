@@ -137,16 +137,15 @@ impl AgentThreadEntry {
         match self {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
-            Self::ToolCall(too_call) => too_call.to_markdown(cx),
+            Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
         }
     }
 
-    // todo! return all diffs?
-    pub fn first_diff(&self) -> Option<&Diff> {
+    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
         if let AgentThreadEntry::ToolCall(call) = self {
-            call.first_diff()
+            itertools::Either::Left(call.diffs())
         } else {
-            None
+            itertools::Either::Right(std::iter::empty())
         }
     }
 
@@ -197,8 +196,8 @@ impl ToolCall {
         }
     }
 
-    pub fn first_diff(&self) -> Option<&Diff> {
-        self.content.iter().find_map(|content| match content {
+    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
+        self.content.iter().filter_map(|content| match content {
             ToolCallContent::ContentBlock { .. } => None,
             ToolCallContent::Diff { diff } => Some(diff),
         })
@@ -623,7 +622,7 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(_) => return false,
-                AgentThreadEntry::ToolCall(call) if call.first_diff().is_some() => return true,
+                AgentThreadEntry::ToolCall(call) if call.diffs().next().is_some() => return true,
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
             }
         }

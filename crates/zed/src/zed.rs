@@ -19,7 +19,7 @@ use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{Editor, MultiBuffer};
-use feature_flags::FeatureFlagAppExt;
+use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;

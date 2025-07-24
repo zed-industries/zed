@@ -574,62 +574,70 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(multibuffer) = self.entry_diff_multibuffer(entry_ix, cx) else {
+        let Some(multibuffers) = self.entry_diff_multibuffers(entry_ix, cx) else {
             return;
         };
 
-        if self.diff_editors.contains_key(&multibuffer.entity_id()) {
-            return;
-        }
+        let multibuffers = multibuffers.collect::<Vec<_>>();
 
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::new(
-                EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sized_by_content: true,
-                },
-                multibuffer.clone(),
-                None,
-                window,
-                cx,
-            );
-            editor.set_show_gutter(false, cx);
-            editor.disable_inline_diagnostics();
-            editor.disable_expand_excerpt_buttons(cx);
-            editor.set_show_vertical_scrollbar(false, cx);
-            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::None, cx);
-            editor.scroll_manager.set_forbid_vertical_scroll(true);
-            editor.set_show_indent_guides(false, cx);
-            editor.set_read_only(true);
-            editor.set_show_breakpoints(false, cx);
-            editor.set_show_code_actions(false, cx);
-            editor.set_show_git_diff_gutter(false, cx);
-            editor.set_expand_all_diff_hunks(cx);
-            editor.set_text_style_refinement(TextStyleRefinement {
-                font_size: Some(
-                    TextSize::Small
-                        .rems(cx)
-                        .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
-                        .into(),
-                ),
-                ..Default::default()
+        for multibuffer in multibuffers {
+            if self.diff_editors.contains_key(&multibuffer.entity_id()) {
+                return;
+            }
+
+            let editor = cx.new(|cx| {
+                let mut editor = Editor::new(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sized_by_content: true,
+                    },
+                    multibuffer.clone(),
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_show_gutter(false, cx);
+                editor.disable_inline_diagnostics();
+                editor.disable_expand_excerpt_buttons(cx);
+                editor.set_show_vertical_scrollbar(false, cx);
+                editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
+                editor.set_soft_wrap_mode(SoftWrap::None, cx);
+                editor.scroll_manager.set_forbid_vertical_scroll(true);
+                editor.set_show_indent_guides(false, cx);
+                editor.set_read_only(true);
+                editor.set_show_breakpoints(false, cx);
+                editor.set_show_code_actions(false, cx);
+                editor.set_show_git_diff_gutter(false, cx);
+                editor.set_expand_all_diff_hunks(cx);
+                editor.set_text_style_refinement(TextStyleRefinement {
+                    font_size: Some(
+                        TextSize::Small
+                            .rems(cx)
+                            .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                            .into(),
+                    ),
+                    ..Default::default()
+                });
+                editor
             });
-            editor
-        });
-        let entity_id = multibuffer.entity_id();
-        cx.observe_release(&multibuffer, move |this, _, _| {
-            this.diff_editors.remove(&entity_id);
-        })
-        .detach();
+            let entity_id = multibuffer.entity_id();
+            cx.observe_release(&multibuffer, move |this, _, _| {
+                this.diff_editors.remove(&entity_id);
+            })
+            .detach();
 
-        self.diff_editors.insert(entity_id, editor);
+            self.diff_editors.insert(entity_id, editor);
+        }
     }
 
-    fn entry_diff_multibuffer(&self, entry_ix: usize, cx: &App) -> Option<Entity<MultiBuffer>> {
+    fn entry_diff_multibuffers(
+        &self,
+        entry_ix: usize,
+        cx: &App,
+    ) -> Option<impl Iterator<Item = Entity<MultiBuffer>>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        entry.first_diff().map(|diff| diff.multibuffer.clone())
+        Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
     }
 
     fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
