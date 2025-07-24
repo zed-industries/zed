@@ -256,9 +256,6 @@ impl CodexConnection {
                     })
                     .log_err();
             }
-            acp::SessionUpdate::Error(_) => {
-                // todo!
-            }
         }
     }
 }
