@@ -14,9 +14,10 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::Fs;
 use futures::{
-    FutureExt, StreamExt as _,
+    FutureExt, StreamExt,
     channel::{mpsc, oneshot},
     future::{self, Shared},
+    stream::FuturesOrdered,
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
@@ -1088,6 +1089,7 @@ impl GitStore {
                     .read(cx)
                     .worktree_for_id(*worktree_id, cx)
                 {
+                    let x = std::time::Instant::now();
                     let paths_by_git_repo =
                         self.process_updated_entries(&worktree, updated_entries, cx);
                     let downstream = downstream
@@ -2212,50 +2214,43 @@ impl GitStore {
         let entries = entries
             .into_iter()
             .filter_map(|path| worktree.absolutize(&path).ok())
-            .collect::<Vec<_>>();
+            .collect::<Arc<[_]>>();
 
         let executor = cx.background_executor().clone();
         cx.background_executor().spawn(async move {
             repo_paths.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
             let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
-            let mut tasks = Vec::with_capacity(repo_paths.len());
-            executor
-                .scoped(|scope: &mut Scope| {
-                    for (repo_path, repo) in repo_paths {
-                        let (tx, rx) = oneshot::channel();
-                        let update_contents = &entries;
-                        scope.spawn(async move {
-                            // Find all repository paths that belong to this repo
-                            let mut ix = update_contents.partition_point(|path| path < &*repo_path);
-                            if ix == update_contents.len() {
-                                return;
-                            };
+            let mut tasks = FuturesOrdered::new();
+            for (repo_path, repo) in repo_paths.into_iter().rev() {
+                let entries = entries.clone();
+                let task = executor.spawn(async move {
+                    // Find all repository paths that belong to this repo
+                    let mut ix = entries.partition_point(|path| path < &*repo_path);
+                    if ix == entries.len() {
+                        return None;
+                    };
 
-                            let mut paths = vec![];
-                            // All paths prefixed by a given repo will constitute a continuous range.
-                            while let Some(path) = update_contents.get(ix)
-                                && let Some(repo_path) =
-                                    RepositorySnapshot::abs_path_to_repo_path_inner(
-                                        &repo_path, &path,
-                                    )
-                            {
-                                paths.push((repo_path, ix));
-                                ix += 1;
-                            }
-                            tx.send((repo, paths)).ok();
-                        });
-                        tasks.push(rx);
+                    let mut paths = vec![];
+                    // All paths prefixed by a given repo will constitute a continuous range.
+                    while let Some(path) = entries.get(ix)
+                        && let Some(repo_path) =
+                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+                    {
+                        paths.push((repo_path, ix));
+                        ix += 1;
                     }
-                })
-                .await;
+                    Some((repo, paths))
+                });
+                tasks.push_back(task);
+            }
 
             // Now, let's filter out the "duplicate" entries that were processed by multiple distinct repos.
             let mut path_was_used = vec![false; entries.len()];
-
+            let tasks = tasks.collect::<Vec<_>>().await;
             // Process tasks from the back: iterating backwards allows us to see more-specific paths first.
             // We always want to assign a path to it's innermost repository.
-            for t in tasks.into_iter().rev() {
-                let Ok((repo, paths)) = t.await else {
+            for t in tasks {
+                let Some((repo, paths)) = t else {
                     continue;
                 };
                 let entry = paths_by_git_repo.entry(repo).or_default();
