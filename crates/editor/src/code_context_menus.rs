@@ -15,7 +15,7 @@ use project::{CodeAction, Completion, TaskSourceKind};
 use task::DebugScenario;
 use task::TaskContext;
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
@@ -1201,9 +1201,22 @@ impl CodeActionContents {
         debug_scenarios: Vec<DebugScenario>,
         context: TaskContext,
     ) -> Self {
+        let deduped_actions = actions.map(|actions_rc| {
+            let mut seen = HashSet::new();
+            let deduped: Vec<_> = actions_rc
+                .iter()
+                .filter(|a| {
+                    let key = (a.excerpt_id, a.action.lsp_action.title());
+                    seen.insert(key)
+                })
+                .cloned()
+                .collect();
+            Rc::from(deduped.into_boxed_slice())
+        });
+
         Self {
             tasks: tasks.map(Rc::new),
-            actions,
+            actions: deduped_actions,
             debug_scenarios,
             context,
         }
