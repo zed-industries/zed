@@ -7982,14 +7982,9 @@ impl Element for EditorElement {
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
                     let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
-
                     let content_origin = text_hitbox.origin + content_offset;
 
-                    let editor_text_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
-
-                    let height_in_lines = editor_text_bounds.size.height / line_height;
-
+                    let height_in_lines = bounds.size.height / line_height;
                     let max_row = snapshot.max_point().row().as_f32();
 
                     // The max scroll position for the top of the window
@@ -8373,7 +8368,6 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
-                        editor_width,
                         EditorSettings::get_global(cx),
                     );
 
@@ -9038,7 +9032,6 @@ impl ScrollbarLayoutInformation {
         glyph_grid_cell: Size<Pixels>,
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
-        editor_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
@@ -9049,19 +9042,11 @@ impl ScrollbarLayoutInformation {
             }
         };
 
-        let right_margin = if document_size.width + longest_line_blame_width >= editor_width {
-            glyph_grid_cell.width
-        } else {
-            px(0.0)
-        };
-
-        let overscroll = size(right_margin + longest_line_blame_width, vertical_overscroll);
-
-        let scroll_range = document_size + overscroll;
+        let overscroll = size(longest_line_blame_width, vertical_overscroll);
 
         ScrollbarLayoutInformation {
             editor_bounds,
-            scroll_range,
+            scroll_range: document_size + overscroll,
             glyph_grid_cell,
         }
     }
@@ -9166,7 +9151,7 @@ struct EditorScrollbars {
 
 impl EditorScrollbars {
     pub fn from_scrollbar_axes(
-        settings_visibility: ScrollbarAxes,
+        show_scrollbar: ScrollbarAxes,
         layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
         scroll_position: gpui::Point<f32>,
@@ -9204,22 +9189,13 @@ impl EditorScrollbars {
         };
 
         let mut create_scrollbar_layout = |axis| {
-            settings_visibility
-                .along(axis)
+            let viewport_size = viewport_size.along(axis);
+            let scroll_range = scroll_range.along(axis);
+
+            // We always want a vertical scrollbar track for scrollbar diagnostic visibility.
+            (show_scrollbar.along(axis)
+                && (axis == ScrollbarAxis::Vertical || scroll_range > viewport_size))
                 .then(|| {
-                    (
-                        viewport_size.along(axis) - content_offset.along(axis),
-                        scroll_range.along(axis),
-                    )
-                })
-                .filter(|(viewport_size, scroll_range)| {
-                    // The scrollbar should only be rendered if the content does
-                    // not entirely fit into the editor
-                    // However, this only applies to the horizontal scrollbar, as information about the
-                    // vertical scrollbar layout is always needed for scrollbar diagnostics.
-                    axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
-                })
-                .map(|(viewport_size, scroll_range)| {
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), HitboxBehavior::Normal),
                         viewport_size,
