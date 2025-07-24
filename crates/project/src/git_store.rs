@@ -63,8 +63,8 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
 use util::{ResultExt, debug_panic, post_inc};
 use worktree::{
-    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet,
-    UpdatedGitRepository, Worktree,
+    File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
+    UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
 };
 
 pub struct GitStore {
@@ -1083,17 +1083,8 @@ impl GitStore {
 
         match event {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, updated_entries) => {
-                let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
-                for (relative_path, _, _) in updated_entries.iter() {
-                    let Some((repo, repo_path)) = self.repository_and_path_for_project_path(
-                        &(*worktree_id, relative_path.clone()).into(),
-                        cx,
-                    ) else {
-                        continue;
-                    };
-                    paths_by_git_repo.entry(repo).or_default().push(repo_path)
-                }
-
+                let paths_by_git_repo =
+                    self.process_updated_entries(*worktree_id, updated_entries, cx);
                 for (repo, paths) in paths_by_git_repo {
                     repo.update(cx, |repo, cx| {
                         repo.paths_changed(
@@ -2190,6 +2181,43 @@ impl GitStore {
             .iter()
             .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
             .collect()
+    }
+
+    fn process_updated_entries(
+        &self,
+        worktree_id: worktree::WorktreeId,
+        updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        cx: &mut Context<Self>,
+    ) -> HashMap<Entity<Repository>, Vec<RepoPath>> {
+        let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
+        let mut updated_copy: Vec<_> = updated_entries.as_ref().to_vec();
+        updated_copy.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+
+        let mut repo_paths = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo.clone()))
+            .collect::<Vec<_>>();
+        repo_paths.sort_by(|lhs, rhs| rhs.0.cmp(&lhs.0));
+
+        for (repo_path, repo) in repo_paths {
+            // Find all repository paths that belong to this repo
+            let mut ix =
+                updated_copy.partition_point(|(path, _, _)| path.starts_with(repo_path.as_ref()));
+            if ix == updated_copy.len() {
+                continue;
+            }
+            let mut paths = paths_by_git_repo
+                .entry(repo.clone()).or_default();
+            while let Some((path, _, _)) = updated_copy.get(ix)
+                && let Some(repo_path) = repo.read(cx).abs_path_to_repo_path(&path)
+            {
+                ix += 1;
+                paths
+                    .push(repo_path);
+            }
+        }
+        paths_by_git_repo
     }
 }
 
