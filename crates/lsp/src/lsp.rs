@@ -877,39 +877,41 @@ impl LanguageServer {
 
             let server = self.server.clone();
             let name = self.name.clone();
+            let server_id = self.server_id;
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
-                async move {
-                    log::debug!("language server shutdown started");
+            Some(async move {
+                log::debug!("language server shutdown started");
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            match request_result {
-                                ConnectionResult::Timeout => {
-                                    log::warn!("timeout waiting for language server {name} to shutdown");
-                                },
-                                ConnectionResult::ConnectionReset => {},
-                                ConnectionResult::Result(r) => r?,
-                            }
+                select! {
+                    request_result = shutdown_request.fuse() => {
+                        match request_result {
+                            ConnectionResult::Timeout => {
+                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                            },
+                            ConnectionResult::ConnectionReset => {
+                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                            },
+                            ConnectionResult::Result(Err(e)) => {
+                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                            },
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
                     }
 
-                    response_handlers.lock().take();
-                    Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                    outbound_tx.close();
-                    output_done.recv().await;
-                    server.lock().take().map(|mut child| child.kill());
-                    log::debug!("language server shutdown finished");
-
-                    drop(tasks);
-                    anyhow::Ok(())
+                    _ = timer => {
+                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    },
                 }
-                .log_err(),
-            )
+
+                response_handlers.lock().take();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                outbound_tx.close();
+                output_done.recv().await;
+                server.lock().take().map(|mut child| child.kill());
+                drop(tasks);
+                log::debug!("language server shutdown finished");
+                Some(())
+            })
         } else {
             None
         }
