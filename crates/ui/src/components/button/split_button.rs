@@ -47,7 +47,7 @@ impl RenderOnce for SplitButton {
         h_flex()
             .rounded_sm()
             .border_1()
-            .border_color(cx.theme().colors().border.opacity(0.5))
+            .border_color(cx.theme().colors().border.opacity(0.8))
             .child(div().flex_grow().child(self.left))
             .child(
                 div()
