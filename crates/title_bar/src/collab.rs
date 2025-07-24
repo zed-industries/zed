@@ -343,39 +343,13 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
-        if is_local && can_share_projects && !is_connecting_to_project {
-            children.push(
-                Button::new(
-                    "toggle_sharing",
-                    if is_shared { "Unshare" } else { "Share" },
-                )
-                .tooltip(Tooltip::text(if is_shared {
-                    "Stop sharing project with call participants"
-                } else {
-                    "Share project with call participants"
-                }))
-                .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                .toggle_state(is_shared)
-                .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if is_shared {
-                        this.unshare_project(window, cx);
-                    } else {
-                        this.share_project(cx);
-                    }
-                }))
-                .into_any_element(),
-            );
-        }
-
         children.push(
-            div()
-                .pr_2()
+            h_flex()
+                .gap_1()
                 .child(
-                    IconButton::new("leave-call", ui::IconName::Exit)
+                    IconButton::new("leave-call", IconName::Exit)
                         .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave call"))
+                        .tooltip(Tooltip::text("Leave Call"))
                         .icon_size(IconSize::Small)
                         .on_click(move |_, _window, cx| {
                             ActiveCall::global(cx)
@@ -387,14 +361,51 @@ impl TitleBar {
                 .into_any_element(),
         );
 
+        if is_local && can_share_projects && !is_connecting_to_project {
+            children.push(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new(
+                            "toggle_sharing",
+                            if is_shared { "Unshare" } else { "Share" },
+                        )
+                        .tooltip(Tooltip::text(if is_shared {
+                            "Stop sharing project with call participants"
+                        } else {
+                            "Share project with call participants"
+                        }))
+                        .style(ButtonStyle::Subtle)
+                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        .toggle_state(is_shared)
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::ShareProject)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .icon_position(IconPosition::Start)
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                if is_shared {
+                                    this.unshare_project(window, cx);
+                                } else {
+                                    this.share_project(cx);
+                                }
+                            },
+                        )),
+                    )
+                    .child(Divider::vertical())
+                    .into_any_element(),
+            );
+        }
+
         if can_use_microphone {
             children.push(
                 IconButton::new(
                     "mute-microphone",
                     if is_muted {
-                        ui::IconName::MicMute
+                        IconName::MicMute
                     } else {
-                        ui::IconName::Mic
+                        IconName::Mic
                     },
                 )
                 .tooltip(move |window, cx| {
@@ -429,9 +440,9 @@ impl TitleBar {
             IconButton::new(
                 "mute-sound",
                 if is_deafened {
-                    ui::IconName::AudioOff
+                    IconName::AudioOff
                 } else {
-                    ui::IconName::AudioOn
+                    IconName::AudioOn
                 },
             )
             .style(ButtonStyle::Subtle)
@@ -462,7 +473,7 @@ impl TitleBar {
         );
 
         if can_use_microphone && screen_sharing_supported {
-            let trigger = IconButton::new("screen-share", ui::IconName::Screen)
+            let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_screen_sharing)
@@ -513,11 +524,10 @@ impl TitleBar {
             .with_handle(self.screen_share_popover_handle.clone())
             .trigger(
                 ui::ButtonLike::new_rounded_right("screen-share-screen-list-trigger")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
                     .child(
-                        div()
-                            .px_1()
+                        h_flex()
+                            .h_full()
+                            .justify_center()
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
                     )
                     .toggle_state(self.screen_share_popover_handle.is_deployed()),
