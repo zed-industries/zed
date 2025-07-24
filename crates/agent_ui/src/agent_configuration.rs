@@ -186,6 +186,7 @@ impl AgentConfiguration {
         };
 
         v_flex()
+            .w_full()
             .when(is_expanded, |this| this.mb_2())
             .child(
                 div()
@@ -216,6 +217,7 @@ impl AgentConfiguration {
                             .hover(|hover| hover.bg(cx.theme().colors().element_hover))
                             .child(
                                 h_flex()
+                                    .w_full()
                                     .gap_2()
                                     .child(
                                         Icon::new(provider.icon())
@@ -224,6 +226,7 @@ impl AgentConfiguration {
                                     )
                                     .child(
                                         h_flex()
+                                            .w_full()
                                             .gap_1()
                                             .child(
                                                 Label::new(provider_name.clone())
@@ -307,6 +310,7 @@ impl AgentConfiguration {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
+            .w_full()
             .child(
                 h_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
@@ -361,6 +365,7 @@ impl AgentConfiguration {
             )
             .child(
                 div()
+                    .w_full()
                     .pl(DynamicSpacing::Base08.rems(cx))
                     .pr(DynamicSpacing::Base20.rems(cx))
                     .children(
