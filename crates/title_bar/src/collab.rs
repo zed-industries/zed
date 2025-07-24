@@ -519,6 +519,7 @@ impl TitleBar {
                 ui::ButtonLike::new_rounded_right("screen-share-screen-list-trigger")
                     .child(
                         h_flex()
+                            .mx_neg_0p5()
                             .h_full()
                             .justify_center()
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
