@@ -65,10 +65,7 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.to_path_buf();
         cx.spawn(async move |cx| {
             let threads_map = Rc::new(RefCell::new(HashMap::default()));
-            let tool_id_map = Rc::new(RefCell::new(HashMap::default()));
-
-            let permission_mcp_server =
-                ZedMcpServer::new(threads_map, tool_id_map.clone(), cx).await?;
+            let permission_mcp_server = ZedMcpServer::new(threads_map, cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(

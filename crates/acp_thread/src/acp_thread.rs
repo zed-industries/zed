@@ -1001,7 +1001,9 @@ impl AcpThread {
 
     pub fn read_text_file(
         &self,
-        request: acp::ReadTextFileArguments,
+        path: PathBuf,
+        line: Option<u32>,
+        limit: Option<u32>,
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
@@ -1010,7 +1012,7 @@ impl AcpThread {
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
-                    .project_path_for_absolute_path(&request.path, cx)
+                    .project_path_for_absolute_path(&path, cx)
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
@@ -1036,7 +1038,7 @@ impl AcpThread {
                     let position = buffer
                         .read(cx)
                         .snapshot()
-                        .anchor_before(Point::new(request.line.unwrap_or_default(), 0));
+                        .anchor_before(Point::new(line.unwrap_or_default(), 0));
                     project.set_agent_location(
                         Some(AgentLocation {
                             buffer: buffer.downgrade(),
@@ -1052,11 +1054,11 @@ impl AcpThread {
             this.update(cx, |this, _| {
                 let text = snapshot.text();
                 this.shared_buffers.insert(buffer.clone(), snapshot);
-                if request.line.is_none() && request.limit.is_none() {
+                if line.is_none() && limit.is_none() {
                     return Ok(text);
                 }
-                let limit = request.limit.unwrap_or(u32::MAX) as usize;
-                let Some(line) = request.line else {
+                let limit = limit.unwrap_or(u32::MAX) as usize;
+                let Some(line) = line else {
                     return Ok(text.lines().take(limit).collect::<String>());
                 };
 
@@ -1075,7 +1077,8 @@ impl AcpThread {
 
     pub fn write_text_file(
         &self,
-        request: acp::WriteTextFileToolArguments,
+        path: PathBuf,
+        content: String,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let project = self.project.clone();
@@ -1083,7 +1086,7 @@ impl AcpThread {
         cx.spawn(async move |this, cx| {
             let load = project.update(cx, |project, cx| {
                 let path = project
-                    .project_path_for_absolute_path(&request.path, cx)
+                    .project_path_for_absolute_path(&path, cx)
                     .context("invalid path")?;
                 anyhow::Ok(project.open_buffer(path, cx))
             });
@@ -1098,7 +1101,7 @@ impl AcpThread {
                 .background_executor()
                 .spawn(async move {
                     let old_text = snapshot.text();
-                    text_diff(old_text.as_str(), &request.content)
+                    text_diff(old_text.as_str(), &content)
                         .into_iter()
                         .map(|(range, replacement)| {
                             (
@@ -1165,43 +1168,8 @@ impl OldAcpClientDelegate {
             next_tool_call_id: Rc::new(RefCell::new(0)),
         }
     }
-
-    pub async fn clear_completed_plan_entries(&self) -> Result<()> {
-        let cx = &mut self.cx.clone();
-        cx.update(|cx| {
-            self.thread
-                .borrow()
-                .update(cx, |thread, cx| thread.clear_completed_plan_entries(cx))
-        })?
-        .context("Failed to update thread")?;
-
-        Ok(())
-    }
-
-    pub async fn read_text_file_reusing_snapshot(
-        &self,
-        request: acp_old::ReadTextFileParams,
-    ) -> Result<acp_old::ReadTextFileResponse, acp_old::Error> {
-        let content = self
-            .cx
-            .update(|cx| {
-                self.thread.borrow().update(cx, |thread, cx| {
-                    thread.read_text_file(
-                        acp::ReadTextFileArguments {
-                            path: request.path,
-                            line: request.line,
-                            limit: request.limit,
-                        },
-                        true,
-                        cx,
-                    )
-                })
-            })?
-            .context("Failed to update thread")?
-            .await?;
-        Ok(acp_old::ReadTextFileResponse { content })
-    }
 }
+
 impl acp_old::Client for OldAcpClientDelegate {
     async fn stream_assistant_message_chunk(
         &self,
@@ -1412,21 +1380,13 @@ impl acp_old::Client for OldAcpClientDelegate {
 
     async fn read_text_file(
         &self,
-        request: acp_old::ReadTextFileParams,
+        acp_old::ReadTextFileParams { path, line, limit }: acp_old::ReadTextFileParams,
     ) -> Result<acp_old::ReadTextFileResponse, acp_old::Error> {
         let content = self
             .cx
             .update(|cx| {
                 self.thread.borrow().update(cx, |thread, cx| {
-                    thread.read_text_file(
-                        acp::ReadTextFileArguments {
-                            path: request.path,
-                            line: request.line,
-                            limit: request.limit,
-                        },
-                        false,
-                        cx,
-                    )
+                    thread.read_text_file(path, line, limit, false, cx)
                 })
             })?
             .context("Failed to update thread")?
@@ -1436,19 +1396,13 @@ impl acp_old::Client for OldAcpClientDelegate {
 
     async fn write_text_file(
         &self,
-        request: acp_old::WriteTextFileParams,
+        acp_old::WriteTextFileParams { path, content }: acp_old::WriteTextFileParams,
     ) -> Result<(), acp_old::Error> {
         self.cx
             .update(|cx| {
-                self.thread.borrow().update(cx, |thread, cx| {
-                    thread.write_text_file(
-                        acp::WriteTextFileToolArguments {
-                            path: request.path,
-                            content: request.content,
-                        },
-                        cx,
-                    )
-                })
+                self.thread
+                    .borrow()
+                    .update(cx, |thread, cx| thread.write_text_file(path, content, cx))
             })?
             .context("Failed to update thread")?
             .await?;
