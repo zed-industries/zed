@@ -51,7 +51,6 @@ pub(crate) struct Client {
     outbound_tx: channel::Sender<String>,
     name: Arc<str>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
-    request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
@@ -234,7 +233,6 @@ impl Client {
             server_id,
             notification_handlers,
             response_handlers,
-            request_handlers,
             name: server_name,
             next_id: Default::default(),
             outbound_tx,
@@ -451,79 +449,6 @@ impl Client {
         self.notification_handlers
             .lock()
             .insert(method, Box::new(f));
-    }
-
-    pub fn on_request<R: crate::types::Request, F>(&self, mut f: F)
-    where
-        F: 'static + Send + FnMut(R::Params, AsyncApp) -> Task<Result<R::Response>>,
-    {
-        let outbound_tx = self.outbound_tx.clone();
-        self.request_handlers.lock().insert(
-            R::METHOD,
-            Box::new(move |id, json, cx| {
-                let outbound_tx = outbound_tx.clone();
-                match serde_json::from_str(json.get()) {
-                    Ok(req) => {
-                        let task = f(req, cx.clone());
-                        cx.foreground_executor()
-                            .spawn(async move {
-                                match task.await {
-                                    Ok(res) => {
-                                        outbound_tx
-                                            .send(
-                                                serde_json::to_string(&Response {
-                                                    jsonrpc: JSON_RPC_VERSION,
-                                                    id,
-                                                    value: CspResult::Ok(Some(res)),
-                                                })
-                                                .unwrap(),
-                                            )
-                                            .await
-                                            .ok();
-                                    }
-                                    Err(e) => {
-                                        outbound_tx
-                                            .send(
-                                                serde_json::to_string(&Response {
-                                                    jsonrpc: JSON_RPC_VERSION,
-                                                    id,
-                                                    value: CspResult::<()>::Error(Some(Error {
-                                                        code: -1, // todo!()
-                                                        message: format!("{e}"),
-                                                    })),
-                                                })
-                                                .unwrap(),
-                                            )
-                                            .await
-                                            .ok();
-                                    }
-                                }
-                            })
-                            .detach();
-                    }
-                    Err(e) => {
-                        cx.foreground_executor()
-                            .spawn(async move {
-                                outbound_tx
-                                    .send(
-                                        serde_json::to_string(&Response {
-                                            jsonrpc: JSON_RPC_VERSION,
-                                            id,
-                                            value: CspResult::<()>::Error(Some(Error {
-                                                code: -1, // todo!()
-                                                message: format!("{e}"),
-                                            })),
-                                        })
-                                        .unwrap(),
-                                    )
-                                    .await
-                                    .ok();
-                            })
-                            .detach();
-                    }
-                }
-            }),
-        );
     }
 }
 
