@@ -3,7 +3,7 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, PathVertex,
+    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, PathVertex, Point,
     PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use blade_graphics as gpu;
@@ -115,7 +115,8 @@ struct PathSprite {
 #[derive(Clone, Debug)]
 #[repr(C)]
 struct PathRasterizationVertex {
-    vertex: PathVertex<ScaledPixels>,
+    xy_position: Point<ScaledPixels>,
+    st_position: Point<f32>,
     color: Background,
     bounds: Bounds<ScaledPixels>,
 }
@@ -591,26 +592,24 @@ impl BladeRenderer {
             };
             let mut encoder = pass.with(&self.pipelines.path_rasterization);
 
+            let mut vertices = Vec::new();
             for path in paths {
-                let vertices = path
-                    .vertices
-                    .iter()
-                    .map(|v| PathRasterizationVertex {
-                        vertex: v.clone(),
-                        color: path.color,
-                        bounds: path.bounds.intersect(&path.content_mask.bounds),
-                    })
-                    .collect::<Vec<_>>();
-                let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-                encoder.bind(
-                    0,
-                    &ShaderPathRasterizationData {
-                        globals,
-                        b_path_vertices: vertex_buf,
-                    },
-                );
-                encoder.draw(0, path.vertices.len() as u32, 0, 1);
+                vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
+                    xy_position: v.xy_position,
+                    st_position: v.st_position,
+                    color: path.color,
+                    bounds: path.bounds.intersect(&path.content_mask.bounds),
+                }));
             }
+            let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
+            encoder.bind(
+                0,
+                &ShaderPathRasterizationData {
+                    globals,
+                    b_path_vertices: vertex_buf,
+                },
+            );
+            encoder.draw(0, vertices.len() as u32, 0, 1);
         }
     }
 

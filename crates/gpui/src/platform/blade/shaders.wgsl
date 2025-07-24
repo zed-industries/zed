@@ -927,7 +927,6 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
 struct PathRasterizationVertex {
     xy_position: vec2<f32>,
     st_position: vec2<f32>,
-    content_mask: Bounds,
     color: Background,
     bounds: Bounds,
 }
@@ -950,7 +949,7 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
     out.position = to_device_position_impl(v.xy_position);
     out.st_position = v.st_position;
     out.vertex_id = vertex_id;
-    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    // out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
     return out;
 }
 
