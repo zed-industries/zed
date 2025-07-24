@@ -1,18 +1,21 @@
 # Agent Panel
 
-The Agent Panel provides you with a way to interact with LLMs.
-You can use it for various tasks, such as generating code, asking questions about your code base, and general inquiries such as emails and documentation.
+The Agent Panel provides you with a surface to interact with LLMs, enabling various types of tasks, such as generating code, asking questions about your codebase, and general inquiries like emails, documentation, and more.
 
-To open the Agent Panel, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
+To open it, use the `agent: new thread` action in [the Command Palette](../getting-started.md#command-palette) or click the ✨ (sparkles) icon in the status bar.
 
-If you're using the Agent Panel for the first time, you'll need to [configure at least one LLM provider](./configuration.md).
+If you're using the Agent Panel for the first time, you need to have at least one LLM provider configured.
+You can do that by:
+
+1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
+2. or by [bringing your own API keys](./configuration.md#use-your-own-keys) for your desired provider
 
 ## Overview {#overview}
 
 After you've configured one or more LLM providers, type at the message editor and hit `enter` to submit your prompt.
 If you need extra room to type, you can expand the message editor with {#kb agent::ExpandMessageEditor}.
 
-You should start to see the responses stream in with indications of [which tools](./tools.md) the AI is using to fulfill your prompt.
+You should start to see the responses stream in with indications of [which tools](./tools.md) the model is using to fulfill your prompt.
 
 ### Editing Messages {#editing-messages}
 
@@ -21,13 +24,13 @@ You can click on the card that contains your message and re-submit it with an ad
 
 ### Checkpoints {#checkpoints}
 
-Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your codebase to the state it was in prior to that message.
+Every time the AI performs an edit, you should see a "Restore Checkpoint" button to the top of your message, allowing you to return your code base to the state it was in prior to that message.
 
 The checkpoint button appears even if you interrupt the thread midway through an edit attempt, as this is likely a moment when you've identified that the agent is not heading in the right direction and you want to revert back.
 
 ### Navigating History {#navigating-history}
 
-To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the hamburger icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
+To quickly navigate through recently opened threads, use the {#kb agent::ToggleNavigationMenu} binding, when focused on the panel's editor, or click the menu icon button at the top left of the panel to open the dropdown that shows you the six most recent threads.
 
 The items in this menu function similarly to tabs, and closing them doesn’t delete the thread; instead, it simply removes them from the recent list.
 
@@ -38,6 +41,8 @@ To view all historical conversations, reach for the `View All` option from withi
 Zed is built with collaboration natively integrated.
 This approach extends to collaboration with AI as well.
 To follow the agent reading through your codebase and performing edits, click on the "crosshair" icon button at the bottom left of the panel.
+
+You can also do that with the keyboard by pressing the `cmd`/`ctrl` modifier with `enter` when submitting a message.
 
 ### Get Notified {#get-notified}
 
@@ -63,12 +68,12 @@ So, if your active tab had edits made by the AI, you'll see diffs with the same 
 
 ## Adding Context {#adding-context}
 
-Although Zed's agent is very efficient at reading through your codebase to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
+Although Zed's agent is very efficient at reading through your code base to autonomously pick up relevant files, directories, and other context, manually adding context is still encouraged as a way to speed up and improve the AI's response quality.
 
-If you have a tab open when opening the Agent Panel, that tab appears as a suggested context in form of a dashed button.
+If you have a tab open while using the Agent Panel, that tab appears as a suggested context in form of a dashed button.
 You can also add other forms of context by either mentioning them with `@` or hitting the `+` icon button.
 
-You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the top-right menu to continue a longer conversation, keeping it within the context window.
+You can even add previous threads as context by mentioning them with `@thread`, or by selecting the "New From Summary" option from the `+` menu to continue a longer conversation, keeping it within the context window.
 
 Pasting images as context is also supported by the Agent Panel.
 
@@ -116,6 +121,12 @@ Zed will store this profile in your settings using the same profile name as the 
 
 All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
 
+### Tool Approval
+
+Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
+
+You can change that by setting this key to `true` in either your `settings.json` or via the Agent Panel's settings view.
+
 ### Model Support {#model-support}
 
 Tool calling needs to be individually supported by each model and model provider.
@@ -141,24 +152,17 @@ You can remove and edit responses from the LLM, swap roles, and include more con
 For users who have been with us for some time, you'll notice that text threads are our original assistant panel—users love it for the control it offers.
 We do not plan to deprecate text threads, but it should be noted that if you want the AI to write to your code base autonomously, that's only available in the newer, and now default, "Threads".
 
-### Text Thread History {#text-thread-history}
-
-Content from text thread are saved to your file system.
-Visit [the dedicated docs](./text-threads.md#history) for more info.
-
 ## Errors and Debugging {#errors-and-debugging}
 
 In case of any error or strange LLM response behavior, the best way to help the Zed team debug is by reaching for the `agent: open thread as markdown` action and attaching that data as part of your issue on GitHub.
-
-This action exposes the entire thread in the form of Markdown and allows for deeper understanding of what each tool call was doing.
 
 You can also open threads as Markdown by clicking on the file icon button, to the right of the thumbs down button, when focused on the panel's editor.
 
 ## Feedback {#feedback}
 
-Every change we make to Zed's system prompt and tool set, needs to be backed by an eval with good scores.
+Every change we make to Zed's system prompt and tool set, needs to be backed by a thorough eval with good scores.
 
-Every time the LLM performs a weird change or investigates a certain topic in your codebase completely incorrectly, it's an indication that there's an improvement opportunity.
+Every time the LLM performs a weird change or investigates a certain topic in your code base incorrectly, it's an indication that there's an improvement opportunity.
 
 > Note that rating responses will send your data related to that response to Zed's servers.
 > See [AI Improvement](./ai-improvement.md) and [Privacy and Security](./privacy-and-security.md) for more information about Zed's approach to AI improvement, privacy, and security.

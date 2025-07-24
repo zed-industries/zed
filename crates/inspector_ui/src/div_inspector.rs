@@ -1,5 +1,8 @@
 use anyhow::{Result, anyhow};
-use editor::{Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
+use editor::{
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
+    MultiBuffer,
+};
 use fuzzy::StringMatch;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
@@ -499,6 +502,7 @@ impl DivInspector {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
+            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor
         })
     }

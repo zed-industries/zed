@@ -146,6 +146,7 @@ pub trait DebuggerProvider {
         definition: DebugScenario,
         task_context: TaskContext,
         active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
     );
@@ -168,42 +169,83 @@ pub trait DebuggerProvider {
 actions!(
     workspace,
     [
+        /// Activates the next pane in the workspace.
         ActivateNextPane,
+        /// Activates the previous pane in the workspace.
         ActivatePreviousPane,
+        /// Switches to the next window.
         ActivateNextWindow,
+        /// Switches to the previous window.
         ActivatePreviousWindow,
+        /// Adds a folder to the current project.
         AddFolderToProject,
+        /// Clears all notifications.
         ClearAllNotifications,
+        /// Closes the active dock.
         CloseActiveDock,
+        /// Closes all docks.
         CloseAllDocks,
+        /// Closes the current window.
         CloseWindow,
+        /// Opens the feedback dialog.
         Feedback,
+        /// Follows the next collaborator in the session.
         FollowNextCollaborator,
+        /// Moves the focused panel to the next position.
         MoveFocusedPanelToNextPosition,
+        /// Opens a new terminal in the center.
         NewCenterTerminal,
+        /// Creates a new file.
         NewFile,
+        /// Creates a new file in a vertical split.
         NewFileSplitVertical,
+        /// Creates a new file in a horizontal split.
         NewFileSplitHorizontal,
+        /// Opens a new search.
         NewSearch,
+        /// Opens a new terminal.
         NewTerminal,
+        /// Opens a new window.
         NewWindow,
+        /// Opens a file or directory.
         Open,
+        /// Opens multiple files.
         OpenFiles,
+        /// Opens the current location in terminal.
         OpenInTerminal,
+        /// Opens the component preview.
         OpenComponentPreview,
+        /// Reloads the active item.
         ReloadActiveItem,
+        /// Resets the active dock to its default size.
+        ResetActiveDockSize,
+        /// Resets all open docks to their default sizes.
+        ResetOpenDocksSize,
+        /// Saves the current file with a new name.
         SaveAs,
+        /// Saves without formatting.
         SaveWithoutFormat,
+        /// Shuts down all debug adapters.
         ShutdownDebugAdapters,
+        /// Suppresses the current notification.
         SuppressNotification,
+        /// Toggles the bottom dock.
         ToggleBottomDock,
+        /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles the left dock.
         ToggleLeftDock,
+        /// Toggles the right dock.
         ToggleRightDock,
+        /// Toggles zoom on the active pane.
         ToggleZoom,
+        /// Stops following a collaborator.
         Unfollow,
+        /// Shows the welcome screen.
         Welcome,
+        /// Restores the banner.
         RestoreBanner,
+        /// Toggles expansion of the selected item.
         ToggleExpandItem,
     ]
 );
@@ -213,14 +255,17 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
+/// Activates a specific pane by its index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct ActivatePane(pub usize);
 
+/// Moves an item to a specific pane by index.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPane {
+    #[serde(default = "default_1")]
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -228,10 +273,16 @@ pub struct MoveItemToPane {
     pub clone: bool,
 }
 
+fn default_1() -> usize {
+    1
+}
+
+/// Moves an item to a pane in the specified direction.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct MoveItemToPaneInDirection {
+    #[serde(default = "default_right")]
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
@@ -239,38 +290,52 @@ pub struct MoveItemToPaneInDirection {
     pub clone: bool,
 }
 
+fn default_right() -> SplitDirection {
+    SplitDirection::Right
+}
+
+/// Saves all open files in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct SaveAll {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Saves the current file with the specified options.
 #[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct Save {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all items and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItemsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Closes all inactive tabs and panes in the workspace.
 #[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
 pub struct CloseInactiveTabsAndPanes {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
 }
 
+/// Sends a sequence of keystrokes to the active element.
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
 
+/// Reloads the active item or workspace.
 #[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -281,28 +346,79 @@ pub struct Reload {
 actions!(
     project_symbols,
     [
+        /// Toggles the project symbols search.
         #[action(name = "Toggle")]
         ToggleProjectSymbols
     ]
 );
 
+/// Toggles the file finder interface.
 #[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = file_finder, name = "Toggle")]
+#[serde(deny_unknown_fields)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
 }
 
+/// Increases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Decreases size of a currently focused dock by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseActiveDockSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Increases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct IncreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
+/// Decreases size of all currently visible docks uniformly, by a given amount of pixels.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = workspace)]
+#[serde(deny_unknown_fields)]
+pub struct DecreaseOpenDocksSize {
+    /// For 0px parameter, uses UI font size value.
+    #[serde(default)]
+    pub px: u32,
+}
+
 actions!(
     workspace,
     [
+        /// Activates the pane to the left.
         ActivatePaneLeft,
+        /// Activates the pane to the right.
         ActivatePaneRight,
+        /// Activates the pane above.
         ActivatePaneUp,
+        /// Activates the pane below.
         ActivatePaneDown,
+        /// Swaps the current pane with the one to the left.
         SwapPaneLeft,
+        /// Swaps the current pane with the one to the right.
         SwapPaneRight,
+        /// Swaps the current pane with the one above.
         SwapPaneUp,
+        /// Swaps the current pane with the one below.
         SwapPaneDown,
     ]
 );
@@ -358,6 +474,7 @@ impl PartialEq for Toast {
     }
 }
 
+/// Opens a new terminal with the specified working directory.
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 #[serde(deny_unknown_fields)]
@@ -899,6 +1016,15 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+enum WorkspaceLocation {
+    // Valid local paths or SSH project to serialize
+    Location(SerializedWorkspaceLocation),
+    // No valid location found hence clear session id
+    DetachFromSession,
+    // No valid location found to serialize
+    None,
+}
+
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
@@ -1018,7 +1144,6 @@ impl Workspace {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    // So we need to update the history.
                     this.update_history(cx);
                 }
 
@@ -1592,6 +1717,27 @@ impl Workspace {
         }
 
         history
+    }
+
+    pub fn recent_active_item_by_type<T: 'static>(&self, cx: &App) -> Option<Entity<T>> {
+        let mut recent_item: Option<Entity<T>> = None;
+        let mut recent_timestamp = 0;
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+            let item_map: HashMap<EntityId, &Box<dyn ItemHandle>> =
+                pane.items().map(|item| (item.item_id(), item)).collect();
+            for entry in pane.activation_history() {
+                if entry.timestamp > recent_timestamp {
+                    if let Some(&item) = item_map.get(&entry.entity_id) {
+                        if let Some(typed_item) = item.act_as::<T>(cx) {
+                            recent_timestamp = entry.timestamp;
+                            recent_item = Some(typed_item);
+                        }
+                    }
+                }
+            }
+        }
+        recent_item
     }
 
     pub fn recent_navigation_history_iter(
@@ -2199,7 +2345,7 @@ impl Workspace {
                             // (Note that the tests always do this implicitly, so you must manually test with something like:
                             //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
                             // )
-                            window.draw(cx);
+                            window.draw(cx).clear();
                         }
                     })?;
                 }
@@ -2655,11 +2801,12 @@ impl Workspace {
 
         if retain_active_pane {
             let current_pane_close = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(
-                    &CloseInactiveItems {
+                pane.close_other_items(
+                    &CloseOtherItems {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    None,
                     window,
                     cx,
                 )
@@ -2762,12 +2909,14 @@ impl Workspace {
         })
     }
 
-    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn close_active_dock(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if let Some(dock) = self.active_dock(window, cx) {
             dock.update(cx, |dock, cx| {
                 dock.set_open(false, window, cx);
             });
+            return true;
         }
+        false
     }
 
     pub fn close_all_docks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3615,9 +3764,9 @@ impl Workspace {
                 return;
             };
             match dock.read(cx).position() {
-                DockPosition::Left => resize_left_dock(panel_size + amount, self, window, cx),
-                DockPosition::Bottom => resize_bottom_dock(panel_size + amount, self, window, cx),
-                DockPosition::Right => resize_right_dock(panel_size + amount, self, window, cx),
+                DockPosition::Left => self.resize_left_dock(panel_size + amount, window, cx),
+                DockPosition::Bottom => self.resize_bottom_dock(panel_size + amount, window, cx),
+                DockPosition::Right => self.resize_right_dock(panel_size + amount, window, cx),
             }
         } else {
             self.center
@@ -3722,11 +3871,13 @@ impl Workspace {
                 if *local {
                     self.unfollow_in_pane(&pane, window, cx);
                 }
+                serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
+                } else if *local {
+                    self.set_active_pane(&pane, window, cx);
                 }
-                serialize_workspace = *focus_changed || pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
@@ -5075,48 +5226,58 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.serialize_workspace_location(cx) {
-            let breakpoints = self.project.update(cx, |project, cx| {
-                project
-                    .breakpoint_store()
-                    .read(cx)
-                    .all_source_breakpoints(cx)
-            });
+        match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => {
+                let breakpoints = self.project.update(cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .read(cx)
+                        .all_source_breakpoints(cx)
+                });
 
-            let center_group = build_serialized_pane_group(&self.center.root, window, cx);
-            let docks = build_serialized_docks(self, window, cx);
-            let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
-            let serialized_workspace = SerializedWorkspace {
-                id: database_id,
-                location,
-                center_group,
-                window_bounds,
-                display: Default::default(),
-                docks,
-                centered_layout: self.centered_layout,
-                session_id: self.session_id.clone(),
-                breakpoints,
-                window_id: Some(window.window_handle().window_id().as_u64()),
-            };
+                let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+                let docks = build_serialized_docks(self, window, cx);
+                let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+                let serialized_workspace = SerializedWorkspace {
+                    id: database_id,
+                    location,
+                    center_group,
+                    window_bounds,
+                    display: Default::default(),
+                    docks,
+                    centered_layout: self.centered_layout,
+                    session_id: self.session_id.clone(),
+                    breakpoints,
+                    window_id: Some(window.window_handle().window_id().as_u64()),
+                };
 
-            return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await;
-            });
+                window.spawn(cx, async move |_| {
+                    persistence::DB.save_workspace(serialized_workspace).await;
+                })
+            }
+            WorkspaceLocation::DetachFromSession => window.spawn(cx, async move |_| {
+                persistence::DB
+                    .set_session_id(database_id, None)
+                    .await
+                    .log_err();
+            }),
+            WorkspaceLocation::None => Task::ready(()),
         }
-        Task::ready(())
     }
 
-    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
+    fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+            WorkspaceLocation::Location(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+                WorkspaceLocation::Location(SerializedWorkspaceLocation::from_local_paths(
+                    local_paths,
+                ))
             } else {
-                None
+                WorkspaceLocation::DetachFromSession
             }
         } else {
-            None
+            WorkspaceLocation::None
         }
     }
 
@@ -5124,8 +5285,9 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        let Some(location) = self.serialize_workspace_location(cx) else {
-            return;
+        let location = match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => location,
+            _ => return,
         };
         if let Some(manager) = HistoryManager::global(cx) {
             manager.update(cx, |this, cx| {
@@ -5406,7 +5568,9 @@ impl Workspace {
             ))
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &CloseActiveDock, window, cx| {
-                    workspace.close_active_dock(window, cx);
+                    if !workspace.close_active_dock(window, cx) {
+                        cx.propagate();
+                    }
                 },
             ))
             .on_action(
@@ -5429,6 +5593,72 @@ impl Workspace {
             .on_action(cx.listener(
                 |workspace: &mut Workspace, _: &ReopenClosedItem, window, cx| {
                     workspace.reopen_closed_item(window, cx).detach();
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetActiveDockSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if dock.focus_handle(cx).contains_focused(window, cx) {
+                            let Some(panel) = dock.read(cx).active_panel() else {
+                                return;
+                            };
+
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+
+                            return;
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetOpenDocksSize, window, cx| {
+                    for dock in workspace.all_docks() {
+                        if let Some(panel) = dock.read(cx).visible_panel() {
+                            // Set to `None`, then the size will fall back to the default.
+                            panel.clone().set_size(None, window, cx);
+                        }
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseActiveDockSize, window, cx| {
+                    adjust_active_dock_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &IncreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx),
+                        workspace,
+                        window,
+                        cx,
+                    );
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, act: &DecreaseOpenDocksSize, window, cx| {
+                    adjust_open_docks_size_by_px(
+                        px_with_ui_font_fallback(act.px, cx) * -1.,
+                        workspace,
+                        window,
+                        cx,
+                    );
                 },
             ))
             .on_action(cx.listener(Workspace::toggle_centered_layout))
@@ -5617,9 +5847,74 @@ impl Workspace {
         } else if let Some((notification_id, _)) = self.notifications.pop() {
             dismiss_app_notification(&notification_id, cx);
         } else {
-            cx.emit(Event::ClearActivityIndicator);
             cx.propagate();
         }
+    }
+
+    fn adjust_dock_size_by_px(
+        &mut self,
+        panel_size: Pixels,
+        dock_pos: DockPosition,
+        px: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match dock_pos {
+            DockPosition::Left => self.resize_left_dock(panel_size + px, window, cx),
+            DockPosition::Right => self.resize_right_dock(panel_size + px, window, cx),
+            DockPosition::Bottom => self.resize_bottom_dock(panel_size + px, window, cx),
+        }
+    }
+
+    fn resize_left_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.right() - RESIZE_HANDLE_SIZE);
+
+        self.left_dock.update(cx, |left_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Left)
+            {
+                left_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                left_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_right_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let mut size = new_size.max(self.bounds.left() - RESIZE_HANDLE_SIZE);
+        self.left_dock.read_with(cx, |left_dock, cx| {
+            let left_dock_size = left_dock
+                .active_panel_size(window, cx)
+                .unwrap_or(Pixels(0.0));
+            if left_dock_size + size > self.bounds.right() {
+                size = self.bounds.right() - left_dock_size
+            }
+        });
+        self.right_dock.update(cx, |right_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Right)
+            {
+                right_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                right_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
+    }
+
+    fn resize_bottom_dock(&mut self, new_size: Pixels, window: &mut Window, cx: &mut App) {
+        let size = new_size.min(self.bounds.bottom() - RESIZE_HANDLE_SIZE - self.bounds.top());
+        self.bottom_dock.update(cx, |bottom_dock, cx| {
+            if WorkspaceSettings::get_global(cx)
+                .resize_all_panels_in_dock
+                .contains(&DockPosition::Bottom)
+            {
+                bottom_dock.resize_all_panels(Some(size), window, cx);
+            } else {
+                bottom_dock.resize_active_panel(Some(size), window, cx);
+            }
+        });
     }
 }
 
@@ -5805,6 +6100,63 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
+fn px_with_ui_font_fallback(val: u32, cx: &Context<Workspace>) -> Pixels {
+    if val == 0 {
+        ThemeSettings::get_global(cx).ui_font_size(cx)
+    } else {
+        px(val as f32)
+    }
+}
+
+fn adjust_active_dock_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(active_dock) = workspace
+        .all_docks()
+        .into_iter()
+        .find(|dock| dock.focus_handle(cx).contains_focused(window, cx))
+    else {
+        return;
+    };
+    let dock = active_dock.read(cx);
+    let Some(panel_size) = dock.active_panel_size(window, cx) else {
+        return;
+    };
+    let dock_pos = dock.position();
+    workspace.adjust_dock_size_by_px(panel_size, dock_pos, px, window, cx);
+}
+
+fn adjust_open_docks_size_by_px(
+    px: Pixels,
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let docks = workspace
+        .all_docks()
+        .into_iter()
+        .filter_map(|dock| {
+            if dock.read(cx).is_open() {
+                let dock = dock.read(cx);
+                let panel_size = dock.active_panel_size(window, cx)?;
+                let dock_pos = dock.position();
+                Some((panel_size, dock_pos, px))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    docks
+        .into_iter()
+        .for_each(|(panel_size, dock_pos, offset)| {
+            workspace.adjust_dock_size_by_px(panel_size, dock_pos, offset, window, cx);
+        });
+}
+
 impl Focusable for Workspace {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.active_pane.focus_handle(cx)
@@ -5962,28 +6314,25 @@ impl Render for Workspace {
                                                     Some(e.event.position);
                                                 match e.drag(cx).0 {
                                                     DockPosition::Left => {
-                                                        resize_left_dock(
+                                                        workspace.resize_left_dock(
                                                             e.event.position.x
                                                                 - workspace.bounds.left(),
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Right => {
-                                                        resize_right_dock(
+                                                        workspace.resize_right_dock(
                                                             workspace.bounds.right()
                                                                 - e.event.position.x,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
                                                     }
                                                     DockPosition::Bottom => {
-                                                        resize_bottom_dock(
+                                                        workspace.resize_bottom_dock(
                                                             workspace.bounds.bottom()
                                                                 - e.event.position.y,
-                                                            workspace,
                                                             window,
                                                             cx,
                                                         );
@@ -6269,73 +6618,6 @@ impl Render for Workspace {
     }
 }
 
-fn resize_bottom_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size =
-        new_size.min(workspace.bounds.bottom() - RESIZE_HANDLE_SIZE - workspace.bounds.top());
-    workspace.bottom_dock.update(cx, |bottom_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Bottom)
-        {
-            bottom_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            bottom_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_right_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let mut size = new_size.max(workspace.bounds.left() - RESIZE_HANDLE_SIZE);
-    workspace.left_dock.read_with(cx, |left_dock, cx| {
-        let left_dock_size = left_dock
-            .active_panel_size(window, cx)
-            .unwrap_or(Pixels(0.0));
-        if left_dock_size + size > workspace.bounds.right() {
-            size = workspace.bounds.right() - left_dock_size
-        }
-    });
-    workspace.right_dock.update(cx, |right_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Right)
-        {
-            right_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            right_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
-fn resize_left_dock(
-    new_size: Pixels,
-    workspace: &mut Workspace,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let size = new_size.min(workspace.bounds.right() - RESIZE_HANDLE_SIZE);
-
-    workspace.left_dock.update(cx, |left_dock, cx| {
-        if WorkspaceSettings::get_global(cx)
-            .resize_all_panels_in_dock
-            .contains(&DockPosition::Left)
-        {
-            left_dock.resize_all_panels(Some(size), window, cx);
-        } else {
-            left_dock.resize_active_panel(Some(size), window, cx);
-        }
-    });
-}
-
 impl WorkspaceStore {
     pub fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
         Self {
@@ -6418,6 +6700,10 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
+
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+        &self.workspaces
+    }
 }
 
 impl ViewId {
@@ -6497,14 +6783,25 @@ actions!(
         /// can be copied via "Copy link to section" in the context menu of the channel notes
         /// buffer. These URLs look like `https://zed.dev/channel/channel-name-CHANNEL_ID/notes`.
         OpenChannelNotes,
+        /// Mutes your microphone.
         Mute,
+        /// Deafens yourself (mute both microphone and speakers).
         Deafen,
+        /// Leaves the current call.
         LeaveCall,
+        /// Shares the current project with collaborators.
         ShareProject,
+        /// Shares your screen with collaborators.
         ScreenShare
     ]
 );
-actions!(zed, [OpenLog]);
+actions!(
+    zed,
+    [
+        /// Opens the Zed log file.
+        OpenLog
+    ]
+);
 
 async fn join_channel_internal(
     channel_id: ChannelId,
@@ -7081,6 +7378,17 @@ async fn open_ssh_project_inner(
         return Err(project_path_errors.pop().context("no paths given")?);
     }
 
+    if let Some(detach_session_task) = window
+        .update(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, async move |this, cx| {
+                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))
+            })
+        })
+        .ok()
+    {
+        detach_session_task.await.ok();
+    }
+
     cx.update_window(window.into(), |_, window, cx| {
         window.replace_root(cx, |window, cx| {
             telemetry::event!("SSH Project Opened");
@@ -7311,6 +7619,7 @@ fn parse_pixel_size_env_var(value: &str) -> Option<Size<Pixels>> {
     Some(size(px(width as f32), px(height as f32)))
 }
 
+/// Add client-side decorations (rounded corners, shadows, resize handling) when appropriate.
 pub fn client_side_decorations(
     element: impl IntoElement,
     window: &mut Window,
@@ -7319,8 +7628,9 @@ pub fn client_side_decorations(
     const BORDER_SIZE: Pixels = px(1.0);
     let decorations = window.window_decorations();
 
-    if matches!(decorations, Decorations::Client { .. }) {
-        window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW);
+    match decorations {
+        Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
+        Decorations::Server { .. } => window.set_client_inset(px(0.0)),
     }
 
     struct GlobalResizeEdge(ResizeEdge);
@@ -9191,11 +9501,12 @@ mod tests {
             );
         });
         let close_all_but_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },
+                None,
                 window,
                 cx,
             )

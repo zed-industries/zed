@@ -1,6 +1,6 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
-use editor::CompletionProvider;
+use editor::{CompletionProvider, SelectionEffects};
 use editor::{CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle, actions::Tab};
 use gpui::{
     Action, App, Bounds, Entity, EventEmitter, Focusable, PromptLevel, Subscription, Task,
@@ -37,7 +37,16 @@ pub fn init(cx: &mut App) {
 
 actions!(
     rules_library,
-    [NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule]
+    [
+        /// Creates a new rule in the rules library.
+        NewRule,
+        /// Deletes the selected rule.
+        DeleteRule,
+        /// Duplicates the selected rule.
+        DuplicateRule,
+        /// Toggles whether the selected rule is a default rule.
+        ToggleDefaultRule
+    ]
 );
 
 const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
@@ -602,7 +611,7 @@ impl RulesLibrary {
                 this.update_in(cx, |this, window, cx| match rule {
                     Ok(rule) => {
                         let title_editor = cx.new(|cx| {
-                            let mut editor = Editor::auto_width(window, cx);
+                            let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
@@ -895,10 +904,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 title_editor.update(cx, |title_editor, cx| {
-                    title_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    title_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}
@@ -920,10 +934,15 @@ impl RulesLibrary {
             }
             EditorEvent::Blurred => {
                 body_editor.update(cx, |body_editor, cx| {
-                    body_editor.change_selections(None, window, cx, |selections| {
-                        let cursor = selections.oldest_anchor().head();
-                        selections.select_anchor_ranges([cursor..cursor]);
-                    });
+                    body_editor.change_selections(
+                        SelectionEffects::no_scroll(),
+                        window,
+                        cx,
+                        |selections| {
+                            let cursor = selections.oldest_anchor().head();
+                            selections.select_anchor_ranges([cursor..cursor]);
+                        },
+                    );
                 });
             }
             _ => {}
@@ -962,6 +981,7 @@ impl RulesLibrary {
                                     tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
+                                    thinking_allowed: true,
                                 },
                                 cx,
                             )

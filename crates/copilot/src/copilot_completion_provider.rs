@@ -264,7 +264,8 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 mod tests {
     use super::*;
     use editor::{
-        Editor, ExcerptRange, MultiBuffer, test::editor_lsp_test_context::EditorLspTestContext,
+        Editor, ExcerptRange, MultiBuffer, SelectionEffects,
+        test::editor_lsp_test_context::EditorLspTestContext,
     };
     use fs::FakeFs;
     use futures::StreamExt;
@@ -478,7 +479,7 @@ mod tests {
         // Reset the editor to verify how suggestions behave when tabbing on leading indentation.
         cx.update_editor(|editor, window, cx| {
             editor.set_text("fn foo() {\n  \n}", window, cx);
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(1, 2)..Point::new(1, 2)])
             });
         });
@@ -767,7 +768,7 @@ mod tests {
         );
         _ = editor.update(cx, |editor, window, cx| {
             // Ensure copilot suggestions are shown for the first excerpt.
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(1, 5)..Point::new(1, 5)])
             });
             editor.next_edit_prediction(&Default::default(), window, cx);
@@ -793,7 +794,7 @@ mod tests {
         );
         _ = editor.update(cx, |editor, window, cx| {
             // Move to another excerpt, ensuring the suggestion gets cleared.
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
             });
             assert!(!editor.has_active_inline_completion());
@@ -1019,7 +1020,7 @@ mod tests {
             );
 
         _ = editor.update(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
             editor.refresh_inline_completion(true, false, window, cx);
@@ -1029,7 +1030,7 @@ mod tests {
         assert!(copilot_requests.try_next().is_err());
 
         _ = editor.update(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
             });
             editor.refresh_inline_completion(true, false, window, cx);

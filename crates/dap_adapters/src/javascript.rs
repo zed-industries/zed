@@ -1,11 +1,12 @@
 use adapters::latest_github_release;
 use anyhow::Context as _;
+use collections::HashMap;
 use dap::{StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::AsyncApp;
 use serde_json::Value;
-use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
+use std::{path::PathBuf, sync::OnceLock};
 use task::DebugRequest;
-use util::ResultExt;
+use util::{ResultExt, maybe};
 
 use crate::*;
 
@@ -53,25 +54,31 @@ impl JsDebugAdapter {
         user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        let adapter_path = if let Some(user_installed_path) = user_installed_path {
-            user_installed_path
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
-
-            let file_name_prefix = format!("{}_", self.name());
-
-            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-                file_name.starts_with(&file_name_prefix)
-            })
-            .await
-            .context("Couldn't find JavaScript dap directory")?
-        };
-
         let tcp_connection = task_definition.tcp_connection.clone().unwrap_or_default();
         let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
 
+        let mut envs = HashMap::default();
+
         let mut configuration = task_definition.config.clone();
         if let Some(configuration) = configuration.as_object_mut() {
+            maybe!({
+                configuration
+                    .get("type")
+                    .filter(|value| value == &"node-terminal")?;
+                let command = configuration.get("command")?.as_str()?.to_owned();
+                let mut args = shlex::split(&command)?.into_iter();
+                let program = args.next()?;
+                configuration.insert("runtimeExecutable".to_owned(), program.into());
+                configuration.insert(
+                    "runtimeArgs".to_owned(),
+                    args.map(Value::from).collect::<Vec<_>>().into(),
+                );
+                configuration.insert("console".to_owned(), "externalTerminal".into());
+                Some(())
+            });
+
+            configuration.entry("type").and_modify(normalize_task_type);
+
             if let Some(program) = configuration
                 .get("program")
                 .cloned()
@@ -92,11 +99,16 @@ impl JsDebugAdapter {
                 }
             }
 
+            if let Some(env) = configuration.get("env").cloned() {
+                if let Ok(env) = serde_json::from_value(env) {
+                    envs = env;
+                }
+            }
+
             configuration
                 .entry("cwd")
                 .or_insert(delegate.worktree_root_path().to_string_lossy().into());
 
-            configuration.entry("type").and_modify(normalize_task_type);
             configuration
                 .entry("console")
                 .or_insert("externalTerminal".into());
@@ -110,21 +122,27 @@ impl JsDebugAdapter {
                 .or_insert(true.into());
         }
 
+        let adapter_path = if let Some(user_installed_path) = user_installed_path {
+            user_installed_path
+        } else {
+            let adapter_path = paths::debug_adapters_dir().join(self.name().as_ref());
+
+            let file_name_prefix = format!("{}_", self.name());
+
+            util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                file_name.starts_with(&file_name_prefix)
+            })
+            .await
+            .context("Couldn't find JavaScript dap directory")?
+            .join(Self::ADAPTER_PATH)
+        };
+
         let arguments = if let Some(mut args) = user_args {
-            args.insert(
-                0,
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
-            );
+            args.insert(0, adapter_path.to_string_lossy().to_string());
             args
         } else {
             vec![
-                adapter_path
-                    .join(Self::ADAPTER_PATH)
-                    .to_string_lossy()
-                    .to_string(),
+                adapter_path.to_string_lossy().to_string(),
                 port.to_string(),
                 host.to_string(),
             ]
@@ -141,7 +159,7 @@ impl JsDebugAdapter {
             ),
             arguments,
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: HashMap::default(),
+            envs,
             connection: Some(adapters::TcpArguments {
                 host,
                 port,
@@ -228,7 +246,7 @@ impl DebugAdapter for JsDebugAdapter {
                             "properties": {
                                 "type": {
                                     "type": "string",
-                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge"],
+                                    "enum": ["pwa-node", "node", "chrome", "pwa-chrome", "msedge", "pwa-msedge", "node-terminal"],
                                     "description": "The type of debug session",
                                     "default": "pwa-node"
                                 },
@@ -264,6 +282,10 @@ impl DebugAdapter for JsDebugAdapter {
                                     "type": "boolean",
                                     "description": "Automatically stop program after launch",
                                     "default": false
+                                },
+                                "attachSimplePort": {
+                                    "type": "number",
+                                    "description": "If set, attaches to the process via the given port. This is generally no longer necessary for Node.js programs and loses the ability to debug child processes, but can be useful in more esoteric scenarios such as with Deno and Docker launches. If set to 0, a random port will be chosen and --inspect-brk added to the launch arguments automatically."
                                 },
                                 "runtimeExecutable": {
                                     "type": ["string", "null"],
@@ -358,10 +380,6 @@ impl DebugAdapter for JsDebugAdapter {
                                     }
                                 }
                             },
-                            "oneOf": [
-                                { "required": ["program"] },
-                                { "required": ["url"] }
-                            ]
                         }
                     ]
                 },
@@ -501,8 +519,20 @@ impl DebugAdapter for JsDebugAdapter {
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
-        let label = args.configuration.get("name")?.as_str()?;
+        let label = args
+            .configuration
+            .get("name")?
+            .as_str()
+            .filter(|name| !name.is_empty())?;
         Some(label.to_owned())
+    }
+
+    fn compact_child_session(&self) -> bool {
+        true
+    }
+
+    fn prefer_thread_name(&self) -> bool {
+        true
     }
 }
 
@@ -512,7 +542,7 @@ fn normalize_task_type(task_type: &mut Value) {
     };
 
     let new_name = match task_type_str {
-        "node" | "pwa-node" => "pwa-node",
+        "node" | "pwa-node" | "node-terminal" => "pwa-node",
         "chrome" | "pwa-chrome" => "pwa-chrome",
         "edge" | "msedge" | "pwa-edge" | "pwa-msedge" => "pwa-msedge",
         _ => task_type_str,

@@ -8,7 +8,7 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent,
+    Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -41,7 +41,15 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-actions!(git, [Diff, Add]);
+actions!(
+    git,
+    [
+        /// Shows the diff between the working directory and the index.
+        Diff,
+        /// Adds files to the git staging area.
+        Add
+    ]
+);
 
 pub struct ProjectDiff {
     project: Entity<Project>,
@@ -255,9 +263,14 @@ impl ProjectDiff {
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                    s.select_ranges([position..position]);
-                })
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::focused()),
+                    window,
+                    cx,
+                    |s| {
+                        s.select_ranges([position..position]);
+                    },
+                )
             });
         } else {
             self.pending_scroll = Some(path_key);
@@ -463,7 +476,7 @@ impl ProjectDiff {
 
         self.editor.update(cx, |editor, cx| {
             if was_empty {
-                editor.change_selections(None, window, cx, |selections| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
                     selections.select_ranges([0..0])
                 });

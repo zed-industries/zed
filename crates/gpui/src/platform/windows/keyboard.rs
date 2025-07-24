@@ -130,11 +130,13 @@ pub(crate) fn generate_key_char(
     let mut buffer = [0; 8];
     let len = unsafe { ToUnicode(vkey.0 as u32, scan_code, Some(&state), &mut buffer, 1 << 2) };
 
-    if len > 0 {
-        let candidate = String::from_utf16_lossy(&buffer[..len as usize]);
-        if !candidate.is_empty() && !candidate.chars().next().unwrap().is_control() {
-            return Some(candidate);
-        }
+    match len {
+        len if len > 0 => String::from_utf16(&buffer[..len as usize])
+            .ok()
+            .filter(|candidate| {
+                !candidate.is_empty() && !candidate.chars().next().unwrap().is_control()
+            }),
+        len if len < 0 => String::from_utf16(&buffer[..(-len as usize)]).ok(),
+        _ => None,
     }
-    None
 }
