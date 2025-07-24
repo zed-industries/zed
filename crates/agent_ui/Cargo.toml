@@ -68,6 +68,7 @@ picker.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 rope.workspace = true
 rules_library.workspace = true

@@ -16,6 +16,7 @@ actions!(
         Cancel,
         /// Confirms the selected menu item.
         Confirm,
+        SaveEdit,
         /// Performs secondary confirmation action.
         SecondaryConfirm,
         /// Selects the previous item in the menu.

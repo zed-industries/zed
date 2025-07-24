@@ -9,7 +9,6 @@ use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use serde::{Deserialize, Serialize};
 
-use crate::NewExternalAgentThread;
 use crate::agent_diff::AgentDiffThread;
 use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
 use crate::ui::NewThreadButton;
@@ -31,6 +30,7 @@ use crate::{
     thread_history::{HistoryEntryElement, ThreadHistory},
     ui::{AgentOnboardingModal, EndTrialUpsell},
 };
+use crate::{EditAssistantMessage, EditUserMessage, NewExternalAgentThread};
 use agent::{
     Thread, ThreadError, ThreadEvent, ThreadId, ThreadSummary, TokenUsageRatio,
     context_store::ContextStore,
@@ -3222,6 +3222,20 @@ impl Render for AgentPanel {
                 }
             }))
             .on_action(cx.listener(Self::toggle_burn_mode))
+            // .on_action(cx.listener(|this, _: &EditAssistantMessage, window, cx| {
+            //     if let ActiveView::Thread { thread, .. } = &this.active_view {
+            //         thread.update(cx, |this, cx| {
+            //             this.edit_last_message(Role::Assistant, window, cx);
+            //         });
+            //     }
+            // }))
+            // .on_action(cx.listener(|this, _: &EditUserMessage, window, cx| {
+            //     if let ActiveView::Thread { thread, .. } = &this.active_view {
+            //         thread.update(cx, |this, cx| {
+            //             this.edit_last_message(Role::User, window, cx);
+            //         });
+            //     }
+            // }))
             .child(self.render_toolbar(window, cx))
             .children(self.render_onboarding(window, cx))
             .children(self.render_trial_end_upsell(window, cx))

@@ -123,6 +123,8 @@ actions!(
         ContinueWithBurnMode,
         /// Toggles burn mode for faster responses.
         ToggleBurnMode,
+        EditAssistantMessage,
+        EditUserMessage,
     ]
 );
 

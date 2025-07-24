@@ -15,9 +15,11 @@ use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
 use audio::{Audio, Sound};
 use collections::{HashMap, HashSet};
-use editor::actions::{MoveUp, Paste};
+use editor::actions::{MoveToEnd, MoveUp, Paste};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorElement, EditorEvent, EditorStyle, MultiBuffer, SelectionEffects};
+use editor::{
+    Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, SelectionEffects,
+};
 use gpui::{
     AbsoluteLength, Animation, AnimationExt, AnyElement, App, ClickEvent, ClipboardEntry,
     ClipboardItem, DefiniteLength, EdgesRefinement, Empty, Entity, EventEmitter, Focusable, Hsla,
@@ -35,12 +37,13 @@ use markdown::{
     HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle, ParsedMarkdown, PathWithRange,
 };
 use project::{ProjectEntryId, ProjectItem as _};
+use regex::Regex;
 use rope::Point;
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use text::ToPoint;
 use theme::ThemeSettings;
@@ -57,6 +60,15 @@ use zed_llm_client::CompletionIntent;
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
 const RESPONSE_PADDING_X: Pixels = px(19.);
+const ASSISTANT_EDITOR_MAX_LINES: usize = 50;
+
+static LANG_PREFIX_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```([a-zA-Z0-9]{1,5}) ([^\n]*[/\\][^\n]*\.([a-zA-Z0-9]+)(?:#[^\n]*)?)")
+        .expect("Failed to create LANG_PREFIX_REGEX")
+});
+static PATH_CODE_BLOCK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"```(\S*[/\\]\S*\.(\w+)\S*)").expect("Failed to create PATH_CODE_BLOCK_REGEX")
+});
 
 pub struct ActiveThread {
     context_store: Entity<ContextStore>,
@@ -760,6 +772,8 @@ struct EditingMessageState {
     last_estimated_token_count: Option<u64>,
     _subscriptions: [Subscription; 2],
     _update_token_count_task: Option<Task<()>>,
+    is_agent_message: bool,
+    preprocessing_applied: bool,
 }
 
 impl ActiveThread {
@@ -914,6 +928,47 @@ impl ActiveThread {
         self.messages.remove(index);
         self.list_state.splice(index..index + 1, 0);
         self.rendered_messages_by_id.remove(id);
+    }
+
+    pub fn edit_last_message(&mut self, role: Role, window: &mut Window, cx: &mut Context<Self>) {
+        if self.editing_message_id().is_some() {
+            return;
+        }
+
+        // smit
+        let thread = self.thread().read(cx);
+        let messages: Vec<_> = thread.messages().collect();
+
+        let Some(message) = messages.iter().rev().find(|m| m.role == role) else {
+            return;
+        };
+
+        let (id, segments, creases) = (
+            message.id,
+            message.segments.clone(),
+            message.creases.clone(),
+        );
+
+        match role {
+            Role::Assistant => {
+                self.start_editing_assistant_message(id, &segments, &creases, None, window, cx)
+            }
+            Role::User => {
+                dbg!(&segments);
+
+                if let Some(message_text) = segments.first().and_then(|segment| match segment {
+                    MessageSegment::Text(message_text) => {
+                        Some(Into::<Arc<str>>::into(message_text.as_str()))
+                    }
+                    _ => None,
+                }) {
+                    dbg!(&message_text);
+
+                    self.start_editing_user_message(id, message_text, &creases, None, window, cx)
+                }
+            }
+            _ => {}
+        }
     }
 
     fn render_tool_use_markdown(
@@ -1360,11 +1415,12 @@ impl ActiveThread {
         }));
     }
 
-    fn start_editing_message(
+    fn start_editing_user_message(
         &mut self,
         message_id: MessageId,
         message_text: impl Into<Arc<str>>,
         message_creases: &[MessageCrease],
+        text_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1378,17 +1434,33 @@ impl ActiveThread {
             window,
             cx,
         );
+
         editor.update(cx, |editor, cx| {
             editor.set_text(message_text, window, cx);
             insert_message_creases(editor, message_creases, &self.context_store, window, cx);
             editor.focus_handle(cx).focus(window);
-            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+
+            if let Some(offset) = text_offset {
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let text = buffer_snapshot.text();
+                let clamped_offset = offset.min(text.len());
+                let point = buffer_snapshot.offset_to_point(clamped_offset);
+                let anchor = buffer_snapshot.anchor_before(point);
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_ranges([anchor..anchor]),
+                );
+            } else {
+                editor.move_to_end(&MoveToEnd, window, cx);
+            }
         });
-        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| match event {
-            EditorEvent::BufferEdited => {
+
+        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| {
+            if matches!(event, EditorEvent::BufferEdited) {
                 this.update_editing_message_token_count(true, cx);
             }
-            _ => {}
         });
 
         let context_picker_menu_handle = PopoverMenuHandle::default();
@@ -1418,10 +1490,230 @@ impl ActiveThread {
                 last_estimated_token_count: None,
                 _subscriptions: [buffer_edited_subscription, context_strip_subscription],
                 _update_token_count_task: None,
+                is_agent_message: false,
+                preprocessing_applied: false,
             },
         ));
         self.update_editing_message_token_count(false, cx);
+
+        if let Some(message_index) = self.messages.iter().position(|id| *id == message_id) {
+            self.list_state.scroll_to_reveal_item(message_index);
+        }
+
         cx.notify();
+    }
+
+    fn start_editing_assistant_message_at_segment(
+        &mut self,
+        message_id: MessageId,
+        segment_index: usize,
+        segment_offset: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let thread = self.thread.read(cx);
+        let Some(message) = thread.message(message_id) else {
+            return;
+        };
+        let message_segments = message.segments.clone();
+        let message_creases = message.creases.clone();
+
+        let total_offset = segment_offset
+            + message_segments
+                .iter()
+                .filter(|s| !matches!(s, MessageSegment::RedactedThinking(_)))
+                .take(segment_index)
+                .map(|s| match s {
+                    MessageSegment::Text(text) | MessageSegment::Thinking { text, .. } => {
+                        text.len() + 2 // \n\n
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>();
+
+        self.start_editing_assistant_message(
+            message_id,
+            &message_segments,
+            &message_creases,
+            Some(total_offset),
+            window,
+            cx,
+        );
+    }
+
+    pub fn start_editing_assistant_message(
+        &mut self,
+        message_id: MessageId,
+        message_segments: &[MessageSegment],
+        message_creases: &[MessageCrease],
+        text_offset: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let message_text = message_segments
+            .iter()
+            .filter_map(|segment| match segment {
+                MessageSegment::Text(text) => Some(text.clone()),
+                MessageSegment::Thinking { text, .. } => {
+                    Some(format!("<think>\n{}\n</think>", text))
+                }
+                MessageSegment::RedactedThinking(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+
+        let preprocessed_text = PATH_CODE_BLOCK_REGEX
+            .replace_all(&message_text, "```$2 $1")
+            .to_string();
+        let preprocessing_applied = preprocessed_text != message_text;
+
+        let editor = cx.new(|cx| {
+            let buffer =
+                cx.new(|cx| MultiBuffer::singleton(cx.new(|cx| Buffer::local("", cx)), cx));
+            let mut e = Editor::new(
+                editor::EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(ASSISTANT_EDITOR_MAX_LINES),
+                },
+                buffer,
+                None,
+                window,
+                cx,
+            );
+            e.set_show_line_numbers(EditorSettings::get_global(cx).gutter.line_numbers, cx);
+            e.set_show_indent_guides(true, cx);
+            e.set_soft_wrap();
+            e.set_use_modal_editing(true);
+            e
+        });
+
+        editor.update(cx, |e, cx| {
+            e.set_text(message_text, window, cx);
+            insert_message_creases(e, message_creases, &self.context_store, window, cx);
+            e.focus_handle(cx).focus(window);
+        });
+
+        if let Some(offset) = text_offset {
+            let point = editor.update(cx, |editor, cx| {
+                let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+                let text = buffer_snapshot.text();
+                let clamped_offset = offset.min(text.len());
+                buffer_snapshot.offset_to_point(clamped_offset)
+            });
+            Self::focus_editor_and_center_on_point(&editor, point, window, cx);
+        } else {
+            let point = editor.update(cx, |editor, cx| {
+                editor.move_to_end(&MoveToEnd, window, cx);
+                editor.selections.newest(cx).head()
+            });
+            Self::focus_editor_and_center_on_point(&editor, point, window, cx);
+        }
+
+        if preprocessing_applied {
+            editor.update(cx, |editor, cx| {
+                let current_selection: text::Selection<usize> =
+                    editor.selections.newest(cx).clone();
+                editor.set_text(preprocessed_text, window, cx);
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([current_selection.range()])
+                });
+            });
+        }
+        let (reg, ed) = (self.language_registry.clone(), editor.clone());
+        cx.spawn(async move |_, cx| {
+            if let Ok(md) = reg.language_for_name("Markdown").await {
+                ed.update(cx, |e, cx| {
+                    e.buffer().update(cx, |buf, cx| {
+                        for b in buf.all_buffers() {
+                            b.update(cx, |b, cx| {
+                                b.set_language_registry(reg.clone());
+                                b.set_language(Some(md.clone()), cx);
+                            });
+                        }
+                    })
+                })
+                .ok();
+            }
+        })
+        .detach();
+
+        let buffer_edited_subscription = cx.subscribe(&editor, |this, _, event, cx| {
+            if matches!(event, EditorEvent::BufferEdited) {
+                this.update_editing_message_token_count(true, cx);
+            }
+        });
+
+        let mut state =
+            self.create_common_editing_state(message_id, editor.clone(), true, window, cx);
+        state.preprocessing_applied = preprocessing_applied;
+        state._subscriptions[0] = buffer_edited_subscription;
+
+        self.editing_message = Some((message_id, state));
+        self.update_editing_message_token_count(false, cx);
+        cx.notify();
+    }
+
+    fn create_common_editing_state(
+        &mut self,
+        _message_id: MessageId,
+        editor: Entity<Editor>,
+        is_assistant_message: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> EditingMessageState {
+        let handle = PopoverMenuHandle::default();
+        let context_strip = cx.new(|cx| {
+            ContextStrip::new(
+                self.context_store.clone(),
+                self.workspace.clone(),
+                Some(self.thread_store.downgrade()),
+                Some(self.text_thread_store.downgrade()),
+                handle.clone(),
+                SuggestContextKind::File,
+                ModelUsageContext::Thread(self.thread.clone()),
+                window,
+                cx,
+            )
+        });
+
+        let context_strip_subscription =
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
+
+        let editor_weak = editor.downgrade();
+        let list_state_clone = self.list_state.clone();
+        let editor_subscription = cx.subscribe_in(
+            &editor,
+            window,
+            move |this: &mut ActiveThread, _editor, event: &EditorEvent, _window, cx| {
+                if let EditorEvent::ScrollPositionChanged { .. } = event {
+                    if let Some((_, editing_state)) = &this.editing_message {
+                        if editing_state.is_agent_message {
+                            if let Some(editor) = editor_weak.upgrade() {
+                                // Sync panel scroll to editor scroll
+                                let scroll_anchor = editor.read(cx).scroll_manager.anchor();
+                                let editor_y = scroll_anchor.offset.y;
+                                list_state_clone.scroll_to(ListOffset {
+                                    item_ix: 0,
+                                    offset_in_item: px(editor_y),
+                                });
+                                cx.notify();
+                            }
+                        }
+                    }
+                }
+            },
+        );
+
+        EditingMessageState {
+            editor,
+            is_agent_message: is_assistant_message,
+            context_strip,
+            context_picker_menu_handle: handle,
+            last_estimated_token_count: None,
+            _subscriptions: [editor_subscription, context_strip_subscription],
+            _update_token_count_task: None,
+            preprocessing_applied: false,
+        }
     }
 
     fn handle_context_strip_event(
@@ -1442,6 +1734,42 @@ impl ActiveThread {
                 ContextStripEvent::BlurredUp => {}
             }
         }
+    }
+
+    fn focus_editor_and_center_on_point(
+        editor: &Entity<Editor>,
+        point: Point,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        editor.update(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let anchor = snapshot.anchor_before(point);
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_ranges([anchor..anchor]);
+            });
+        });
+
+        // Autoscroll after text is set
+        let editor_handle = editor.downgrade();
+        cx.on_next_frame(window, move |_, window, cx| {
+            if window.is_window_active() {
+                if let Some(editor) = editor_handle.upgrade() {
+                    editor.update(cx, |editor, cx| {
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        let anchor = snapshot.anchor_before(point);
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| {
+                                s.select_ranges([anchor..anchor]);
+                            },
+                        );
+                    });
+                }
+            }
+        });
     }
 
     fn update_editing_message_token_count(&mut self, debounce: bool, cx: &mut Context<Self>) {
@@ -1616,6 +1944,14 @@ impl ActiveThread {
 
         let edited_text = state.editor.read(cx).text(cx);
 
+        let restored_text = if state.preprocessing_applied {
+            LANG_PREFIX_REGEX
+                .replace_all(&edited_text, "```$2")
+                .to_string()
+        } else {
+            edited_text
+        };
+
         let creases = state.editor.update(cx, extract_message_creases);
 
         let new_context = self
@@ -1634,24 +1970,31 @@ impl ActiveThread {
             Some(cx.spawn_in(window, async move |this, cx| {
                 let (context, checkpoint) =
                     futures::future::join(load_context_task, checkpoint).await;
-                let _ = this
-                    .update_in(cx, |this, window, cx| {
-                        this.thread.update(cx, |thread, cx| {
-                            thread.edit_message(
-                                message_id,
-                                Role::User,
-                                vec![MessageSegment::Text(edited_text)],
-                                creases,
-                                Some(context.loaded_context),
-                                checkpoint.ok(),
-                                cx,
-                            );
-                            for message_id in this.messages_after(message_id) {
-                                thread.delete_message(*message_id, cx);
-                            }
-                        });
+                this.update_in(cx, |this, window, cx| {
+                    let original_role = this
+                        .thread
+                        .read(cx)
+                        .message(message_id)
+                        .map(|m| m.role)
+                        .unwrap_or(Role::User);
 
-                        this.thread.update(cx, |thread, cx| {
+                    this.thread.update(cx, |thread, cx| {
+                        let segments = vec![MessageSegment::Text(restored_text)];
+
+                        thread.edit_message(
+                            message_id,
+                            original_role,
+                            segments,
+                            creases,
+                            Some(context.loaded_context),
+                            checkpoint.ok(),
+                            cx,
+                        );
+                        if original_role == Role::User {
+                            let messages_to_delete = this.messages_after(message_id).to_vec();
+                            for msg_id in messages_to_delete {
+                                thread.delete_message(msg_id, cx);
+                            }
                             thread.advance_prompt_id();
                             thread.cancel_last_completion(Some(window.window_handle()), cx);
                             thread.send_to_model(
@@ -1660,11 +2003,12 @@ impl ActiveThread {
                                 Some(window.window_handle()),
                                 cx,
                             );
-                        });
-                        this._load_edited_message_context_task = None;
-                        cx.notify();
-                    })
-                    .log_err();
+                        }
+                    });
+                    this._load_edited_message_context_task = None;
+                    cx.notify();
+                })
+                .log_err();
             }));
 
         if let Some(workspace) = self.workspace.upgrade() {
@@ -1684,8 +2028,68 @@ impl ActiveThread {
             .unwrap_or(&[])
     }
 
+    fn save_editing_message(
+        &mut self,
+        _: &menu::SaveEdit,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((message_id, state)) = self.editing_message.take() else {
+            return;
+        };
+
+        let edited_text = state.editor.read(cx).text(cx);
+
+        let new_context = self
+            .context_store
+            .read(cx)
+            .new_context_for_thread(self.thread.read(cx), Some(message_id));
+
+        let project = self.thread.read(cx).project().clone();
+        let prompt_store = self.thread_store.read(cx).prompt_store().clone();
+
+        let git_store = project.read(cx).git_store().clone();
+        let checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
+
+        let creases = state.editor.update(cx, extract_message_creases);
+
+        let load_context_task = context::load_context(new_context, &project, &prompt_store, cx);
+        self._load_edited_message_context_task =
+            Some(cx.spawn_in(window, async move |this, cx| {
+                let (context, checkpoint) =
+                    futures::future::join(load_context_task, checkpoint).await;
+                this.update_in(cx, |this, _window, cx| {
+                    let original_role = this
+                        .thread
+                        .read(cx)
+                        .message(message_id)
+                        .map(|m| m.role)
+                        .unwrap_or(Role::User);
+
+                    this.thread.update(cx, |thread, cx| {
+                        thread.edit_message(
+                            message_id,
+                            original_role,
+                            vec![MessageSegment::Text(edited_text)],
+                            creases,
+                            Some(context.loaded_context),
+                            checkpoint.ok(),
+                            cx,
+                        );
+                    });
+                    this._load_edited_message_context_task = None;
+                    cx.notify();
+                })
+                .log_err();
+            }));
+    }
+
     fn handle_cancel_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_editing_message(&menu::Cancel, window, cx);
+    }
+
+    fn handle_save_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.save_editing_message(&menu::SaveEdit, window, cx);
     }
 
     fn handle_regenerate_click(
@@ -1804,11 +2208,12 @@ impl ActiveThread {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
+        let editor_settings = editor::EditorSettings::get_global(cx);
+
         let font_size = TextSize::Small
             .rems(cx)
             .to_pixels(settings.agent_font_size(cx));
         let line_height = font_size * 1.75;
-
         let colors = cx.theme().colors();
 
         let text_style = TextStyle {
@@ -1821,29 +2226,69 @@ impl ActiveThread {
             ..Default::default()
         };
 
+        let editor_style = EditorStyle {
+            background: colors.editor_background,
+            local_player: cx.theme().players().local(),
+            text: text_style,
+            syntax: cx.theme().syntax().clone(),
+            ..Default::default()
+        };
+
+        let editor_element = div()
+            .pt(px(-3.))
+            .when(
+                state.is_agent_message && !editor_settings.gutter.line_numbers,
+                |d| d.px_neg_0p5(),
+            )
+            .w_full()
+            .child(EditorElement::new(&state.editor, editor_style))
+            .into_any_element();
+
         v_flex()
             .key_context("EditMessageEditor")
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
-            .on_action(cx.listener(Self::cancel_editing_message))
-            .on_action(cx.listener(Self::confirm_editing_message))
             .capture_action(cx.listener(Self::paste))
-            .min_h_6()
             .w_full()
-            .flex_grow()
-            .gap_2()
-            .child(state.context_strip.clone())
-            .child(div().pt(px(-3.)).px_neg_0p5().child(EditorElement::new(
-                &state.editor,
-                EditorStyle {
-                    background: colors.editor_background,
-                    local_player: cx.theme().players().local(),
-                    text: text_style,
-                    syntax: cx.theme().syntax().clone(),
-                    ..Default::default()
-                },
-            )))
+            .gap_1()
+            .when(state.is_agent_message, |container| {
+                container
+                    .capture_action(cx.listener(Self::cancel_editing_message))
+                    .capture_action(cx.listener(Self::save_editing_message))
+            })
+            .when(!state.is_agent_message, |container| {
+                container
+                    .on_action(cx.listener(Self::cancel_editing_message))
+                    .on_action(cx.listener(Self::confirm_editing_message))
+                    .on_action(cx.listener(Self::save_editing_message))
+                    .child(state.context_strip.clone())
+            })
+            .child(editor_element)
+
+        // v_flex()
+        //     .key_context("EditMessageEditor")
+        //     .on_action(cx.listener(Self::toggle_context_picker))
+        //     .on_action(cx.listener(Self::remove_all_context))
+        //     .on_action(cx.listener(Self::move_up))
+        //     .on_action(cx.listener(Self::cancel_editing_message))
+        //     .on_action(cx.listener(Self::confirm_editing_message))
+        //     .capture_action(cx.listener(Self::paste))
+        //     .min_h_6()
+        //     .w_full()
+        //     .flex_grow()
+        //     .gap_2()
+        //     .child(state.context_strip.clone())
+        //     .child(div().pt(px(-3.)).px_neg_0p5().child(EditorElement::new(
+        //         &state.editor,
+        //         EditorStyle {
+        //             background: colors.editor_background,
+        //             local_player: cx.theme().players().local(),
+        //             text: text_style,
+        //             syntax: cx.theme().syntax().clone(),
+        //             ..Default::default()
+        //         },
+        //     )))
     }
 
     fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -2049,7 +2494,7 @@ impl ActiveThread {
                 self.render_edit_message_editor(state, window, cx)
                     .into_any_element()
             } else {
-                v_flex()
+                let base_content_element = v_flex()
                     .w_full()
                     .gap_1()
                     .when(!added_context.is_empty(), |parent| {
@@ -2071,16 +2516,28 @@ impl ActiveThread {
                         ))
                     })
                     .when(!message_is_empty, |parent| {
-                        parent.child(div().pt_0p5().min_h_6().child(self.render_message_content(
-                            message_id,
-                            rendered_message,
-                            has_tool_uses,
-                            workspace.clone(),
-                            window,
-                            cx,
-                        )))
-                    })
-                    .into_any_element()
+                        parent.child(
+                            div().pt_0p5().min_h_6().child(
+                                self.render_message_content(
+                                    message_id,
+                                    rendered_message,
+                                    has_tool_uses,
+                                    workspace.clone(),
+                                    window,
+                                    cx,
+                                )
+                                .into_any_element(),
+                            ),
+                        )
+                    });
+
+                if message.role == Role::Assistant && editing_message_state.is_none() {
+                    base_content_element
+                        .id(("assistant_content_wrapper", ix))
+                        .into_any_element()
+                } else {
+                    base_content_element.into_any_element()
+                }
             }
         });
 
@@ -2164,6 +2621,29 @@ impl ActiveThread {
                                                             )
                                                             .child(
                                                                 IconButton::new(
+                                                                    "save-edit-message",
+                                                                    IconName::Save,
+                                                                )
+                                                                .disabled(state.editor.read(cx).is_empty(cx))
+                                                                .shape(ui::IconButtonShape::Square)
+                                                                .icon_color(Color::Muted)
+                                                                .icon_size(IconSize::Small)
+                                                                // .tooltip({
+                                                                //     let focus_handle = focus_handle.clone();
+                                                                //     move |window, cx| {
+                                                                //         Tooltip::for_action_in(
+                                                                //             "Only Save",
+                                                                //             &menu::SaveEdit,
+                                                                //             &focus_handle,
+                                                                //             window,
+                                                                //             cx,
+                                                                //         )
+                                                                //     }
+                                                                // })
+                                                                .on_click(cx.listener(Self::handle_save_click)),
+                                                            )
+                                                            .child(
+                                                                IconButton::new(
                                                                     "confirm-edit-message",
                                                                     IconName::Return,
                                                                 )
@@ -2191,33 +2671,34 @@ impl ActiveThread {
                                             )
                                         }),
                                 )
-                                .on_click(cx.listener({
-                                    let message_creases = message.creases.clone();
-                                    move |this, _, window, cx| {
-                                        if let Some(message_text) =
-                                            this.thread.read(cx).message(message_id).and_then(|message| {
-                                                message.segments.first().and_then(|segment| {
-                                                    match segment {
-                                                        MessageSegment::Text(message_text) => {
-                                                            Some(Into::<Arc<str>>::into(message_text.as_str()))
-                                                        }
-                                                        _ => {
-                                                            None
-                                                        }
-                                                    }
-                                                })
-                                            })
-                                        {
-                                            this.start_editing_message(
-                                                message_id,
-                                                message_text,
-                                                &message_creases,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    }
-                                })),
+                                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                                // .on_click(cx.listener({
+                                //     let message_creases = message.creases.clone();
+                                //     move |this, _, window, cx| {
+                                //         if let Some(message_text) =
+                                //             this.thread.read(cx).message(message_id).and_then(|message| {
+                                //                 message.segments.first().and_then(|segment| {
+                                //                     match segment {
+                                //                         MessageSegment::Text(message_text) => {
+                                //                             Some(Into::<Arc<str>>::into(message_text.as_str()))
+                                //                         }
+                                //                         _ => {
+                                //                             None
+                                //                         }
+                                //                     }
+                                //                 })
+                                //             })
+                                //         {
+                                //             this.start_editing_message(
+                                //                 message_id,
+                                //                 message_text,
+                                //                 &message_creases,
+                                //                 window,
+                                //                 cx,
+                                //             );
+                                //         }
+                                //     }
+                                // })),
                         )
                 }
                 Role::Assistant => v_flex()
@@ -2229,6 +2710,53 @@ impl ActiveThread {
                         parent.children(tool_uses.into_iter().map(|tool_use| {
                             self.render_tool_use(tool_use, window, workspace.clone(), cx)
                         }))
+                    })
+                    .when_some(editing_message_state, |this, state| {
+                        let focus_handle = state.editor.focus_handle(cx);
+                        this.child(
+                            h_flex()
+                                .justify_end()
+                                .gap_0p5()
+                                .child(
+                                    IconButton::new("cancel-edit-message", IconName::Close)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .icon_color(Color::Error)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Cancel Edit",
+                                                    &menu::Cancel,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(Self::handle_cancel_click)),
+                                )
+                                .child(
+                                    IconButton::new("save-edit-message", IconName::Save)
+                                        .disabled(state.editor.read(cx).is_empty(cx))
+                                        .shape(ui::IconButtonShape::Square)
+                                        .icon_color(Color::Muted)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Save Edit",
+                                                    &menu::SaveEdit,
+                                                    &focus_handle,
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .on_click(cx.listener(Self::handle_save_click)),
+                                ),
+                        )
                     }),
                 Role::System => {
                     let colors = cx.theme().colors();
@@ -2236,7 +2764,54 @@ impl ActiveThread {
                         v_flex()
                             .bg(colors.editor_background)
                             .rounded_sm()
-                            .child(div().p_4().children(message_content)),
+                            .child(div().p_4().children(message_content))
+                            .when_some(editing_message_state, |this, state| {
+                                let focus_handle = state.editor.focus_handle(cx);
+                                this.child(
+                                    h_flex()
+                                        .justify_end()
+                                        .gap_0p5()
+                                        .child(
+                                            IconButton::new("cancel-edit-message", IconName::Close)
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Error)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Cancel Edit",
+                                                            &menu::Cancel,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .on_click(cx.listener(Self::handle_cancel_click)),
+                                        )
+                                        .child(
+                                            IconButton::new("save-edit-message", IconName::Save)
+                                                .disabled(state.editor.read(cx).is_empty(cx))
+                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_color(Color::Accent)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip({
+                                                    let focus_handle = focus_handle.clone();
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Save Edit",
+                                                            &menu::SaveEdit,
+                                                            &focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .on_click(cx.listener(Self::handle_save_click)),
+                                        ),
+                                )
+                            }),
                     )
                 }
             }
@@ -2553,14 +3128,71 @@ impl ActiveThread {
                                 )
                             };
 
-                            div()
-                                .child(markdown_element.on_url_click({
-                                    let workspace = self.workspace.clone();
-                                    move |text, window, cx| {
-                                        open_markdown_link(text, workspace.clone(), window, cx);
-                                    }
-                                }))
-                                .into_any_element()
+                            let markdown_element = markdown_element.on_url_click({
+                                let workspace = self.workspace.clone();
+                                move |text, window, cx| {
+                                    open_markdown_link(text, workspace.clone(), window, cx);
+                                }
+                            });
+
+                            if is_assistant_message {
+                                let active_thread = cx.entity();
+                                let markdown_element =
+                                    markdown_element.on_click(move |text_offset, window, cx| {
+                                        if window.modifiers().secondary() {
+                                            active_thread.update(cx, |this, cx| {
+                                                this.start_editing_assistant_message_at_segment(
+                                                    message_id,
+                                                    index,
+                                                    text_offset,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    });
+
+                                div()
+                                    .id(("assistant-message-text", message_id.as_usize()))
+                                    .child(markdown_element)
+                                    .into_any_element()
+                            } else {
+                                let active_thread = cx.entity();
+                                let markdown_element =
+                                    markdown_element.on_click(move |text_offset, window, cx| {
+                                        let message_data = active_thread
+                                            .read(cx)
+                                            .thread
+                                            .read(cx)
+                                            .message(message_id)
+                                            .map(|m| (m.segments.clone(), m.creases.clone()));
+
+                                        if let Some((segments, creases)) = message_data {
+                                            if let Some(message_text) =
+                                                segments.first().and_then(|segment| match segment {
+                                                    MessageSegment::Text(message_text) => {
+                                                        Some(Into::<Arc<str>>::into(
+                                                            message_text.as_str(),
+                                                        ))
+                                                    }
+                                                    _ => None,
+                                                })
+                                            {
+                                                active_thread.update(cx, |this, inner_cx| {
+                                                    this.start_editing_user_message(
+                                                        message_id,
+                                                        message_text,
+                                                        &creases,
+                                                        Some(text_offset),
+                                                        window,
+                                                        inner_cx,
+                                                    );
+                                                });
+                                            }
+                                        }
+                                    });
+                                div().child(markdown_element).into_any_element()
+                            }
                         }
                     },
                 ),
@@ -3504,6 +4136,12 @@ impl ActiveThread {
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        if let Some((_, state)) = &self.editing_message {
+            if state.is_agent_message {
+                return None;
+            }
+        }
+
         if !self.show_scrollbar && !self.scrollbar_state.is_dragging() {
             return None;
         }
@@ -3923,10 +4561,11 @@ mod tests {
 
         active_thread.update_in(cx, |active_thread, window, cx| {
             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
+                active_thread.start_editing_user_message(
                     message.id,
                     message_text,
                     message.creases.as_slice(),
+                    None,
                     window,
                     cx,
                 );
@@ -3946,10 +4585,11 @@ mod tests {
         let message = thread.update(cx, |thread, _| thread.message(message.id).cloned().unwrap());
         active_thread.update_in(cx, |active_thread, window, cx| {
             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
+                active_thread.start_editing_user_message(
                     message.id,
                     message_text,
                     message.creases.as_slice(),
+                    None,
                     window,
                     cx,
                 );
@@ -4036,10 +4676,11 @@ mod tests {
         // Edit the message while the completion is still running
         active_thread.update_in(cx, |active_thread, window, cx| {
             if let Some(message_text) = message.segments.first().and_then(MessageSegment::text) {
-                active_thread.start_editing_message(
+                active_thread.start_editing_user_message(
                     message.id,
                     message_text,
                     message.creases.as_slice(),
+                    None,
                     window,
                     cx,
                 );
@@ -4153,7 +4794,7 @@ mod tests {
 
         let active_thread = cx.update(|window, cx| {
             cx.new(|cx| {
-                ActiveThread::new(
+                let mut active_thread = ActiveThread::new(
                     thread.clone(),
                     thread_store.clone(),
                     text_thread_store,
@@ -4162,7 +4803,12 @@ mod tests {
                     workspace.downgrade(),
                     window,
                     cx,
-                )
+                );
+                #[cfg(test)]
+                {
+                    active_thread.skip_save_when_testing = true;
+                }
+                active_thread
             })
         });
 
