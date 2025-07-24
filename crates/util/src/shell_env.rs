@@ -23,7 +23,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 
     let (fd_num, redir) = match shell_name {
         Some("rc") => (FD_STDIN, format!(">[1={}]", FD_STDIN)), // `[1=0]`
-        Some("nu") => (FD_STDOUT, "".to_string()),
+        Some("nu") | Some("tcsh") => (FD_STDOUT, "".to_string()),
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
     command.stdin(Stdio::null());
