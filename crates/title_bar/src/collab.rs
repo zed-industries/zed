@@ -11,8 +11,8 @@ use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{
-    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, Facepile,
-    PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
+    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
+    Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
 use util::maybe;
 use workspace::notifications::DetachAndPromptErr;
@@ -357,7 +357,7 @@ impl TitleBar {
                                 .detach_and_log_err(cx);
                         }),
                 )
-                .child(Divider::vertical())
+                .child(Divider::vertical().color(DividerColor::Border))
                 .into_any_element(),
         );
 
