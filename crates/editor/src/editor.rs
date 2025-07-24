@@ -21402,6 +21402,43 @@ fn rewrap_indent_and_prefix_for_row(
         let is_within_comment_override = buffer
             .language_scope_at(indent_end)
             .is_some_and(|scope| scope.override_name() == Some("comment"));
+
+        if selection.is_empty() {
+            if let Some((_, range)) = buffer.syntax_ancestor(selection.range()) {
+                let text_range = match range {
+                    MultiOrSingleBufferOffsetRange::Multi(r) => Some(r),
+                    MultiOrSingleBufferOffsetRange::Single(_) => None,
+                };
+                if let Some(range) = text_range {
+                    let comment_start_point = buffer.offset_to_point(range.start);
+                    if let Some((snapshot, line_range)) =
+                        buffer.buffer_line_for_row(MultiBufferRow(comment_start_point.row))
+                    {
+                        let num_of_whitespaces = snapshot
+                            .chars_for_range(line_range.clone())
+                            .take_while(|c| c.is_whitespace())
+                            .count();
+
+                        // for more on this, look at:
+                        // https://github.com/zed-industries/zed/blob/69ba5e37387b67cdc9630b203ab205a5ee8ab3de/crates/editor/src/editor.rs#L4463
+
+                        // use all line_comment, block_comment and documentation_comment
+                        // to get max_len_of_delimiter
+                        let max_len_of_delimiter = 0;
+
+                        let comment_candidate = snapshot
+                            .chars_for_range(range.clone())
+                            .skip(num_of_whitespaces)
+                            .take(max_len_of_delimiter)
+                            .collect::<String>();
+
+                        // comment_candidate can be //, /*, /**
+                        // add match statement, do your thing
+                    }
+                }
+            }
+        }
+
         let comment_delimiters = if is_within_comment_override {
             // we are within a comment syntax node, but we don't
             // yet know what kind of comment: block, doc or line
