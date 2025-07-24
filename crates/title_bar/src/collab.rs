@@ -363,38 +363,31 @@ impl TitleBar {
 
         if is_local && can_share_projects && !is_connecting_to_project {
             children.push(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new(
-                            "toggle_sharing",
-                            if is_shared { "Unshare" } else { "Share" },
-                        )
-                        .tooltip(Tooltip::text(if is_shared {
-                            "Stop sharing project with call participants"
-                        } else {
-                            "Share project with call participants"
-                        }))
-                        .style(ButtonStyle::Subtle)
-                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                        .toggle_state(is_shared)
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::ShareProject)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                if is_shared {
-                                    this.unshare_project(window, cx);
-                                } else {
-                                    this.share_project(cx);
-                                }
-                            },
-                        )),
-                    )
-                    .child(Divider::vertical())
-                    .into_any_element(),
+                Button::new(
+                    "toggle_sharing",
+                    if is_shared { "Unshare" } else { "Share" },
+                )
+                .tooltip(Tooltip::text(if is_shared {
+                    "Stop sharing project with call participants"
+                } else {
+                    "Share project with call participants"
+                }))
+                .style(ButtonStyle::Subtle)
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                .toggle_state(is_shared)
+                .label_size(LabelSize::Small)
+                .icon(IconName::ShareProject)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    if is_shared {
+                        this.unshare_project(window, cx);
+                    } else {
+                        this.share_project(cx);
+                    }
+                }))
+                .into_any_element(),
             );
         }
 
