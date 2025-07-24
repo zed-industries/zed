@@ -46,6 +46,7 @@ use rpc::{
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
+use settings::WorktreeId;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, VecDeque},
@@ -1082,9 +1083,10 @@ impl GitStore {
         };
 
         match event {
-            WorktreeStoreEvent::WorktreeUpdatedEntries(_, updated_entries) => {
+            WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, updated_entries) => {
                 let paths_by_git_repo =
-                    self.process_updated_entries(updated_entries, cx);
+                    self.process_updated_entries(*worktree_id, updated_entries, cx);
+
                 for (repo, paths) in paths_by_git_repo {
                     repo.update(cx, |repo, cx| {
                         repo.paths_changed(
@@ -2185,12 +2187,21 @@ impl GitStore {
 
     fn process_updated_entries(
         &self,
+        worktree_id: WorktreeId,
         updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) -> HashMap<Entity<Repository>, Vec<RepoPath>> {
         let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
-        let mut updated_copy: Vec<_> = updated_entries.iter().map(|(path, _, _)| path.clone()).collect();
+        let mut updated_copy: Vec<_> = updated_entries
+            .iter()
+            .map(|(path, _, _)| path.clone())
+            .collect();
         updated_copy.sort_by(|lhs, rhs| lhs.cmp(&rhs));
+        let worktree = self.worktree_store.read(cx);
+        let updated_copy = updated_copy
+            .into_iter()
+            .filter_map(|path| worktree.absolutize(&ProjectPath { worktree_id, path }, cx))
+            .collect::<Vec<_>>();
 
         let mut path_was_used = vec![false; updated_copy.len()];
         let mut repo_paths = self
@@ -2200,25 +2211,25 @@ impl GitStore {
             .collect::<Vec<_>>();
         repo_paths.sort_by(|lhs, rhs| rhs.0.cmp(&lhs.0));
 
-
         for (repo_path, repo) in repo_paths {
             // Find all repository paths that belong to this repo
-            let mut ix =
-                updated_copy.partition_point(|path| path.starts_with(repo_path.as_ref()));
+            let mut ix = updated_copy.partition_point(|path| *path < repo_path.as_ref());
             if ix == updated_copy.len() {
                 continue;
             };
-            let paths = paths_by_git_repo
-                .entry(repo).or_default();
-            while let Some(path) = updated_copy.get(ix) && path_was_used[ix] == false
-                && let Some(repo_path) = RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+
+            let paths = paths_by_git_repo.entry(repo).or_default();
+            while let Some(path) = updated_copy.get(ix)
+                && let Some(repo_path) =
+                    RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
             {
+                if path_was_used[ix] == false {
+                    path_was_used[ix] = true;
+                    paths.push(repo_path);
+                }
                 ix += 1;
-                path_was_used[ix] = true;
-                paths
-                    .push(repo_path);
             }
-                                }
+        }
         paths_by_git_repo
     }
 }
@@ -2694,13 +2705,15 @@ impl RepositorySnapshot {
     }
 
     #[inline]
-    fn abs_path_to_repo_path_inner(work_directory_abs_path: &Path, abs_path: &Path) -> Option<RepoPath> {
+    fn abs_path_to_repo_path_inner(
+        work_directory_abs_path: &Path,
+        abs_path: &Path,
+    ) -> Option<RepoPath> {
         abs_path
             .strip_prefix(&work_directory_abs_path)
             .map(RepoPath::from)
             .ok()
     }
-
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
         self.merge.conflicted_paths.contains(&repo_path)
