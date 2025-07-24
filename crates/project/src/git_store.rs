@@ -1094,7 +1094,6 @@ impl GitStore {
                         .as_ref()
                         .map(|downstream| downstream.updates_tx.clone());
                     cx.spawn(async move |_, cx| {
-                        let c = std::time::Instant::now();
                         let paths_by_git_repo = paths_by_git_repo.await;
                         for (repo, paths) in paths_by_git_repo {
                             repo.update(cx, |repo, cx| {
@@ -1102,7 +1101,6 @@ impl GitStore {
                             })
                             .ok();
                         }
-                        dbg!(c.elapsed());
                     })
                     .detach();
                 }
