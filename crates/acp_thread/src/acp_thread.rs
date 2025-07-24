@@ -635,7 +635,7 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
-    pub fn push_assistant_chunk(
+    pub fn push_assistant_content_block(
         &mut self,
         chunk: acp::ContentBlock,
         is_thought: bool,

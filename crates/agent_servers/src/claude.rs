@@ -393,7 +393,7 @@ impl ClaudeAgentSession {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(text.into(), false, cx)
+                                    thread.push_assistant_content_block(text.into(), false, cx)
                                 })
                                 .log_err();
                         }
@@ -445,7 +445,7 @@ impl ClaudeAgentSession {
                         | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(
+                                    thread.push_assistant_content_block(
                                         format!("Unsupported content: {:?}", chunk).into(),
                                         false,
                                         cx,

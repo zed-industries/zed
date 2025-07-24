@@ -40,10 +40,10 @@ impl acp_old::Client for OldAcpClientDelegate {
                 .borrow()
                 .update(cx, |thread, cx| match params.chunk {
                     acp_old::AssistantMessageChunk::Text { text } => {
-                        thread.push_assistant_chunk(text.into(), false, cx)
+                        thread.push_assistant_content_block(text.into(), false, cx)
                     }
                     acp_old::AssistantMessageChunk::Thought { thought } => {
-                        thread.push_assistant_chunk(thought.into(), true, cx)
+                        thread.push_assistant_content_block(thought.into(), true, cx)
                     }
                 })
                 .ok();
@@ -285,6 +285,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .into_iter()
             .map(into_new_tool_call_location)
             .collect(),
+        structured_content: None,
     }
 }
 
