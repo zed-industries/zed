@@ -3,22 +3,17 @@
 
 use super::{BladeAtlas, BladeContext};
 use crate::{
-    AtlasTextureKind, AtlasTile, Background, Bounds, ContentMask, DevicePixels, GpuSpecs,
-    MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
-    ScaledPixels, Scene, Shadow, Size, Underline,
+    Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, PathVertex,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline,
 };
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
-use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
-// Use 4x MSAA, all devices support it.
-// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
-const DEFAULT_PATH_SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -369,7 +364,7 @@ impl BladeRenderer {
         });
         let atlas = Arc::new(BladeAtlas::new(&context.gpu));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
-            name: "atlas",
+            name: "path rasterization sampler",
             mag_filter: gpu::FilterMode::Linear,
             min_filter: gpu::FilterMode::Linear,
             ..Default::default()
@@ -673,7 +668,6 @@ impl BladeRenderer {
                             },
                         );
                         let mut encoder = pass.with(&self.pipelines.paths);
-                        // todo(linux): group by texture ID
                         for path in paths {
                             let sprites = [PathSprite {
                                 bounds: path
