@@ -1,3 +1,4 @@
+mod acp;
 mod active_thread;
 mod agent_configuration;
 mod agent_diff;
@@ -24,12 +25,14 @@ mod thread_history;
 mod tool_compatibility;
 mod ui;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::Client;
+use client::{Client, DisableAiSettings};
+use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, actions};
@@ -39,8 +42,9 @@ use language_model::{
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use std::any::TypeId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -50,6 +54,7 @@ use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub use ui::preview::{all_agent_previews, get_agent_preview};
+use zed_actions;
 
 actions!(
     agent,
@@ -76,8 +81,6 @@ actions!(
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
-        /// Starts a chat conversation with the agent.
-        Chat,
         /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
         /// Cycles to the next inline assist suggestion.
@@ -130,6 +133,32 @@ actions!(
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
+}
+
+/// Creates a new external agent conversation thread.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewExternalAgentThread {
+    /// Which agent to use for the conversation.
+    agent: Option<ExternalAgent>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExternalAgent {
+    #[default]
+    Gemini,
+    ClaudeCode,
+}
+
+impl ExternalAgent {
+    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
+            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+        }
+    }
 }
 
 /// Opens the profile management interface for configuring agent tools and settings.
@@ -215,6 +244,66 @@ pub fn init(
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
+
+    // Update command palette filter based on AI settings
+    update_command_palette_filter(cx);
+
+    // Watch for settings changes
+    cx.observe_global::<SettingsStore>(|app_cx| {
+        // When settings change, update the command palette filter
+        update_command_palette_filter(app_cx);
+    })
+    .detach();
+}
+
+fn update_command_palette_filter(cx: &mut App) {
+    let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        if disable_ai {
+            filter.hide_namespace("agent");
+            filter.hide_namespace("assistant");
+            filter.hide_namespace("zed_predict_onboarding");
+            filter.hide_namespace("edit_prediction");
+
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.hide_action_types(&edit_prediction_actions);
+            filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+        } else {
+            filter.show_namespace("agent");
+            filter.show_namespace("assistant");
+            filter.show_namespace("zed_predict_onboarding");
+
+            filter.show_namespace("edit_prediction");
+
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.show_action_types(edit_prediction_actions.iter());
+
+            filter
+                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+        }
+    });
 }
 
 fn init_language_model_settings(cx: &mut App) {

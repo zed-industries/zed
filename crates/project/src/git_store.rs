@@ -1738,6 +1738,7 @@ impl GitStore {
                     name.zip(email),
                     CommitOptions {
                         amend: options.amend,
+                        signoff: options.signoff,
                     },
                     cx,
                 )
@@ -3488,6 +3489,7 @@ impl Repository {
                             email: email.map(String::from),
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
+                                signoff: options.signoff,
                             }),
                         })
                         .await
@@ -4277,7 +4279,7 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
-                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left) {
                                 if cursor.item().is_some_and(|entry| entry.status == *status) {
                                     continue;
                                 }
@@ -4290,7 +4292,7 @@ impl Repository {
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
                         for path in changed_paths.into_iter() {
-                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
                                 changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
@@ -4395,17 +4397,17 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
             start_line: entry.range.start,
             end_line: entry.range.end,
             original_line_number: entry.original_line_number,
-            author: entry.author.clone(),
-            author_mail: entry.author_mail.clone(),
+            author: entry.author,
+            author_mail: entry.author_mail,
             author_time: entry.author_time,
-            author_tz: entry.author_tz.clone(),
-            committer: entry.committer_name.clone(),
-            committer_mail: entry.committer_email.clone(),
+            author_tz: entry.author_tz,
+            committer: entry.committer_name,
+            committer_mail: entry.committer_email,
             committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz.clone(),
-            summary: entry.summary.clone(),
-            previous: entry.previous.clone(),
-            filename: entry.filename.clone(),
+            committer_tz: entry.committer_tz,
+            summary: entry.summary,
+            previous: entry.previous,
+            filename: entry.filename,
         })
         .collect::<Vec<_>>();
 

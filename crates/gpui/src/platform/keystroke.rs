@@ -13,6 +13,9 @@ pub struct Keystroke {
 
     /// key is the character printed on the key that was pressed
     /// e.g. for option-s, key is "s"
+    /// On layouts that do not have ascii keys (e.g. Thai)
+    /// this will be the ASCII-equivalent character (q instead of ๆ),
+    /// and the typed character will be present in key_char.
     pub key: String,
 
     /// key_char is the character that could have been typed when
@@ -412,6 +415,17 @@ impl Modifiers {
     /// Returns whether any modifier key is pressed.
     pub fn modified(&self) -> bool {
         self.control || self.alt || self.shift || self.platform || self.function
+    }
+
+    /// Returns the XOR of two modifier sets
+    pub fn xor(&self, other: &Modifiers) -> Modifiers {
+        Modifiers {
+            control: self.control ^ other.control,
+            alt: self.alt ^ other.alt,
+            shift: self.shift ^ other.shift,
+            platform: self.platform ^ other.platform,
+            function: self.function ^ other.function,
+        }
     }
 
     /// Whether the semantically 'secondary' modifier key is pressed.

@@ -124,6 +124,7 @@
       "g r a": "editor::ToggleCodeActions",
       "g g": "vim::StartOfDocument",
       "g h": "editor::Hover",
+      "g B": "editor::BlameHover",
       "g t": "pane::ActivateNextItem",
       "g shift-t": "pane::ActivatePreviousItem",
       "g d": "editor::GoToDefinition",
@@ -189,6 +190,8 @@
       "z shift-r": "editor::UnfoldAll",
       "z l": "vim::ColumnRight",
       "z h": "vim::ColumnLeft",
+      "z shift-l": "vim::HalfPageRight",
+      "z shift-h": "vim::HalfPageLeft",
       "shift-z shift-q": ["pane::CloseActiveItem", { "save_intent": "skip" }],
       "shift-z shift-z": ["pane::CloseActiveItem", { "save_intent": "save_all" }],
       // Count support
@@ -362,6 +365,7 @@
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
+      "shift-u": "vim::UndoLastLine",
       "r": "vim::PushReplace",
       "s": "vim::Substitute",
       "shift-s": "vim::SubstituteLine",
@@ -374,6 +378,7 @@
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
       "ctrl-[": "editor::Cancel",
+      ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
       "left": "vim::WrappingLeft",
       "right": "vim::WrappingRight",
@@ -463,7 +468,7 @@
     }
   },
   {
-    "context": "vim_mode == insert && showing_signature_help && !showing_completions",
+    "context": "(vim_mode == insert || vim_mode == normal) && showing_signature_help && !showing_completions",
     "bindings": {
       "ctrl-p": "editor::SignatureHelpPrevious",
       "ctrl-n": "editor::SignatureHelpNext"
@@ -720,7 +725,7 @@
     }
   },
   {
-    "context": "AgentPanel || GitPanel || ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || DebugPanel",
+    "context": "VimControl || !Editor && !Terminal",
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -778,7 +783,7 @@
     }
   },
   {
-    "context": "ChangesList || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView || Welcome",
+    "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"
@@ -838,6 +843,7 @@
       "i": "git_panel::FocusEditor",
       "x": "git::ToggleStaged",
       "shift-x": "git::StageAll",
+      "g x": "git::StageRange",
       "shift-u": "git::UnstageAll"
     }
   },
@@ -851,6 +857,14 @@
       "*": null,
       "n": null,
       "shift-n": null
+    }
+  },
+  {
+    "context": "Picker > Editor",
+    "bindings": {
+      "ctrl-h": "editor::Backspace",
+      "ctrl-u": "editor::DeleteToBeginningOfLine",
+      "ctrl-w": "editor::DeleteToPreviousWordStart"
     }
   },
   {

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Ok, Result};
+use base64::Engine;
 use dap::{
     Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
@@ -10,6 +11,7 @@ use dap::{
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
 };
+
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
@@ -812,7 +814,7 @@ impl DapCommand for RestartCommand {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VariablesCommand {
     pub variables_reference: u64,
     pub filter: Option<VariablesArgumentsFilter>,
@@ -1666,6 +1668,130 @@ impl LocalDapCommand for SetBreakpoints {
         Ok(message.breakpoints)
     }
 }
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum DataBreakpointContext {
+    Variable {
+        variables_reference: u64,
+        name: String,
+        bytes: Option<u64>,
+    },
+    Expression {
+        expression: String,
+        frame_id: Option<u64>,
+    },
+    Address {
+        address: String,
+        bytes: Option<u64>,
+    },
+}
+
+impl DataBreakpointContext {
+    pub fn human_readable_label(&self) -> String {
+        match self {
+            DataBreakpointContext::Variable { name, .. } => format!("Variable: {}", name),
+            DataBreakpointContext::Expression { expression, .. } => {
+                format!("Expression: {}", expression)
+            }
+            DataBreakpointContext::Address { address, bytes } => {
+                let mut label = format!("Address: {}", address);
+                if let Some(bytes) = bytes {
+                    label.push_str(&format!(
+                        " ({} byte{})",
+                        bytes,
+                        if *bytes == 1 { "" } else { "s" }
+                    ));
+                }
+                label
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct DataBreakpointInfoCommand {
+    pub context: Arc<DataBreakpointContext>,
+    pub mode: Option<String>,
+}
+
+impl LocalDapCommand for DataBreakpointInfoCommand {
+    type Response = dap::DataBreakpointInfoResponse;
+    type DapRequest = dap::requests::DataBreakpointInfo;
+    const CACHEABLE: bool = true;
+
+    // todo(debugger): We should expand this trait in the future to take a &self
+    // Depending on this command is_supported could be differentb
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        let (variables_reference, name, frame_id, as_address, bytes) = match &*self.context {
+            DataBreakpointContext::Variable {
+                variables_reference,
+                name,
+                bytes,
+            } => (
+                Some(*variables_reference),
+                name.clone(),
+                None,
+                Some(false),
+                *bytes,
+            ),
+            DataBreakpointContext::Expression {
+                expression,
+                frame_id,
+            } => (None, expression.clone(), *frame_id, Some(false), None),
+            DataBreakpointContext::Address { address, bytes } => {
+                (None, address.clone(), None, Some(true), *bytes)
+            }
+        };
+
+        dap::DataBreakpointInfoArguments {
+            variables_reference,
+            name,
+            frame_id,
+            bytes,
+            as_address,
+            mode: self.mode.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct SetDataBreakpointsCommand {
+    pub breakpoints: Vec<dap::DataBreakpoint>,
+}
+
+impl LocalDapCommand for SetDataBreakpointsCommand {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetDataBreakpoints;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SetDataBreakpointsArguments {
+            breakpoints: self.breakpoints.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub(super) enum SetExceptionBreakpoints {
     Plain {
@@ -1772,5 +1898,78 @@ impl DapCommand for LocationsCommand {
             end_line: response.end_line,
             end_column: response.end_column,
         })
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct ReadMemory {
+    pub(crate) memory_reference: String,
+    pub(crate) offset: Option<u64>,
+    pub(crate) count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReadMemoryResponse {
+    pub(super) address: Arc<str>,
+    pub(super) unreadable_bytes: Option<u64>,
+    pub(super) content: Arc<[u8]>,
+}
+
+impl LocalDapCommand for ReadMemory {
+    type Response = ReadMemoryResponse;
+    type DapRequest = dap::requests::ReadMemory;
+    const CACHEABLE: bool = true;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_read_memory_request
+            .unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::ReadMemoryArguments {
+            memory_reference: self.memory_reference.clone(),
+            offset: self.offset,
+            count: self.count,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        let data = if let Some(data) = message.data {
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .log_err()
+                .context("parsing base64 data from DAP's ReadMemory response")?
+        } else {
+            vec![]
+        };
+
+        Ok(ReadMemoryResponse {
+            address: message.address.into(),
+            content: data.into(),
+            unreadable_bytes: message.unreadable_bytes,
+        })
+    }
+}
+
+impl LocalDapCommand for dap::WriteMemoryArguments {
+    type Response = dap::WriteMemoryResponse;
+    type DapRequest = dap::requests::WriteMemory;
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_write_memory_request
+            .unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
     }
 }

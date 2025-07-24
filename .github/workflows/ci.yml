@@ -21,6 +21,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+  DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
+  ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
 
 jobs:
   job_spec:
@@ -31,6 +34,7 @@ jobs:
       run_license: ${{ steps.filter.outputs.run_license }}
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_nix: ${{ steps.filter.outputs.run_nix }}
+      run_actionlint: ${{ steps.filter.outputs.run_actionlint }}
     runs-on:
       - ubuntu-latest
     steps:
@@ -44,38 +48,40 @@ jobs:
         run: |
           if [ -z "$GITHUB_BASE_REF" ]; then
             echo "Not in a PR context (i.e., push to main/stable/preview)"
-            COMPARE_REV=$(git rev-parse HEAD~1)
+            COMPARE_REV="$(git rev-parse HEAD~1)"
           else
             echo "In a PR context comparing to pull_request.base.ref"
             git fetch origin "$GITHUB_BASE_REF" --depth=350
-            COMPARE_REV=$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)
+            COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD)"
           fi
-          # Specify anything which should skip full CI in this regex:
+          CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" ${{ github.sha }})"
+
+          # Specify anything which should potentially skip full test suite in this regex:
           # - docs/
+          # - script/update_top_ranking_issues/
           # - .github/ISSUE_TEMPLATE/
           # - .github/workflows/  (except .github/workflows/ci.yml)
-          SKIP_REGEX='^(docs/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -vP "$SKIP_REGEX") ]]; then
-            echo "run_tests=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_tests=false" >> $GITHUB_OUTPUT
-          fi
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep '^docs/') ]]; then
-            echo "run_docs=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_docs=false" >> $GITHUB_OUTPUT
-          fi
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep -P '^(Cargo.lock|script/.*licenses)') ]]; then
-            echo "run_license=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_license=false" >> $GITHUB_OUTPUT
-          fi
-          NIX_REGEX='^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)'
-          if [[ $(git diff --name-only $COMPARE_REV ${{ github.sha }} | grep "$NIX_REGEX") ]]; then
-            echo "run_nix=true" >> $GITHUB_OUTPUT
-          else
-            echo "run_nix=false" >> $GITHUB_OUTPUT
-          fi
+          SKIP_REGEX='^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!ci)))'
+
+          echo "$CHANGED_FILES" | grep -qvP "$SKIP_REGEX" && \
+            echo "run_tests=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_tests=false" >> "$GITHUB_OUTPUT"
+
+          echo "$CHANGED_FILES" | grep -qP '^docs/' && \
+            echo "run_docs=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_docs=false" >> "$GITHUB_OUTPUT"
+
+          echo "$CHANGED_FILES" | grep -qP '^\.github/(workflows/|actions/|actionlint.yml)' && \
+            echo "run_actionlint=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_actionlint=false" >> "$GITHUB_OUTPUT"
+
+          echo "$CHANGED_FILES" | grep -qP '^(Cargo.lock|script/.*licenses)' && \
+            echo "run_license=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_license=false" >> "$GITHUB_OUTPUT"
+
+          echo "$CHANGED_FILES" | grep -qP '^(nix/|flake\.|Cargo\.|rust-toolchain.toml|\.cargo/config.toml)' && \
+            echo "run_nix=true" >> "$GITHUB_OUTPUT" || \
+            echo "run_nix=false" >> "$GITHUB_OUTPUT"
 
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
@@ -85,8 +91,7 @@ jobs:
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
     runs-on:
-      - self-hosted
-      - macOS
+      - self-mini-macos
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -108,11 +113,11 @@ jobs:
         run: |
           if [ -z "$GITHUB_BASE_REF" ];
           then
-            echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> $GITHUB_ENV
+            echo "BUF_BASE_BRANCH=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
           else
             git checkout -B temp
-            git merge -q origin/$GITHUB_BASE_REF -m "merge main into temp"
-            echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> $GITHUB_ENV
+            git merge -q "origin/$GITHUB_BASE_REF" -m "merge main into temp"
+            echo "BUF_BASE_BRANCH=$GITHUB_BASE_REF" >> "$GITHUB_ENV"
           fi
 
       - uses: bufbuild/buf-setup-action@v1
@@ -136,7 +141,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Install cargo-hakari
         uses: clechasseur/rs-cargo@8435b10f6e71c2e3d4d3b7573003a8ce4bfc6386 # v2
         with:
@@ -174,7 +179,7 @@ jobs:
       - name: Prettier Check on /docs
         working-directory: ./docs
         run: |
-          pnpm dlx prettier@${PRETTIER_VERSION} . --check || {
+          pnpm dlx "prettier@${PRETTIER_VERSION}" . --check || {
             echo "To fix, run from the root of the Zed repo:"
             echo "  cd docs && pnpm dlx prettier@${PRETTIER_VERSION} . --write && cd .."
             false
@@ -184,7 +189,7 @@ jobs:
 
       - name: Prettier Check on default.json
         run: |
-          pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --check || {
+          pnpm dlx "prettier@${PRETTIER_VERSION}" assets/settings/default.json --check || {
             echo "To fix, run from the root of the Zed repo:"
             echo "  pnpm dlx prettier@${PRETTIER_VERSION} assets/settings/default.json --write"
             false
@@ -230,6 +235,20 @@ jobs:
       - name: Build docs
         uses: ./.github/actions/build_docs
 
+  actionlint:
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'zed-industries' && needs.job_spec.outputs.run_actionlint == 'true'
+    needs: [job_spec]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actionlint
+        id: get_actionlint
+        run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        shell: bash
+      - name: Check workflow files
+        run: ${{ steps.get_actionlint.outputs.executable }} -color
+        shell: bash
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
@@ -238,8 +257,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - self-hosted
-      - macOS
+      - self-mini-macos
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -308,7 +326,7 @@ jobs:
       - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -360,7 +378,7 @@ jobs:
       - buildjet-8vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -390,7 +408,7 @@ jobs:
 
   windows_tests:
     timeout-minutes: 60
-    name: (Windows) Run Tests
+    name: (Windows) Run Clippy and tests
     needs: [job_spec]
     if: |
       github.repository_owner == 'zed-industries' &&
@@ -411,11 +429,10 @@ jobs:
         with:
           clean: false
 
-      - name: Setup Cargo and Rustup
+      - name: Configure CI
         run: |
-          mkdir -p ${{ env.CARGO_HOME }} -ErrorAction Ignore
-          cp ./.cargo/ci-config.toml ${{ env.CARGO_HOME }}/config.toml
-          .\script\install-rustup.ps1
+          New-Item -ItemType Directory -Path "./../.cargo" -Force
+          Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
 
       - name: cargo clippy
         run: |
@@ -430,18 +447,9 @@ jobs:
       - name: Limit target directory size
         run: ./script/clear-target-dir-if-larger-than.ps1 250
 
-      # - name: Check dev drive space
-      #   working-directory: ${{ env.ZED_WORKSPACE }}
-      #   # `setup-dev-driver.ps1` creates a 100GB drive, with CI taking up ~45GB of the drive.
-      #   run: ./script/exit-ci-if-dev-drive-is-full.ps1 95
-
-      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
         if: always()
-        run: |
-          if (Test-Path "${{ env.CARGO_HOME }}/config.toml") {
-            Remove-Item -Path "${{ env.CARGO_HOME }}/config.toml"  -Force
-          }
+        run: Remove-Item -Recurse -Path "./../.cargo" -Force -ErrorAction SilentlyContinue
 
   tests_pass:
     name: Tests Pass
@@ -450,6 +458,7 @@ jobs:
       - job_spec
       - style
       - check_docs
+      - actionlint
       - migration_checks
       # run_tests: If adding required tests, add them here and to script below.
       - workspace_hack
@@ -471,6 +480,11 @@ jobs:
           if [[ "${{ needs.job_spec.outputs.run_docs }}" == "true" ]]; then
             [[ "${{ needs.check_docs.result }}" != 'success' ]] && { RET_CODE=1; echo "docs checks failed"; }
           fi
+
+          if [[ "${{ needs.job_spec.outputs.run_actionlint }}" == "true" ]]; then
+            [[ "${{ needs.actionlint.result }}" != 'success' ]] && { RET_CODE=1; echo "actionlint checks failed"; }
+          fi
+
           # Only check test jobs if they were supposed to run
           if [[ "${{ needs.job_spec.outputs.run_tests }}" == "true" ]]; then
             [[ "${{ needs.workspace_hack.result }}"       != 'success' ]] && { RET_CODE=1; echo "Workspace Hack failed"; }
@@ -490,8 +504,7 @@ jobs:
     timeout-minutes: 120
     name: Create a macOS bundle
     runs-on:
-      - self-hosted
-      - bundle
+      - self-mini-macos
     if: |
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
@@ -502,9 +515,6 @@ jobs:
       APPLE_NOTARIZATION_KEY: ${{ secrets.APPLE_NOTARIZATION_KEY }}
       APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
       APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Install Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -587,10 +597,6 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -644,10 +650,6 @@ jobs:
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
     needs: [linux_tests]
-    env:
-      ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
-      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -696,20 +698,18 @@ jobs:
     timeout-minutes: 60
     runs-on: github-8vcpu-ubuntu-2404
     if: |
+      false && (
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+      )
     needs: [linux_tests]
     name: Build Zed on FreeBSD
-    # env:
-    #   MYTOKEN : ${{ secrets.MYTOKEN }}
-    #   MYTOKEN2: "value2"
     steps:
       - uses: actions/checkout@v4
       - name: Build FreeBSD remote-server
         id: freebsd-build
         uses: vmactions/freebsd-vm@c3ae29a132c8ef1924775414107a97cac042aad5 # v1.2.0
         with:
-          # envs: "MYTOKEN MYTOKEN2"
           usesh: true
           release: 13.5
           copyback: true
@@ -763,17 +763,67 @@ jobs:
       # excludes the final package to only cache dependencies
       cachix-filter: "-zed-editor-[0-9.]*-nightly"
 
+  bundle-windows-x64:
+    timeout-minutes: 120
+    name: Create a Windows installer
+    runs-on: [self-hosted, Windows, X64]
+    if: false && (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    needs: [windows_tests]
+    env:
+      AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_SIGNING_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_SIGNING_CLIENT_SECRET }}
+      ACCOUNT_NAME: ${{ vars.AZURE_SIGNING_ACCOUNT_NAME }}
+      CERT_PROFILE_NAME: ${{ vars.AZURE_SIGNING_CERT_PROFILE_NAME }}
+      ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      FILE_DIGEST: SHA256
+      TIMESTAMP_DIGEST: SHA256
+      TIMESTAMP_SERVER: "http://timestamp.acs.microsoft.com"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Determine version and release channel
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # This exports RELEASE_CHANNEL into env (GITHUB_ENV)
+          script/determine-release-channel.ps1
+
+      - name: Build Zed installer
+        working-directory: ${{ env.ZED_WORKSPACE }}
+        run: script/bundle-windows.ps1
+
+      - name: Upload installer (x86_64) to Workflow - zed (run-bundling)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
+        with:
+          name: ZedEditorUserSetup-x64-${{ github.event.pull_request.head.sha || github.sha }}.exe
+          path: ${{ env.SETUP_PATH }}
+
+      - name: Upload Artifacts to release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v1
+        # Re-enable when we are ready to publish windows preview releases
+        if: ${{ !(contains(github.event.pull_request.labels.*.name, 'run-bundling')) && env.RELEASE_CHANNEL == 'preview' }} # upload only preview
+        with:
+          draft: true
+          prerelease: ${{ env.RELEASE_CHANNEL == 'preview' }}
+          files: ${{ env.SETUP_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   auto-release-preview:
     name: Auto release preview
     if: |
       startsWith(github.ref, 'refs/tags/v')
       && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre')
-    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, freebsd]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64, bundle-windows-x64]
     runs-on:
-      - self-hosted
-      - bundle
+      - self-mini-macos
     steps:
       - name: gh release
-        run: gh release edit $GITHUB_REF_NAME --draft=false
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

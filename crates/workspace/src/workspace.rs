@@ -1016,6 +1016,15 @@ pub enum OpenVisible {
     OnlyDirectories,
 }
 
+enum WorkspaceLocation {
+    // Valid local paths or SSH project to serialize
+    Location(SerializedWorkspaceLocation),
+    // No valid location found hence clear session id
+    DetachFromSession,
+    // No valid location found to serialize
+    None,
+}
+
 type PromptForNewPath = Box<
     dyn Fn(
         &mut Workspace,
@@ -1135,7 +1144,6 @@ impl Workspace {
                     this.update_window_title(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
-                    // So we need to update the history.
                     this.update_history(cx);
                 }
 
@@ -1709,6 +1717,27 @@ impl Workspace {
         }
 
         history
+    }
+
+    pub fn recent_active_item_by_type<T: 'static>(&self, cx: &App) -> Option<Entity<T>> {
+        let mut recent_item: Option<Entity<T>> = None;
+        let mut recent_timestamp = 0;
+        for pane_handle in &self.panes {
+            let pane = pane_handle.read(cx);
+            let item_map: HashMap<EntityId, &Box<dyn ItemHandle>> =
+                pane.items().map(|item| (item.item_id(), item)).collect();
+            for entry in pane.activation_history() {
+                if entry.timestamp > recent_timestamp {
+                    if let Some(&item) = item_map.get(&entry.entity_id) {
+                        if let Some(typed_item) = item.act_as::<T>(cx) {
+                            recent_timestamp = entry.timestamp;
+                            recent_item = Some(typed_item);
+                        }
+                    }
+                }
+            }
+        }
+        recent_item
     }
 
     pub fn recent_navigation_history_iter(
@@ -2772,11 +2801,12 @@ impl Workspace {
 
         if retain_active_pane {
             let current_pane_close = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(
-                    &CloseInactiveItems {
+                pane.close_other_items(
+                    &CloseOtherItems {
                         save_intent: None,
                         close_pinned: false,
                     },
+                    None,
                     window,
                     cx,
                 )
@@ -3841,11 +3871,13 @@ impl Workspace {
                 if *local {
                     self.unfollow_in_pane(&pane, window, cx);
                 }
+                serialize_workspace = *focus_changed || pane != self.active_pane();
                 if pane == self.active_pane() {
                     self.active_item_path_changed(window, cx);
                     self.update_active_view_for_followers(window, cx);
+                } else if *local {
+                    self.set_active_pane(&pane, window, cx);
                 }
-                serialize_workspace = *focus_changed || pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
@@ -5194,48 +5226,58 @@ impl Workspace {
             }
         }
 
-        if let Some(location) = self.serialize_workspace_location(cx) {
-            let breakpoints = self.project.update(cx, |project, cx| {
-                project
-                    .breakpoint_store()
-                    .read(cx)
-                    .all_source_breakpoints(cx)
-            });
+        match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => {
+                let breakpoints = self.project.update(cx, |project, cx| {
+                    project
+                        .breakpoint_store()
+                        .read(cx)
+                        .all_source_breakpoints(cx)
+                });
 
-            let center_group = build_serialized_pane_group(&self.center.root, window, cx);
-            let docks = build_serialized_docks(self, window, cx);
-            let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
-            let serialized_workspace = SerializedWorkspace {
-                id: database_id,
-                location,
-                center_group,
-                window_bounds,
-                display: Default::default(),
-                docks,
-                centered_layout: self.centered_layout,
-                session_id: self.session_id.clone(),
-                breakpoints,
-                window_id: Some(window.window_handle().window_id().as_u64()),
-            };
+                let center_group = build_serialized_pane_group(&self.center.root, window, cx);
+                let docks = build_serialized_docks(self, window, cx);
+                let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+                let serialized_workspace = SerializedWorkspace {
+                    id: database_id,
+                    location,
+                    center_group,
+                    window_bounds,
+                    display: Default::default(),
+                    docks,
+                    centered_layout: self.centered_layout,
+                    session_id: self.session_id.clone(),
+                    breakpoints,
+                    window_id: Some(window.window_handle().window_id().as_u64()),
+                };
 
-            return window.spawn(cx, async move |_| {
-                persistence::DB.save_workspace(serialized_workspace).await;
-            });
+                window.spawn(cx, async move |_| {
+                    persistence::DB.save_workspace(serialized_workspace).await;
+                })
+            }
+            WorkspaceLocation::DetachFromSession => window.spawn(cx, async move |_| {
+                persistence::DB
+                    .set_session_id(database_id, None)
+                    .await
+                    .log_err();
+            }),
+            WorkspaceLocation::None => Task::ready(()),
         }
-        Task::ready(())
     }
 
-    fn serialize_workspace_location(&self, cx: &App) -> Option<SerializedWorkspaceLocation> {
+    fn serialize_workspace_location(&self, cx: &App) -> WorkspaceLocation {
         if let Some(ssh_project) = &self.serialized_ssh_project {
-            Some(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
+            WorkspaceLocation::Location(SerializedWorkspaceLocation::Ssh(ssh_project.clone()))
         } else if let Some(local_paths) = self.local_paths(cx) {
             if !local_paths.is_empty() {
-                Some(SerializedWorkspaceLocation::from_local_paths(local_paths))
+                WorkspaceLocation::Location(SerializedWorkspaceLocation::from_local_paths(
+                    local_paths,
+                ))
             } else {
-                None
+                WorkspaceLocation::DetachFromSession
             }
         } else {
-            None
+            WorkspaceLocation::None
         }
     }
 
@@ -5243,8 +5285,9 @@ impl Workspace {
         let Some(id) = self.database_id() else {
             return;
         };
-        let Some(location) = self.serialize_workspace_location(cx) else {
-            return;
+        let location = match self.serialize_workspace_location(cx) {
+            WorkspaceLocation::Location(location) => location,
+            _ => return,
         };
         if let Some(manager) = HistoryManager::global(cx) {
             manager.update(cx, |this, cx| {
@@ -6657,6 +6700,10 @@ impl WorkspaceStore {
             Ok(())
         })?
     }
+
+    pub fn workspaces(&self) -> &HashSet<WindowHandle<Workspace>> {
+        &self.workspaces
+    }
 }
 
 impl ViewId {
@@ -7329,6 +7376,17 @@ async fn open_ssh_project_inner(
 
     if project_paths_to_open.is_empty() {
         return Err(project_path_errors.pop().context("no paths given")?);
+    }
+
+    if let Some(detach_session_task) = window
+        .update(cx, |_workspace, window, cx| {
+            cx.spawn_in(window, async move |this, cx| {
+                this.update_in(cx, |this, window, cx| this.remove_from_session(window, cx))
+            })
+        })
+        .ok()
+    {
+        detach_session_task.await.ok();
     }
 
     cx.update_window(window.into(), |_, window, cx| {
@@ -9443,11 +9501,12 @@ mod tests {
             );
         });
         let close_all_but_multi_buffer_task = pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: Some(SaveIntent::Save),
                     close_pinned: true,
                 },
+                None,
                 window,
                 cx,
             )

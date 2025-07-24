@@ -2,18 +2,23 @@ use std::{ops::Range, rc::Rc, time::Duration};
 
 use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
-    AppContext, Axis, Context, Entity, FocusHandle, Length, ListHorizontalSizingBehavior,
-    ListSizingBehavior, MouseButton, Task, UniformListScrollHandle, WeakEntity, transparent_black,
-    uniform_list,
+    AbsoluteLength, AppContext, Axis, Context, DefiniteLength, DragMoveEvent, Entity, FocusHandle,
+    Length, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Point, Stateful, Task,
+    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
+
+use itertools::intersperse_with;
 use settings::Settings as _;
 use ui::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
-    InteractiveElement as _, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    Scrollbar, ScrollbarState, StatefulInteractiveElement as _, Styled, StyledExt as _,
+    InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
+    Scrollbar, ScrollbarState, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
+
+#[derive(Debug)]
+struct DraggedColumn(usize);
 
 struct UniformListData<const COLS: usize> {
     render_item_fn: Box<dyn Fn(Range<usize>, &mut Window, &mut App) -> Vec<[AnyElement; COLS]>>,
@@ -39,6 +44,10 @@ impl<const COLS: usize> TableContents<COLS> {
             TableContents::Vec(rows) => rows.len(),
             TableContents::UniformList(data) => data.row_count,
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -88,6 +97,28 @@ impl TableInteractionState {
             this.update_scrollbar_visibility(cx);
             this
         })
+    }
+
+    pub fn get_scrollbar_offset(&self, axis: Axis) -> Point<Pixels> {
+        match axis {
+            Axis::Vertical => self.vertical_scrollbar.state.scroll_handle().offset(),
+            Axis::Horizontal => self.horizontal_scrollbar.state.scroll_handle().offset(),
+        }
+    }
+
+    pub fn set_scrollbar_offset(&self, axis: Axis, offset: Point<Pixels>) {
+        match axis {
+            Axis::Vertical => self
+                .vertical_scrollbar
+                .state
+                .scroll_handle()
+                .set_offset(offset),
+            Axis::Horizontal => self
+                .horizontal_scrollbar
+                .state
+                .scroll_handle()
+                .set_offset(offset),
+        }
     }
 
     fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {
@@ -163,6 +194,87 @@ impl TableInteractionState {
         move |e: &E, window: &mut Window, cx: &mut App| {
             view.update(cx, |view, cx| f(view, e, window, cx)).ok();
         }
+    }
+
+    fn render_resize_handles<const COLS: usize>(
+        &self,
+        column_widths: &[Length; COLS],
+        resizable_columns: &[ResizeBehavior; COLS],
+        initial_sizes: [DefiniteLength; COLS],
+        columns: Option<Entity<ColumnWidths<COLS>>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let spacers = column_widths
+            .iter()
+            .map(|width| base_cell_style(Some(*width)).into_any_element());
+
+        let mut column_ix = 0;
+        let resizable_columns_slice = *resizable_columns;
+        let mut resizable_columns = resizable_columns.into_iter();
+        let dividers = intersperse_with(spacers, || {
+            window.with_id(column_ix, |window| {
+                let mut resize_divider = div()
+                    // This is required because this is evaluated at a different time than the use_state call above
+                    .id(column_ix)
+                    .relative()
+                    .top_0()
+                    .w_0p5()
+                    .h_full()
+                    .bg(cx.theme().colors().border.opacity(0.5));
+
+                let mut resize_handle = div()
+                    .id("column-resize-handle")
+                    .absolute()
+                    .left_neg_0p5()
+                    .w(px(5.0))
+                    .h_full();
+
+                if resizable_columns
+                    .next()
+                    .is_some_and(ResizeBehavior::is_resizable)
+                {
+                    let hovered = window.use_state(cx, |_window, _cx| false);
+                    resize_divider = resize_divider.when(*hovered.read(cx), |div| {
+                        div.bg(cx.theme().colors().border_focused)
+                    });
+                    resize_handle = resize_handle
+                        .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
+                        .cursor_col_resize()
+                        .when_some(columns.clone(), |this, columns| {
+                            this.on_click(move |event, window, cx| {
+                                if event.down.click_count >= 2 {
+                                    columns.update(cx, |columns, _| {
+                                        columns.on_double_click(
+                                            column_ix,
+                                            &initial_sizes,
+                                            &resizable_columns_slice,
+                                            window,
+                                        );
+                                    })
+                                }
+
+                                cx.stop_propagation();
+                            })
+                        })
+                        .on_drag(DraggedColumn(column_ix), |_, _offset, _window, cx| {
+                            cx.new(|_cx| gpui::Empty)
+                        })
+                }
+
+                column_ix += 1;
+                resize_divider.child(resize_handle).into_any_element()
+            })
+        });
+
+        div()
+            .id("resize-handles")
+            .h_flex()
+            .absolute()
+            .w_full()
+            .inset_0()
+            .children(dividers)
+            .into_any_element()
     }
 
     fn render_vertical_scrollbar_track(
@@ -343,6 +455,242 @@ impl TableInteractionState {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum ResizeBehavior {
+    None,
+    Resizable,
+    MinSize(f32),
+}
+
+impl ResizeBehavior {
+    pub fn is_resizable(&self) -> bool {
+        *self != ResizeBehavior::None
+    }
+
+    pub fn min_size(&self) -> Option<f32> {
+        match self {
+            ResizeBehavior::None => None,
+            ResizeBehavior::Resizable => Some(0.05),
+            ResizeBehavior::MinSize(min_size) => Some(*min_size),
+        }
+    }
+}
+
+pub struct ColumnWidths<const COLS: usize> {
+    widths: [DefiniteLength; COLS],
+    cached_bounds_width: Pixels,
+    initialized: bool,
+}
+
+impl<const COLS: usize> ColumnWidths<COLS> {
+    pub fn new(_: &mut App) -> Self {
+        Self {
+            widths: [DefiniteLength::default(); COLS],
+            cached_bounds_width: Default::default(),
+            initialized: false,
+        }
+    }
+
+    fn get_fraction(length: &DefiniteLength, bounds_width: Pixels, rem_size: Pixels) -> f32 {
+        match length {
+            DefiniteLength::Absolute(AbsoluteLength::Pixels(pixels)) => *pixels / bounds_width,
+            DefiniteLength::Absolute(AbsoluteLength::Rems(rems_width)) => {
+                rems_width.to_pixels(rem_size) / bounds_width
+            }
+            DefiniteLength::Fraction(fraction) => *fraction,
+        }
+    }
+
+    fn on_double_click(
+        &mut self,
+        double_click_position: usize,
+        initial_sizes: &[DefiniteLength; COLS],
+        resize_behavior: &[ResizeBehavior; COLS],
+        window: &mut Window,
+    ) {
+        let bounds_width = self.cached_bounds_width;
+        let rem_size = window.rem_size();
+        let initial_sizes =
+            initial_sizes.map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+        let mut widths = self
+            .widths
+            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+
+        let diff = initial_sizes[double_click_position] - widths[double_click_position];
+
+        if diff > 0.0 {
+            let diff_remaining = self.propagate_resize_diff_right(
+                diff,
+                double_click_position,
+                &mut widths,
+                resize_behavior,
+            );
+
+            if diff_remaining > 0.0 && double_click_position > 0 {
+                self.propagate_resize_diff_left(
+                    -diff_remaining,
+                    double_click_position - 1,
+                    &mut widths,
+                    resize_behavior,
+                );
+            }
+        } else if double_click_position > 0 {
+            let diff_remaining = self.propagate_resize_diff_left(
+                diff,
+                double_click_position,
+                &mut widths,
+                resize_behavior,
+            );
+
+            if diff_remaining < 0.0 {
+                self.propagate_resize_diff_right(
+                    -diff_remaining,
+                    double_click_position,
+                    &mut widths,
+                    resize_behavior,
+                );
+            }
+        }
+        self.widths = widths.map(DefiniteLength::Fraction);
+    }
+
+    fn on_drag_move(
+        &mut self,
+        drag_event: &DragMoveEvent<DraggedColumn>,
+        resize_behavior: &[ResizeBehavior; COLS],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let drag_position = drag_event.event.position;
+        let bounds = drag_event.bounds;
+
+        let mut col_position = 0.0;
+        let rem_size = window.rem_size();
+        let bounds_width = bounds.right() - bounds.left();
+        let col_idx = drag_event.drag(cx).0;
+
+        let mut widths = self
+            .widths
+            .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
+
+        for length in widths[0..=col_idx].iter() {
+            col_position += length;
+        }
+
+        let mut total_length_ratio = col_position;
+        for length in widths[col_idx + 1..].iter() {
+            total_length_ratio += length;
+        }
+
+        let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
+        let drag_fraction = drag_fraction * total_length_ratio;
+        let diff = drag_fraction - col_position;
+
+        let is_dragging_right = diff > 0.0;
+
+        if is_dragging_right {
+            self.propagate_resize_diff_right(diff, col_idx, &mut widths, resize_behavior);
+        } else {
+            // Resize behavior should be improved in the future by also seeking to the right column when there's not enough space
+            self.propagate_resize_diff_left(diff, col_idx, &mut widths, resize_behavior);
+        }
+        self.widths = widths.map(DefiniteLength::Fraction);
+    }
+
+    fn propagate_resize_diff_right(
+        &self,
+        diff: f32,
+        col_idx: usize,
+        widths: &mut [f32; COLS],
+        resize_behavior: &[ResizeBehavior; COLS],
+    ) -> f32 {
+        let mut diff_remaining = diff;
+        let mut curr_column = col_idx + 1;
+
+        while diff_remaining > 0.0 && curr_column < COLS {
+            let Some(min_size) = resize_behavior[curr_column - 1].min_size() else {
+                curr_column += 1;
+                continue;
+            };
+
+            let mut curr_width = widths[curr_column] - diff_remaining;
+
+            diff_remaining = 0.0;
+            if min_size > curr_width {
+                diff_remaining += min_size - curr_width;
+                curr_width = min_size;
+            }
+            widths[curr_column] = curr_width;
+            curr_column += 1;
+        }
+
+        widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
+        return diff_remaining;
+    }
+
+    fn propagate_resize_diff_left(
+        &mut self,
+        diff: f32,
+        mut curr_column: usize,
+        widths: &mut [f32; COLS],
+        resize_behavior: &[ResizeBehavior; COLS],
+    ) -> f32 {
+        let mut diff_remaining = diff;
+        let col_idx = curr_column;
+        while diff_remaining < 0.0 {
+            let Some(min_size) = resize_behavior[curr_column].min_size() else {
+                if curr_column == 0 {
+                    break;
+                }
+                curr_column -= 1;
+                continue;
+            };
+
+            let mut curr_width = widths[curr_column] + diff_remaining;
+
+            diff_remaining = 0.0;
+            if curr_width < min_size {
+                diff_remaining = curr_width - min_size;
+                curr_width = min_size
+            }
+
+            widths[curr_column] = curr_width;
+            if curr_column == 0 {
+                break;
+            }
+            curr_column -= 1;
+        }
+        widths[col_idx + 1] = widths[col_idx + 1] - (diff - diff_remaining);
+
+        return diff_remaining;
+    }
+}
+
+pub struct TableWidths<const COLS: usize> {
+    initial: [DefiniteLength; COLS],
+    current: Option<Entity<ColumnWidths<COLS>>>,
+    resizable: [ResizeBehavior; COLS],
+}
+
+impl<const COLS: usize> TableWidths<COLS> {
+    pub fn new(widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+        let widths = widths.map(Into::into);
+
+        TableWidths {
+            initial: widths,
+            current: None,
+            resizable: [ResizeBehavior::None; COLS],
+        }
+    }
+
+    fn lengths(&self, cx: &App) -> [Length; COLS] {
+        self.current
+            .as_ref()
+            .map(|entity| entity.read(cx).widths.map(Length::Definite))
+            .unwrap_or(self.initial.map(Length::Definite))
+    }
+}
+
 /// A table component
 #[derive(RegisterComponent, IntoElement)]
 pub struct Table<const COLS: usize = 3> {
@@ -351,21 +699,23 @@ pub struct Table<const COLS: usize = 3> {
     headers: Option<[AnyElement; COLS]>,
     rows: TableContents<COLS>,
     interaction_state: Option<WeakEntity<TableInteractionState>>,
-    column_widths: Option<[Length; COLS]>,
-    map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
+    col_widths: Option<TableWidths<COLS>>,
+    map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
+    empty_table_callback: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> Table<COLS> {
     /// number of headers provided.
     pub fn new() -> Self {
-        Table {
+        Self {
             striped: false,
             width: None,
             headers: None,
             rows: TableContents::Vec(Vec::new()),
             interaction_state: None,
-            column_widths: None,
             map_row: None,
+            empty_table_callback: None,
+            col_widths: None,
         }
     }
 
@@ -426,30 +776,66 @@ impl<const COLS: usize> Table<COLS> {
         self
     }
 
-    pub fn column_widths(mut self, widths: [impl Into<Length>; COLS]) -> Self {
-        self.column_widths = Some(widths.map(Into::into));
+    pub fn column_widths(mut self, widths: [impl Into<DefiniteLength>; COLS]) -> Self {
+        if self.col_widths.is_none() {
+            self.col_widths = Some(TableWidths::new(widths));
+        }
+        self
+    }
+
+    pub fn resizable_columns(
+        mut self,
+        resizable: [ResizeBehavior; COLS],
+        column_widths: &Entity<ColumnWidths<COLS>>,
+        cx: &mut App,
+    ) -> Self {
+        if let Some(table_widths) = self.col_widths.as_mut() {
+            table_widths.resizable = resizable;
+            let column_widths = table_widths
+                .current
+                .get_or_insert_with(|| column_widths.clone());
+
+            column_widths.update(cx, |widths, _| {
+                if !widths.initialized {
+                    widths.initialized = true;
+                    widths.widths = table_widths.initial;
+                }
+            })
+        }
         self
     }
 
     pub fn map_row(
         mut self,
-        callback: impl Fn((usize, Div), &mut Window, &mut App) -> AnyElement + 'static,
+        callback: impl Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement + 'static,
     ) -> Self {
         self.map_row = Some(Rc::new(callback));
         self
     }
+
+    /// Provide a callback that is invoked when the table is rendered without any rows
+    pub fn empty_table_callback(
+        mut self,
+        callback: impl Fn(&mut Window, &mut App) -> AnyElement + 'static,
+    ) -> Self {
+        self.empty_table_callback = Some(Rc::new(callback));
+        self
+    }
 }
 
-fn base_cell_style(width: Option<Length>, cx: &App) -> Div {
+fn base_cell_style(width: Option<Length>) -> Div {
     div()
         .px_1p5()
         .when_some(width, |this, width| this.w(width))
         .when(width.is_none(), |this| this.flex_1())
         .justify_start()
-        .text_ui(cx)
         .whitespace_nowrap()
         .text_ellipsis()
         .overflow_hidden()
+}
+
+fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
+    base_cell_style(width).text_ui(cx)
 }
 
 pub fn render_row<const COLS: usize>(
@@ -470,33 +856,33 @@ pub fn render_row<const COLS: usize>(
         .column_widths
         .map_or([None; COLS], |widths| widths.map(Some));
 
-    let row = div().w_full().child(
-        h_flex()
-            .id("table_row")
-            .w_full()
-            .justify_between()
-            .px_1p5()
-            .py_1()
-            .when_some(bg, |row, bg| row.bg(bg))
-            .when(!is_striped, |row| {
-                row.border_b_1()
-                    .border_color(transparent_black())
-                    .when(!is_last, |row| row.border_color(cx.theme().colors().border))
-            })
-            .children(
-                items
-                    .map(IntoElement::into_any_element)
-                    .into_iter()
-                    .zip(column_widths)
-                    .map(|(cell, width)| base_cell_style(width, cx).child(cell)),
-            ),
+    let mut row = h_flex()
+        .h_full()
+        .id(("table_row", row_index))
+        .w_full()
+        .justify_between()
+        .when_some(bg, |row, bg| row.bg(bg))
+        .when(!is_striped, |row| {
+            row.border_b_1()
+                .border_color(transparent_black())
+                .when(!is_last, |row| row.border_color(cx.theme().colors().border))
+        });
+
+    row = row.children(
+        items
+            .map(IntoElement::into_any_element)
+            .into_iter()
+            .zip(column_widths)
+            .map(|(cell, width)| base_cell_style_text(width, cx).px_1p5().py_1().child(cell)),
     );
 
-    if let Some(map_row) = table_context.map_row {
+    let row = if let Some(map_row) = table_context.map_row {
         map_row((row_index, row), window, cx)
     } else {
         row.into_any_element()
-    }
+    };
+
+    div().h_full().w_full().child(row).into_any_element()
 }
 
 pub fn render_header<const COLS: usize>(
@@ -520,7 +906,7 @@ pub fn render_header<const COLS: usize>(
             headers
                 .into_iter()
                 .zip(column_widths)
-                .map(|(h, width)| base_cell_style(width, cx).child(h)),
+                .map(|(h, width)| base_cell_style_text(width, cx).child(h)),
         )
 }
 
@@ -529,15 +915,15 @@ pub struct TableRenderContext<const COLS: usize> {
     pub striped: bool,
     pub total_row_count: usize,
     pub column_widths: Option<[Length; COLS]>,
-    pub map_row: Option<Rc<dyn Fn((usize, Div), &mut Window, &mut App) -> AnyElement>>,
+    pub map_row: Option<Rc<dyn Fn((usize, Stateful<Div>), &mut Window, &mut App) -> AnyElement>>,
 }
 
 impl<const COLS: usize> TableRenderContext<COLS> {
-    fn new(table: &Table<COLS>) -> Self {
+    fn new(table: &Table<COLS>, cx: &App) -> Self {
         Self {
             striped: table.striped,
             total_row_count: table.rows.len(),
-            column_widths: table.column_widths,
+            column_widths: table.col_widths.as_ref().map(|widths| widths.lengths(cx)),
             map_row: table.map_row.clone(),
         }
     }
@@ -545,8 +931,13 @@ impl<const COLS: usize> TableRenderContext<COLS> {
 
 impl<const COLS: usize> RenderOnce for Table<COLS> {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let table_context = TableRenderContext::new(&self);
+        let table_context = TableRenderContext::new(&self, cx);
         let interaction_state = self.interaction_state.and_then(|state| state.upgrade());
+        let current_widths = self
+            .col_widths
+            .as_ref()
+            .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable)))
+            .map(|(curr, resize_behavior)| (curr.downgrade(), resize_behavior));
 
         let scroll_track_size = px(16.);
         let h_scroll_offset = if interaction_state
@@ -560,6 +951,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
         };
 
         let width = self.width;
+        let no_rows_rendered = self.rows.is_empty();
 
         let table = div()
             .when_some(width, |this, width| this.w(width))
@@ -567,6 +959,31 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
                 this.child(render_header(headers, table_context.clone(), cx))
+            })
+            .when_some(current_widths, {
+                |this, (widths, resize_behavior)| {
+                    this.on_drag_move::<DraggedColumn>({
+                        let widths = widths.clone();
+                        move |e, window, cx| {
+                            widths
+                                .update(cx, |widths, cx| {
+                                    widths.on_drag_move(e, &resize_behavior, window, cx);
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_children_prepainted(move |bounds, _, cx| {
+                        widths
+                            .update(cx, |widths, _| {
+                                // This works because all children x axis bounds are the same
+                                widths.cached_bounds_width = bounds[0].right() - bounds[0].left();
+                            })
+                            .ok();
+                    })
+                }
+            })
+            .on_drop::<DraggedColumn>(|_, _, _| {
+                // Finish the resize operation
             })
             .child(
                 div()
@@ -622,6 +1039,25 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             ),
                         ),
                     })
+                    .when_some(
+                        self.col_widths.as_ref().zip(interaction_state.as_ref()),
+                        |parent, (table_widths, state)| {
+                            parent.child(state.update(cx, |state, cx| {
+                                let resizable_columns = table_widths.resizable;
+                                let column_widths = table_widths.lengths(cx);
+                                let columns = table_widths.current.clone();
+                                let initial_sizes = table_widths.initial;
+                                state.render_resize_handles(
+                                    &column_widths,
+                                    &resizable_columns,
+                                    initial_sizes,
+                                    columns,
+                                    window,
+                                    cx,
+                                )
+                            }))
+                        },
+                    )
                     .when_some(interaction_state.as_ref(), |this, interaction_state| {
                         this.map(|this| {
                             TableInteractionState::render_vertical_scrollbar_track(
@@ -639,6 +1075,21 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             )
                         })
                     }),
+            )
+            .when_some(
+                no_rows_rendered
+                    .then_some(self.empty_table_callback)
+                    .flatten(),
+                |this, callback| {
+                    this.child(
+                        h_flex()
+                            .size_full()
+                            .p_3()
+                            .items_start()
+                            .justify_center()
+                            .child(callback(window, cx)),
+                    )
+                },
             )
             .when_some(
                 width.and(interaction_state.as_ref()),

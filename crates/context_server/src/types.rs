@@ -153,7 +153,7 @@ pub struct InitializeParams {
 pub struct CallToolParams {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<HashMap<String, serde_json::Value>>,
+    pub arguments: Option<serde_json::Value>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
