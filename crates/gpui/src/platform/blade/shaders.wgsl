@@ -950,17 +950,18 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
 }
 
 @fragment
-fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
-    let dx = dpdx(input.st_position);
-    let dy = dpdy(input.st_position);
-    if (any(input.clip_distances < vec4<f32>(0.0))) {
-        return 0.0;
-    }
+fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
+    // let dx = dpdx(input.st_position);
+    // let dy = dpdy(input.st_position);
+    // if (any(input.clip_distances < vec4<f32>(0.0))) {
+    //     return 0.0;
+    // }
 
-    let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
-    let f = input.st_position.x * input.st_position.x - input.st_position.y;
-    let distance = f / length(gradient);
-    return saturate(0.5 - distance);
+    // let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+    // let f = input.st_position.x * input.st_position.x - input.st_position.y;
+    // let distance = f / length(gradient);
+    // return saturate(0.5 - distance);
+    return vec4<f32>(0.7, 0.2, 0.2, 1.0); // Placeholder for path rasterization
 }
 
 // --- paths --- //
