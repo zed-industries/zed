@@ -373,9 +373,12 @@ impl Element for UniformList {
                             ScrollStrategy::Center => {
                                 if scrolled_to_top {
                                     let item_center = item_top + item_height / 2.0;
-                                    let target_scroll_top = item_center - list_height / 2.0;
 
-                                    if item_top < scroll_top
+                                    let viewport_height = list_height - offset_pixels;
+                                    let viewport_center = offset_pixels + viewport_height / 2.0;
+                                    let target_scroll_top = item_center - viewport_center;
+
+                                    if item_top < scroll_top + offset_pixels
                                         || item_bottom > scroll_top + list_height
                                     {
                                         updated_scroll_offset.y = -target_scroll_top
