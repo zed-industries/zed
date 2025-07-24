@@ -675,9 +675,33 @@ impl AcpThread {
         false
     }
 
-    fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
-        self.entries.push(entry);
-        cx.emit(AcpThreadEvent::NewEntry);
+    pub fn handle_session_update(
+        &mut self,
+        update: acp::SessionUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        match update {
+            acp::SessionUpdate::Started => {}
+            acp::SessionUpdate::UserMessage(content_block) => {
+                self.push_user_content_block(content_block, cx);
+            }
+            acp::SessionUpdate::AgentMessageChunk(content_block) => {
+                self.push_assistant_content_block(content_block, false, cx);
+            }
+            acp::SessionUpdate::AgentThoughtChunk(content_block) => {
+                self.push_assistant_content_block(content_block, true, cx);
+            }
+            acp::SessionUpdate::ToolCall(tool_call) => {
+                self.upsert_tool_call(tool_call, cx);
+            }
+            acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
+                self.update_tool_call(tool_call_update, cx)?;
+            }
+            acp::SessionUpdate::Plan(plan) => {
+                self.update_plan(plan, cx);
+            }
+        }
+        Ok(())
     }
 
     pub fn push_user_content_block(&mut self, chunk: acp::ContentBlock, cx: &mut Context<Self>) {
@@ -736,6 +760,11 @@ impl AcpThread {
                 cx,
             );
         }
+    }
+
+    fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+        self.entries.push(entry);
+        cx.emit(AcpThreadEvent::NewEntry);
     }
 
     pub fn update_tool_call(
@@ -805,6 +834,37 @@ impl AcpThread {
             })
     }
 
+    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
+                return;
+            };
+            let buffer = project.open_buffer(path, cx);
+            cx.spawn(async move |project, cx| {
+                let buffer = buffer.await?;
+
+                project.update(cx, |project, cx| {
+                    let position = if let Some(line) = location.line {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
+                        snapshot.anchor_before(point)
+                    } else {
+                        Anchor::MIN
+                    };
+
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })
+            })
+            .detach_and_log_err(cx);
+        });
+    }
+
     pub fn request_tool_call_permission(
         &mut self,
         tool_call: acp::ToolCall,
@@ -855,6 +915,25 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
+    /// Returns true if the last turn is awaiting tool authorization
+    pub fn waiting_for_tool_confirmation(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match &entry {
+                AgentThreadEntry::ToolCall(call) => match call.status {
+                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
+                    ToolCallStatus::Allowed { .. }
+                    | ToolCallStatus::Rejected
+                    | ToolCallStatus::Canceled => continue,
+                },
+                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
+                    // Reached the beginning of the turn
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -876,56 +955,6 @@ impl AcpThread {
             .entries
             .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
         cx.notify();
-    }
-
-    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
-                return;
-            };
-            let buffer = project.open_buffer(path, cx);
-            cx.spawn(async move |project, cx| {
-                let buffer = buffer.await?;
-
-                project.update(cx, |project, cx| {
-                    let position = if let Some(line) = location.line {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
-                        snapshot.anchor_before(point)
-                    } else {
-                        Anchor::MIN
-                    };
-
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })
-            })
-            .detach_and_log_err(cx);
-        });
-    }
-
-    /// Returns true if the last turn is awaiting tool authorization
-    pub fn waiting_for_tool_confirmation(&self) -> bool {
-        for entry in self.entries.iter().rev() {
-            match &entry {
-                AgentThreadEntry::ToolCall(call) => match call.status {
-                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Allowed { .. }
-                    | ToolCallStatus::Rejected
-                    | ToolCallStatus::Canceled => continue,
-                },
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    // Reached the beginning of the turn
-                    return false;
-                }
-            }
-        }
-        false
     }
 
     pub fn authenticate(&self, cx: &mut App) -> impl use<> + Future<Output = Result<()>> {

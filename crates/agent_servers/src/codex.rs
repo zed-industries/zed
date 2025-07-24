@@ -224,51 +224,11 @@ impl CodexConnection {
             return;
         };
 
-        match notification.update {
-            acp::SessionUpdate::Started => {}
-            acp::SessionUpdate::UserMessage(content_block) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.push_user_content_block(content_block, cx);
-                    })
-                    .log_err();
-            }
-            acp::SessionUpdate::AgentMessageChunk(content_block) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.push_assistant_content_block(content_block, false, cx);
-                    })
-                    .log_err();
-            }
-            acp::SessionUpdate::AgentThoughtChunk(content_block) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.push_assistant_content_block(content_block, true, cx);
-                    })
-                    .log_err();
-            }
-            acp::SessionUpdate::ToolCall(tool_call) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.upsert_tool_call(tool_call, cx);
-                    })
-                    .log_err();
-            }
-            acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.update_tool_call(tool_call_update, cx)
-                    })
-                    .log_err();
-            }
-            acp::SessionUpdate::Plan(plan) => {
-                thread
-                    .update(cx, |thread, cx| {
-                        thread.update_plan(plan, cx);
-                    })
-                    .log_err();
-            }
-        }
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(notification.update, cx)
+            })
+            .log_err();
     }
 }
 
