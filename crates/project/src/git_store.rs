@@ -32,8 +32,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
-    WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, Scope, SharedString, Subscription,
+    Task, WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -46,7 +46,6 @@ use rpc::{
     proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
-use settings::WorktreeId;
 use std::{
     cmp::Ordering,
     collections::{BTreeSet, VecDeque},
@@ -1084,19 +1083,28 @@ impl GitStore {
 
         match event {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, updated_entries) => {
-                let paths_by_git_repo =
-                    self.process_updated_entries(*worktree_id, updated_entries, cx);
-
-                for (repo, paths) in paths_by_git_repo {
-                    repo.update(cx, |repo, cx| {
-                        repo.paths_changed(
-                            paths,
-                            downstream
-                                .as_ref()
-                                .map(|downstream| downstream.updates_tx.clone()),
-                            cx,
-                        );
-                    });
+                if let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                {
+                    let paths_by_git_repo =
+                        self.process_updated_entries(&worktree, updated_entries, cx);
+                    let downstream = downstream
+                        .as_ref()
+                        .map(|downstream| downstream.updates_tx.clone());
+                    cx.spawn(async move |_, cx| {
+                        let c = std::time::Instant::now();
+                        let paths_by_git_repo = paths_by_git_repo.await;
+                        for (repo, paths) in paths_by_git_repo {
+                            repo.update(cx, |repo, cx| {
+                                repo.paths_changed(paths, downstream.clone(), cx);
+                            })
+                            .ok();
+                        }
+                        dbg!(c.elapsed());
+                    })
+                    .detach();
                 }
             }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
@@ -2187,50 +2195,83 @@ impl GitStore {
 
     fn process_updated_entries(
         &self,
-        worktree_id: WorktreeId,
+        worktree: &Entity<Worktree>,
         updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
-        cx: &mut Context<Self>,
-    ) -> HashMap<Entity<Repository>, Vec<RepoPath>> {
-        let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
-        let mut updated_copy: Vec<_> = updated_entries
-            .iter()
-            .map(|(path, _, _)| path.clone())
-            .collect();
-        updated_copy.sort_by(|lhs, rhs| lhs.cmp(&rhs));
-        let worktree = self.worktree_store.read(cx);
-        let updated_copy = updated_copy
-            .into_iter()
-            .filter_map(|path| worktree.absolutize(&ProjectPath { worktree_id, path }, cx))
-            .collect::<Vec<_>>();
-
-        let mut path_was_used = vec![false; updated_copy.len()];
+        cx: &mut App,
+    ) -> Task<HashMap<Entity<Repository>, Vec<RepoPath>>> {
         let mut repo_paths = self
             .repositories
             .values()
             .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo.clone()))
             .collect::<Vec<_>>();
-        repo_paths.sort_by(|lhs, rhs| rhs.0.cmp(&lhs.0));
+        let mut entries: Vec<_> = updated_entries
+            .iter()
+            .map(|(path, _, _)| path.clone())
+            .collect();
+        entries.sort();
+        let worktree = worktree.read(cx);
 
-        for (repo_path, repo) in repo_paths {
-            // Find all repository paths that belong to this repo
-            let mut ix = updated_copy.partition_point(|path| *path < repo_path.as_ref());
-            if ix == updated_copy.len() {
-                continue;
-            };
+        let entries = entries
+            .into_iter()
+            .filter_map(|path| worktree.absolutize(&path).ok())
+            .collect::<Vec<_>>();
 
-            let paths = paths_by_git_repo.entry(repo).or_default();
-            while let Some(path) = updated_copy.get(ix)
-                && let Some(repo_path) =
-                    RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
-            {
-                if path_was_used[ix] == false {
+        let executor = cx.background_executor().clone();
+        cx.background_executor().spawn(async move {
+            repo_paths.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+            let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
+            let mut tasks = Vec::with_capacity(repo_paths.len());
+            executor
+                .scoped(|scope: &mut Scope| {
+                    for (repo_path, repo) in repo_paths {
+                        let (tx, rx) = oneshot::channel();
+                        let update_contents = &entries;
+                        scope.spawn(async move {
+                            // Find all repository paths that belong to this repo
+                            let mut ix = update_contents.partition_point(|path| path < &*repo_path);
+                            if ix == update_contents.len() {
+                                return;
+                            };
+
+                            let mut paths = vec![];
+                            // All paths prefixed by a given repo will constitute a continuous range.
+                            while let Some(path) = update_contents.get(ix)
+                                && let Some(repo_path) =
+                                    RepositorySnapshot::abs_path_to_repo_path_inner(
+                                        &repo_path, &path,
+                                    )
+                            {
+                                paths.push((repo_path, ix));
+                                ix += 1;
+                            }
+                            tx.send((repo, paths)).ok();
+                        });
+                        tasks.push(rx);
+                    }
+                })
+                .await;
+
+            // Now, let's filter out the "duplicate" entries that were processed by multiple distinct repos.
+            let mut path_was_used = vec![false; entries.len()];
+
+            // Process tasks from the back: iterating backwards allows us to see more-specific paths first.
+            // We always want to assign a path to it's innermost repository.
+            for t in tasks.into_iter().rev() {
+                let Ok((repo, paths)) = t.await else {
+                    continue;
+                };
+                let entry = paths_by_git_repo.entry(repo).or_default();
+                for (repo_path, ix) in paths {
+                    if path_was_used[ix] {
+                        continue;
+                    }
                     path_was_used[ix] = true;
-                    paths.push(repo_path);
+                    entry.push(repo_path);
                 }
-                ix += 1;
             }
-        }
-        paths_by_git_repo
+
+            paths_by_git_repo
+        })
     }
 }
 
