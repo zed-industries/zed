@@ -1,4 +1,4 @@
-///! Translates old acp agents into the new schema
+// Translates old acp agents into the new schema
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
 use anyhow::{Context as _, Result};
