@@ -6077,6 +6077,96 @@ if is_entire_line {
 }
 
 #[gpui::test]
+async fn test_copy_entire_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2\nlastˇ line");
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("last line\n".to_string()),
+        "Copying last line of file without newline should include trailing newline"
+    );
+
+    cx.set_state("line1\nˇline2\nlast line");
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("line2\n".to_string()),
+        "Copying a line without a selection should copy that line with a trailing newline"
+    );
+
+    cx.set_state("ˇ");
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("\n".to_string()),
+        "Copying empty line should be a newline"
+    );
+
+    cx.set_state("line1\nline2\nlast line\nˇ");
+    cx.update_editor(|e, window, cx| e.copy(&Copy, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("\n".to_string()),
+        "Copying empty line at end of file should be a newline"
+    );
+}
+
+#[gpui::test]
+async fn test_cut_entire_line(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("line1\nline2\nlastˇ line");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("last line\n".to_string()),
+        "Cutting last line of file without newline should include trailing newline"
+    );
+    cx.assert_editor_state("line1\nline2\nˇ");
+
+    cx.set_state("line1\nˇline2\nlast line");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("line2\n".to_string()),
+        "Cutting a line without a selection should cut that line with a trailing newline"
+    );
+    cx.assert_editor_state("line1\nˇlast line");
+
+    cx.set_state("ˇ");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("\n".to_string()),
+        "Cutting empty line should be a newline"
+    );
+    cx.assert_editor_state("ˇ");
+
+    cx.set_state("line1\nline2\nlast line\nˇ");
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    assert_eq!(
+        cx.read_from_clipboard()
+            .and_then(|item| item.text().as_deref().map(str::to_string)),
+        Some("\n".to_string()),
+        "Cutting empty line at end of file should be a newline"
+    );
+    cx.assert_editor_state("line1\nline2\nlast lineˇ");
+}
+
+#[gpui::test]
 async fn test_paste_multiline(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

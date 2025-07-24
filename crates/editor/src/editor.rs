@@ -11918,6 +11918,13 @@ impl Editor {
                     text.push_str(chunk);
                     len += chunk.len();
                 }
+
+                // If cutting an entire line, ensure it ends with exactly one newline
+                if is_entire_line && !text.ends_with('\n') {
+                    text.push('\n');
+                    len += 1;
+                }
+
                 clipboard_selections.push(ClipboardSelection {
                     len,
                     is_entire_line,
@@ -12049,6 +12056,13 @@ impl Editor {
                         text.push_str(chunk);
                         len += chunk.len();
                     }
+
+                    // If copying an entire line, ensure it ends with exactly one newline
+                    if is_entire_line && !text.ends_with('\n') {
+                        text.push('\n');
+                        len += 1;
+                    }
+
                     clipboard_selections.push(ClipboardSelection {
                         len,
                         is_entire_line,
