@@ -9,7 +9,7 @@ use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
-use itertools::{Itertools, PeekingNext};
+use itertools::Itertools;
 use language::{
     Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
     text_diff,
@@ -353,33 +353,6 @@ impl ToolCallContent {
                 diff: Diff::from_acp(diff, language_registry, cx),
             },
         }
-    }
-
-    pub fn from_acp_contents(
-        content: Vec<acp::ToolCallContent>,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Vec<Self> {
-        content
-            .into_iter()
-            .peekable()
-            .batching(|it| match it.next()? {
-                acp::ToolCallContent::ContentBlock { content } => {
-                    let mut block = ContentBlock::new(content, &language_registry, cx);
-                    while let Some(acp::ToolCallContent::ContentBlock { content }) =
-                        it.peeking_next(|c| matches!(c, acp::ToolCallContent::ContentBlock { .. }))
-                    {
-                        block.append(content, &language_registry, cx);
-                    }
-                    Some(ToolCallContent::ContentBlock { content: block })
-                }
-                content @ acp::ToolCallContent::Diff { .. } => Some(ToolCallContent::from_acp(
-                    content,
-                    language_registry.clone(),
-                    cx,
-                )),
-            })
-            .collect()
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
