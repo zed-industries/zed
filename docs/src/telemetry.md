@@ -52,6 +52,7 @@ You can audit the metrics data that Zed has reported by running the command {#ac
 You can see the full list of the event types and exactly the data sent for each by inspecting the `Event` enum and the associated structs in [crates/telemetry_events/src/telemetry_events.rs](https://github.com/zed-industries/zed/blob/main/crates/telemetry_events/src/telemetry_events.rs) in the Zed repository.
 
 ### Server-Side Usage Data {#metrics}
+
 When using Zed's hosted services, we may collect, generate, and Process data to allow us to support users and improve our hosted offering. Examples include metadata around rate limiting and billing metrics/token usage. Zed does not persistently store user content or use user content to evaluate and/or improve our AI features, unless it is explicitly shared with Zed, and we have a zero-data retention agreement with Anthropic.
 
 You can see more about our stance on data collection (and that any prompt data shared with Zed is explicitly opt-in) at [AI Improvement](./ai/ai-improvement.md).
