@@ -2037,6 +2037,12 @@ impl Thread {
                                         if let Some(retry_strategy) =
                                             Thread::get_retry_strategy(completion_error)
                                         {
+                                            log::info!(
+                                                "Retrying with {:?} for language model completion error",
+                                                retry_strategy,
+                                                completion_error
+                                            );
+
                                             retry_scheduled = thread
                                                 .handle_retryable_error_with_delay(
                                                     &completion_error,
