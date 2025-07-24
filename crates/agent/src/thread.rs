@@ -2252,15 +2252,14 @@ impl Thread {
                 ..
             }
             | AuthenticationError { .. }
-            | PermissionError { .. } => None,
-            // These errors might be transient, so retry them
-            SerializeRequest { .. }
-            | BuildRequestBody { .. }
-            | PromptTooLarge { .. }
+            | PermissionError { .. }
+            | NoApiKey { .. }
             | ApiEndpointNotFound { .. }
-            | NoApiKey { .. } => Some(RetryStrategy::Fixed {
+            | PromptTooLarge { .. } => None,
+            // These errors might be transient, so retry them
+            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
-                max_attempts: 2,
+                max_attempts: 1,
             }),
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
