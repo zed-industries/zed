@@ -3,7 +3,7 @@ use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest};
 use anyhow::Result;
-use gpui::{AppContext, Entity, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
 use ui::App;
 
@@ -15,7 +15,7 @@ pub trait AgentConnection {
         project: Entity<Project>,
         cwd: &Path,
         connection: Arc<dyn AgentConnection>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
@@ -47,7 +47,7 @@ impl AgentConnection for OldAcpAgentConnection {
         project: Entity<Project>,
         _cwd: &Path,
         connection: Arc<dyn AgentConnection>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let task = self.connection.request_any(
             acp_old::InitializeParams {

@@ -40,8 +40,7 @@ use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
 
 use ::acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk, Diff,
-    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallConfirmation, ToolCallContent,
-    ToolCallId, ToolCallStatus,
+    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
@@ -65,7 +64,7 @@ pub struct AcpThreadView {
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     auth_task: Option<Task<()>>,
-    expanded_tool_calls: HashSet<ToolCallId>,
+    expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
     edits_expanded: bool,
     plan_expanded: bool,
@@ -211,7 +210,7 @@ impl AcpThreadView {
 
         let connect_task = agent.connect(&root_dir, &project, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
-            let connection = match task.await {
+            let connection = match connect_task.await {
                 Ok(thread) => thread,
                 Err(err) => {
                     this.update(cx, |this, cx| {
@@ -224,7 +223,7 @@ impl AcpThreadView {
             };
 
             let result = match connection
-                .new_thread(&project, root_dir, connection.clone(), cx)
+                .new_thread(project.clone(), &root_dir, connection.clone(), cx)
                 .await
             {
                 Err(e) => {
@@ -243,7 +242,7 @@ impl AcpThreadView {
                             Err(e)
                         }
                     } else if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
-                        this.update(cx, |this, _| {
+                        this.update(&mut cx, |this, _| {
                             this.thread_state = ThreadState::Unauthenticated { thread };
                         })
                         .ok();

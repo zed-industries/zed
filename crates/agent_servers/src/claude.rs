@@ -65,7 +65,7 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.to_path_buf();
         cx.spawn(async move |cx| {
             let threads_map = Rc::new(RefCell::new(HashMap::default()));
-            let permission_mcp_server = ZedMcpServer::new(threads_map, cx).await?;
+            let permission_mcp_server = ZedMcpServer::new(threads_map.clone(), cx).await?;
 
             let mut mcp_servers = HashMap::default();
             mcp_servers.insert(
@@ -101,56 +101,65 @@ impl AgentServer for ClaudeCode {
 
             log::trace!("Starting session with id: {}", session_id);
 
-            cx.background_spawn(async move {
-                let mut outgoing_rx = Some(outgoing_rx);
-                let mut mode = ClaudeSessionMode::Start;
+            cx.background_spawn({
+                let session_id = session_id.clone();
+                async move {
+                    let mut outgoing_rx = Some(outgoing_rx);
+                    let mut mode = ClaudeSessionMode::Start;
 
-                loop {
-                    let mut child =
-                        spawn_claude(&command, mode, session_id, &mcp_config_path, &root_dir)
-                            .await?;
-                    mode = ClaudeSessionMode::Resume;
-
-                    let pid = child.id();
-                    log::trace!("Spawned (pid: {})", pid);
-
-                    let mut io_fut = pin!(
-                        ClaudeAgentConnection::handle_io(
-                            outgoing_rx.take().unwrap(),
-                            incoming_message_tx.clone(),
-                            child.stdin.take().unwrap(),
-                            child.stdout.take().unwrap(),
+                    loop {
+                        let mut child = spawn_claude(
+                            &command,
+                            mode,
+                            session_id.clone(),
+                            &mcp_config_path,
+                            &root_dir,
                         )
-                        .fuse()
-                    );
+                        .await?;
+                        mode = ClaudeSessionMode::Resume;
 
-                    select_biased! {
-                        done_tx = cancel_rx.next() => {
-                            if let Some(done_tx) = done_tx {
-                                log::trace!("Interrupted (pid: {})", pid);
-                                let result = send_interrupt(pid as i32);
-                                outgoing_rx.replace(io_fut.await?);
-                                done_tx.send(result).log_err();
-                                continue;
+                        let pid = child.id();
+                        log::trace!("Spawned (pid: {})", pid);
+
+                        let mut io_fut = pin!(
+                            ClaudeAgentConnection::handle_io(
+                                outgoing_rx.take().unwrap(),
+                                incoming_message_tx.clone(),
+                                child.stdin.take().unwrap(),
+                                child.stdout.take().unwrap(),
+                            )
+                            .fuse()
+                        );
+
+                        select_biased! {
+                            done_tx = cancel_rx.next() => {
+                                if let Some(done_tx) = done_tx {
+                                    log::trace!("Interrupted (pid: {})", pid);
+                                    let result = send_interrupt(pid as i32);
+                                    outgoing_rx.replace(io_fut.await?);
+                                    done_tx.send(result).log_err();
+                                    continue;
+                                }
+                            }
+                            result = io_fut => {
+                                result?;
                             }
                         }
-                        result = io_fut => {
-                            result?;
-                        }
+
+                        log::trace!("Stopped (pid: {})", pid);
+                        break;
                     }
 
-                    log::trace!("Stopped (pid: {})", pid);
-                    break;
+                    drop(mcp_config_path);
+                    anyhow::Ok(())
                 }
-
-                drop(mcp_config_path);
-                anyhow::Ok(())
             })
             .detach();
 
             let end_turn_tx = Rc::new(RefCell::new(None));
             let handler_task = cx.spawn({
                 let end_turn_tx = end_turn_tx.clone();
+                let threads_map = threads_map.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentConnection::handle_message(
@@ -198,12 +207,12 @@ impl AgentConnection for ClaudeAgentConnection {
         project: Entity<Project>,
         _cwd: &Path,
         connection: Arc<dyn AgentConnection>,
-        cx: &mut App,
+        cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let session_id = self.session_id.clone();
-        let thread =
+        let thread_result =
             cx.new(|cx| AcpThread::new(connection, "Claude".into(), None, project, session_id, cx));
-        Task::ready(Ok(thread))
+        Task::ready(thread_result)
     }
 
     fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -267,10 +276,11 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn cancel(&self, cx: &mut App) {
         let (done_tx, done_rx) = oneshot::channel();
-        self.cancel_tx.unbounded_send(done_tx);
-        cx.foreground_executor()
-            .spawn(async move { done_rx.await? })
-            .detach_and_log_err(cx);
+        if self.cancel_tx.unbounded_send(done_tx).log_err().is_some() {
+            cx.foreground_executor()
+                .spawn(async move { done_rx.await? })
+                .detach_and_log_err(cx);
+        }
     }
 }
 
