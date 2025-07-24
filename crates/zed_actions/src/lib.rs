@@ -277,7 +277,10 @@ pub mod agent {
             /// Displays the previous message in the history.
             PreviousHistoryMessage,
             /// Displays the next message in the history.
-            NextHistoryMessage
+            NextHistoryMessage,
+            /// Toggles the language model selector dropdown.
+            #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
+            ToggleModelSelector
         ]
     );
 }

@@ -1,9 +1,21 @@
 ; Functions names start with `Test`
 (
-  (
+  [
     (function_declaration name: (_) @run
       (#match? @run "^Test.*"))
-  ) @_
+    (method_declaration
+      receiver: (parameter_list
+        (parameter_declaration
+          name: (identifier) @_receiver_name
+          type: [
+            (pointer_type (type_identifier) @_receiver_type)
+            (type_identifier) @_receiver_type
+          ]
+        )
+      )
+      name: (field_identifier) @run @_method_name
+      (#match? @_method_name "^Test.*"))
+  ] @_
   (#set! tag go-test)
 )
 
@@ -26,7 +38,10 @@
       arguments: (
         argument_list
         .
-        (interpreted_string_literal) @_subtest_name
+        [
+          (interpreted_string_literal)
+          (raw_string_literal)
+        ] @_subtest_name
         .
         (func_literal
           parameters: (

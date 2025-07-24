@@ -29,8 +29,8 @@ impl ThumbState {
 }
 
 impl ScrollableHandle for UniformListScrollHandle {
-    fn content_size(&self) -> Size<Pixels> {
-        self.0.borrow().base_handle.content_size()
+    fn max_offset(&self) -> Size<Pixels> {
+        self.0.borrow().base_handle.max_offset()
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
@@ -47,8 +47,8 @@ impl ScrollableHandle for UniformListScrollHandle {
 }
 
 impl ScrollableHandle for ListState {
-    fn content_size(&self) -> Size<Pixels> {
-        self.content_size_for_scrollbar()
+    fn max_offset(&self) -> Size<Pixels> {
+        self.max_offset_for_scrollbar()
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
@@ -73,8 +73,8 @@ impl ScrollableHandle for ListState {
 }
 
 impl ScrollableHandle for ScrollHandle {
-    fn content_size(&self) -> Size<Pixels> {
-        self.padded_content_size()
+    fn max_offset(&self) -> Size<Pixels> {
+        self.max_offset()
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
@@ -91,7 +91,10 @@ impl ScrollableHandle for ScrollHandle {
 }
 
 pub trait ScrollableHandle: Any + Debug {
-    fn content_size(&self) -> Size<Pixels>;
+    fn content_size(&self) -> Size<Pixels> {
+        self.viewport().size + self.max_offset()
+    }
+    fn max_offset(&self) -> Size<Pixels>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
     fn viewport(&self) -> Bounds<Pixels>;
@@ -149,17 +152,17 @@ impl ScrollbarState {
 
     fn thumb_range(&self, axis: ScrollbarAxis) -> Option<Range<f32>> {
         const MINIMUM_THUMB_SIZE: Pixels = px(25.);
-        let content_size = self.scroll_handle.content_size().along(axis);
+        let max_offset = self.scroll_handle.max_offset().along(axis);
         let viewport_size = self.scroll_handle.viewport().size.along(axis);
-        if content_size.is_zero() || viewport_size.is_zero() || content_size <= viewport_size {
+        if max_offset.is_zero() || viewport_size.is_zero() {
             return None;
         }
+        let content_size = viewport_size + max_offset;
         let visible_percentage = viewport_size / content_size;
         let thumb_size = MINIMUM_THUMB_SIZE.max(viewport_size * visible_percentage);
         if thumb_size > viewport_size {
             return None;
         }
-        let max_offset = content_size - viewport_size;
         let current_offset = self
             .scroll_handle
             .offset()
@@ -307,7 +310,7 @@ impl Element for Scrollbar {
 
             let compute_click_offset =
                 move |event_position: Point<Pixels>,
-                      item_size: Size<Pixels>,
+                      max_offset: Size<Pixels>,
                       event_type: ScrollbarMouseEvent| {
                     let viewport_size = padded_bounds.size.along(axis);
 
@@ -323,7 +326,7 @@ impl Element for Scrollbar {
                         - thumb_offset)
                         .clamp(px(0.), viewport_size - thumb_size);
 
-                    let max_offset = (item_size.along(axis) - viewport_size).max(px(0.));
+                    let max_offset = max_offset.along(axis);
                     let percentage = if viewport_size > thumb_size {
                         thumb_start / (viewport_size - thumb_size)
                     } else {
@@ -347,7 +350,7 @@ impl Element for Scrollbar {
                     } else {
                         let click_offset = compute_click_offset(
                             event.position,
-                            scroll.content_size(),
+                            scroll.max_offset(),
                             ScrollbarMouseEvent::GutterClick,
                         );
                         scroll.set_offset(scroll.offset().apply_along(axis, |_| click_offset));
@@ -373,7 +376,7 @@ impl Element for Scrollbar {
                     ThumbState::Dragging(drag_state) if event.dragging() => {
                         let drag_offset = compute_click_offset(
                             event.position,
-                            scroll.content_size(),
+                            scroll.max_offset(),
                             ScrollbarMouseEvent::ThumbDrag(drag_state),
                         );
                         scroll.set_offset(scroll.offset().apply_along(axis, |_| drag_offset));

@@ -1036,7 +1036,7 @@ impl ActiveThread {
                             .collect::<Vec<_>>()
                             .join("\n");
                         self.last_error = Some(ThreadError::Message {
-                            header: "Error interacting with language model".into(),
+                            header: "Error".into(),
                             message: error_message.into(),
                         });
                     }
@@ -3202,7 +3202,10 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    div()
+                                        .min_w(rems_from_px(145.))
+                                        .child(LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    )
                                 )
                                 .child(
                                     h_flex()
@@ -3247,7 +3250,6 @@ impl ActiveThread {
                                                 },
                                             ))
                                         })
-                                        .child(ui::Divider::vertical())
                                         .child({
                                             let tool_id = tool_use.id.clone();
                                             Button::new("allow-tool-action", "Allow")
@@ -3722,8 +3724,11 @@ pub(crate) fn open_context(
 
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, cx| {
-                    panel.open_thread(thread_context.thread.clone(), window, cx);
+                let thread = thread_context.thread.clone();
+                window.defer(cx, move |window, cx| {
+                    panel.update(cx, |panel, cx| {
+                        panel.open_thread(thread, window, cx);
+                    });
                 });
             }
         }),
@@ -3731,8 +3736,11 @@ pub(crate) fn open_context(
         AgentContextHandle::TextThread(text_thread_context) => {
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
+                    let context = text_thread_context.context.clone();
+                    window.defer(cx, move |window, cx| {
+                        panel.update(cx, |panel, cx| {
+                            panel.open_prompt_editor(context, window, cx)
+                        });
                     });
                 }
             })
@@ -3887,7 +3895,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model,
                     }),
                     cx,
@@ -3971,7 +3979,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model: model.clone(),
                     }),
                     cx,

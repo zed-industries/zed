@@ -121,7 +121,7 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "0.4.3"
+taffy = "=0.8.3"
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -294,6 +294,10 @@ path = "examples/text.rs"
 [[example]]
 name = "text_wrapper"
 path = "examples/text_wrapper.rs"
+
+[[example]]
+name = "tree"
+path = "examples/tree.rs"
 
 [[example]]
 name = "uniform_list"

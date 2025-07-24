@@ -6,7 +6,7 @@
     }
   },
   {
-    "context": "Editor",
+    "context": "Editor && mode == full",
     "bindings": {
       "cmd-l": "go_to_line::Toggle",
       "ctrl-shift-d": "editor::DuplicateLineDown",
@@ -15,7 +15,12 @@
       "cmd-enter": "editor::NewlineBelow",
       "cmd-alt-enter": "editor::NewlineAbove",
       "cmd-shift-l": "editor::SelectLine",
-      "cmd-shift-t": "outline::Toggle",
+      "cmd-shift-t": "outline::Toggle"
+    }
+  },
+  {
+    "context": "Editor",
+    "bindings": {
       "alt-backspace": "editor::DeleteToPreviousWordStart",
       "alt-shift-backspace": "editor::DeleteToNextWordEnd",
       "alt-delete": "editor::DeleteToNextWordEnd",
@@ -38,10 +43,6 @@
       "ctrl-alt-u": "editor::ConvertToUpperCamelCase",
       "ctrl-_": "editor::ConvertToSnakeCase"
     }
-  },
-  {
-    "context": "Editor && mode == full",
-    "bindings": {}
   },
   {
     "context": "BufferSearchBar",

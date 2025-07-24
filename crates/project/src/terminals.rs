@@ -16,7 +16,7 @@ use std::{
 use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
-    terminal_settings::{self, TerminalSettings, VenvSettings},
+    terminal_settings::{self, ActivateScript, TerminalSettings, VenvSettings},
 };
 use util::{
     ResultExt,
@@ -256,8 +256,11 @@ impl Project {
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
                 if let Some(python_venv_directory) = &python_venv_directory {
-                    python_venv_activate_command =
-                        this.python_activate_command(python_venv_directory, &settings.detect_venv);
+                    python_venv_activate_command = this.python_activate_command(
+                        python_venv_directory,
+                        &settings.detect_venv,
+                        &settings.shell,
+                    );
                 }
 
                 match ssh_details {
@@ -510,10 +513,27 @@ impl Project {
             })
     }
 
+    fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
+        let shell_env = std::env::var("SHELL").ok();
+        let shell_path = shell.or_else(|| shell_env.as_deref());
+        let shell = std::path::Path::new(shell_path.unwrap_or(""))
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        match shell {
+            "fish" => ActivateScript::Fish,
+            "tcsh" => ActivateScript::Csh,
+            "nu" => ActivateScript::Nushell,
+            "powershell" | "pwsh" => ActivateScript::PowerShell,
+            _ => ActivateScript::Default,
+        }
+    }
+
     fn python_activate_command(
         &self,
         venv_base_directory: &Path,
         venv_settings: &VenvSettings,
+        shell: &Shell,
     ) -> Option<String> {
         let venv_settings = venv_settings.as_option()?;
         let activate_keyword = match venv_settings.activate_script {
@@ -526,7 +546,22 @@ impl Project {
             terminal_settings::ActivateScript::Pyenv => "pyenv",
             _ => "source",
         };
-        let activate_script_name = match venv_settings.activate_script {
+        let script_kind =
+            if venv_settings.activate_script == terminal_settings::ActivateScript::Default {
+                match shell {
+                    Shell::Program(program) => Self::activate_script_kind(Some(program)),
+                    Shell::WithArguments {
+                        program,
+                        args: _,
+                        title_override: _,
+                    } => Self::activate_script_kind(Some(program)),
+                    Shell::System => Self::activate_script_kind(None),
+                }
+            } else {
+                venv_settings.activate_script
+            };
+
+        let activate_script_name = match script_kind {
             terminal_settings::ActivateScript::Default
             | terminal_settings::ActivateScript::Pyenv => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
@@ -627,7 +662,7 @@ pub fn wrap_for_ssh(
 
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
-            format!("cd {path}; {env_changes} {to_run}")
+            format!("cd \"{path}\"; {env_changes} {to_run}")
         }
     } else {
         format!("cd; {env_changes} {to_run}")

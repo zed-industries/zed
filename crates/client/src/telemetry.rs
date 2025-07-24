@@ -358,13 +358,13 @@ impl Telemetry {
         worktree_id: WorktreeId,
         updated_entries_set: &UpdatedEntriesSet,
     ) {
-        let Some(project_type_names) = self.detect_project_types(worktree_id, updated_entries_set)
+        let Some(project_types) = self.detect_project_types(worktree_id, updated_entries_set)
         else {
             return;
         };
 
-        for project_type_name in project_type_names {
-            telemetry::event!("Project Opened", project_type = project_type_name);
+        for project_type in project_types {
+            telemetry::event!("Project Opened", project_type = project_type);
         }
     }
 

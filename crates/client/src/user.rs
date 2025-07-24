@@ -764,6 +764,18 @@ impl UserStore {
     }
 
     pub fn current_plan(&self) -> Option<proto::Plan> {
+        #[cfg(debug_assertions)]
+        if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
+            return match plan.as_str() {
+                "free" => Some(proto::Plan::Free),
+                "trial" => Some(proto::Plan::ZedProTrial),
+                "pro" => Some(proto::Plan::ZedPro),
+                _ => {
+                    panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
+                }
+            };
+        }
+
         self.current_plan
     }
 

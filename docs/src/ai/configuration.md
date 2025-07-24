@@ -237,7 +237,7 @@ You can use Gemini models with the Zed agent by choosing it via the model dropdo
 
 The Google AI API key will be saved in your keychain.
 
-Zed will also use the `GOOGLE_AI_API_KEY` environment variable if it's defined.
+Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See [Using Gemini API keys](Using Gemini API keys) in the Gemini docs for more.
 
 #### Custom Models {#google-ai-custom-models}
 
@@ -444,14 +444,17 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible {#openai-api-compatible}
 
-Zed supports using OpenAI compatible APIs by specifying a custom `endpoint` and `available_models` for the OpenAI provider.
+Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider. This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-Zed supports using OpenAI compatible APIs by specifying a custom `api_url` and `available_models` for the OpenAI provider. This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
+To configure a compatible API, you can add a custom API URL for OpenAI either via the UI (currently available only in Preview) or by editing your `settings.json`.
 
-To configure a compatible API, you can add a custom API URL for OpenAI either via the UI or by editing your `settings.json`. For example, to connect to [Together AI](https://www.together.ai/):
+For example, to connect to [Together AI](https://www.together.ai/) via the UI:
 
-1.  Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
-2.  Add the following to your `settings.json`:
+1. Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
+2. Go to the Agent Panel's settings view, click on the "Add Provider" button, and then on the "OpenAI" menu item
+3. Add the requested fields, such as `api_url`, `api_key`, available models, and others
+
+Alternatively, you can also add it via the `settings.json`:
 
 ```json
 {

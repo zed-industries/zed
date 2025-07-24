@@ -26,7 +26,7 @@ jobs:
       - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

@@ -15,13 +15,15 @@
     "adapter": "JavaScript",
     "program": "$ZED_FILE",
     "request": "launch",
-    "cwd": "$ZED_WORKTREE_ROOT"
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "type": "pwa-node"
   },
   {
     "label": "JavaScript debug terminal",
     "adapter": "JavaScript",
     "request": "launch",
     "cwd": "$ZED_WORKTREE_ROOT",
-    "console": "integratedTerminal"
+    "console": "integratedTerminal",
+    "type": "pwa-node"
   }
 ]

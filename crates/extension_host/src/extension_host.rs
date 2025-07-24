@@ -1313,10 +1313,17 @@ impl ExtensionStore {
                     }
 
                     for snippets_path in &snippets_to_add {
-                        if let Some(snippets_contents) = fs.load(snippets_path).await.log_err() {
-                            proxy
-                                .register_snippet(snippets_path, &snippets_contents)
-                                .log_err();
+                        match fs
+                            .load(snippets_path)
+                            .await
+                            .with_context(|| format!("Loading snippets from {snippets_path:?}"))
+                        {
+                            Ok(snippets_contents) => {
+                                proxy
+                                    .register_snippet(snippets_path, &snippets_contents)
+                                    .log_err();
+                            }
+                            Err(e) => log::error!("Cannot load snippets: {e:#}"),
                         }
                     }
                 }
@@ -1331,20 +1338,25 @@ impl ExtensionStore {
 
                 let extension_path = root_dir.join(extension.manifest.id.as_ref());
                 let wasm_extension = WasmExtension::load(
-                    extension_path,
+                    &extension_path,
                     &extension.manifest,
                     wasm_host.clone(),
                     &cx,
                 )
-                .await;
+                .await
+                .with_context(|| format!("Loading extension from {extension_path:?}"));
 
-                if let Some(wasm_extension) = wasm_extension.log_err() {
-                    wasm_extensions.push((extension.manifest.clone(), wasm_extension));
-                } else {
-                    this.update(cx, |_, cx| {
-                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
-                    })
-                    .ok();
+                match wasm_extension {
+                    Ok(wasm_extension) => {
+                        wasm_extensions.push((extension.manifest.clone(), wasm_extension))
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load extension: {e:#}");
+                        this.update(cx, |_, cx| {
+                            cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                        })
+                        .ok();
+                    }
                 }
             }
 
