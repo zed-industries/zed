@@ -23,7 +23,7 @@ pub trait AgentConnection {
 
     fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>>;
 
-    fn cancel(&self, cx: &mut App);
+    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 }
 
 #[derive(Debug)]
@@ -111,7 +111,7 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn cancel(&self, cx: &mut App) {
+    fn cancel(&self, _session_id: &acp::SessionId, cx: &mut App) {
         let task = self
             .connection
             .request_any(acp_old::CancelSendMessageParams.into_any());

@@ -1,4 +1,4 @@
-use std::{cell::RefCell, path::PathBuf, rc::Rc};
+use std::path::PathBuf;
 
 use acp_thread::AcpThread;
 use agent_client_protocol as acp;
@@ -9,13 +9,13 @@ use context_server::types::{
     ListToolsResponse, ProtocolVersion, ServerCapabilities, Tool, ToolAnnotations,
     ToolResponseContent, ToolsCapabilities, requests,
 };
-use gpui::{App, AsyncApp, Task, WeakEntity};
+use gpui::{App, AsyncApp, Entity, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::claude::tools::{ClaudeTool, EditToolParams, ReadToolParams};
 
-pub struct ZedMcpServer {
+pub struct ClaudeZedMcpServer {
     server: context_server::listener::McpServer,
 }
 
@@ -45,16 +45,16 @@ enum PermissionToolBehavior {
     Deny,
 }
 
-impl ZedMcpServer {
+impl ClaudeZedMcpServer {
     pub async fn new(
-        thread_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         cx: &AsyncApp,
     ) -> Result<Self> {
         let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
         mcp_server.handle_request::<requests::ListTools>(Self::handle_list_tools);
         mcp_server.handle_request::<requests::CallTool>(move |request, cx| {
-            Self::handle_call_tool(request, thread_map.clone(), cx)
+            Self::handle_call_tool(request, thread_rx.clone(), cx)
         });
 
         Ok(Self { server: mcp_server })
@@ -142,15 +142,19 @@ impl ZedMcpServer {
 
     fn handle_call_tool(
         request: CallToolParams,
-        threads_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         cx: &App,
     ) -> Task<Result<CallToolResponse>> {
         cx.spawn(async move |cx| {
+            let Some(thread) = thread_rx.recv().await?.upgrade() else {
+                anyhow::bail!("Thread closed");
+            };
+
             if request.name.as_str() == PERMISSION_TOOL {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let result = Self::handle_permissions_tool_call(input, threads_map, cx).await?;
+                let result = Self::handle_permissions_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content: vec![ToolResponseContent::Text {
                         text: serde_json::to_string(&result)?,
@@ -162,7 +166,7 @@ impl ZedMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                let content = Self::handle_read_tool_call(input, threads_map, cx).await?;
+                let content = Self::handle_read_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content,
                     is_error: None,
@@ -172,7 +176,7 @@ impl ZedMcpServer {
                 let input =
                     serde_json::from_value(request.arguments.context("Arguments required")?)?;
 
-                Self::handle_edit_tool_call(input, threads_map, cx).await?;
+                Self::handle_edit_tool_call(input, thread, cx).await?;
                 Ok(CallToolResponse {
                     content: vec![],
                     is_error: None,
@@ -190,19 +194,10 @@ impl ZedMcpServer {
             offset,
             limit,
         }: ReadToolParams,
-        threads_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<Vec<ToolResponseContent>>> {
         cx.spawn(async move |cx| {
-            // todo! get session id somehow
-            let thread = {
-                let threads_map = threads_map.borrow();
-                let Some((_, thread)) = threads_map.iter().next() else {
-                    anyhow::bail!("Server not available");
-                };
-                thread.clone()
-            };
-
             let content = thread
                 .update(cx, |thread, cx| {
                     thread.read_text_file(abs_path, offset, limit, false, cx)
@@ -215,19 +210,10 @@ impl ZedMcpServer {
 
     fn handle_edit_tool_call(
         params: EditToolParams,
-        threads_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<()>> {
         cx.spawn(async move |cx| {
-            // todo! get session id somehow
-            let thread = {
-                let threads_map = threads_map.borrow();
-                let Some((_, thread)) = threads_map.iter().next() else {
-                    anyhow::bail!("Server not available");
-                };
-                thread.clone()
-            };
-
             let content = thread
                 .update(cx, |threads, cx| {
                     threads.read_text_file(params.abs_path.clone(), None, None, true, cx)
@@ -251,19 +237,10 @@ impl ZedMcpServer {
 
     fn handle_permissions_tool_call(
         params: PermissionToolParams,
-        threads_map: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        thread: Entity<AcpThread>,
         cx: &AsyncApp,
     ) -> Task<Result<PermissionToolResponse>> {
         cx.spawn(async move |cx| {
-            // todo! get session id somehow
-            let thread = {
-                let threads_map = threads_map.borrow();
-                let Some((_, thread)) = threads_map.iter().next() else {
-                    anyhow::bail!("Server not available");
-                };
-                thread.clone()
-            };
-
             let claude_tool = ClaudeTool::infer(&params.tool_name, params.input.clone());
 
             let tool_call_id =

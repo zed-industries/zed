@@ -965,7 +965,7 @@ impl AcpThread {
             }
         }
 
-        self.connection.cancel(cx);
+        self.connection.cancel(&self.session_id, cx);
 
         // Wait for the send task to complete
         cx.foreground_executor().spawn(send_task)
