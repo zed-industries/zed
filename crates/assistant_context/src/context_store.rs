@@ -767,6 +767,11 @@ impl ContextStore {
     fn reload(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let fs = self.fs.clone();
         cx.spawn(async move |this, cx| {
+            pub static ZED_STATELESS: LazyLock<bool> =
+                LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
+            if *ZED_STATELESS {
+                return Ok(());
+            }
             fs.create_dir(contexts_dir()).await?;
 
             let mut paths = fs.read_dir(contexts_dir()).await?;

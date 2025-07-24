@@ -16,6 +16,7 @@ use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, TintColor, Tooltip, prelude::*};
 
+#[derive(IntoElement)]
 pub struct BulletItem {
     label: SharedString,
 }
@@ -28,18 +29,27 @@ impl BulletItem {
     }
 }
 
-impl IntoElement for BulletItem {
-    type Element = AnyElement;
+impl RenderOnce for BulletItem {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let line_height = 0.85 * window.line_height();
 
-    fn into_element(self) -> Self::Element {
         ListItem::new("list-item")
             .selectable(false)
-            .start_slot(
-                Icon::new(IconName::Dash)
-                    .size(IconSize::XSmall)
-                    .color(Color::Hidden),
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Hidden),
+                        ),
+                    )
+                    .child(div().w_full().min_w_0().child(Label::new(self.label))),
             )
-            .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
 }
@@ -373,7 +383,9 @@ impl ZedAiOnboarding {
             .child(
                 List::new()
                     .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("pro", "Continue with Zed Pro")

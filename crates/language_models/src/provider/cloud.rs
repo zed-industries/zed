@@ -1159,19 +1159,20 @@ impl RenderOnce for ZedAiConfiguration {
 
         let manage_subscription_buttons = if is_pro {
             Button::new("manage_settings", "Manage Subscription")
+                .full_width()
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
             Button::new("start_trial", "Start 14-day Free Pro Trial")
-                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .full_width()
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
                 .into_any_element()
         } else {
             Button::new("upgrade", "Upgrade to Pro")
-                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .full_width()
+                .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
                 .into_any_element()
         };
