@@ -614,7 +614,7 @@ impl BladeRenderer {
             pad: 0,
         };
 
-        let mut pass = self.command_encoder.render(
+        if let mut pass = self.command_encoder.render(
             "main",
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
@@ -624,8 +624,7 @@ impl BladeRenderer {
                 }],
                 depth_stencil: None,
             },
-        );
-        {
+        ) {
             profiling::scope!("render pass");
             for batch in scene.batches() {
                 match batch {
@@ -656,10 +655,22 @@ impl BladeRenderer {
                         encoder.draw(0, 4, 0, shadows.len() as u32);
                     }
                     PrimitiveBatch::Paths(paths) => {
+                        drop(pass);
                         self.rasterize_paths_to_intermediate(
                             paths,
                             self.surface_config.size.width as f32,
                             self.surface_config.size.height as f32,
+                        );
+                        pass = self.command_encoder.render(
+                            "main",
+                            gpu::RenderTargetSet {
+                                colors: &[gpu::RenderTarget {
+                                    view: frame.texture_view(),
+                                    init_op: gpu::InitOp::Load,
+                                    finish_op: gpu::FinishOp::Store,
+                                }],
+                                depth_stencil: None,
+                            },
                         );
                         let mut encoder = pass.with(&self.pipelines.paths);
                         // todo(linux): group by texture ID

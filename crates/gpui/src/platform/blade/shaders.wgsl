@@ -968,17 +968,12 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
 struct PathSprite {
     bounds: Bounds,
     color: Background,
-    tile: AtlasTile,
 }
 var<storage, read> b_path_sprites: array<PathSprite>;
 
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) tile_position: vec2<f32>,
-    @location(1) @interpolate(flat) instance_id: u32,
-    @location(2) @interpolate(flat) color_solid: vec4<f32>,
-    @location(3) @interpolate(flat) color0: vec4<f32>,
-    @location(4) @interpolate(flat) color1: vec4<f32>,
+    @location(0) texture_coords: vec2<f32>,
 }
 
 @vertex
@@ -986,33 +981,28 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_path_sprites[instance_id];
     // Don't apply content mask because it was already accounted for when rasterizing the path.
+    let device_position = to_device_position(unit_vertex, sprite.bounds);
+    // For screen-space intermediate texture, convert screen position to texture coordinates
+    let screen_position = vec2<f32>(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * vec2<f32>(sprite.bounds.size.x, sprite.bounds.size.y);
+    let texture_coords = screen_position / vec2<f32>(globals.viewport_size.x, globals.viewport_size.y);
 
     var out = PathVarying();
-    out.position = to_device_position(unit_vertex, sprite.bounds);
-    out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.instance_id = instance_id;
-
-    let gradient = prepare_gradient_color(
-        sprite.color.tag,
-        sprite.color.color_space,
-        sprite.color.solid,
-        sprite.color.colors
-    );
-    out.color_solid = gradient.solid;
-    out.color0 = gradient.color0;
-    out.color1 = gradient.color1;
+    out.position = device_position;
+    out.texture_coords = texture_coords;
+    
     return out;
 }
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
-    let mask = 1.0 - abs(1.0 - sample % 2.0);
-    let sprite = b_path_sprites[input.instance_id];
-    let background = sprite.color;
-    let color = gradient_color(background, input.position.xy, sprite.bounds,
-        input.color_solid, input.color0, input.color1);
-    return blend_color(color, mask);
+    let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
+    // let mask = 1.0 - abs(1.0 - sample % 2.0);
+    // let sprite = b_path_sprites[input.instance_id];
+    // let background = sprite.color;
+    // let color = gradient_color(background, input.position.xy, sprite.bounds,
+    //     input.color_solid, input.color0, input.color1);
+    // return blend_color(color, mask);
+    return sample;
 }
 
 // --- underlines --- //
