@@ -33,8 +33,8 @@ use git::{
     },
 };
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, Scope, SharedString, Subscription,
-    Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
+    WeakEntity,
 };
 use language::{
     Buffer, BufferEvent, Language, LanguageRegistry,
@@ -1089,7 +1089,6 @@ impl GitStore {
                     .read(cx)
                     .worktree_for_id(*worktree_id, cx)
                 {
-                    let x = std::time::Instant::now();
                     let paths_by_git_repo =
                         self.process_updated_entries(&worktree, updated_entries, cx);
                     let downstream = downstream
