@@ -1,6 +1,6 @@
 mod completion_provider;
 mod fetch_context_picker;
-mod file_context_picker;
+pub(crate) mod file_context_picker;
 mod rules_context_picker;
 mod symbol_context_picker;
 mod thread_context_picker;
@@ -426,6 +426,7 @@ impl ContextPicker {
                             this.add_recent_file(project_path.clone(), window, cx);
                         })
                     },
+                    None,
                 )
             }
             RecentEntry::Thread(thread) => {
@@ -443,6 +444,7 @@ impl ContextPicker {
                                 .detach_and_log_err(cx);
                         })
                     },
+                    None,
                 )
             }
         }
@@ -661,7 +663,7 @@ fn recent_context_picker_entries(
 
     let active_thread_id = workspace
         .panel::<AgentPanel>(cx)
-        .and_then(|panel| Some(panel.read(cx).active_thread()?.read(cx).id()));
+        .and_then(|panel| Some(panel.read(cx).active_thread(cx)?.read(cx).id()));
 
     if let Some((thread_store, text_thread_store)) = thread_store
         .and_then(|store| store.upgrade())
@@ -930,8 +932,8 @@ impl MentionLink {
         format!(
             "[@{} ({}-{})]({}:{}:{}-{})",
             file_name,
-            line_range.start,
-            line_range.end,
+            line_range.start + 1,
+            line_range.end + 1,
             Self::SELECTION,
             full_path,
             line_range.start,

@@ -132,12 +132,12 @@ impl NotificationStore {
         }
         let ix = count - 1 - ix;
         let mut cursor = self.notifications.cursor::<Count>(&());
-        cursor.seek(&Count(ix), Bias::Right, &());
+        cursor.seek(&Count(ix), Bias::Right);
         cursor.item()
     }
     pub fn notification_for_id(&self, id: u64) -> Option<&NotificationEntry> {
         let mut cursor = self.notifications.cursor::<NotificationId>(&());
-        cursor.seek(&NotificationId(id), Bias::Left, &());
+        cursor.seek(&NotificationId(id), Bias::Left);
         if let Some(item) = cursor.item() {
             if item.id == id {
                 return Some(item);
@@ -365,7 +365,7 @@ impl NotificationStore {
         let mut old_range = 0..0;
 
         for (i, (id, new_notification)) in notifications.into_iter().enumerate() {
-            new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left, &()), &());
+            new_notifications.append(cursor.slice(&NotificationId(id), Bias::Left), &());
 
             if i == 0 {
                 old_range.start = cursor.start().1.0;
@@ -374,7 +374,7 @@ impl NotificationStore {
             let old_notification = cursor.item();
             if let Some(old_notification) = old_notification {
                 if old_notification.id == id {
-                    cursor.next(&());
+                    cursor.next();
 
                     if let Some(new_notification) = &new_notification {
                         if new_notification.is_read {
@@ -403,7 +403,7 @@ impl NotificationStore {
 
         old_range.end = cursor.start().1.0;
         let new_count = new_notifications.summary().count - old_range.start;
-        new_notifications.append(cursor.suffix(&()), &());
+        new_notifications.append(cursor.suffix(), &());
         drop(cursor);
 
         self.notifications = new_notifications;

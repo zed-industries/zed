@@ -1,4 +1,4 @@
-use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint, scroll::Autoscroll};
+use editor::{Editor, MultiBufferSnapshot, ToOffset, ToPoint};
 use gpui::{Action, Context, Window};
 use language::{Bias, Point};
 use schemars::JsonSchema;
@@ -9,6 +9,7 @@ use crate::{Vim, state::Mode};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 
+/// Increments the number under the cursor or toggles boolean values.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +18,7 @@ struct Increment {
     step: bool,
 }
 
+/// Decrements the number under the cursor or toggles boolean values.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -97,7 +99,7 @@ impl Vim {
                 editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     let mut new_ranges = Vec::new();
                     for (visual, anchor) in new_anchors.iter() {
                         let mut point = anchor.to_point(&snapshot);

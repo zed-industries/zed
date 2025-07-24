@@ -73,6 +73,7 @@ pub enum StripeCancellationDetailsReason {
 pub struct StripeCreateSubscriptionParams {
     pub customer: StripeCustomerId,
     pub items: Vec<StripeCreateSubscriptionItems>,
+    pub automatic_tax: Option<StripeAutomaticTax>,
 }
 
 #[derive(Debug)]
@@ -148,6 +149,37 @@ pub struct StripeCreateMeterEventPayload<'a> {
     pub stripe_customer_id: &'a StripeCustomerId,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeBillingAddressCollection {
+    Auto,
+    Required,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeCustomerUpdate {
+    pub address: Option<StripeCustomerUpdateAddress>,
+    pub name: Option<StripeCustomerUpdateName>,
+    pub shipping: Option<StripeCustomerUpdateShipping>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCustomerUpdateAddress {
+    Auto,
+    Never,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCustomerUpdateName {
+    Auto,
+    Never,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum StripeCustomerUpdateShipping {
+    Auto,
+    Never,
+}
+
 #[derive(Debug, Default)]
 pub struct StripeCreateCheckoutSessionParams<'a> {
     pub customer: Option<&'a StripeCustomerId>,
@@ -157,6 +189,9 @@ pub struct StripeCreateCheckoutSessionParams<'a> {
     pub payment_method_collection: Option<StripeCheckoutSessionPaymentMethodCollection>,
     pub subscription_data: Option<StripeCreateCheckoutSessionSubscriptionData>,
     pub success_url: Option<&'a str>,
+    pub billing_address_collection: Option<StripeBillingAddressCollection>,
+    pub customer_update: Option<StripeCustomerUpdate>,
+    pub tax_id_collection: Option<StripeTaxIdCollection>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -183,6 +218,16 @@ pub struct StripeCreateCheckoutSessionSubscriptionData {
     pub metadata: Option<HashMap<String, String>>,
     pub trial_period_days: Option<u32>,
     pub trial_settings: Option<StripeSubscriptionTrialSettings>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StripeTaxIdCollection {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StripeAutomaticTax {
+    pub enabled: bool,
 }
 
 #[derive(Debug)]

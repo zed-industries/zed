@@ -18,7 +18,8 @@ use client::zed_urls;
 use collections::VecDeque;
 use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
-use editor::{Editor, MultiBuffer, scroll::Autoscroll};
+use editor::{Editor, MultiBuffer};
+use feature_flags::{FeatureFlagAppExt, PanicFeatureFlag};
 use futures::future::Either;
 use futures::{StreamExt, channel::mpsc, select_biased};
 use git_ui::git_panel::GitPanel;
@@ -30,6 +31,7 @@ use gpui::{
     px, retain_all,
 };
 use image_viewer::ImageInfo;
+use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
 pub use open_listener::*;
@@ -47,13 +49,17 @@ use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeymapFile, KeymapFileLoadResult, Settings,
-    SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
-    initial_project_settings_content, initial_tasks_content, update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
+    KeymapFileLoadResult, Settings, SettingsStore, VIM_KEYMAP_PATH,
+    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
+    update_settings_file,
 };
-use std::path::PathBuf;
-use std::sync::atomic::{self, AtomicBool};
-use std::{borrow::Cow, path::Path, sync::Arc};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+    sync::Arc,
+    sync::atomic::{self, AtomicBool},
+};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
 use ui::{PopoverMenuHandle, prelude::*};
@@ -61,7 +67,7 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{BaseKeymap, DOCS_URL, MultibufferHint};
+use welcome::{DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -77,19 +83,33 @@ use zed_actions::{
 actions!(
     zed,
     [
+        /// Opens the element inspector for debugging UI.
         DebugElements,
+        /// Hides the application window.
         Hide,
+        /// Hides all other application windows.
         HideOthers,
+        /// Minimizes the current window.
         Minimize,
+        /// Opens the default settings file.
         OpenDefaultSettings,
+        /// Opens project-specific settings.
         OpenProjectSettings,
+        /// Opens the project tasks configuration.
         OpenProjectTasks,
+        /// Opens the tasks panel.
         OpenTasks,
+        /// Opens debug tasks configuration.
         OpenDebugTasks,
+        /// Resets the application database.
         ResetDatabase,
+        /// Shows all hidden windows.
         ShowAll,
+        /// Toggles fullscreen mode.
         ToggleFullScreen,
+        /// Zooms the window.
         Zoom,
+        /// Triggers a test panic for debugging.
         TestPanic,
     ]
 );
@@ -104,11 +124,9 @@ pub fn init(cx: &mut App) {
     cx.on_action(quit);
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
-
-    if ReleaseChannel::global(cx) == ReleaseChannel::Dev {
-        cx.on_action(test_panic);
+    if ReleaseChannel::global(cx) == ReleaseChannel::Dev || cx.has_flag::<PanicFeatureFlag>() {
+        cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
     }
-
     cx.on_action(|_: &OpenLog, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_log_file(workspace, window, cx);
@@ -293,20 +311,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let popover_menu_handle = PopoverMenuHandle::default();
-
-        let inline_completion_button = cx.new(|cx| {
+        let inline_completion_menu_handle = PopoverMenuHandle::default();
+        let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                popover_menu_handle.clone(),
+                inline_completion_menu_handle.clone(),
                 cx,
             )
         });
-
         workspace.register_action({
             move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                popover_menu_handle.toggle(window, cx);
+                inline_completion_menu_handle.toggle(window, cx);
             }
         });
 
@@ -315,7 +331,7 @@ pub fn initialize_workspace(
             cx.new(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
-            app_state.languages.clone(),
+            workspace.project().read(cx).languages().clone(),
             window,
             cx,
         );
@@ -325,13 +341,24 @@ pub fn initialize_workspace(
             cx.new(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new(|cx| vim::ModeIndicator::new(window, cx));
         let image_info = cx.new(|_cx| ImageInfo::new(workspace));
+
+        let lsp_tool_menu_handle = PopoverMenuHandle::default();
+        let lsp_tool =
+            cx.new(|cx| LspTool::new(workspace, lsp_tool_menu_handle.clone(), window, cx));
+        workspace.register_action({
+            move |_, _: &lsp_tool::ToggleMenu, window, cx| {
+                lsp_tool_menu_handle.toggle(window, cx);
+            }
+        });
+
         let cursor_position =
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(search_button, window, cx);
+            status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
-            status_bar.add_right_item(inline_completion_button, window, cx);
+            status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);
             status_bar.add_right_item(vim_mode_indicator, window, cx);
@@ -962,10 +989,6 @@ fn about(
     .detach();
 }
 
-fn test_panic(_: &TestPanic, _: &mut App) {
-    panic!("Ran the TestPanic action")
-}
-
 fn install_cli(
     _: &mut Workspace,
     _: &install_cli::Install,
@@ -1115,7 +1138,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
 
                         editor.update(cx, |editor, cx| {
                             let last_multi_buffer_offset = editor.buffer().read(cx).len(cx);
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(Some(
                                     last_multi_buffer_offset..last_multi_buffer_offset,
                                 ));
@@ -1403,10 +1426,15 @@ fn show_markdown_app_notification<F>(
     .detach();
 }
 
-fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
+fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
+
+    for key_binding in &mut user_key_bindings {
+        key_binding.set_meta(KeybindSource::User.meta());
+    }
     cx.bind_keys(user_key_bindings);
+
     cx.set_menus(app_menus());
     // On Windows, this is set in the `update_jump_list` method of the `HistoryManager`.
     #[cfg(not(target_os = "windows"))]
@@ -1414,6 +1442,8 @@ fn reload_keymaps(cx: &mut App, user_key_bindings: Vec<KeyBinding>) {
         "New Window",
         workspace::NewWindow,
     )]);
+    // todo: nicer api here?
+    settings_ui::keybindings::KeymapEventChannel::trigger_keymap_changed(cx);
 }
 
 pub fn load_default_keymap(cx: &mut App) {
@@ -1422,14 +1452,18 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
+    cx.bind_keys(
+        KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
+    );
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
+        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
+        cx.bind_keys(
+            KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
+        );
     }
 }
 
@@ -1755,7 +1789,7 @@ mod tests {
     use super::*;
     use assets::Assets;
     use collections::HashSet;
-    use editor::{DisplayPoint, Editor, display_map::DisplayRow, scroll::Autoscroll};
+    use editor::{DisplayPoint, Editor, SelectionEffects, display_map::DisplayRow};
     use gpui::{
         Action, AnyWindowHandle, App, AssetSource, BorrowAppContext, SemanticVersion,
         TestAppContext, UpdateGlobal, VisualTestContext, WindowHandle, actions,
@@ -3329,7 +3363,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(10), 0)
                             ..DisplayPoint::new(DisplayRow(10), 0)])
                     });
@@ -3359,7 +3393,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor3.update(cx, |editor, cx| {
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(12), 0)
                             ..DisplayPoint::new(DisplayRow(12), 0)])
                     });
@@ -3574,7 +3608,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(15), 0)
                             ..DisplayPoint::new(DisplayRow(15), 0)])
                     })
@@ -3585,7 +3619,7 @@ mod tests {
             workspace
                 .update(cx, |_, window, cx| {
                     editor1.update(cx, |editor, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(3), 0)
                                 ..DisplayPoint::new(DisplayRow(3), 0)])
                         });
@@ -3596,7 +3630,7 @@ mod tests {
             workspace
                 .update(cx, |_, window, cx| {
                     editor1.update(cx, |editor, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(13), 0)
                                 ..DisplayPoint::new(DisplayRow(13), 0)])
                         })
@@ -3608,7 +3642,7 @@ mod tests {
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
                     editor.transact(window, cx, |editor, window, cx| {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_display_ranges([DisplayPoint::new(DisplayRow(2), 0)
                                 ..DisplayPoint::new(DisplayRow(14), 0)])
                         });
@@ -3621,7 +3655,7 @@ mod tests {
         workspace
             .update(cx, |_, window, cx| {
                 editor1.update(cx, |editor, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.select_display_ranges([DisplayPoint::new(DisplayRow(1), 0)
                             ..DisplayPoint::new(DisplayRow(1), 0)])
                     })
@@ -3921,6 +3955,7 @@ mod tests {
             language::init(cx);
             workspace::init(app_state.clone(), cx);
             welcome::init(cx);
+            onboarding::init(cx);
             Project::init_settings(cx);
             app_state
         })
@@ -4290,7 +4325,10 @@ mod tests {
                 "icon_theme_selector",
                 "jj",
                 "journal",
+                "keymap_editor",
+                "keystroke_input",
                 "language_selector",
+                "lsp_tool",
                 "markdown",
                 "menu",
                 "notebook",
@@ -4309,6 +4347,7 @@ mod tests {
                 "search",
                 "snippets",
                 "supermaven",
+                "svg",
                 "tab_switcher",
                 "task",
                 "terminal",
@@ -4427,12 +4466,7 @@ mod tests {
             );
             image_viewer::init(cx);
             language_model::init(app_state.client.clone(), cx);
-            language_models::init(
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                app_state.fs.clone(),
-                cx,
-            );
+            language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
             web_search_providers::init(app_state.client.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);

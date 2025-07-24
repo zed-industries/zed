@@ -20,6 +20,7 @@ anyhow.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
+client.workspace = true
 collections.workspace = true
 component.workspace = true
 derive_more.workspace = true
@@ -63,6 +64,7 @@ which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_llm_client.workspace = true
+diffy = "0.4.2"
 
 [dev-dependencies]
 lsp = { workspace = true, features = ["test-support"] }

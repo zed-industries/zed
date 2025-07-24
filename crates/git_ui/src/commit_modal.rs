@@ -1,8 +1,10 @@
 use crate::branch_picker::{self, BranchList};
 use crate::git_panel::{GitPanel, commit_message_editor};
+use client::DisableAiSettings;
 use git::repository::CommitOptions;
-use git::{Amend, Commit, GenerateCommitMessage};
-use panel::{panel_button, panel_editor_style, panel_filled_button};
+use git::{Amend, Commit, GenerateCommitMessage, Signoff};
+use panel::{panel_button, panel_editor_style};
+use settings::Settings;
 use ui::{
     ContextMenu, KeybindingHint, PopoverMenu, PopoverMenuHandle, SplitButton, Tooltip, prelude::*,
 };
@@ -273,14 +275,51 @@ impl CommitModal {
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
                     ),
             )
-            .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |context_menu, _, _| {
-                    context_menu
-                        .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                            el.context(keybinding_target.clone())
-                        })
-                        .action("Amend", Amend.boxed_clone())
-                }))
+            .menu({
+                let git_panel_entity = self.git_panel.clone();
+                move |window, cx| {
+                    let git_panel = git_panel_entity.read(cx);
+                    let amend_enabled = git_panel.amend_pending();
+                    let signoff_enabled = git_panel.signoff_enabled();
+                    let has_previous_commit = git_panel.head_commit(cx).is_some();
+
+                    Some(ContextMenu::build(window, cx, |context_menu, _, _| {
+                        context_menu
+                            .when_some(keybinding_target.clone(), |el, keybinding_target| {
+                                el.context(keybinding_target.clone())
+                            })
+                            .when(has_previous_commit, |this| {
+                                this.toggleable_entry(
+                                    "Amend",
+                                    amend_enabled,
+                                    IconPosition::Start,
+                                    Some(Box::new(Amend)),
+                                    {
+                                        let git_panel = git_panel_entity.clone();
+                                        move |window, cx| {
+                                            git_panel.update(cx, |git_panel, cx| {
+                                                git_panel.toggle_amend_pending(&Amend, window, cx);
+                                            })
+                                        }
+                                    },
+                                )
+                            })
+                            .toggleable_entry(
+                                "Signoff",
+                                signoff_enabled,
+                                IconPosition::Start,
+                                Some(Box::new(Signoff)),
+                                {
+                                    let git_panel = git_panel_entity.clone();
+                                    move |window, cx| {
+                                        git_panel.update(cx, |git_panel, cx| {
+                                            git_panel.toggle_signoff_enabled(&Signoff, window, cx);
+                                        })
+                                    }
+                                },
+                            )
+                    }))
+                }
             })
             .with_handle(self.commit_menu_handle.clone())
             .anchor(Corner::TopRight)
@@ -295,7 +334,7 @@ impl CommitModal {
             generate_commit_message,
             active_repo,
             is_amend_pending,
-            has_previous_commit,
+            is_signoff_enabled,
         ) = self.git_panel.update(cx, |git_panel, cx| {
             let (can_commit, tooltip) = git_panel.configure_commit_button(cx);
             let title = git_panel.commit_button_title();
@@ -303,10 +342,7 @@ impl CommitModal {
             let generate_commit_message = git_panel.render_generate_commit_message_button(cx);
             let active_repo = git_panel.active_repository.clone();
             let is_amend_pending = git_panel.amend_pending();
-            let has_previous_commit = active_repo
-                .as_ref()
-                .and_then(|repo| repo.read(cx).head_commit.as_ref())
-                .is_some();
+            let is_signoff_enabled = git_panel.signoff_enabled();
             (
                 can_commit,
                 tooltip,
@@ -315,7 +351,7 @@ impl CommitModal {
                 generate_commit_message,
                 active_repo,
                 is_amend_pending,
-                has_previous_commit,
+                is_signoff_enabled,
             )
         });
 
@@ -396,126 +432,59 @@ impl CommitModal {
                     .px_1()
                     .gap_4()
                     .children(close_kb_hint)
-                    .when(is_amend_pending, |this| {
-                        let focus_handle = focus_handle.clone();
-                        this.child(
-                            panel_filled_button(commit_label)
-                                .tooltip(move |window, cx| {
-                                    if can_commit {
-                                        Tooltip::for_action_in(
-                                            tooltip,
-                                            &Amend,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        )
-                                    } else {
-                                        Tooltip::simple(tooltip, cx)
-                                    }
-                                })
-                                .disabled(!can_commit)
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    telemetry::event!("Git Amended", source = "Git Modal");
-                                    this.git_panel.update(cx, |git_panel, cx| {
-                                        git_panel.set_amend_pending(false, cx);
-                                        git_panel.commit_changes(
-                                            CommitOptions { amend: true },
-                                            window,
-                                            cx,
-                                        );
-                                    });
-                                    cx.emit(DismissEvent);
-                                })),
+                    .child(SplitButton::new(
+                        ui::ButtonLike::new_rounded_left(ElementId::Name(
+                            format!("split-button-left-{}", commit_label).into(),
+                        ))
+                        .layer(ui::ElevationIndex::ModalSurface)
+                        .size(ui::ButtonSize::Compact)
+                        .child(
+                            div()
+                                .child(Label::new(commit_label).size(LabelSize::Small))
+                                .mr_0p5(),
                         )
-                    })
-                    .when(!is_amend_pending, |this| {
-                        this.when(has_previous_commit, |this| {
-                            this.child(SplitButton::new(
-                                ui::ButtonLike::new_rounded_left(ElementId::Name(
-                                    format!("split-button-left-{}", commit_label).into(),
-                                ))
-                                .layer(ui::ElevationIndex::ModalSurface)
-                                .size(ui::ButtonSize::Compact)
-                                .child(
-                                    div()
-                                        .child(Label::new(commit_label).size(LabelSize::Small))
-                                        .mr_0p5(),
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            telemetry::event!("Git Committed", source = "Git Modal");
+                            this.git_panel.update(cx, |git_panel, cx| {
+                                git_panel.commit_changes(
+                                    CommitOptions {
+                                        amend: is_amend_pending,
+                                        signoff: is_signoff_enabled,
+                                    },
+                                    window,
+                                    cx,
                                 )
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    telemetry::event!("Git Committed", source = "Git Modal");
-                                    this.git_panel.update(cx, |git_panel, cx| {
-                                        git_panel.commit_changes(
-                                            CommitOptions { amend: false },
-                                            window,
-                                            cx,
-                                        )
-                                    });
-                                    cx.emit(DismissEvent);
-                                }))
-                                .disabled(!can_commit)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-                                    move |window, cx| {
-                                        if can_commit {
-                                            Tooltip::with_meta_in(
-                                                tooltip,
-                                                Some(&git::Commit),
-                                                "git commit",
-                                                &focus_handle.clone(),
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            Tooltip::simple(tooltip, cx)
-                                        }
-                                    }
-                                }),
-                                self.render_git_commit_menu(
-                                    ElementId::Name(
-                                        format!("split-button-right-{}", commit_label).into(),
-                                    ),
-                                    Some(focus_handle.clone()),
-                                )
-                                .into_any_element(),
-                            ))
-                        })
-                        .when(!has_previous_commit, |this| {
-                            this.child(
-                                panel_filled_button(commit_label)
-                                    .tooltip(move |window, cx| {
-                                        if can_commit {
-                                            Tooltip::with_meta_in(
-                                                tooltip,
-                                                Some(&git::Commit),
-                                                "git commit",
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                        } else {
-                                            Tooltip::simple(tooltip, cx)
-                                        }
-                                    })
-                                    .disabled(!can_commit)
-                                    .on_click(cx.listener(
-                                        move |this, _: &ClickEvent, window, cx| {
-                                            telemetry::event!(
-                                                "Git Committed",
-                                                source = "Git Modal"
-                                            );
-                                            this.git_panel.update(cx, |git_panel, cx| {
-                                                git_panel.commit_changes(
-                                                    CommitOptions { amend: false },
-                                                    window,
-                                                    cx,
-                                                )
-                                            });
-                                            cx.emit(DismissEvent);
-                                        },
-                                    )),
-                            )
-                        })
-                    }),
+                            });
+                            cx.emit(DismissEvent);
+                        }))
+                        .disabled(!can_commit)
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |window, cx| {
+                                if can_commit {
+                                    Tooltip::with_meta_in(
+                                        tooltip,
+                                        Some(&git::Commit),
+                                        format!(
+                                            "git commit{}{}",
+                                            if is_amend_pending { " --amend" } else { "" },
+                                            if is_signoff_enabled { " --signoff" } else { "" }
+                                        ),
+                                        &focus_handle.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                } else {
+                                    Tooltip::simple(tooltip, cx)
+                                }
+                            }
+                        }),
+                        self.render_git_commit_menu(
+                            ElementId::Name(format!("split-button-right-{}", commit_label).into()),
+                            Some(focus_handle.clone()),
+                        )
+                        .into_any_element(),
+                    )),
             )
     }
 
@@ -534,7 +503,14 @@ impl CommitModal {
         }
         telemetry::event!("Git Committed", source = "Git Modal");
         self.git_panel.update(cx, |git_panel, cx| {
-            git_panel.commit_changes(CommitOptions { amend: false }, window, cx)
+            git_panel.commit_changes(
+                CommitOptions {
+                    amend: false,
+                    signoff: git_panel.signoff_enabled(),
+                },
+                window,
+                cx,
+            )
         });
         cx.emit(DismissEvent);
     }
@@ -559,7 +535,14 @@ impl CommitModal {
             telemetry::event!("Git Amended", source = "Git Modal");
             self.git_panel.update(cx, |git_panel, cx| {
                 git_panel.set_amend_pending(false, cx);
-                git_panel.commit_changes(CommitOptions { amend: true }, window, cx);
+                git_panel.commit_changes(
+                    CommitOptions {
+                        amend: true,
+                        signoff: git_panel.signoff_enabled(),
+                    },
+                    window,
+                    cx,
+                );
             });
             cx.emit(DismissEvent);
         }
@@ -588,11 +571,13 @@ impl Render for CommitModal {
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::commit))
             .on_action(cx.listener(Self::amend))
-            .on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
-                this.git_panel.update(cx, |panel, cx| {
-                    panel.generate_commit_message(cx);
-                })
-            }))
+            .when(!DisableAiSettings::get_global(cx).disable_ai, |this| {
+                this.on_action(cx.listener(|this, _: &GenerateCommitMessage, _, cx| {
+                    this.git_panel.update(cx, |panel, cx| {
+                        panel.generate_commit_message(cx);
+                    })
+                }))
+            })
             .on_action(
                 cx.listener(|this, _: &zed_actions::git::Branch, window, cx| {
                     this.toggle_branch_selector(window, cx);

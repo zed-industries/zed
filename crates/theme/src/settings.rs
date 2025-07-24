@@ -7,19 +7,15 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    Subscription, Window, px,
+    SharedString, Subscription, Window, px,
 };
 use refineable::Refineable;
-use schemars::{
-    JsonSchema,
-    r#gen::SchemaGenerator,
-    schema::{InstanceType, Schema, SchemaObject},
-};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use settings::{Settings, SettingsJsonSchemaParams, SettingsSources, add_references_to_properties};
+use settings::{ParameterizedJsonSchema, Settings, SettingsSources};
 use std::sync::Arc;
 use util::ResultExt as _;
+use util::schemars::replace_subschema;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MIN_LINE_HEIGHT: f32 = 1.0;
@@ -263,23 +259,17 @@ impl Global for AgentFontSize {}
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
-    Static(#[schemars(schema_with = "theme_name_ref")] String),
+    Static(ThemeName),
     /// A dynamic theme selection, which can change based the [ThemeMode].
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
         mode: ThemeMode,
         /// The theme to use for light mode.
-        #[schemars(schema_with = "theme_name_ref")]
-        light: String,
+        light: ThemeName,
         /// The theme to use for dark mode.
-        #[schemars(schema_with = "theme_name_ref")]
-        dark: String,
+        dark: ThemeName,
     },
-}
-
-fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
-    Schema::new_ref("#/definitions/ThemeName".into())
 }
 
 // TODO: Rename ThemeMode -> ThemeAppearanceMode
@@ -306,13 +296,13 @@ impl ThemeSelection {
     /// Returns the theme name for the selected [ThemeMode].
     pub fn theme(&self, system_appearance: Appearance) -> &str {
         match self {
-            Self::Static(theme) => theme,
+            Self::Static(theme) => &theme.0,
             Self::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light,
-                ThemeMode::Dark => dark,
+                ThemeMode::Light => &light.0,
+                ThemeMode::Dark => &dark.0,
                 ThemeMode::System => match system_appearance {
-                    Appearance::Light => light,
-                    Appearance::Dark => dark,
+                    Appearance::Light => &light.0,
+                    Appearance::Dark => &dark.0,
                 },
             },
         }
@@ -327,27 +317,21 @@ impl ThemeSelection {
     }
 }
 
-fn icon_theme_name_ref(_: &mut SchemaGenerator) -> Schema {
-    Schema::new_ref("#/definitions/IconThemeName".into())
-}
-
 /// Represents the selection of an icon theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
-    Static(#[schemars(schema_with = "icon_theme_name_ref")] String),
+    Static(IconThemeName),
     /// A dynamic icon theme selection, which can change based on the [`ThemeMode`].
     Dynamic {
         /// The mode used to determine which theme to use.
         #[serde(default)]
         mode: ThemeMode,
         /// The icon theme to use for light mode.
-        #[schemars(schema_with = "icon_theme_name_ref")]
-        light: String,
+        light: IconThemeName,
         /// The icon theme to use for dark mode.
-        #[schemars(schema_with = "icon_theme_name_ref")]
-        dark: String,
+        dark: IconThemeName,
     },
 }
 
@@ -355,13 +339,13 @@ impl IconThemeSelection {
     /// Returns the icon theme name based on the given [`Appearance`].
     pub fn icon_theme(&self, system_appearance: Appearance) -> &str {
         match self {
-            Self::Static(theme) => theme,
+            Self::Static(theme) => &theme.0,
             Self::Dynamic { mode, light, dark } => match mode {
-                ThemeMode::Light => light,
-                ThemeMode::Dark => dark,
+                ThemeMode::Light => &light.0,
+                ThemeMode::Dark => &dark.0,
                 ThemeMode::System => match system_appearance {
-                    Appearance::Light => light,
-                    Appearance::Dark => dark,
+                    Appearance::Light => &light.0,
+                    Appearance::Dark => &dark.0,
                 },
             },
         }
@@ -384,11 +368,12 @@ pub struct ThemeSettingsContent {
     pub ui_font_size: Option<f32>,
     /// The name of a font to use for rendering in the UI.
     #[serde(default)]
-    pub ui_font_family: Option<String>,
+    pub ui_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in the UI.
     #[serde(default)]
     #[schemars(default = "default_font_fallbacks")]
-    pub ui_font_fallbacks: Option<Vec<String>>,
+    #[schemars(extend("uniqueItems" = true))]
+    pub ui_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
     #[schemars(default = "default_font_features")]
@@ -398,11 +383,11 @@ pub struct ThemeSettingsContent {
     pub ui_font_weight: Option<f32>,
     /// The name of a font to use for rendering in text buffers.
     #[serde(default)]
-    pub buffer_font_family: Option<String>,
+    pub buffer_font_family: Option<FontFamilyName>,
     /// The font fallbacks to use for rendering in text buffers.
     #[serde(default)]
-    #[schemars(default = "default_font_fallbacks")]
-    pub buffer_font_fallbacks: Option<Vec<String>>,
+    #[schemars(extend("uniqueItems" = true))]
+    pub buffer_font_fallbacks: Option<Vec<FontFamilyName>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
     pub buffer_font_size: Option<f32>,
@@ -467,9 +452,9 @@ impl ThemeSettingsContent {
                 },
             };
 
-            *theme_to_update = theme_name.to_string();
+            *theme_to_update = ThemeName(theme_name.into());
         } else {
-            self.theme = Some(ThemeSelection::Static(theme_name.to_string()));
+            self.theme = Some(ThemeSelection::Static(ThemeName(theme_name.into())));
         }
     }
 
@@ -488,9 +473,11 @@ impl ThemeSettingsContent {
                 },
             };
 
-            *icon_theme_to_update = icon_theme_name.to_string();
+            *icon_theme_to_update = IconThemeName(icon_theme_name.into());
         } else {
-            self.icon_theme = Some(IconThemeSelection::Static(icon_theme_name.to_string()));
+            self.icon_theme = Some(IconThemeSelection::Static(IconThemeName(
+                icon_theme_name.into(),
+            )));
         }
     }
 
@@ -516,8 +503,8 @@ impl ThemeSettingsContent {
         } else {
             self.theme = Some(ThemeSelection::Dynamic {
                 mode,
-                light: ThemeSettings::DEFAULT_LIGHT_THEME.into(),
-                dark: ThemeSettings::DEFAULT_DARK_THEME.into(),
+                light: ThemeName(ThemeSettings::DEFAULT_LIGHT_THEME.into()),
+                dark: ThemeName(ThemeSettings::DEFAULT_DARK_THEME.into()),
             });
         }
 
@@ -539,7 +526,9 @@ impl ThemeSettingsContent {
                 } => *mode_to_update = mode,
             }
         } else {
-            self.icon_theme = Some(IconThemeSelection::Static(DEFAULT_ICON_THEME_NAME.into()));
+            self.icon_theme = Some(IconThemeSelection::Static(IconThemeName(
+                DEFAULT_ICON_THEME_NAME.into(),
+            )));
         }
     }
 }
@@ -815,26 +804,39 @@ impl settings::Settings for ThemeSettings {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
+        fn font_fallbacks_from_settings(
+            fallbacks: Option<Vec<FontFamilyName>>,
+        ) -> Option<FontFallbacks> {
+            fallbacks.map(|fallbacks| {
+                FontFallbacks::from_fonts(
+                    fallbacks
+                        .into_iter()
+                        .map(|font_family| font_family.0.to_string())
+                        .collect(),
+                )
+            })
+        }
+
         let defaults = sources.default;
         let mut this = Self {
             ui_font_size: defaults.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: defaults.ui_font_family.as_ref().unwrap().clone().into(),
+                family: defaults.ui_font_family.as_ref().unwrap().0.clone().into(),
                 features: defaults.ui_font_features.clone().unwrap(),
-                fallbacks: defaults
-                    .ui_font_fallbacks
-                    .as_ref()
-                    .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
+                fallbacks: font_fallbacks_from_settings(defaults.ui_font_fallbacks.clone()),
                 weight: defaults.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
-                family: defaults.buffer_font_family.as_ref().unwrap().clone().into(),
-                features: defaults.buffer_font_features.clone().unwrap(),
-                fallbacks: defaults
-                    .buffer_font_fallbacks
+                family: defaults
+                    .buffer_font_family
                     .as_ref()
-                    .map(|fallbacks| FontFallbacks::from_fonts(fallbacks.clone())),
+                    .unwrap()
+                    .0
+                    .clone()
+                    .into(),
+                features: defaults.buffer_font_features.clone().unwrap(),
+                fallbacks: font_fallbacks_from_settings(defaults.buffer_font_fallbacks.clone()),
                 weight: defaults.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
@@ -872,26 +874,26 @@ impl settings::Settings for ThemeSettings {
             }
 
             if let Some(value) = value.buffer_font_family.clone() {
-                this.buffer_font.family = value.into();
+                this.buffer_font.family = value.0.into();
             }
             if let Some(value) = value.buffer_font_features.clone() {
                 this.buffer_font.features = value;
             }
             if let Some(value) = value.buffer_font_fallbacks.clone() {
-                this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
+                this.buffer_font.fallbacks = font_fallbacks_from_settings(Some(value));
             }
             if let Some(value) = value.buffer_font_weight {
                 this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
-                this.ui_font.family = value.into();
+                this.ui_font.family = value.0.into();
             }
             if let Some(value) = value.ui_font_features.clone() {
                 this.ui_font.features = value;
             }
             if let Some(value) = value.ui_font_fallbacks.clone() {
-                this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
+                this.ui_font.fallbacks = font_fallbacks_from_settings(Some(value));
             }
             if let Some(value) = value.ui_font_weight {
                 this.ui_font.weight = clamp_font_weight(value);
@@ -959,61 +961,69 @@ impl settings::Settings for ThemeSettings {
         Ok(this)
     }
 
-    fn json_schema(
-        generator: &mut SchemaGenerator,
-        params: &SettingsJsonSchemaParams,
-        cx: &App,
-    ) -> schemars::schema::RootSchema {
-        let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
-        let theme_names = ThemeRegistry::global(cx)
-            .list_names()
-            .into_iter()
-            .map(|theme_name| Value::String(theme_name.to_string()))
-            .collect();
-
-        let theme_name_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(theme_names),
-            ..Default::default()
-        };
-
-        let icon_theme_names = ThemeRegistry::global(cx)
-            .list_icon_themes()
-            .into_iter()
-            .map(|icon_theme| Value::String(icon_theme.name.to_string()))
-            .collect();
-
-        let icon_theme_name_schema = SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            enum_values: Some(icon_theme_names),
-            ..Default::default()
-        };
-
-        root_schema.definitions.extend([
-            ("ThemeName".into(), theme_name_schema.into()),
-            ("IconThemeName".into(), icon_theme_name_schema.into()),
-            ("FontFamilies".into(), params.font_family_schema()),
-            ("FontFallbacks".into(), params.font_fallback_schema()),
-        ]);
-
-        add_references_to_properties(
-            &mut root_schema,
-            &[
-                ("buffer_font_family", "#/definitions/FontFamilies"),
-                ("buffer_font_fallbacks", "#/definitions/FontFallbacks"),
-                ("ui_font_family", "#/definitions/FontFamilies"),
-                ("ui_font_fallbacks", "#/definitions/FontFallbacks"),
-            ],
-        );
-
-        root_schema
-    }
-
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         vscode.f32_setting("editor.fontWeight", &mut current.buffer_font_weight);
         vscode.f32_setting("editor.fontSize", &mut current.buffer_font_size);
-        vscode.string_setting("editor.font", &mut current.buffer_font_family);
+        if let Some(font) = vscode.read_string("editor.font") {
+            current.buffer_font_family = Some(FontFamilyName(font.into()));
+        }
         // TODO: possibly map editor.fontLigatures to buffer_font_features?
+    }
+}
+
+/// Newtype for a theme name. Its `ParameterizedJsonSchema` lists the theme names known at runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ThemeName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            replace_subschema::<ThemeName>(generator, || json_schema!({
+                "type": "string",
+                "enum": ThemeRegistry::global(cx).list_names(),
+            }))
+        }
+    }
+}
+
+/// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
+/// runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct IconThemeName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            replace_subschema::<IconThemeName>(generator, || json_schema!({
+                "type": "string",
+                "enum": ThemeRegistry::global(cx)
+                    .list_icon_themes()
+                    .into_iter()
+                    .map(|icon_theme| icon_theme.name)
+                    .collect::<Vec<SharedString>>(),
+            }))
+        }
+    }
+}
+
+/// Newtype for font family name. Its `ParameterizedJsonSchema` lists the font families known at
+/// runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct FontFamilyName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, params, _cx| {
+            replace_subschema::<FontFamilyName>(generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.font_names,
+                })
+            })
+        }
     }
 }
 

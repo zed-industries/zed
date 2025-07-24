@@ -75,7 +75,7 @@ impl From<Range> for std::ops::Range<usize> {
 impl From<Command> for extension::Command {
     fn from(value: Command) -> Self {
         Self {
-            command: value.command,
+            command: value.command.into(),
             args: value.args,
             env: value.env,
         }
@@ -299,15 +299,17 @@ impl From<extension::DebugScenario> for DebugScenario {
     }
 }
 
-impl From<SpawnInTerminal> for ResolvedTask {
-    fn from(value: SpawnInTerminal) -> Self {
-        Self {
+impl TryFrom<SpawnInTerminal> for ResolvedTask {
+    type Error = anyhow::Error;
+
+    fn try_from(value: SpawnInTerminal) -> Result<Self, Self::Error> {
+        Ok(Self {
             label: value.label,
-            command: value.command,
+            command: value.command.context("missing command")?,
             args: value.args,
             env: value.env.into_iter().collect(),
             cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
-        }
+        })
     }
 }
 
@@ -945,7 +947,10 @@ impl ExtensionImports for WasmState {
                                     .get(key.as_str())
                             })
                             .cloned()
-                            .context("Failed to get context server configuration")?;
+                            .unwrap_or_else(|| {
+                                project::project_settings::ContextServerSettings::default_extension(
+                                )
+                            });
 
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
@@ -953,7 +958,7 @@ impl ExtensionImports for WasmState {
                                 command,
                             } => Ok(serde_json::to_string(&settings::ContextServerSettings {
                                 command: Some(settings::CommandSettings {
-                                    path: Some(command.path),
+                                    path: command.path.to_str().map(|path| path.to_string()),
                                     arguments: Some(command.args),
                                     env: command.env.map(|env| env.into_iter().collect()),
                                 }),

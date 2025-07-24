@@ -9,6 +9,7 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [ruby-lsp](https://github.com/Shopify/ruby-lsp)
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
+- Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
 
@@ -43,15 +44,15 @@ For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `s
 
 You can skip step 1 and force using the system executable by setting `use_bundler` to `false` in your settings:
 
-```jsonc
+```json
 {
   "lsp": {
     "<SERVER_NAME>": {
       "settings": {
-        "use_bundler": false,
-      },
-    },
-  },
+        "use_bundler": false
+      }
+    }
+  }
 }
 ```
 
@@ -126,7 +127,7 @@ Solargraph reads its configuration from a file called `.solargraph.yml` in the r
 
 ## Setting up `ruby-lsp`
 
-Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell Zed to disable it by adding the following to your `settings.json`:
+You can pass Ruby LSP configuration to `initialization_options`, e.g.
 
 ```json
 {
@@ -139,8 +140,7 @@ Ruby LSP uses pull-based diagnostics which Zed doesn't support yet. We can tell 
     "ruby-lsp": {
       "initialization_options": {
         "enabledFeatures": {
-          // This disables diagnostics
-          "diagnostics": false
+          // "someFeature": false
         }
       }
     }
@@ -255,7 +255,7 @@ In order to do that, you need to configure the language server so that it knows 
     "tailwindcss-language-server": {
       "settings": {
         "includeLanguages": {
-          "erb": "html",
+          "html/erb": "html",
           "ruby": "html"
         },
         "experimental": {
@@ -340,3 +340,60 @@ Plain minitest does not support running tests by line number, only by name, so w
 ```
 
 Similar task syntax can be used for other test frameworks such as `quickdraw` or `tldr`.
+
+## Debugging
+
+The Ruby extension provides a debug adapter for debugging Ruby code. Zed's name for the adapter (in the UI and `debug.json`) is `rdbg`, and under the hood, it uses the [`debug`](https://github.com/ruby/debug) gem. The extension uses the [same activation logic](#language-server-activation) as the language servers.
+
+### Examples
+
+#### Debug a Ruby script
+
+```json
+[
+  {
+    "label": "Debug current file",
+    "adapter": "rdbg",
+    "request": "launch",
+    "script": "$ZED_FILE",
+    "cwd": "$ZED_WORKTREE_ROOT"
+  }
+]
+```
+
+#### Debug Rails server
+
+```json
+[
+  {
+    "label": "Debug Rails server",
+    "adapter": "rdbg",
+    "request": "launch",
+    "command": "$ZED_WORKTREE_ROOT/bin/rails",
+    "args": ["server"],
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "RUBY_DEBUG_OPEN": "true"
+    }
+  }
+]
+```
+
+## Formatters
+
+### `erb-formatter`
+
+To format ERB templates, you can use the `erb-formatter` formatter. This formatter uses the [`erb-formatter`](https://rubygems.org/gems/erb-formatter) gem to format ERB templates.
+
+```jsonc
+{
+  "HTML/ERB": {
+    "formatter": {
+      "external": {
+        "command": "erb-formatter",
+        "arguments": ["--stdin-filename", "{buffer_path}"],
+      },
+    },
+  },
+}
+```

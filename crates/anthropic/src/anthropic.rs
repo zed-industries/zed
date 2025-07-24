@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::http::{self, HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
@@ -356,7 +356,7 @@ pub async fn complete(
         .send(request)
         .await
         .map_err(AnthropicError::HttpSend)?;
-    let status = response.status();
+    let status_code = response.status();
     let mut body = String::new();
     response
         .body_mut()
@@ -364,12 +364,12 @@ pub async fn complete(
         .await
         .map_err(AnthropicError::ReadResponse)?;
 
-    if status.is_success() {
+    if status_code.is_success() {
         Ok(serde_json::from_str(&body).map_err(AnthropicError::DeserializeResponse)?)
     } else {
         Err(AnthropicError::HttpResponseError {
-            status: status.as_u16(),
-            body,
+            status_code,
+            message: body,
         })
     }
 }
@@ -444,17 +444,24 @@ impl RateLimitInfo {
         }
 
         Self {
-            retry_after: headers
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-                .map(Duration::from_secs),
+            retry_after: parse_retry_after(headers),
             requests: RateLimit::from_headers("requests", headers).ok(),
             tokens: RateLimit::from_headers("tokens", headers).ok(),
             input_tokens: RateLimit::from_headers("input-tokens", headers).ok(),
             output_tokens: RateLimit::from_headers("output-tokens", headers).ok(),
         }
     }
+}
+
+/// Parses the Retry-After header value as an integer number of seconds (anthropic always uses
+/// seconds). Note that other services might specify an HTTP date or some other format for this
+/// header. Returns `None` if the header is not present or cannot be parsed.
+pub fn parse_retry_after(headers: &HeaderMap<HeaderValue>) -> Option<Duration> {
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
 }
 
 fn get_header<'a>(key: &str, headers: &'a HeaderMap) -> anyhow::Result<&'a str> {
@@ -520,6 +527,10 @@ pub async fn stream_completion_with_rate_limit_info(
             })
             .boxed();
         Ok((stream, Some(rate_limits)))
+    } else if response.status().as_u16() == 529 {
+        Err(AnthropicError::ServerOverloaded {
+            retry_after: rate_limits.retry_after,
+        })
     } else if let Some(retry_after) = rate_limits.retry_after {
         Err(AnthropicError::RateLimit { retry_after })
     } else {
@@ -532,10 +543,9 @@ pub async fn stream_completion_with_rate_limit_info(
 
         match serde_json::from_str::<Event>(&body) {
             Ok(Event::Error { error }) => Err(AnthropicError::ApiError(error)),
-            Ok(_) => Err(AnthropicError::UnexpectedResponseFormat(body)),
-            Err(_) => Err(AnthropicError::HttpResponseError {
-                status: response.status().as_u16(),
-                body: body,
+            Ok(_) | Err(_) => Err(AnthropicError::HttpResponseError {
+                status_code: response.status(),
+                message: body,
             }),
         }
     }
@@ -801,16 +811,19 @@ pub enum AnthropicError {
     ReadResponse(io::Error),
 
     /// HTTP error response from the API
-    HttpResponseError { status: u16, body: String },
+    HttpResponseError {
+        status_code: StatusCode,
+        message: String,
+    },
 
     /// Rate limit exceeded
     RateLimit { retry_after: Duration },
 
+    /// Server overloaded
+    ServerOverloaded { retry_after: Option<Duration> },
+
     /// API returned an error response
     ApiError(ApiError),
-
-    /// Unexpected response format
-    UnexpectedResponseFormat(String),
 }
 
 #[derive(Debug, Serialize, Deserialize, Error)]

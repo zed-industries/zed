@@ -16,20 +16,9 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   If you prefer to install the system libraries manually, you can find the list of required packages in the `script/linux` file.
 
-## Backend dependencies
+### Backend Dependencies (optional) {#backend-dependencies}
 
-> This section is still in development. The instructions are not yet complete.
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://www.postgresql.org/download/linux/)
-- Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
+If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ## Building from source
 

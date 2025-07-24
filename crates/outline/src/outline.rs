@@ -4,8 +4,8 @@ use std::{
     sync::Arc,
 };
 
-use editor::RowHighlightOptions;
 use editor::{Anchor, AnchorRangeExt, Editor, scroll::Autoscroll};
+use editor::{RowHighlightOptions, SelectionEffects};
 use fuzzy::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
@@ -288,9 +288,12 @@ impl PickerDelegate for OutlineViewDelegate {
                 .highlighted_rows::<OutlineRowHighlights>()
                 .next();
             if let Some((rows, _)) = highlight {
-                active_editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                    s.select_ranges([rows.start..rows.start])
-                });
+                active_editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_ranges([rows.start..rows.start]),
+                );
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 window.focus(&active_editor.focus_handle(cx));
             }

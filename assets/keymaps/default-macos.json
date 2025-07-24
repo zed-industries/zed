@@ -5,10 +5,10 @@
     "bindings": {
       "f4": "debugger::Start",
       "shift-f5": "debugger::Stop",
-      "shift-cmd-f5": "debugger::Restart",
+      "shift-cmd-f5": "debugger::RerunSession",
       "f6": "debugger::Pause",
       "f7": "debugger::StepOver",
-      "f11": "debugger::StepInto",
+      "ctrl-f11": "debugger::StepInto",
       "shift-f11": "debugger::StepOut",
       "home": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
@@ -47,7 +47,8 @@
       "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen",
       "ctrl-cmd-z": "edit_prediction::RateCompletions",
-      "ctrl-cmd-i": "edit_prediction::ToggleMenu"
+      "ctrl-cmd-i": "edit_prediction::ToggleMenu",
+      "ctrl-cmd-l": "lsp_tool::ToggleMenu"
     }
   },
   {
@@ -282,9 +283,9 @@
       "cmd->": "assistant::QuoteSelection",
       "cmd-alt-e": "agent::RemoveAllContext",
       "cmd-shift-e": "project_panel::ToggleFocus",
+      "cmd-ctrl-b": "agent::ToggleBurnMode",
       "cmd-shift-enter": "agent::ContinueThread",
-      "alt-enter": "agent::ContinueWithBurnMode",
-      "cmd-alt-b": "agent::ToggleBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode"
     }
   },
   {
@@ -309,11 +310,31 @@
     }
   },
   {
-    "context": "MessageEditor > Editor",
+    "context": "AgentPanel && external_agent_thread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewExternalAgentThread",
+      "cmd-alt-t": "agent::NewThread"
+    }
+  },
+  {
+    "context": "MessageEditor && !Picker > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "cmd-enter": "agent::ChatWithFollow",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll"
+    }
+  },
+  {
+    "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "agent::Chat",
+      "enter": "editor::Newline",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
@@ -354,6 +375,16 @@
     "context": "AgentConfiguration",
     "bindings": {
       "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "agent::Chat",
+      "up": "agent::PreviousHistoryMessage",
+      "down": "agent::NextHistoryMessage",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -458,7 +489,7 @@
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
-      "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
+      "alt-cmd-t": ["pane::CloseOtherItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
@@ -506,11 +537,10 @@
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "cmd-k cmd-i": "editor::Hover",
+      "cmd-k cmd-b": "editor::BlameHover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
-      "cmd-u": "editor::UndoSelection",
-      "cmd-shift-u": "editor::RedoSelection",
-      "f8": "editor::GoToDiagnostic",
-      "shift-f8": "editor::GoToPreviousDiagnostic",
+      "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
+      "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
@@ -544,9 +574,23 @@
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
       "cmd-\\": "pane::SplitRight",
-      "cmd-k v": "markdown::OpenPreviewToTheSide",
-      "cmd-shift-v": "markdown::OpenPreview",
       "ctrl-cmd-c": "editor::DisplayCursorNames"
+    }
+  },
+  {
+    "context": "Editor && extension == md",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "markdown::OpenPreviewToTheSide",
+      "cmd-shift-v": "markdown::OpenPreview"
+    }
+  },
+  {
+    "context": "Editor && extension == svg",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-k v": "svg::OpenPreviewToTheSide",
+      "cmd-shift-v": "svg::OpenPreview"
     }
   },
   {
@@ -587,7 +631,7 @@
       "alt-cmd-o": ["projects::OpenRecent", { "create_new_window": false }],
       "ctrl-cmd-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "ctrl-cmd-shift-o": ["projects::OpenRemote", { "from_existing_connection": true, "create_new_window": false }],
-      "alt-cmd-b": "branches::OpenRecent",
+      "cmd-ctrl-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
@@ -605,13 +649,21 @@
       "cmd-8": ["workspace::ActivatePane", 7],
       "cmd-9": ["workspace::ActivatePane", 8],
       "cmd-b": "workspace::ToggleLeftDock",
+      "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-r": "workspace::ToggleRightDock",
       "cmd-j": "workspace::ToggleBottomDock",
       "alt-cmd-y": "workspace::CloseAllDocks",
+      // For 0px parameter, uses UI font size value.
+      "ctrl-alt-0": "workspace::ResetActiveDockSize",
+      "ctrl-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
+      "ctrl-alt-)": "workspace::ResetOpenDocksSize",
+      "ctrl-alt-_": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
+      "ctrl-alt-+": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-k cmd-s": "zed::OpenKeymap",
+      "cmd-k cmd-s": "zed::OpenKeymapEditor",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
@@ -636,7 +688,8 @@
       "cmd-k shift-up": "workspace::SwapPaneUp",
       "cmd-k shift-down": "workspace::SwapPaneDown",
       "cmd-shift-x": "zed::Extensions",
-      "f5": "debugger::RerunLastSession"
+      "f5": "debugger::Rerun",
+      "cmd-w": "workspace::CloseActiveDock"
     }
   },
   {
@@ -672,6 +725,8 @@
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-u": "editor::UndoSelection",
+      "cmd-shift-u": "editor::RedoSelection",
       "ctrl-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
@@ -748,6 +803,13 @@
       "ctrl-n": "editor::ContextMenuNext",
       "pageup": "editor::ContextMenuFirst",
       "pagedown": "editor::ContextMenuLast"
+    }
+  },
+  {
+    "context": "Editor && showing_signature_help && !showing_completions",
+    "bindings": {
+      "up": "editor::SignatureHelpPrevious",
+      "down": "editor::SignatureHelpNext"
     }
   },
   // Custom bindings
@@ -881,6 +943,7 @@
       "enter": "menu::Confirm",
       "cmd-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
+      "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
       "alt-down": "git_panel::FocusEditor",
@@ -913,7 +976,7 @@
     }
   },
   {
-    "context": "GitPanel > Editor",
+    "context": "CommitEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
@@ -964,7 +1027,9 @@
     "context": "BreakpointList",
     "bindings": {
       "space": "debugger::ToggleEnableBreakpoint",
-      "backspace": "debugger::UnsetBreakpoint"
+      "backspace": "debugger::UnsetBreakpoint",
+      "left": "debugger::PreviousBreakpointProperty",
+      "right": "debugger::NextBreakpointProperty"
     }
   },
   {
@@ -972,9 +1037,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm",
-      "cmd-up": "collab_panel::MoveChannelUp",
-      "cmd-down": "collab_panel::MoveChannelDown"
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "CollabPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "collab_panel::MoveChannelUp",
+      "alt-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -1046,13 +1117,16 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "cmd-f": "buffer_search::Deploy",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
-      "cmd-backspace": ["terminal::SendText", "\u0015"],
+      "cmd-backspace": ["terminal::SendText", "\u0015"], // ctrl-u: clear line
+      "alt-delete": ["terminal::SendText", "\u001bd"], // alt-d: delete word forward
+      "cmd-delete": ["terminal::SendText", "\u000b"], // ctrl-k: delete to end of line
       "cmd-right": ["terminal::SendText", "\u0005"],
       "cmd-left": ["terminal::SendText", "\u0001"],
       // Terminal.app compatibility
@@ -1148,6 +1222,52 @@
     "bindings": {
       "ctrl-tab": "pane::ActivateNextItem",
       "ctrl-shift-tab": "pane::ActivatePreviousItem"
+    }
+  },
+  {
+    "context": "MarkdownPreview",
+    "bindings": {
+      "pageup": "markdown::MovePageUp",
+      "pagedown": "markdown::MovePageDown"
+    }
+  },
+  {
+    "context": "KeymapEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
+      "enter": "keymap_editor::EditBinding",
+      "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-c": "keymap_editor::CopyAction",
+      "cmd-shift-c": "keymap_editor::CopyContext",
+      "cmd-t": "keymap_editor::ShowMatchingKeybinds"
+    }
+  },
+  {
+    "context": "KeystrokeInput",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "keystroke_input::StartRecording",
+      "escape escape escape": "keystroke_input::StopRecording",
+      "delete": "keystroke_input::ClearKeystrokes"
+    }
+  },
+  {
+    "context": "KeybindEditorModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "menu::Confirm",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "KeybindEditorModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext"
     }
   }
 ]

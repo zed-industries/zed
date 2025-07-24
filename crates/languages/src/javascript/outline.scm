@@ -14,6 +14,15 @@
       "(" @context
       ")" @context)) @item
 
+(generator_function_declaration
+    "async"? @context
+    "function" @context
+    "*" @context
+    name: (_) @name
+    parameters: (formal_parameters
+      "(" @context
+      ")" @context)) @item
+
 (interface_declaration
     "interface" @context
     name: (_) @name) @item

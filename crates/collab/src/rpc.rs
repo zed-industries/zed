@@ -179,7 +179,7 @@ struct Session {
 }
 
 impl Session {
-    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
+    async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -1002,7 +1002,26 @@ impl Server {
         Ok(())
     }
 
-    pub async fn update_plan_for_user(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+    pub async fn update_plan_for_user(
+        self: &Arc<Self>,
+        user_id: UserId,
+        update_user_plan: proto::UpdateUserPlan,
+    ) -> Result<()> {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, update_user_plan.clone())
+                .trace_err();
+        }
+
+        Ok(())
+    }
+
+    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
+    /// message on the Collab server.
+    ///
+    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
+    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
         let user = self
             .app_state
             .db
@@ -1018,14 +1037,7 @@ impl Server {
         )
         .await?;
 
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
+        self.update_plan_for_user(user_id, update_user_plan).await
     }
 
     pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
@@ -1037,7 +1049,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
@@ -2008,6 +2020,7 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
+                server_name: Some(language_server.name.clone()),
                 language_server_id: language_server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
@@ -2835,60 +2848,115 @@ async fn make_update_user_plan_message(
         account_too_young: Some(account_too_young),
         has_overdue_invoices: billing_customer
             .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: usage.map(|usage| {
-            let plan = match plan {
-                proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-                proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            };
-
-            let model_requests_limit = match plan.model_requests_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
-                    let limit = if plan == zed_llm_client::Plan::ZedProTrial
-                        && feature_flags
-                            .iter()
-                            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-                    {
-                        1_000
-                    } else {
-                        limit
-                    };
-
-                    zed_llm_client::UsageLimit::Limited(limit)
-                }
-                zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
-            };
-
-            proto::SubscriptionUsage {
-                model_requests_usage_amount: usage.model_requests as u32,
-                model_requests_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match model_requests_limit {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-                edit_predictions_usage_amount: usage.edit_predictions as u32,
-                edit_predictions_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match plan.edit_predictions_limit() {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-            }
-        }),
+        usage: Some(
+            usage
+                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
+                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
+        ),
     })
+}
+
+fn model_requests_limit(
+    plan: zed_llm_client::Plan,
+    feature_flags: &Vec<String>,
+) -> zed_llm_client::UsageLimit {
+    match plan.model_requests_limit() {
+        zed_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == zed_llm_client::Plan::ZedProTrial
+                && feature_flags
+                    .iter()
+                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+            {
+                1_000
+            } else {
+                limit
+            };
+
+            zed_llm_client::UsageLimit::Limited(limit)
+        }
+        zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
+    }
+}
+
+fn subscription_usage_to_proto(
+    plan: proto::Plan,
+    usage: crate::llm::db::subscription_usage::Model,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: usage.model_requests as u32,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                zed_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                zed_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: usage.edit_predictions as u32,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                zed_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                zed_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
+}
+
+fn make_default_subscription_usage(
+    plan: proto::Plan,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: 0,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                zed_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                zed_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: 0,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                zed_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                zed_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
 }
 
 async fn update_user_plan(session: &Session) -> Result<()> {
@@ -4111,6 +4179,13 @@ async fn accept_terms_of_service(
     response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
+
+    // When the user accepts the terms of service, we want to refresh their LLM
+    // token to grant access.
+    session
+        .peer
+        .send(session.connection_id, proto::RefreshLlmToken {})?;
+
     Ok(())
 }
 

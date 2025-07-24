@@ -1006,8 +1006,6 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
-// TODO: this test is flaky on our linux CI machines
-#[cfg(target_os = "macos")]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1047,8 +1045,6 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇ123456789", Mode::Normal);
     cx.simulate_keystrokes("g x");
     cx.assert_state("1234fooˇ56789", Mode::Normal);
-
-    cx.executor().allow_parking();
 
     // test command
     cx.update(|_, cx| {
@@ -2030,4 +2026,83 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     cx.shared_clipboard()
         .await
         .assert_eq("  oth(wow)\n  oth(wow)\n");
+}
+
+#[gpui::test]
+async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.set_shared_state(indoc! {
+        "
+        Emacs is
+        ˇa great
+
+        operating system
+
+        all it lacks
+        is a
+
+        decent text editor
+        "
+    })
+    .await;
+
+    cx.simulate_shared_keystrokes("2 d a p").await;
+    cx.shared_state().await.assert_eq(indoc! {
+        "
+        ˇall it lacks
+        is a
+
+        decent text editor
+        "
+    });
+
+    cx.simulate_shared_keystrokes("d a p").await;
+    cx.shared_clipboard()
+        .await
+        .assert_eq("all it lacks\nis a\n\n");
+
+    //reset to initial state
+    cx.simulate_shared_keystrokes("2 u").await;
+
+    cx.simulate_shared_keystrokes("4 d a p").await;
+    cx.shared_state().await.assert_eq(indoc! {"ˇ"});
+}
+
+#[gpui::test]
+async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state(
+        indoc! {
+            "
+        oˇne one one
+
+        two two two
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("3 g l s wow escape escape");
+    cx.assert_state(
+        indoc! {
+            "
+        woˇw wow wow
+
+        two two two
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("2 j 3 g l .");
+    cx.assert_state(
+        indoc! {
+            "
+        wow wow wow
+
+        woˇw woˇw woˇw
+        "
+        },
+        Mode::Normal,
+    );
 }

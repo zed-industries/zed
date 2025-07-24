@@ -1,9 +1,11 @@
+mod acp;
 mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
+mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
@@ -11,7 +13,6 @@ mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
-mod max_mode_tooltip;
 mod message_editor;
 mod profile_selector;
 mod slash_command;
@@ -24,12 +25,14 @@ mod thread_history;
 mod tool_compatibility;
 mod ui;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::Client;
+use client::{Client, DisableAiSettings};
+use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{Action, App, Entity, actions};
@@ -39,8 +42,9 @@ use language_model::{
 };
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
+use std::any::TypeId;
 
 pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
@@ -48,57 +52,119 @@ pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub use text_thread_editor::AgentPanelDelegate;
+pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 pub use ui::preview::{all_agent_previews, get_agent_preview};
+use zed_actions;
 
 actions!(
     agent,
     [
+        /// Creates a new text-based conversation thread.
         NewTextThread,
+        /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
+        /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
+        /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
+        /// Toggles the profile selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Removes all added context from the current conversation.
         RemoveAllContext,
+        /// Expands the message editor to full size.
         ExpandMessageEditor,
+        /// Opens the conversation history view.
         OpenHistory,
+        /// Adds a context server to the configuration.
         AddContextServer,
+        /// Removes the currently selected thread.
         RemoveSelectedThread,
-        Chat,
+        /// Starts a chat conversation with follow-up enabled.
         ChatWithFollow,
+        /// Cycles to the next inline assist suggestion.
         CycleNextInlineAssist,
+        /// Cycles to the previous inline assist suggestion.
         CyclePreviousInlineAssist,
+        /// Moves focus up in the interface.
         FocusUp,
+        /// Moves focus down in the interface.
         FocusDown,
+        /// Moves focus left in the interface.
         FocusLeft,
+        /// Moves focus right in the interface.
         FocusRight,
+        /// Removes the currently focused context item.
         RemoveFocusedContext,
+        /// Accepts the suggested context item.
         AcceptSuggestedContext,
+        /// Opens the active thread as a markdown file.
         OpenActiveThreadAsMarkdown,
+        /// Opens the agent diff view to review changes.
         OpenAgentDiff,
+        /// Keeps the current suggestion or change.
         Keep,
+        /// Rejects the current suggestion or change.
         Reject,
+        /// Rejects all suggestions or changes.
         RejectAll,
+        /// Keeps all suggestions or changes.
         KeepAll,
+        /// Follows the agent's suggestions.
         Follow,
+        /// Resets the trial upsell notification.
         ResetTrialUpsell,
+        /// Resets the trial end upsell notification.
         ResetTrialEndUpsell,
+        /// Continues the current thread.
         ContinueThread,
+        /// Continues the thread with burn mode enabled.
         ContinueWithBurnMode,
+        /// Toggles burn mode for faster responses.
         ToggleBurnMode,
     ]
 );
 
+/// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct NewThread {
     #[serde(default)]
     from_thread_id: Option<ThreadId>,
 }
 
+/// Creates a new external agent conversation thread.
+#[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewExternalAgentThread {
+    /// Which agent to use for the conversation.
+    agent: Option<ExternalAgent>,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum ExternalAgent {
+    #[default]
+    Gemini,
+    ClaudeCode,
+}
+
+impl ExternalAgent {
+    pub fn server(&self) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
+            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+        }
+    }
+}
+
+/// Opens the profile management interface for configuring agent tools and settings.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
 pub struct ManageProfiles {
     #[serde(default)]
     pub customize_tools: Option<AgentProfileId>,
@@ -157,6 +223,7 @@ pub fn init(
     agent::init(cx);
     agent_panel::init(cx);
     context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    TextThreadEditor::init(cx);
 
     register_slash_commands(cx);
     inline_assistant::init(
@@ -177,6 +244,66 @@ pub fn init(
     })
     .detach();
     cx.observe_new(ManageProfilesModal::register).detach();
+
+    // Update command palette filter based on AI settings
+    update_command_palette_filter(cx);
+
+    // Watch for settings changes
+    cx.observe_global::<SettingsStore>(|app_cx| {
+        // When settings change, update the command palette filter
+        update_command_palette_filter(app_cx);
+    })
+    .detach();
+}
+
+fn update_command_palette_filter(cx: &mut App) {
+    let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+    CommandPaletteFilter::update_global(cx, |filter, _| {
+        if disable_ai {
+            filter.hide_namespace("agent");
+            filter.hide_namespace("assistant");
+            filter.hide_namespace("zed_predict_onboarding");
+            filter.hide_namespace("edit_prediction");
+
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.hide_action_types(&edit_prediction_actions);
+            filter.hide_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
+        } else {
+            filter.show_namespace("agent");
+            filter.show_namespace("assistant");
+            filter.show_namespace("zed_predict_onboarding");
+
+            filter.show_namespace("edit_prediction");
+
+            use editor::actions::{
+                AcceptEditPrediction, AcceptPartialEditPrediction, NextEditPrediction,
+                PreviousEditPrediction, ShowEditPrediction, ToggleEditPrediction,
+            };
+            let edit_prediction_actions = [
+                TypeId::of::<AcceptEditPrediction>(),
+                TypeId::of::<AcceptPartialEditPrediction>(),
+                TypeId::of::<ShowEditPrediction>(),
+                TypeId::of::<NextEditPrediction>(),
+                TypeId::of::<PreviousEditPrediction>(),
+                TypeId::of::<ToggleEditPrediction>(),
+            ];
+            filter.show_action_types(edit_prediction_actions.iter());
+
+            filter
+                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+        }
+    });
 }
 
 fn init_language_model_settings(cx: &mut App) {
@@ -208,7 +335,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
-    let default = to_selected_model(&settings.default_model);
+    let default = settings.default_model.as_ref().map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
         .as_ref()
@@ -228,7 +355,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         .collect::<Vec<_>>();
 
     LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-        registry.select_default_model(Some(&default), cx);
+        registry.select_default_model(default.as_ref(), cx);
         registry.select_inline_assistant_model(inline_assistant.as_ref(), cx);
         registry.select_commit_message_model(commit_message.as_ref(), cx);
         registry.select_thread_summary_model(thread_summary.as_ref(), cx);

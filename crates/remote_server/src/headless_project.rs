@@ -77,7 +77,6 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
@@ -185,6 +184,11 @@ impl HeadlessProject {
         });
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+        language_extension::init(
+            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            proxy.clone(),
+            languages.clone(),
+        );
 
         cx.subscribe(
             &buffer_store,
@@ -301,11 +305,13 @@ impl HeadlessProject {
         match event {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
+                name,
                 message,
             } => {
                 self.session
                     .send(proto::UpdateLanguageServer {
                         project_id: SSH_PROJECT_ID,
+                        server_name: name.as_ref().map(|name| name.to_string()),
                         language_server_id: language_server_id.to_proto(),
                         variant: Some(message.clone()),
                     })
