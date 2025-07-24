@@ -624,6 +624,7 @@ pub enum ClientNotification {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CancelledParams {
     pub request_id: RequestId,
     #[serde(skip_serializing_if = "Option::is_none")]

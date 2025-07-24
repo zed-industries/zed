@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use collections::HashMap;
 use context_server::types::requests;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
 use project::Project;
 use settings::SettingsStore;
 use smol::stream::StreamExt as _;
@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
-use acp_thread::{AcpThread, AgentConnection, AgentThreadEntry};
+use acp_thread::{AcpThread, AgentConnection};
 
 #[derive(Clone)]
 pub struct Codex;
@@ -88,15 +88,15 @@ impl AgentServer for Codex {
                     }
                 });
 
-            let threads = Rc::new(RefCell::new(HashMap::default()));
+            let sessions = Rc::new(RefCell::new(HashMap::default()));
 
             let notification_handler_task = cx.spawn({
-                let threads = threads.clone();
+                let sessions = sessions.clone();
                 async move |cx| {
                     while let Some(notification) = notification_rx.next().await {
                         CodexConnection::handle_session_notification(
                             notification,
-                            threads.clone(),
+                            sessions.clone(),
                             cx,
                         )
                     }
@@ -105,7 +105,7 @@ impl AgentServer for Codex {
 
             let connection = CodexConnection {
                 client,
-                threads,
+                sessions,
                 _notification_handler_task: notification_handler_task,
             };
             Ok(Rc::new(connection) as _)
@@ -115,8 +115,13 @@ impl AgentServer for Codex {
 
 struct CodexConnection {
     client: Arc<context_server::ContextServer>,
-    threads: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+    sessions: Rc<RefCell<HashMap<acp::SessionId, CodexSession>>>,
     _notification_handler_task: Task<()>,
+}
+
+struct CodexSession {
+    thread: WeakEntity<AcpThread>,
+    cancel_tx: Option<oneshot::Sender<()>>,
 }
 
 impl AgentConnection for CodexConnection {
@@ -131,7 +136,7 @@ impl AgentConnection for CodexConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
         let client = self.client.client();
-        let threads = self.threads.clone();
+        let sessions = self.sessions.clone();
         let cwd = cwd.to_path_buf();
         cx.spawn(async move |cx| {
             let client = client.context("MCP server is not initialized yet")?;
@@ -163,16 +168,18 @@ impl AgentConnection for CodexConnection {
             let thread =
                 cx.new(|cx| AcpThread::new(self.clone(), project, result.session_id.clone(), cx))?;
 
-            threads
-                .borrow_mut()
-                .insert(result.session_id, thread.downgrade());
+            let session = CodexSession {
+                thread: thread.downgrade(),
+                cancel_tx: None,
+            };
+            sessions.borrow_mut().insert(result.session_id, session);
 
             Ok(thread)
         })
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
-        todo!()
+    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
     fn prompt(
@@ -181,17 +188,38 @@ impl AgentConnection for CodexConnection {
         cx: &mut App,
     ) -> Task<Result<()>> {
         let client = self.client.client();
+        let sessions = self.sessions.clone();
 
         cx.foreground_executor().spawn(async move {
             let client = client.context("MCP server is not initialized yet")?;
 
-            let response = client
-                .request::<requests::CallTool>(context_server::types::CallToolParams {
-                    name: acp::PROMPT_TOOL_NAME.into(),
-                    arguments: Some(serde_json::to_value(params)?),
-                    meta: None,
-                })
-                .await?;
+            let (new_cancel_tx, cancel_rx) = oneshot::channel();
+            let mut sessions = sessions.borrow_mut();
+            let session = sessions
+                .get_mut(&params.session_id)
+                .context("Session not found")?;
+            session.cancel_tx.replace(new_cancel_tx);
+            drop(sessions);
+
+            let result = client
+                .request_with::<requests::CallTool>(
+                    context_server::types::CallToolParams {
+                        name: acp::PROMPT_TOOL_NAME.into(),
+                        arguments: Some(serde_json::to_value(params)?),
+                        meta: None,
+                    },
+                    Some(cancel_rx),
+                    None,
+                )
+                .await;
+
+            if let Err(err) = &result
+                && err.is::<context_server::client::RequestCanceled>()
+            {
+                return Ok(());
+            }
+
+            let response = result?;
 
             if response.is_error.unwrap_or_default() {
                 return Err(anyhow!("{:?}", response.content));
@@ -201,21 +229,28 @@ impl AgentConnection for CodexConnection {
         })
     }
 
-    fn cancel(&self, session_id: &agent_client_protocol::SessionId, cx: &mut App) {
-        todo!()
+    fn cancel(&self, session_id: &agent_client_protocol::SessionId, _cx: &mut App) {
+        let mut sessions = self.sessions.borrow_mut();
+
+        if let Some(cancel_tx) = sessions
+            .get_mut(session_id)
+            .and_then(|session| session.cancel_tx.take())
+        {
+            cancel_tx.send(()).ok();
+        }
     }
 }
 
 impl CodexConnection {
     pub fn handle_session_notification(
         notification: acp::SessionNotification,
-        threads: Rc<RefCell<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        threads: Rc<RefCell<HashMap<acp::SessionId, CodexSession>>>,
         cx: &mut AsyncApp,
     ) {
         let threads = threads.borrow();
         let Some(thread) = threads
             .get(&notification.session_id)
-            .and_then(|thread| thread.upgrade())
+            .and_then(|session| session.thread.upgrade())
         else {
             log::error!(
                 "Thread not found for session ID: {}",
