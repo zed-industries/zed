@@ -916,7 +916,7 @@ impl AcpThread {
         &mut self,
         message: &str,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
+    ) -> BoxFuture<'static, Result<()>> {
         self.send(
             vec![acp::ContentBlock::Text(acp::TextContent {
                 text: message.to_string(),
@@ -930,7 +930,7 @@ impl AcpThread {
         &mut self,
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
-    ) -> BoxFuture<'static, Result<(), acp_old::Error>> {
+    ) -> BoxFuture<'static, Result<()>> {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),

@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use agent_client_protocol as acp;
-use agentic_coding_protocol as acp_old;
 use itertools::Itertools;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -230,109 +229,6 @@ impl ClaudeTool {
             Self::TodoWrite(_) => acp::ToolKind::Think,
             Self::ExitPlanMode(_) => acp::ToolKind::Think,
             Self::Other { .. } => acp::ToolKind::Other,
-        }
-    }
-
-    pub fn confirmation(&self, description: Option<String>) -> acp_old::ToolCallConfirmation {
-        match &self {
-            Self::Edit(_) | Self::Write(_) | Self::NotebookEdit(_) | Self::MultiEdit(_) => {
-                acp_old::ToolCallConfirmation::Edit { description }
-            }
-            Self::WebFetch(params) => acp_old::ToolCallConfirmation::Fetch {
-                urls: params
-                    .as_ref()
-                    .map(|p| vec![p.url.clone()])
-                    .unwrap_or_default(),
-                description,
-            },
-            Self::Terminal(Some(BashToolParams {
-                description,
-                command,
-                ..
-            })) => acp_old::ToolCallConfirmation::Execute {
-                command: command.clone(),
-                root_command: command.clone(),
-                description: description.clone(),
-            },
-            Self::ExitPlanMode(Some(params)) => acp_old::ToolCallConfirmation::Other {
-                description: if let Some(description) = description {
-                    format!("{description} {}", params.plan)
-                } else {
-                    params.plan.clone()
-                },
-            },
-            Self::Task(Some(params)) => acp_old::ToolCallConfirmation::Other {
-                description: if let Some(description) = description {
-                    format!("{description} {}", params.description)
-                } else {
-                    params.description.clone()
-                },
-            },
-            Self::Ls(Some(LsToolParams { path, .. }))
-            | Self::ReadFile(Some(ReadToolParams { abs_path: path, .. })) => {
-                let path = path.display();
-                acp_old::ToolCallConfirmation::Other {
-                    description: if let Some(description) = description {
-                        format!("{description} {path}")
-                    } else {
-                        path.to_string()
-                    },
-                }
-            }
-            Self::NotebookRead(Some(NotebookReadToolParams { notebook_path, .. })) => {
-                let path = notebook_path.display();
-                acp_old::ToolCallConfirmation::Other {
-                    description: if let Some(description) = description {
-                        format!("{description} {path}")
-                    } else {
-                        path.to_string()
-                    },
-                }
-            }
-            Self::Glob(Some(params)) => acp_old::ToolCallConfirmation::Other {
-                description: if let Some(description) = description {
-                    format!("{description} {params}")
-                } else {
-                    params.to_string()
-                },
-            },
-            Self::Grep(Some(params)) => acp_old::ToolCallConfirmation::Other {
-                description: if let Some(description) = description {
-                    format!("{description} {params}")
-                } else {
-                    params.to_string()
-                },
-            },
-            Self::WebSearch(Some(params)) => acp_old::ToolCallConfirmation::Other {
-                description: if let Some(description) = description {
-                    format!("{description} {params}")
-                } else {
-                    params.to_string()
-                },
-            },
-            Self::TodoWrite(Some(params)) => {
-                let params = params.todos.iter().map(|todo| &todo.content).join(", ");
-                acp_old::ToolCallConfirmation::Other {
-                    description: if let Some(description) = description {
-                        format!("{description} {params}")
-                    } else {
-                        params
-                    },
-                }
-            }
-            Self::Terminal(None)
-            | Self::Task(None)
-            | Self::NotebookRead(None)
-            | Self::ExitPlanMode(None)
-            | Self::Ls(None)
-            | Self::Glob(None)
-            | Self::Grep(None)
-            | Self::ReadFile(None)
-            | Self::WebSearch(None)
-            | Self::TodoWrite(None)
-            | Self::Other { .. } => acp_old::ToolCallConfirmation::Other {
-                description: description.unwrap_or("".to_string()),
-            },
         }
     }
 
