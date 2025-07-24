@@ -700,7 +700,11 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let query_editor = cx.new(|cx| Editor::single_line(window, cx));
+        let query_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_use_autoclose(false);
+            editor
+        });
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
         let replacement_editor = cx.new(|cx| Editor::single_line(window, cx));
