@@ -3003,6 +3003,12 @@ impl Project {
                 }),
                 Err(_) => {}
             },
+            SettingsObserverEvent::DevcontainerDetected(path) => {
+                cx.emit(Event::Toast {
+                    notification_id: format!("devcontainer-detected-{path:?}").into(),
+                    message: format!("Dev container configuration detected in {path:?}. Would you like to open it in a dev container?"),
+                });
+            },
         }
     }
 

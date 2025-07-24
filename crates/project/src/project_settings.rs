@@ -7,9 +7,9 @@ use futures::StreamExt as _;
 use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task};
 use lsp::LanguageServerName;
 use paths::{
-    EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
-    local_tasks_file_relative_path, local_vscode_launch_file_relative_path,
-    local_vscode_tasks_file_relative_path, task_file_name,
+    EDITORCONFIG_NAME, local_debug_file_relative_path, local_devcontainer_file_relative_path,
+    local_settings_file_relative_path, local_tasks_file_relative_path,
+    local_vscode_launch_file_relative_path, local_vscode_tasks_file_relative_path, task_file_name,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -627,6 +627,7 @@ pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
+    DevcontainerDetected(PathBuf),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -865,6 +866,18 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Debug)
+            } else if path.ends_with(local_devcontainer_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            local_devcontainer_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
+                        .unwrap(),
+                );
+                (settings_dir, LocalSettingsKind::Devcontainer)
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -883,6 +896,13 @@ impl SettingsObserver {
                     continue;
                 }
             };
+
+            // Handle devcontainer detection separately
+            if kind == LocalSettingsKind::Devcontainer && !removed {
+                cx.emit(SettingsObserverEvent::DevcontainerDetected(abs_path.clone()));
+                continue;
+            }
+
             settings_contents.push(async move {
                 (
                     settings_dir,
@@ -1060,6 +1080,10 @@ impl SettingsObserver {
                         }
                     }
                 }
+                LocalSettingsKind::Devcontainer => {
+                    // Devcontainer files are handled separately for notifications
+                    // and don't need to be stored in settings
+                }
             };
 
             if let Some(downstream_client) = &self.downstream_client {
@@ -1194,6 +1218,7 @@ pub fn local_settings_kind_from_proto(kind: proto::LocalSettingsKind) -> LocalSe
         proto::LocalSettingsKind::Tasks => LocalSettingsKind::Tasks,
         proto::LocalSettingsKind::Editorconfig => LocalSettingsKind::Editorconfig,
         proto::LocalSettingsKind::Debug => LocalSettingsKind::Debug,
+        proto::LocalSettingsKind::Devcontainer => LocalSettingsKind::Devcontainer,
     }
 }
 
@@ -1203,5 +1228,6 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Tasks => proto::LocalSettingsKind::Tasks,
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
         LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
+        LocalSettingsKind::Devcontainer => proto::LocalSettingsKind::Devcontainer,
     }
 }
