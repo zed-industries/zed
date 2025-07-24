@@ -829,7 +829,7 @@ impl Server {
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
             let mut foreground_message_handlers = FuturesUnordered::new();
-            let concurrent_handlers = Arc::new(Semaphore::new(256));
+            let concurrent_handlers = Arc::new(Semaphore::new(512));
             loop {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
