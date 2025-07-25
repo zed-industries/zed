@@ -159,10 +159,13 @@ impl AgentConnection for CodexConnection {
                         client_tools: acp::ClientTools {
                             request_permission: Some(acp::McpToolId {
                                 mcp_server: mcp_server::SERVER_NAME.into(),
-                                tool_name: mcp_server::PermissionTool::NAME.into(),
+                                tool_name: mcp_server::RequestPermissionTool::NAME.into(),
+                            }),
+                            read_text_file: Some(acp::McpToolId {
+                                mcp_server: mcp_server::SERVER_NAME.into(),
+                                tool_name: mcp_server::ReadTextFileTool::NAME.into(),
                             }),
                             write_text_file: None,
-                            read_text_file: None,
                         },
                         cwd,
                     })?),

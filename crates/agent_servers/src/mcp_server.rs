@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use context_server::listener::{McpServerTool, ToolResponse};
 use context_server::types::{
     Implementation, InitializeParams, InitializeResponse, ProtocolVersion, ServerCapabilities,
-    ToolsCapabilities, requests,
+    ToolResponseContent, ToolsCapabilities, requests,
 };
 use futures::channel::oneshot;
 use gpui::{App, AsyncApp, Task, WeakEntity};
@@ -23,7 +23,10 @@ impl ZedMcpServer {
         let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
         mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
 
-        mcp_server.add_tool(PermissionTool {
+        mcp_server.add_tool(RequestPermissionTool {
+            thread_rx: thread_rx.clone(),
+        });
+        mcp_server.add_tool(ReadFileTool {
             thread_rx: thread_rx.clone(),
         });
 
@@ -72,11 +75,11 @@ impl ZedMcpServer {
 // Tools
 
 #[derive(Clone)]
-pub struct PermissionTool {
+pub struct RequestPermissionTool {
     thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
 }
 
-impl McpServerTool for PermissionTool {
+impl McpServerTool for RequestPermissionTool {
     type Input = acp::RequestPermissionToolArguments;
     type Output = acp::RequestPermissionToolOutput;
 
@@ -110,6 +113,44 @@ impl McpServerTool for PermissionTool {
         Ok(ToolResponse {
             content: vec![],
             structured_content: acp::RequestPermissionToolOutput { outcome },
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct ReadFileTool {
+    thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+}
+
+impl McpServerTool for ReadFileTool {
+    type Input = acp::ReadTextFileArguments;
+    type Output = ();
+
+    const NAME: &'static str = "Read";
+
+    fn description(&self) -> &'static str {
+        "Read text files"
+    }
+
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
+        let mut thread_rx = self.thread_rx.clone();
+        let Some(thread) = thread_rx.recv().await?.upgrade() else {
+            anyhow::bail!("Thread closed");
+        };
+
+        let text = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(input.path, input.line, input.limit, false, cx)
+            })?
+            .await?;
+
+        Ok(ToolResponse {
+            content: vec![ToolResponseContent::Text { text }],
+            structured_content: (),
         })
     }
 }
