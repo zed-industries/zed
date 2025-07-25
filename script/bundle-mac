@@ -377,8 +377,8 @@ else
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
         sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "target/${architecture}/${target_dir}/aarch64-apple-darwin/" \
-            "target/${architecture}/${target_dir}/x86_64-apple-darwin/"
+            "target/x86_64-apple-darwin/${target_dir}/" \
+            "target/aarch64-apple-darwin/${target_dir}/"
     else
         echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
     fi
