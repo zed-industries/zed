@@ -480,7 +480,7 @@ impl ResizeBehavior {
 
 pub struct ColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
-    visiable_widths: [DefiniteLength; COLS],
+    visible_widths: [DefiniteLength; COLS],
     cached_bounds_width: Pixels,
     initialized: bool,
 }
@@ -489,7 +489,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
-            visiable_widths: [DefiniteLength::default(); COLS],
+            visible_widths: [DefiniteLength::default(); COLS],
             cached_bounds_width: Default::default(),
             initialized: false,
         }
@@ -527,7 +527,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             resize_behavior,
         );
         self.widths = updated_widths.map(DefiniteLength::Fraction);
-        self.visiable_widths = self.widths;
+        self.visible_widths = self.widths;
     }
 
     fn reset_to_initial_size(
@@ -580,7 +580,6 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let right_diff = initial_sizes[col_idx + 1..].iter().sum::<f32>()
             - widths[col_idx + 1..].iter().sum::<f32>();
 
-        let shrinking = diff < 0.0;
         let go_left_first = if diff < 0.0 {
             left_diff > right_diff
         } else {
@@ -659,7 +658,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         Self::drag_column_handle(diff, col_idx, &mut widths, resize_behavior);
 
-        self.visiable_widths = widths.map(DefiniteLength::Fraction);
+        self.visible_widths = widths.map(DefiniteLength::Fraction);
     }
 
     fn drag_column_handle(
@@ -754,7 +753,7 @@ impl<const COLS: usize> TableWidths<COLS> {
     fn lengths(&self, cx: &App) -> [Length; COLS] {
         self.current
             .as_ref()
-            .map(|entity| entity.read(cx).visiable_widths.map(Length::Definite))
+            .map(|entity| entity.read(cx).visible_widths.map(Length::Definite))
             .unwrap_or(self.initial.map(Length::Definite))
     }
 }
@@ -867,7 +866,7 @@ impl<const COLS: usize> Table<COLS> {
                 if !widths.initialized {
                     widths.initialized = true;
                     widths.widths = table_widths.initial;
-                    widths.visiable_widths = widths.widths;
+                    widths.visible_widths = widths.widths;
                 }
             })
         }
@@ -1108,7 +1107,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .on_drop::<DraggedColumn>(move |_, _, cx| {
                         widths
                             .update(cx, |widths, _| {
-                                widths.widths = widths.visiable_widths;
+                                widths.widths = widths.visible_widths;
                             })
                             .ok();
                         // Finish the resize operation
