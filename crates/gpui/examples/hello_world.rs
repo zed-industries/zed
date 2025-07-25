@@ -26,9 +26,9 @@ impl Render for HelloWorld {
             .child(
                 div().rounded_md().overflow_hidden().child(
                     div()
-                        .bg(rgb(0x000000))
-                        .text_xl()
-                        .text_color(rgb(0xffffff))
+                        .bg(gpui::black())
+                        .text_color(gpui::white())
+                        .text_base()
                         .py_2()
                         .px_5()
                         .child("Let build applications with Rust and GPUI."),
