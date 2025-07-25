@@ -778,8 +778,7 @@ fragment float4 path_rasterization_fragment(
     gradient_color.color0,
     gradient_color.color1
   );
-
-  return float4(color.rgb * alpha, alpha);
+  return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
 
 struct PathSpriteVertexOutput {
@@ -801,7 +800,6 @@ vertex PathSpriteVertexOutput path_sprite_vertex(
   float4 device_position =
       to_device_position(unit_vertex, sprite.bounds, viewport_size);
 
-  // For screen-space intermediate texture, convert screen position to texture coordinates
   float2 screen_position = float2(sprite.bounds.origin.x, sprite.bounds.origin.y) + unit_vertex * float2(sprite.bounds.size.width, sprite.bounds.size.height);
   float2 texture_coords = screen_position / float2(viewport_size->width, viewport_size->height);
 

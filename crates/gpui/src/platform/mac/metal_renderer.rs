@@ -18,7 +18,10 @@ use core_video::{
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
-use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
+use metal::{
+    CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange,
+    RenderPassColorAttachmentDescriptorRef,
+};
 use objc::{self, msg_send, sel, sel_impl};
 use parking_lot::Mutex;
 
@@ -189,7 +192,7 @@ impl MetalRenderer {
             MTLPixelFormat::BGRA8Unorm,
             PATH_SAMPLE_COUNT,
         );
-        let path_sprites_pipeline_state = build_pipeline_state(
+        let path_sprites_pipeline_state = build_path_sprite_pipeline_state(
             &device,
             &library,
             "path_sprites",
@@ -413,29 +416,18 @@ impl MetalRenderer {
     ) -> Result<metal::CommandBuffer> {
         let command_queue = self.command_queue.clone();
         let command_buffer = command_queue.new_command_buffer();
+        let alpha = if self.layer.is_opaque() { 1. } else { 0. };
         let mut instance_offset = 0;
 
-        let render_pass_descriptor = metal::RenderPassDescriptor::new();
-        let color_attachment = render_pass_descriptor
-            .color_attachments()
-            .object_at(0)
-            .unwrap();
-
-        color_attachment.set_texture(Some(drawable.texture()));
-        color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-        color_attachment.set_store_action(metal::MTLStoreAction::Store);
-        let alpha = if self.layer.is_opaque() { 1. } else { 0. };
-        color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
-        let mut command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
-
-        command_encoder.set_viewport(metal::MTLViewport {
-            originX: 0.0,
-            originY: 0.0,
-            width: i32::from(viewport_size.width) as f64,
-            height: i32::from(viewport_size.height) as f64,
-            znear: 0.0,
-            zfar: 1.0,
-        });
+        let mut command_encoder = new_command_encoder(
+            command_buffer,
+            drawable,
+            viewport_size,
+            |color_attachment| {
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., alpha));
+            },
+        );
 
         for batch in scene.batches() {
             let ok = match batch {
@@ -456,7 +448,7 @@ impl MetalRenderer {
                 PrimitiveBatch::Paths(paths) => {
                     command_encoder.end_encoding();
 
-                    let rasterize_ok = self.rasterize_paths_to_intermediate(
+                    let did_draw = self.draw_paths_to_intermediate(
                         paths,
                         instance_buffer,
                         &mut instance_offset,
@@ -464,29 +456,16 @@ impl MetalRenderer {
                         command_buffer,
                     );
 
-                    let path_render_pass_descriptor = metal::RenderPassDescriptor::new();
-                    let path_color_attachment = path_render_pass_descriptor
-                        .color_attachments()
-                        .object_at(0)
-                        .unwrap();
-                    path_color_attachment.set_texture(Some(drawable.texture()));
-                    path_color_attachment.set_load_action(metal::MTLLoadAction::Load);
-                    path_color_attachment.set_store_action(metal::MTLStoreAction::Store);
+                    command_encoder = new_command_encoder(
+                        command_buffer,
+                        drawable,
+                        viewport_size,
+                        |color_attachment| {
+                            color_attachment.set_load_action(metal::MTLLoadAction::Load);
+                        },
+                    );
 
-                    command_encoder =
-                        command_buffer.new_render_command_encoder(path_render_pass_descriptor);
-                    command_encoder.set_viewport(metal::MTLViewport {
-                        originX: 0.0,
-                        originY: 0.0,
-                        width: i32::from(viewport_size.width) as f64,
-                        height: i32::from(viewport_size.height) as f64,
-                        znear: 0.0,
-                        zfar: 1.0,
-                    });
-
-                    if !rasterize_ok {
-                        false
-                    } else {
+                    if did_draw {
                         self.draw_paths_from_intermediate(
                             paths,
                             instance_buffer,
@@ -494,6 +473,8 @@ impl MetalRenderer {
                             viewport_size,
                             &command_encoder,
                         )
+                    } else {
+                        false
                     }
                 }
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(
@@ -557,7 +538,7 @@ impl MetalRenderer {
         Ok(command_buffer.to_owned())
     }
 
-    fn rasterize_paths_to_intermediate(
+    fn draw_paths_to_intermediate(
         &self,
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
@@ -594,7 +575,6 @@ impl MetalRenderer {
 
         align_offset(instance_offset);
         let mut vertices = Vec::new();
-        // Render each path individually with its own color
         for path in paths {
             vertices.extend(path.vertices.iter().map(|v| PathRasterizationVertex {
                 xy_position: v.xy_position,
@@ -774,9 +754,9 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        if paths.is_empty() {
+        let Some(ref first_path) = paths.first() else {
             return true;
-        }
+        };
 
         let Some(ref intermediate_texture) = self.path_intermediate_texture else {
             return false;
@@ -799,18 +779,31 @@ impl MetalRenderer {
             Some(intermediate_texture),
         );
 
-        // Create sprites for each path using screen coordinates
-        let mut sprites = Vec::new();
-        for path in paths {
-            let bounds = path.bounds.intersect(&path.content_mask.bounds);
-            sprites.push(PathSprite {
-                bounds: bounds.map(|p| p.floor()),
-                color: path.color,
-            });
-        }
-
-        if sprites.is_empty() {
-            return true;
+        // When copying paths from the intermediate texture to the drawable,
+        // each pixel must only be copied once, in case of transparent paths.
+        //
+        // If all paths have the same draw order, then their bounds are all
+        // disjoint, so we can copy each path's bounds individually. If this
+        // batch combines different draw orders, we perform a single copy
+        // for a minimal spanning rect.
+        let sprites;
+        if paths.last().unwrap().order == first_path.order {
+            sprites = paths
+                .iter()
+                .map(|path| PathSprite {
+                    bounds: path.bounds,
+                    color: Background::default(),
+                })
+                .collect();
+        } else {
+            let mut bounds = first_path.bounds;
+            for path in paths.iter().skip(1) {
+                bounds = bounds.union(&path.bounds);
+            }
+            sprites = vec![PathSprite {
+                bounds,
+                color: Background::default(),
+            }];
         }
 
         align_offset(instance_offset);
@@ -1158,6 +1151,33 @@ impl MetalRenderer {
     }
 }
 
+fn new_command_encoder<'a>(
+    command_buffer: &'a metal::CommandBufferRef,
+    drawable: &'a metal::MetalDrawableRef,
+    viewport_size: Size<DevicePixels>,
+    configure_color_attachment: impl Fn(&RenderPassColorAttachmentDescriptorRef),
+) -> &'a metal::RenderCommandEncoderRef {
+    let render_pass_descriptor = metal::RenderPassDescriptor::new();
+    let color_attachment = render_pass_descriptor
+        .color_attachments()
+        .object_at(0)
+        .unwrap();
+    color_attachment.set_texture(Some(drawable.texture()));
+    color_attachment.set_store_action(metal::MTLStoreAction::Store);
+    configure_color_attachment(color_attachment);
+
+    let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
+    command_encoder.set_viewport(metal::MTLViewport {
+        originX: 0.0,
+        originY: 0.0,
+        width: i32::from(viewport_size.width) as f64,
+        height: i32::from(viewport_size.height) as f64,
+        znear: 0.0,
+        zfar: 1.0,
+    });
+    command_encoder
+}
+
 fn build_pipeline_state(
     device: &metal::DeviceRef,
     library: &metal::LibraryRef,
@@ -1183,6 +1203,40 @@ fn build_pipeline_state(
     color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
     color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::SourceAlpha);
+    color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
+    color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
+    color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);
+
+    device
+        .new_render_pipeline_state(&descriptor)
+        .expect("could not create render pipeline state")
+}
+
+fn build_path_sprite_pipeline_state(
+    device: &metal::DeviceRef,
+    library: &metal::LibraryRef,
+    label: &str,
+    vertex_fn_name: &str,
+    fragment_fn_name: &str,
+    pixel_format: metal::MTLPixelFormat,
+) -> metal::RenderPipelineState {
+    let vertex_fn = library
+        .get_function(vertex_fn_name, None)
+        .expect("error locating vertex function");
+    let fragment_fn = library
+        .get_function(fragment_fn_name, None)
+        .expect("error locating fragment function");
+
+    let descriptor = metal::RenderPipelineDescriptor::new();
+    descriptor.set_label(label);
+    descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
+    descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
+    color_attachment.set_pixel_format(pixel_format);
+    color_attachment.set_blending_enabled(true);
+    color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
+    color_attachment.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
     color_attachment.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
     color_attachment.set_destination_alpha_blend_factor(metal::MTLBlendFactor::One);

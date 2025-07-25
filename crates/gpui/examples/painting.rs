@@ -303,6 +303,10 @@ fn main() {
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
         )
         .unwrap();
+        cx.on_window_closed(|cx| {
+            cx.quit();
+        })
+        .detach();
         cx.activate(true);
     });
 }

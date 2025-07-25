@@ -670,7 +670,7 @@ pub(crate) struct PathId(pub(crate) usize);
 #[derive(Clone, Debug)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) id: PathId,
-    order: DrawOrder,
+    pub(crate) order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
