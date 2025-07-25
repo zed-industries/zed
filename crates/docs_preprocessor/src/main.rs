@@ -37,10 +37,21 @@ fn main() -> Result<()> {
             }
         }
         Some("postprocess") => {
-            let dir = args.get(1).expect("Book directory required");
+            let mut ctx = mdbook::renderer::RenderContext::from_json(io::stdin())?;
+            let output = ctx
+                .config
+                .get_mut("output")
+                .expect("has output")
+                .as_table_mut()
+                .expect("output is table");
+            let zed_html = output.remove("zed-html").expect("zed-html output defined");
+            output.insert("html".to_string(), zed_html);
+            mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
+
+            let root_dir = ctx.destination.clone();
             let mut files = Vec::with_capacity(128);
             let mut queue = Vec::with_capacity(64);
-            queue.push(std::path::PathBuf::from(dir));
+            queue.push(std::path::PathBuf::from(root_dir));
             while let Some(dir) = queue.pop() {
                 for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
                     let Ok(entry) = entry else {
@@ -61,7 +72,7 @@ fn main() -> Result<()> {
                 }
             }
             eprintln!("Processing {} `.html` files", files.len());
-            let regex = Regex::new(r"\s*\{#zed-meta (.*?)\}\s*").unwrap();
+            let regex = Regex::new(r"<p>\s*\{#zed-meta \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
             for file in files {
                 let contents = std::fs::read_to_string(&file)?;
                 let mut meta_description = None;
