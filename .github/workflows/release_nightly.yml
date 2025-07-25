@@ -7,6 +7,8 @@ on:
   push:
     tags:
       - "nightly"
+    branches:
+      - "sentry-ci"
 
 env:
   CARGO_TERM_COLOR: always
@@ -110,6 +112,13 @@ jobs:
           version=$(git rev-parse --short HEAD)
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+          organization: zed-dev
+          project: zed
 
       - name: Create macOS app bundle
         run: script/bundle-mac
@@ -276,6 +285,13 @@ jobs:
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+          organization: zed-dev
+          project: zed
+
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/bundle-windows.ps1
@@ -284,28 +300,28 @@ jobs:
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: script/upload-nightly.ps1 windows
 
-  update-nightly-tag:
-    name: Update nightly tag
-    if: github.repository_owner == 'zed-industries'
-    runs-on: ubuntu-latest
-    needs:
-      - bundle-mac
-      - bundle-linux-x86
-      - bundle-linux-arm
-      - bundle-windows-x64
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          fetch-depth: 0
+  # update-nightly-tag:
+  #   name: Update nightly tag
+  #   if: github.repository_owner == 'zed-industries'
+  #   runs-on: ubuntu-latest
+  #   needs:
+  #     - bundle-mac
+  #     - bundle-linux-x86
+  #     - bundle-linux-arm
+  #     - bundle-windows-x64
+  #   steps:
+  #     - name: Checkout repo
+  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+  #       with:
+  #         fetch-depth: 0
 
-      - name: Update nightly tag
-        run: |
-          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
-            echo "Nightly tag already points to current commit. Skipping tagging."
-            exit 0
-          fi
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git tag -f nightly
-          git push origin nightly --force
+  #     - name: Update nightly tag
+  #       run: |
+  #         if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+  #           echo "Nightly tag already points to current commit. Skipping tagging."
+  #           exit 0
+  #         fi
+  #         git config user.name github-actions
+  #         git config user.email github-actions@github.com
+  #         git tag -f nightly
+  #         git push origin nightly --force
