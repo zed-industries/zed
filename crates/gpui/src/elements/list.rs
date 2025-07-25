@@ -955,10 +955,9 @@ impl Element for List {
             state.items = new_items;
         }
 
-        let padding = style
-            .padding
-            .to_pixels(bounds.size.into(), window.rem_size());
-        let corner_radii = style.corner_radii.to_pixels(window.rem_size());
+        let rem_size = window.rem_size();
+        let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
+        let corner_radii = style.corner_radii.to_pixels(rem_size);
         let layout = match state.prepaint_items(bounds, padding, corner_radii, true, window, cx) {
             Ok(layout) => layout,
             Err(autoscroll_request) => {
