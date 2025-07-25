@@ -136,6 +136,13 @@ jobs:
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+          organization: zed-dev
+          project: zed
+
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
 
@@ -167,6 +174,13 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+          organization: zed-dev
+          project: zed
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100

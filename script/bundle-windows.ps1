@@ -127,6 +127,14 @@ function CollectFiles {
     Move-Item -Path "$innoDir\auto_update_helper.exe" -Destination "$innoDir\tools\auto_update_helper.exe" -Force
 }
 
+function UploadToSentry {
+    param (
+        [string]$exe,
+        [string]$debugArchive
+    )
+
+}
+
 function BuildInstaller {
     $issFilePath = "$innoDir\zed.iss"
     switch ($channel) {
@@ -256,6 +264,7 @@ BuildInstaller
 $debugArchive = ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 $debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
+UploadToSentry
 
 if ($buildSuccess) {
     Write-Output "Build successful"
