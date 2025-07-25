@@ -107,6 +107,7 @@ function UploadToSentry {
         Write-Output "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
         return
     }
+    Write-Output "Uploading zed debug symbols to sentry..."
     sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev .\target\release\
 }
 
