@@ -1714,13 +1714,9 @@ impl GitStore {
             .map(RepoPath::new)
             .collect();
 
-        let name = envelope.payload.name.map(SharedString::from);
-        let email = envelope.payload.email.map(SharedString::from);
-        let message = envelope.payload.message.map(SharedString::from);
-
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_entries(entries, message, name.zip(email), cx)
+                repository_handle.stash_entries(entries, cx)
             })?
             .await?;
 
@@ -1735,11 +1731,9 @@ impl GitStore {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
 
-        let index = envelope.payload.stash_index;
-
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_pop(index, cx)
+                repository_handle.stash_pop(cx)
             })?
             .await?;
 
@@ -3514,14 +3508,12 @@ impl Repository {
             .map(|entry| entry.repo_path.clone())
             .collect();
 
-        self.stash_entries(to_stash, None, None, cx)
+        self.stash_entries(to_stash, cx)
     }
 
     pub fn stash_entries(
         &mut self,
         entries: Vec<RepoPath>,
-        message: Option<SharedString>,
-        name_and_email: Option<(SharedString, SharedString)>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         let id = self.id;
@@ -3534,20 +3526,12 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        } => {
-                            backend
-                                .stash_paths(entries, message, name_and_email, environment)
-                                .await
-                        }
+                        } => backend.stash_paths(entries, environment).await,
                         RepositoryState::Remote { project_id, client } => {
-                            let (name, email) = name_and_email.unzip();
                             client
                                 .request(proto::Stash {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
-                                    name: name.map(String::from),
-                                    email: email.map(String::from),
-                                    message: message.map(String::from),
                                     paths: entries
                                         .into_iter()
                                         .map(|repo_path| repo_path.as_ref().to_proto())
@@ -3565,11 +3549,7 @@ impl Repository {
         })
     }
 
-    pub fn stash_pop(
-        &mut self,
-        index: Option<u64>,
-        cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    pub fn stash_pop(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
         let id = self.id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |this, _| {
@@ -3579,13 +3559,12 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        } => backend.stash_pop(index, environment).await,
+                        } => backend.stash_pop(environment).await,
                         RepositoryState::Remote { project_id, client } => {
                             client
                                 .request(proto::StashPop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
-                                    stash_index: index,
                                 })
                                 .await
                                 .context("sending stash pop request")?;

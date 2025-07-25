@@ -289,16 +289,12 @@ message Unstage {
 message Stash {
     uint64 project_id = 1;
     uint64 repository_id = 2;
-    optional string name = 3;
-    optional string email = 4;
-    optional string message = 5;
-    repeated string paths = 6;
+    repeated string paths = 3;
 }
 
 message StashPop {
     uint64 project_id = 1;
     uint64 repository_id = 2;
-    optional uint64 stash_index = 3;
 }
 
 message Commit {

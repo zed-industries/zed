@@ -398,16 +398,10 @@ pub trait GitRepository: Send + Sync {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
-        message: Option<SharedString>,
-        name_and_email: Option<(SharedString, SharedString)>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
 
-    fn stash_pop(
-        &self,
-        index: Option<u64>,
-        env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>>;
 
     fn push(
         &self,
@@ -1206,8 +1200,6 @@ impl GitRepository for RealGitRepository {
     fn stash_paths(
         &self,
         paths: Vec<RepoPath>,
-        message: Option<SharedString>,
-        name_and_email: Option<(SharedString, SharedString)>,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
@@ -1218,13 +1210,6 @@ impl GitRepository for RealGitRepository {
                     .envs(env.iter())
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
-
-                if let Some((name, email)) = name_and_email {
-                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
-                }
-                if let Some(message) = message {
-                    cmd.arg("-m").arg(&message.to_string());
-                }
 
                 cmd.args(paths.iter().map(|p| p.as_ref()));
 
@@ -1240,11 +1225,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_pop(
-        &self,
-        index: Option<u64>,
-        env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -1253,15 +1234,11 @@ impl GitRepository for RealGitRepository {
                     .envs(env.iter())
                     .args(["stash", "pop"]);
 
-                if let Some(index) = index {
-                    cmd.arg("--index").arg(index.to_string());
-                }
-
                 let output = cmd.output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),
-                    "Failed to commit:\n{}",
+                    "Failed to stash pop:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())

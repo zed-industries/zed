@@ -1424,7 +1424,7 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_pop(None, cx))?
+                    .update(cx, |repo, cx| repo.stash_pop(cx))?
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
@@ -1444,18 +1444,10 @@ impl GitPanel {
             return;
         };
 
-        let entries = self
-            .entries
-            .iter()
-            .filter_map(|entry| entry.status_entry())
-            .map(|status_entry| &status_entry.repo_path)
-            .cloned()
-            .collect::<Vec<_>>();
-
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_entries(entries, None, None, cx))?
+                    .update(cx, |repo, cx| repo.stash_all(cx))?
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
