@@ -30,6 +30,7 @@ convert_case.workspace = true
 copilot.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
+fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
