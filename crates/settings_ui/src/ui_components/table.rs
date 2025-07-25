@@ -740,80 +740,58 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     }
 
     fn drag_column_handle(
-        diff: f32,
-        col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
-    ) -> f32 {
-        if diff > 0.0 {
-            Self::drag_column_handle_right(diff, col_idx, widths, resize_behavior)
-        } else {
-            Self::drag_column_handle_left(diff, col_idx, widths, resize_behavior)
-        }
-    }
-
-    fn drag_column_handle_right(
-        diff: f32,
-        col_idx: usize,
-        widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
-    ) -> f32 {
-        let mut diff_remaining = diff;
-        let mut curr_column = col_idx + 1;
-
-        while diff_remaining > 0.0 && curr_column < COLS {
-            let Some(min_size) = resize_behavior[curr_column - 1].min_size() else {
-                curr_column += 1;
-                continue;
-            };
-
-            let mut curr_width = widths[curr_column] - diff_remaining;
-
-            diff_remaining = 0.0;
-            if min_size > curr_width {
-                diff_remaining += min_size - curr_width;
-                curr_width = min_size;
-            }
-            widths[curr_column] = curr_width;
-            curr_column += 1;
-        }
-
-        widths[col_idx] = widths[col_idx] + (diff - diff_remaining);
-        return diff_remaining;
-    }
-
-    fn drag_column_handle_left(
+        // Negative diff means dragging left, positive diff means dragging right.
         diff: f32,
         column_idx: usize,
         widths: &mut [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> f32 {
+        let going_right = diff > 0.0;
         let mut diff_remaining = diff;
-        let mut curr_column_idx = column_idx;
-        while diff_remaining < 0.0 {
-            let Some(min_size) = resize_behavior[curr_column_idx].min_size() else {
-                if curr_column_idx == 0 {
+        let right_step = if going_right { 1 } else { 0 };
+        let left_step = if going_right { 0 } else { 1 };
+
+        let mut curr_column_idx = column_idx + right_step;
+
+        while ((diff_remaining > 0.0 && going_right) || (diff_remaining < 0.0 && !going_right))
+            && curr_column_idx < COLS
+        {
+            let Some(min_size) = resize_behavior[curr_column_idx - right_step].min_size() else {
+                if !going_right && curr_column_idx == 0 {
                     break;
-                }
-                curr_column_idx -= 1;
+                };
+                curr_column_idx = curr_column_idx + right_step - left_step;
                 continue;
             };
 
-            let mut curr_width = widths[curr_column_idx] + diff_remaining;
+            let mut curr_width = if going_right {
+                widths[curr_column_idx] - diff_remaining
+            } else {
+                widths[curr_column_idx] + diff_remaining
+            };
 
             diff_remaining = 0.0;
-            if curr_width < min_size {
+            if min_size > curr_width && going_right {
+                diff_remaining = min_size - curr_width;
+                curr_width = min_size;
+            } else if curr_width < min_size && !going_right {
                 diff_remaining = curr_width - min_size;
-                curr_width = min_size
+                curr_width = min_size;
             }
 
             widths[curr_column_idx] = curr_width;
-            if curr_column_idx == 0 {
+
+            if !going_right && curr_column_idx == 0 {
                 break;
             }
-            curr_column_idx -= 1;
+            curr_column_idx = curr_column_idx + right_step - left_step;
         }
-        widths[column_idx + 1] = widths[column_idx + 1] - (diff - diff_remaining);
+
+        if going_right {
+            widths[column_idx] = widths[column_idx] + (diff - diff_remaining);
+        } else {
+            widths[column_idx + 1] = widths[column_idx + 1] - (diff - diff_remaining);
+        }
 
         return diff_remaining;
     }
