@@ -1232,11 +1232,14 @@ impl KeymapEditor {
 
         match self.search_mode {
             SearchMode::KeyStroke { .. } => {
-                window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
+                self.keystroke_editor.update(cx, |editor, cx| {
+                    editor.start_recording(&StartRecording, window, cx);
+                });
             }
             SearchMode::Normal => {
                 self.keystroke_editor.update(cx, |editor, cx| {
-                    editor.clear_keystrokes(&ClearKeystrokes, window, cx)
+                    editor.stop_recording(&StopRecording, window, cx);
+                    editor.clear_keystrokes(&ClearKeystrokes, window, cx);
                 });
                 window.focus(&self.filter_editor.focus_handle(cx));
             }
@@ -2983,6 +2986,7 @@ struct KeystrokeInput {
     /// Handles tripe escape to stop recording
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
+    initial_modifiers: Modifiers,
 }
 
 impl KeystrokeInput {
@@ -3009,6 +3013,7 @@ impl KeystrokeInput {
             search: false,
             close_keystrokes: None,
             close_keystrokes_start: None,
+            initial_modifiers: Modifiers::default(),
         }
     }
 
@@ -3098,12 +3103,18 @@ impl KeystrokeInput {
     ) {
         let keystrokes_len = self.keystrokes.len();
 
+        if event.modifiers.is_subset_of(&self.initial_modifiers) {
+            self.initial_modifiers &= event.modifiers;
+            cx.stop_propagation();
+            return;
+        }
+
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if self.search {
-                last.modifiers = last.modifiers.xor(&event.modifiers);
+                last.modifiers |= event.modifiers;
             } else if !event.modifiers.modified() {
                 self.keystrokes.pop();
             } else {
@@ -3222,17 +3233,11 @@ impl KeystrokeInput {
         })
     }
 
-    fn recording_focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.inner_focus_handle.clone()
-    }
-
     fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.outer_focus_handle.is_focused(window) {
-            return;
-        }
-        self.clear_keystrokes(&ClearKeystrokes, window, cx);
         window.focus(&self.inner_focus_handle);
-        cx.notify();
+        self.clear_keystrokes(&ClearKeystrokes, window, cx);
+        self.initial_modifiers = window.modifiers();
+        cx.stop_propagation();
     }
 
     fn stop_recording(&mut self, _: &StopRecording, window: &mut Window, cx: &mut Context<Self>) {
