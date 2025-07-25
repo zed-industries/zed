@@ -1752,5 +1752,14 @@ mod test {
             expected: "*|*|*|*|*******",
             minimums: "X|*|*|*|*",
         );
+
+        check!(
+            drag_left,
+            columns: 5,
+            distance: -2,
+            snapshot: "*|*|*|*****I***",
+            expected: "*|*|*|***|*****",
+            minimums: "X|*|*|*|*",
+        );
     }
 }
