@@ -362,7 +362,7 @@ impl ButtonBuilder for ToggleButtonWithIcon {
     }
 
     fn icon(&self) -> Option<IconName> {
-        Some(self.icon.clone())
+        Some(self.icon)
     }
 
     fn on_click(self) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
