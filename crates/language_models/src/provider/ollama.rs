@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -141,6 +141,29 @@ impl State {
 }
 
 impl OllamaLanguageModelProvider {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalOllamaLanguageModelProvider>()
+            .map(|provider| provider.0.clone())
+    }
+
+    pub fn set_global(provider: Entity<Self>, cx: &mut App) {
+        cx.set_global(GlobalOllamaLanguageModelProvider(provider));
+    }
+
+    pub fn available_models_for_completion(&self, cx: &App) -> Vec<ollama::Model> {
+        self.state.read(cx).available_models.clone()
+    }
+
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    pub fn refresh_models(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
+    }
+
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let this = Self {
             http_client: http_client.clone(),
@@ -666,6 +689,10 @@ impl Render for ConfigurationView {
         }
     }
 }
+
+struct GlobalOllamaLanguageModelProvider(Entity<OllamaLanguageModelProvider>);
+
+impl Global for GlobalOllamaLanguageModelProvider {}
 
 fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
     ollama::OllamaTool::Function {

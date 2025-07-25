@@ -541,14 +541,8 @@ pub mod fake {
         ) {
             let fake_client = std::sync::Arc::new(FakeHttpClient::new());
 
-            let provider = cx.new(|_| {
-                OllamaCompletionProvider::new(
-                    fake_client.clone(),
-                    "http://localhost:11434".to_string(),
-                    "qwencoder".to_string(),
-                    None,
-                )
-            });
+            let provider =
+                cx.new(|cx| OllamaCompletionProvider::new("qwencoder".to_string(), None, cx));
 
             (provider, fake_client)
         }

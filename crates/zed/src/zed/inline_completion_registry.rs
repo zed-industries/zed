@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::OllamaCompletionProvider;
+use ollama::{OllamaCompletionProvider, OllamaService};
 use settings::{Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -18,6 +18,11 @@ use zed_actions;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+    // Initialize global Ollama service
+    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+    let ollama_service = OllamaService::new(client.http_client(), settings.api_url.clone(), cx);
+    OllamaService::set_global(ollama_service, cx);
+
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -138,8 +143,13 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     }
                 }
             } else if provider == EditPredictionProvider::Ollama {
-                // Update Ollama providers when settings change but provider stays the same
-                update_ollama_providers(&editors, &client, user_store.clone(), cx);
+                // Update global Ollama service when settings change
+                let _settings = &AllLanguageModelSettings::get_global(cx).ollama;
+                if let Some(service) = OllamaService::global(cx) {
+                    service.update(cx, |service, cx| {
+                        service.refresh_models(cx);
+                    });
+                }
             }
         }
     })
@@ -149,46 +159,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
-    }
-}
-
-fn update_ollama_providers(
-    editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
-    client: &Arc<Client>,
-    user_store: Entity<UserStore>,
-    cx: &mut App,
-) {
-    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-    let _current_model = settings
-        .available_models
-        .first()
-        .map(|m| m.name.clone())
-        .unwrap_or_else(|| "codellama:7b".to_string());
-
-    for (editor, window) in editors.borrow().iter() {
-        _ = window.update(cx, |_window, window, cx| {
-            _ = editor.update(cx, |editor, cx| {
-                if let Some(provider) = editor.edit_prediction_provider() {
-                    // Check if this is an Ollama provider by comparing names
-                    if provider.name() == "ollama" {
-                        // Recreate the provider with the new model
-                        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                        let _api_url = settings.api_url.clone();
-
-                        // Get client from the registry context (need to pass it)
-                        // For now, we'll trigger a full reassignment
-                        assign_edit_prediction_provider(
-                            editor,
-                            EditPredictionProvider::Ollama,
-                            &client,
-                            user_store.clone(),
-                            window,
-                            cx,
-                        );
-                    }
-                }
-            })
-        });
     }
 }
 
@@ -333,27 +303,25 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            let api_key = std::env::var("OLLAMA_API_KEY").ok();
 
-            // Only create provider if models are configured
-            // Note: Only FIM-capable models work with inline completion:
-            // ✓ Supported: qwen2.5-coder:*, starcoder2:*, codeqwen:*
-            // ✗ Not supported: codellama:*, deepseek-coder:*, llama3:*
-            if let Some(first_model) = settings.available_models.first() {
-                let api_url = settings.api_url.clone();
-                let model = first_model.name.clone();
-
-                // Get API key from environment variable only (credentials would require async handling)
-                let api_key = std::env::var("OLLAMA_API_KEY").ok();
-
-                let provider = cx.new(|_| {
-                    OllamaCompletionProvider::new(client.http_client(), api_url, model, api_key)
-                });
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            // Get model from settings or use discovered models
+            let model = if let Some(first_model) = settings.available_models.first() {
+                first_model.name.clone()
+            } else if let Some(service) = OllamaService::global(cx) {
+                // Use first discovered model
+                service
+                    .read(cx)
+                    .available_models()
+                    .first()
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| "qwen2.5-coder:3b".to_string())
             } else {
-                // No models configured - don't create a provider
-                // User will see "Configure Models" option in the completion menu
-                editor.set_edit_prediction_provider::<OllamaCompletionProvider>(None, window, cx);
-            }
+                "qwen2.5-coder:3b".to_string()
+            };
+
+            let provider = cx.new(|cx| OllamaCompletionProvider::new(model, api_key, cx));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
     }
 }
