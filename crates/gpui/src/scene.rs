@@ -43,17 +43,6 @@ impl Scene {
         self.surfaces.clear();
     }
 
-    #[cfg_attr(
-        all(
-            any(target_os = "linux", target_os = "freebsd"),
-            not(any(feature = "x11", feature = "wayland"))
-        ),
-        allow(dead_code)
-    )]
-    pub fn paths(&self) -> &[Path<ScaledPixels>] {
-        &self.paths
-    }
-
     pub fn len(&self) -> usize {
         self.paint_operations.len()
     }
@@ -681,7 +670,7 @@ pub(crate) struct PathId(pub(crate) usize);
 #[derive(Clone, Debug)]
 pub struct Path<P: Clone + Debug + Default + PartialEq> {
     pub(crate) id: PathId,
-    order: DrawOrder,
+    pub(crate) order: DrawOrder,
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
