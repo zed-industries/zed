@@ -117,6 +117,7 @@ members = [
     "crates/paths",
     "crates/picker",
     "crates/prettier",
+    "crates/presentation_mode_selector",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
@@ -208,7 +209,7 @@ members = [
     #
 
     "tooling/workspace-hack",
-    "tooling/xtask",
+    "tooling/xtask", "crates/presentation_mode_selector",
 ]
 default-members = ["crates/zed"]
 
@@ -337,6 +338,7 @@ picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
+presentation_mode_selector = { path = "crates/presentation_mode_selector" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }

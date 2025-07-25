@@ -12,5 +12,6 @@ workspace = true
 gpui.workspace = true
 schemars.workspace = true
 serde.workspace = true
+theme.workspace = true
 workspace-hack.workspace = true
 uuid.workspace = true

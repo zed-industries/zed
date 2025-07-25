@@ -1877,5 +1877,6 @@
     "save_breakpoints": true,
     "dock": "bottom",
     "button": true
-  }
+  },
+  "presentation_modes": []
 }

@@ -1,0 +1,29 @@
+[package]
+name = "presentation_mode_selector"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/presentation_mode_selector.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+fuzzy.workspace = true
+gpui.workspace = true
+log.workspace = true
+picker.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_derive.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true
+zed_actions.workspace = true

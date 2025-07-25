@@ -260,6 +260,18 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod presentation_mode_selector {
+    use gpui::actions;
+
+    actions!(
+        presentation_mode_selector,
+        [
+            /// Toggles the presentation mode selector interface.
+            Toggle
+        ]
+    );
+}
+
 pub mod agent {
     use gpui::actions;
 

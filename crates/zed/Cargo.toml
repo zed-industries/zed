@@ -106,6 +106,7 @@ outline_panel.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+presentation_mode_selector.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
