@@ -484,10 +484,9 @@ impl Interactivity {
     where
         Self: Sized,
     {
-        self.click_listeners
-            .push(Box::new(move |event, window, cx| {
-                listener(event, window, cx)
-            }));
+        self.click_listeners.push(Rc::new(move |event, window, cx| {
+            listener(event, window, cx)
+        }));
     }
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
@@ -1156,7 +1155,7 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
