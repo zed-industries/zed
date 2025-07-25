@@ -720,6 +720,11 @@ workspace-hack = { path = "tooling/workspace-hack" }
 split-debuginfo = "unpacked"
 codegen-units = 16
 
+# mirror configuration for crates compiled for the build platform
+# (without this cargo will compile ~500 crates twice)
+[profile.dev.build-override]
+codegen-units = 16
+
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
@@ -778,10 +783,18 @@ codegen-units = 1
 [profile.release.package]
 zed = { codegen-units = 16 }
 
+[profile.release.build-override]
+opt-level = 3
+codegen-units = 1
+
 [profile.release-fast]
 inherits = "release"
 debug = "full"
 lto = false
+codegen-units = 16
+
+[profile.release-fast.build-override]
+opt-level = 3
 codegen-units = 16
 
 [workspace.lints.rust]
