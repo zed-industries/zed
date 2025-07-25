@@ -49,7 +49,7 @@ pub fn init_output_stdout() {
 
 pub fn init_output_stderr() {
     unsafe {
-        ENABLED_SINKS_STDOUT = true;
+        ENABLED_SINKS_STDERR = true;
     }
 }
 
