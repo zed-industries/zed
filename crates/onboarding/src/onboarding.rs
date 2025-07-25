@@ -10,10 +10,8 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{ThemeMode, ThemeSettings};
 use ui::{
-    ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider, FluentBuilder,
-    Headline, InteractiveElement, KeyBinding, Label, LabelCommon, ParentElement as _,
-    StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector, VectorName, div,
-    h_flex, rems, v_container, v_flex,
+    Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
+    ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -222,39 +220,30 @@ impl Onboarding {
     fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme_mode = read_theme_selection(cx);
 
-        v_container().child(
-            h_flex()
-                .items_center()
-                .justify_between()
-                .child(Label::new("Theme"))
-                .child(
-                    h_flex()
-                        .rounded_md()
-                        .child(
-                            ToggleButton::new("light", "Light")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Light)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Light, cx))
-                                .first(),
-                        )
-                        .child(
-                            ToggleButton::new("dark", "Dark")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Dark)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Dark, cx))
-                                .last(),
-                        )
-                        .child(
-                            ToggleButton::new("system", "System")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::System)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::System, cx))
-                                .middle(),
-                        ),
-                ),
+        v_flex().child(
+            h_flex().justify_between().child(Label::new("Theme")).child(
+                ToggleButtonGroup::single_row(
+                    "theme-selector-onboarding",
+                    [
+                        ToggleButtonSimple::new("Light", |_, _, cx| {
+                            write_theme_selection(ThemeMode::Light, cx)
+                        }),
+                        ToggleButtonSimple::new("Dark", |_, _, cx| {
+                            write_theme_selection(ThemeMode::Dark, cx)
+                        }),
+                        ToggleButtonSimple::new("System", |_, _, cx| {
+                            write_theme_selection(ThemeMode::System, cx)
+                        }),
+                    ],
+                )
+                .selected_index(match theme_mode {
+                    ThemeMode::Light => 0,
+                    ThemeMode::Dark => 1,
+                    ThemeMode::System => 2,
+                })
+                .style(ui::ToggleButtonGroupStyle::Outlined)
+                .button_width(rems_from_px(64.)),
+            ),
         )
     }
 
