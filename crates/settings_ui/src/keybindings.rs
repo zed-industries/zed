@@ -2986,7 +2986,7 @@ struct KeystrokeInput {
     /// Handles tripe escape to stop recording
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
-    initial_modifiers: Modifiers,
+    previous_modifiers: Modifiers,
 }
 
 impl KeystrokeInput {
@@ -3013,7 +3013,7 @@ impl KeystrokeInput {
             search: false,
             close_keystrokes: None,
             close_keystrokes_start: None,
-            initial_modifiers: Modifiers::default(),
+            previous_modifiers: Modifiers::default(),
         }
     }
 
@@ -3103,8 +3103,8 @@ impl KeystrokeInput {
     ) {
         let keystrokes_len = self.keystrokes.len();
 
-        if event.modifiers.is_subset_of(&self.initial_modifiers) {
-            self.initial_modifiers &= event.modifiers;
+        if event.modifiers.is_subset_of(&self.previous_modifiers) {
+            self.previous_modifiers &= event.modifiers;
             cx.stop_propagation();
             return;
         }
@@ -3114,7 +3114,13 @@ impl KeystrokeInput {
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if self.search {
-                last.modifiers |= event.modifiers;
+                if self.previous_modifiers.modified() {
+                    last.modifiers |= event.modifiers;
+                    self.previous_modifiers |= event.modifiers;
+                } else {
+                    self.keystrokes.push(Self::dummy(event.modifiers));
+                    self.previous_modifiers |= event.modifiers;
+                }
             } else if !event.modifiers.modified() {
                 self.keystrokes.pop();
             } else {
@@ -3124,6 +3130,9 @@ impl KeystrokeInput {
             self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
+            if self.search {
+                self.previous_modifiers |= event.modifiers;
+            }
             self.keystrokes_changed(cx);
         }
         cx.stop_propagation();
@@ -3149,6 +3158,9 @@ impl KeystrokeInput {
                     {
                         self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
                     }
+                    if self.search {
+                        self.previous_modifiers = keystroke.modifiers;
+                    }
                     self.keystrokes_changed(cx);
                     cx.stop_propagation();
                     return;
@@ -3163,7 +3175,9 @@ impl KeystrokeInput {
                     self.close_keystrokes_start = Some(self.keystrokes.len());
                 }
                 self.keystrokes.push(keystroke.clone());
-                if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                if self.search {
+                    self.previous_modifiers = keystroke.modifiers;
+                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
             } else if close_keystroke_result != CloseKeystrokeResult::Partial {
@@ -3236,7 +3250,7 @@ impl KeystrokeInput {
     fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.inner_focus_handle);
         self.clear_keystrokes(&ClearKeystrokes, window, cx);
-        self.initial_modifiers = window.modifiers();
+        self.previous_modifiers = window.modifiers();
         cx.stop_propagation();
     }
 
