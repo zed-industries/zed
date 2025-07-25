@@ -283,6 +283,7 @@ impl Display for ToolCallStatus {
             match self {
                 ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
                 ToolCallStatus::Allowed { status } => match status {
+                    acp::ToolCallStatus::Pending => "Pending",
                     acp::ToolCallStatus::InProgress => "In Progress",
                     acp::ToolCallStatus::Completed => "Completed",
                     acp::ToolCallStatus::Failed => "Failed",
@@ -681,7 +682,6 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         match update {
-            acp::SessionUpdate::Started => {}
             acp::SessionUpdate::UserMessage(content_block) => {
                 self.push_user_content_block(content_block, cx);
             }

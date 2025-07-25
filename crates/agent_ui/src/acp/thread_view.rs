@@ -872,7 +872,10 @@ impl AcpThreadView {
         let header_id = SharedString::from(format!("tool-call-header-{}", entry_ix));
 
         let status_icon = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { .. } => None,
+            ToolCallStatus::Allowed {
+                status: acp::ToolCallStatus::Pending,
+            }
+            | ToolCallStatus::WaitingForConfirmation { .. } => None,
             ToolCallStatus::Allowed {
                 status: acp::ToolCallStatus::InProgress,
                 ..

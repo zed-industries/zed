@@ -77,8 +77,8 @@ pub struct PermissionTool {
 }
 
 impl McpServerTool for PermissionTool {
-    type Input = acp::PermissionToolArguments;
-    type Output = acp::PermissionOutcome;
+    type Input = acp::RequestPermissionToolArguments;
+    type Output = acp::RequestPermissionToolOutput;
 
     const NAME: &'static str = "Confirmation";
 
@@ -102,14 +102,14 @@ impl McpServerTool for PermissionTool {
             })?
             .await;
 
-        let response = match result {
-            Ok(option_id) => acp::PermissionOutcome::Selected { option_id },
-            Err(oneshot::Canceled) => acp::PermissionOutcome::Canceled,
+        let outcome = match result {
+            Ok(option_id) => acp::RequestPermissionOutcome::Selected { option_id },
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Canceled,
         };
 
         Ok(ToolResponse {
             content: vec![],
-            structured_content: response,
+            structured_content: acp::RequestPermissionToolOutput { outcome },
         })
     }
 }
