@@ -2,6 +2,7 @@ mod mcp_server;
 pub mod tools;
 
 use collections::HashMap;
+use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
@@ -332,10 +333,16 @@ async fn spawn_claude(
             &format!(
                 "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::PERMISSION_TOOL
+                mcp_server::PermissionTool::NAME,
             ),
             "--allowedTools",
-            "mcp__zed__Read,mcp__zed__Edit",
+            &format!(
+                "mcp__{}__{},mcp__{}__{}",
+                mcp_server::SERVER_NAME,
+                mcp_server::EditTool::NAME,
+                mcp_server::SERVER_NAME,
+                mcp_server::ReadTool::NAME
+            ),
             "--disallowedTools",
             "Read,Edit",
         ])
