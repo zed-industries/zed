@@ -496,7 +496,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
 
     let quad = b_quads[input.quad_id];
 
-    let cliped_corner_radii = Corners(
+    let clipped_corner_radii = Corners(
         max(quad.corner_radii.top_left, quad.content_mask.corner_radii.top_left),
         max(quad.corner_radii.top_right, quad.content_mask.corner_radii.top_right),
         max(quad.corner_radii.bottom_right, quad.content_mask.corner_radii.bottom_right),
@@ -506,10 +506,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
 
-    let unrounded = cliped_corner_radii.top_left == 0.0 &&
-        cliped_corner_radii.bottom_left == 0.0 &&
-        cliped_corner_radii.top_right == 0.0 &&
-        cliped_corner_radii.bottom_right == 0.0;
+    let unrounded = clipped_corner_radii.top_left == 0.0 &&
+        clipped_corner_radii.bottom_left == 0.0 &&
+        clipped_corner_radii.top_right == 0.0 &&
+        clipped_corner_radii.bottom_right == 0.0;
 
     // Fast path when the quad is not rounded and doesn't have any border
     if (quad.border_widths.top == 0.0 &&
@@ -530,7 +530,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let antialias_threshold = 0.5;
 
     // Radius of the nearest corner
-    let corner_radius = pick_corner_radius(center_to_point, cliped_corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
 
     // Width of the nearest borders
     let border = vec2<f32>(
@@ -664,10 +664,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // When corners are rounded, the dashes are laid out clockwise
                 // around the whole perimeter.
 
-                let r_tr = cliped_corner_radii.top_right;
-                let r_br = cliped_corner_radii.bottom_right;
-                let r_bl = cliped_corner_radii.bottom_left;
-                let r_tl = cliped_corner_radii.top_left;
+                let r_tr = clipped_corner_radii.top_right;
+                let r_br = clipped_corner_radii.bottom_right;
+                let r_bl = clipped_corner_radii.bottom_left;
+                let r_tl = clipped_corner_radii.top_left;
 
                 let w_t = quad.border_widths.top;
                 let w_r = quad.border_widths.right;
