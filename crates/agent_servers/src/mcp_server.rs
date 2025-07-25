@@ -84,8 +84,8 @@ pub struct RequestPermissionTool {
 }
 
 impl McpServerTool for RequestPermissionTool {
-    type Input = acp::RequestPermissionToolArguments;
-    type Output = acp::RequestPermissionToolOutput;
+    type Input = acp::RequestPermissionArguments;
+    type Output = acp::RequestPermissionOutput;
 
     const NAME: &'static str = "Confirmation";
 
@@ -120,7 +120,7 @@ impl McpServerTool for RequestPermissionTool {
 
         Ok(ToolResponse {
             content: vec![],
-            structured_content: acp::RequestPermissionToolOutput { outcome },
+            structured_content: acp::RequestPermissionOutput { outcome },
         })
     }
 }
@@ -131,8 +131,8 @@ pub struct ReadTextFileTool {
 }
 
 impl McpServerTool for ReadTextFileTool {
-    type Input = acp::ReadTextFileToolArguments;
-    type Output = acp::ReadTextFileToolOutput;
+    type Input = acp::ReadTextFileArguments;
+    type Output = acp::ReadTextFileOutput;
 
     const NAME: &'static str = "Read";
 
@@ -158,7 +158,7 @@ impl McpServerTool for ReadTextFileTool {
 
         Ok(ToolResponse {
             content: vec![],
-            structured_content: acp::ReadTextFileToolOutput { content },
+            structured_content: acp::ReadTextFileOutput { content },
         })
     }
 }
@@ -169,7 +169,7 @@ pub struct WriteTextFileTool {
 }
 
 impl McpServerTool for WriteTextFileTool {
-    type Input = acp::WriteTextFileToolArguments;
+    type Input = acp::WriteTextFileArguments;
     type Output = ();
 
     const NAME: &'static str = "Write";

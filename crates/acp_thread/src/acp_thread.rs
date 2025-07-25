@@ -1002,7 +1002,7 @@ impl AcpThread {
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
-                            acp::PromptToolArguments {
+                            acp::PromptArguments {
                                 prompt: message,
                                 session_id: this.session_id.clone(),
                             },

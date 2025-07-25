@@ -228,7 +228,7 @@ impl AgentConnection for ClaudeAgentConnection {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(

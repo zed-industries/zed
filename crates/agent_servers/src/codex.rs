@@ -150,7 +150,7 @@ impl AgentConnection for CodexConnection {
             let response = client
                 .request::<requests::CallTool>(context_server::types::CallToolParams {
                     name: acp::NEW_SESSION_TOOL_NAME.into(),
-                    arguments: Some(serde_json::to_value(acp::NewSessionToolArguments {
+                    arguments: Some(serde_json::to_value(acp::NewSessionArguments {
                         mcp_servers: [(
                             mcp_server::SERVER_NAME.to_string(),
                             mcp_server.server_config()?,
@@ -180,7 +180,7 @@ impl AgentConnection for CodexConnection {
                 return Err(anyhow!(response.text_contents()));
             }
 
-            let result = serde_json::from_value::<acp::NewSessionToolResult>(
+            let result = serde_json::from_value::<acp::NewSessionOutput>(
                 response.structured_content.context("Empty response")?,
             )?;
 
@@ -206,7 +206,7 @@ impl AgentConnection for CodexConnection {
 
     fn prompt(
         &self,
-        params: agent_client_protocol::PromptToolArguments,
+        params: agent_client_protocol::PromptArguments,
         cx: &mut App,
     ) -> Task<Result<()>> {
         let client = self.client.client();
