@@ -350,7 +350,7 @@ impl LspCommand for PrepareRename {
             }
             Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
                 let snapshot = buffer.snapshot();
-                let (range, _) = snapshot.surrounding_word(self.position);
+                let (range, _) = snapshot.surrounding_word(self.position, false);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
                 Ok(PrepareRenameResponse::Success(range))
             }
@@ -2297,7 +2297,7 @@ impl LspCommand for GetCompletions {
                             range_for_token
                                 .get_or_insert_with(|| {
                                     let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(offset);
+                                    let (range, kind) = snapshot.surrounding_word(offset, true);
                                     let range = if kind == Some(CharKind::Word) {
                                         range
                                     } else {
@@ -3822,7 +3822,7 @@ impl GetDocumentDiagnostics {
             code,
             code_description: match diagnostic.code_description {
                 Some(code_description) => Some(CodeDescription {
-                    href: lsp::Url::parse(&code_description).unwrap(),
+                    href: Some(lsp::Url::parse(&code_description).unwrap()),
                 }),
                 None => None,
             },
@@ -3898,7 +3898,7 @@ impl GetDocumentDiagnostics {
             tags,
             code_description: diagnostic
                 .code_description
-                .map(|desc| desc.href.to_string()),
+                .and_then(|desc| desc.href.map(|url| url.to_string())),
             message: diagnostic.message,
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })

@@ -3,6 +3,8 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::client::RequestId;
+
 pub const LATEST_PROTOCOL_VERSION: &str = "2025-03-26";
 pub const VERSION_2024_11_05: &str = "2024-11-05";
 
@@ -100,6 +102,7 @@ pub mod notifications {
     notification!("notifications/initialized", Initialized, ());
     notification!("notifications/progress", Progress, ProgressParams);
     notification!("notifications/message", Message, MessageParams);
+    notification!("notifications/cancelled", Cancelled, CancelledParams);
     notification!(
         "notifications/resources/updated",
         ResourcesUpdated,
@@ -153,7 +156,7 @@ pub struct InitializeParams {
 pub struct CallToolParams {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub arguments: Option<HashMap<String, serde_json::Value>>,
+    pub arguments: Option<serde_json::Value>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
 }
@@ -492,18 +495,20 @@ pub struct RootsCapabilities {
     pub list_changed: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tool {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub input_schema: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub annotations: Option<ToolAnnotations>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolAnnotations {
     /// A human-readable title for the tool.
@@ -617,11 +622,14 @@ pub enum ClientNotification {
     Initialized,
     Progress(ProgressParams),
     RootsListChanged,
-    Cancelled {
-        request_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
+    Cancelled(CancelledParams),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CancelledParams {
+    pub request_id: RequestId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -673,6 +681,8 @@ pub struct CallToolResponse {
     pub is_error: Option<bool>,
     #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<HashMap<String, serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_content: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -6,6 +6,7 @@ mod sign_in;
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
+use client::DisableAiSettings;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -25,6 +26,7 @@ use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
 use serde_json::json;
+use settings::Settings;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
 use std::collections::hash_map::Entry;
@@ -93,26 +95,34 @@ pub fn init(
         let copilot_auth_action_types = [TypeId::of::<SignOut>()];
         let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
         let status = handle.read(cx).status();
+
+        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
-        match status {
-            Status::Disabled => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.hide_action_types(&copilot_no_auth_action_types);
-            }
-            Status::Authorized => {
-                filter.hide_action_types(&copilot_no_auth_action_types);
-                filter.show_action_types(
-                    copilot_action_types
-                        .iter()
-                        .chain(&copilot_auth_action_types),
-                );
-            }
-            _ => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.show_action_types(copilot_no_auth_action_types.iter());
+        if is_ai_disabled {
+            filter.hide_action_types(&copilot_action_types);
+            filter.hide_action_types(&copilot_auth_action_types);
+            filter.hide_action_types(&copilot_no_auth_action_types);
+        } else {
+            match status {
+                Status::Disabled => {
+                    filter.hide_action_types(&copilot_action_types);
+                    filter.hide_action_types(&copilot_auth_action_types);
+                    filter.hide_action_types(&copilot_no_auth_action_types);
+                }
+                Status::Authorized => {
+                    filter.hide_action_types(&copilot_no_auth_action_types);
+                    filter.show_action_types(
+                        copilot_action_types
+                            .iter()
+                            .chain(&copilot_auth_action_types),
+                    );
+                }
+                _ => {
+                    filter.hide_action_types(&copilot_action_types);
+                    filter.hide_action_types(&copilot_auth_action_types);
+                    filter.show_action_types(copilot_no_auth_action_types.iter());
+                }
             }
         }
     })
@@ -209,8 +219,14 @@ impl Status {
         matches!(self, Status::Authorized)
     }
 
-    pub fn is_disabled(&self) -> bool {
-        matches!(self, Status::Disabled)
+    pub fn is_configured(&self) -> bool {
+        matches!(
+            self,
+            Status::Starting { .. }
+                | Status::Error(_)
+                | Status::SigningIn { .. }
+                | Status::Authorized
+        )
     }
 }
 

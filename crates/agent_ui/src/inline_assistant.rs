@@ -16,7 +16,7 @@ use agent::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::telemetry::Telemetry;
+use client::{DisableAiSettings, telemetry::Telemetry};
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::SelectionEffects;
 use editor::{
@@ -57,6 +57,17 @@ pub fn init(
     cx: &mut App,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
+
+    cx.observe_global::<SettingsStore>(|cx| {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            // Hide any active inline assist UI when AI is disabled
+            InlineAssistant::update_global(cx, |assistant, cx| {
+                assistant.cancel_all_active_completions(cx);
+            });
+        }
+    })
+    .detach();
+
     cx.observe_new(|_workspace: &mut Workspace, window, cx| {
         let Some(window) = window else {
             return;
@@ -141,6 +152,26 @@ impl InlineAssistant {
         .detach();
     }
 
+    /// Hides all active inline assists when AI is disabled
+    pub fn cancel_all_active_completions(&mut self, cx: &mut App) {
+        // Cancel all active completions in editors
+        for (editor_handle, _) in self.assists_by_editor.iter() {
+            if let Some(editor) = editor_handle.upgrade() {
+                let windows = cx.windows();
+                if !windows.is_empty() {
+                    let window = windows[0];
+                    let _ = window.update(cx, |_, window, cx| {
+                        editor.update(cx, |editor, cx| {
+                            if editor.has_active_inline_completion() {
+                                editor.cancel(&Default::default(), window, cx);
+                            }
+                        });
+                    });
+                }
+            }
+        }
+    }
+
     fn handle_workspace_event(
         &mut self,
         workspace: Entity<Workspace>,
@@ -176,7 +207,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let is_assistant2_enabled = true;
+        let is_assistant2_enabled = !DisableAiSettings::get_global(cx).disable_ai;
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
@@ -199,6 +230,13 @@ impl InlineAssistant {
                         cx,
                     );
 
+                    if DisableAiSettings::get_global(cx).disable_ai {
+                        // Cancel any active completions
+                        if editor.has_active_inline_completion() {
+                            editor.cancel(&Default::default(), window, cx);
+                        }
+                    }
+
                     // Remove the Assistant1 code action provider, as it still might be registered.
                     editor.remove_code_action_provider("assistant".into(), window, cx);
                 } else {
@@ -219,7 +257,7 @@ impl InlineAssistant {
         cx: &mut Context<Workspace>,
     ) {
         let settings = AgentSettings::get_global(cx);
-        if !settings.enabled {
+        if !settings.enabled || DisableAiSettings::get_global(cx).disable_ai {
             return;
         }
 
@@ -660,7 +698,6 @@ impl InlineAssistant {
                 height: Some(prompt_editor_height),
                 render: build_assist_editor_renderer(prompt_editor),
                 priority: 0,
-                render_in_minimap: false,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
@@ -675,7 +712,6 @@ impl InlineAssistant {
                         .into_any_element()
                 }),
                 priority: 0,
-                render_in_minimap: false,
             },
         ];
 
@@ -1451,7 +1487,6 @@ impl InlineAssistant {
                             .into_any_element()
                     }),
                     priority: 0,
-                    render_in_minimap: false,
                 });
             }
 

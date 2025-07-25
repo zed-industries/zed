@@ -15,7 +15,7 @@ The PHP extension offers both `phpactor` and `intelephense` language server supp
 
 ## Phpactor
 
-The Zed PHP Extension can install `phpactor` automatically but requires `php` to installed and available in your path:
+The Zed PHP Extension can install `phpactor` automatically but requires `php` to be installed and available in your path:
 
 ```sh
 # brew install php            # macOS
@@ -27,7 +27,7 @@ which php
 
 ## Intelephense
 
-[Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/). To use these features you must place your [licence.txt file](https://intelephense.com/faq.html) at `~/intelephense/licence.txt` inside your home directory.
+[Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/).
 
 To switch to `intelephense`, add the following to your `settings.json`:
 
@@ -36,6 +36,20 @@ To switch to `intelephense`, add the following to your `settings.json`:
   "languages": {
     "PHP": {
       "language_servers": ["intelephense", "!phpactor", "..."]
+    }
+  }
+}
+```
+
+To use the premium features, you can place your [licence.txt file](https://intelephense.com/faq.html) at `~/intelephense/licence.txt` inside your home directory. Alternatively, you can pass the licence key or a path to a file containing the licence key as an initialization option for the `intelephense` language server. To do this, add the following to your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "intelephense": {
+      "initialization_options": {
+        "licenceKey": "/path/to/licence.txt"
+      }
     }
   }
 }

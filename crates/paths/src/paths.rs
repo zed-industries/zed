@@ -352,6 +352,14 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
     DEBUG_ADAPTERS_DIR.get_or_init(|| data_dir().join("debug_adapters"))
 }
 
+/// Returns the path to the agent servers directory
+///
+/// This is where agent servers are downloaded to
+pub fn agent_servers_dir() -> &'static PathBuf {
+    static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
+    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+}
+
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();

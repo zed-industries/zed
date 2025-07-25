@@ -2,18 +2,20 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
-use crate::language_model_selector::ToggleModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
 use crate::ui::{
     MaxModeTooltip,
     preview::{AgentPreview, UsageCallout},
 };
+use agent::history_store::HistoryStore;
 use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
     context_store::ContextStoreEvent,
 };
 use agent_settings::{AgentSettings, CompletionMode};
+use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
 use client::UserStore;
 use collections::{HashMap, HashSet};
@@ -28,12 +30,14 @@ use fs::Fs;
 use futures::future::Shared;
 use futures::{FutureExt as _, future};
 use gpui::{
-    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, Subscription, Task, TextStyle,
-    WeakEntity, linear_color_stop, linear_gradient, point, pulsating_between,
+    Animation, AnimationExt, App, Entity, EventEmitter, Focusable, IntoElement, KeyContext,
+    Subscription, Task, TextStyle, WeakEntity, linear_color_stop, linear_gradient, point,
+    pulsating_between,
 };
 use language::{Buffer, Language, Point};
 use language_model::{
-    ConfiguredModel, LanguageModelRequestMessage, MessageContent, ZED_CLOUD_PROVIDER_ID,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequestMessage, MessageContent,
+    ZED_CLOUD_PROVIDER_ID,
 };
 use multi_buffer;
 use project::Project;
@@ -47,13 +51,15 @@ use ui::{
 };
 use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
+use zed_actions::agent::Chat;
+use zed_actions::agent::ToggleModelSelector;
 use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::ProfileSelector;
 use crate::{
-    ActiveThread, AgentDiffPane, Chat, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
+    ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
     ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
 };
@@ -62,6 +68,9 @@ use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
+
+pub const MIN_EDITOR_LINES: usize = 4;
+pub const MAX_EDITOR_LINES: usize = 8;
 
 #[derive(RegisterComponent)]
 pub struct MessageEditor {
@@ -73,6 +82,7 @@ pub struct MessageEditor {
     user_store: Entity<UserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
+    history_store: Option<WeakEntity<HistoryStore>>,
     context_strip: Entity<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Entity<AgentModelSelector>,
@@ -85,9 +95,6 @@ pub struct MessageEditor {
     update_token_count_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
-
-const MIN_EDITOR_LINES: usize = 4;
-const MAX_EDITOR_LINES: usize = 8;
 
 pub(crate) fn create_editor(
     workspace: WeakEntity<Workspace>,
@@ -130,6 +137,7 @@ pub(crate) fn create_editor(
             placement: Some(ContextMenuPlacement::Above),
         });
         editor.register_addon(ContextCreasesAddon::new());
+        editor.register_addon(MessageEditorAddon::new());
         editor
     });
 
@@ -156,6 +164,7 @@ impl MessageEditor {
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
         text_thread_store: WeakEntity<TextThreadStore>,
+        history_store: Option<WeakEntity<HistoryStore>>,
         thread: Entity<Thread>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -228,6 +237,7 @@ impl MessageEditor {
             workspace,
             context_store,
             prompt_store,
+            history_store,
             context_strip,
             context_picker_menu_handle,
             load_context_task: None,
@@ -474,9 +484,12 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Ok(diff) =
-            AgentDiffPane::deploy(self.thread.clone(), self.workspace.clone(), window, cx)
-        {
+        if let Ok(diff) = AgentDiffPane::deploy(
+            AgentDiffThread::Native(self.thread.clone()),
+            self.workspace.clone(),
+            window,
+            cx,
+        ) {
             let path_key = multi_buffer::PathKey::for_buffer(&buffer, cx);
             diff.update(cx, |diff, cx| diff.move_to_path(path_key, window, cx));
         }
@@ -604,7 +617,11 @@ impl MessageEditor {
         )
     }
 
-    fn render_follow_toggle(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_follow_toggle(
+        &self,
+        is_model_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let following = self
             .workspace
             .read_with(cx, |workspace, _| {
@@ -613,6 +630,7 @@ impl MessageEditor {
             .unwrap_or(false);
 
         IconButton::new("follow-agent", IconName::Crosshair)
+            .disabled(!is_model_selected)
             .icon_size(IconSize::Small)
             .icon_color(Color::Muted)
             .toggle_state(following)
@@ -700,11 +718,11 @@ impl MessageEditor {
                 cx.listener(|this, _: &RejectAll, window, cx| this.handle_reject_all(window, cx)),
             )
             .capture_action(cx.listener(Self::paste))
-            .gap_2()
             .p_2()
-            .bg(editor_bg_color)
+            .gap_2()
             .border_t_1()
             .border_color(cx.theme().colors().border)
+            .bg(editor_bg_color)
             .child(
                 h_flex()
                     .justify_between()
@@ -781,7 +799,7 @@ impl MessageEditor {
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .child(self.render_follow_toggle(cx))
+                                    .child(self.render_follow_toggle(is_model_selected, cx))
                                     .children(self.render_burn_mode_toggle(cx)),
                             )
                             .child(
@@ -897,6 +915,10 @@ impl MessageEditor {
                                                         .on_click({
                                                             let focus_handle = focus_handle.clone();
                                                             move |_event, window, cx| {
+                                                                telemetry::event!(
+                                                                    "Agent Message Sent",
+                                                                    agent = "zed",
+                                                                );
                                                                 focus_handle.dispatch_action(
                                                                     &Chat, window, cx,
                                                                 );
@@ -1453,6 +1475,7 @@ impl MessageEditor {
                         tool_choice: None,
                         stop: vec![],
                         temperature: AgentSettings::temperature_for_model(&model.model, cx),
+                        thinking_allowed: true,
                     };
 
                     Some(model.model.count_tokens(request, cx))
@@ -1481,6 +1504,31 @@ impl MessageEditor {
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
+}
+
+pub struct MessageEditorAddon {}
+
+impl MessageEditorAddon {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Addon for MessageEditorAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
+        Some(self)
+    }
+
+    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
+        let settings = agent_settings::AgentSettings::get_global(cx);
+        if settings.use_modifier_to_send {
+            key_context.add("use_modifier_to_send");
+        }
+    }
 }
 
 impl Addon for ContextCreasesAddon {
@@ -1618,8 +1666,38 @@ impl Render for MessageEditor {
 
         let line_height = TextSize::Small.rems(cx).to_pixels(window.rem_size()) * 1.5;
 
+        let has_configured_providers = LanguageModelRegistry::read_global(cx)
+            .providers()
+            .iter()
+            .filter(|provider| {
+                provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
+            })
+            .count()
+            > 0;
+
+        let is_signed_out = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.client().status().borrow().is_signed_out()
+            })
+            .unwrap_or(true);
+
+        let has_history = self
+            .history_store
+            .as_ref()
+            .and_then(|hs| hs.update(cx, |hs, cx| hs.entries(cx).len() > 0).ok())
+            .unwrap_or(false)
+            || self
+                .thread
+                .read_with(cx, |thread, _| thread.messages().len() > 0);
+
         v_flex()
             .size_full()
+            .bg(cx.theme().colors().panel_background)
+            .when(
+                !has_history && is_signed_out && has_configured_providers,
+                |this| this.child(cx.new(ApiKeysWithProviders::new)),
+            )
             .when(changed_buffers.len() > 0, |parent| {
                 parent.child(self.render_edits_bar(&changed_buffers, window, cx))
             })
@@ -1709,6 +1787,7 @@ impl AgentPreview for MessageEditor {
                     None,
                     thread_store.downgrade(),
                     text_thread_store.downgrade(),
+                    None,
                     thread,
                     window,
                     cx,

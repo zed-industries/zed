@@ -4,7 +4,8 @@ path_suffixes = ["js", "jsx", "mjs", "cjs"]
 # [/ ] is so we match "env node" or "/node" but not "ts-node"
 first_line_pattern = '^#!.*\b(?:[/ ]node|deno run.*--ext[= ]js)\b'
 line_comments = ["// "]
-block_comment = ["/*", "*/"]
+block_comment = { start = "/*", prefix = "* ", end = "*/", tab_size = 1 }
+documentation_comment = { start = "/**", prefix = "* ", end = "*/", tab_size = 1 }
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
@@ -21,7 +22,6 @@ tab_size = 2
 scope_opt_in_language_servers = ["tailwindcss-language-server", "emmet-language-server"]
 prettier_parser_name = "babel"
 debuggers = ["JavaScript"]
-documentation = { start = "/**", end = "*/", prefix = "* ", tab_size = 1 }
 
 [jsx_tag_auto_close]
 open_tag_node_name = "jsx_opening_element"
@@ -31,7 +31,7 @@ tag_name_node_name = "identifier"
 
 [overrides.element]
 line_comments = { remove = true }
-block_comment = ["{/* ", " */}"]
+block_comment = { start = "{/* ", prefix = "", end = "*/}", tab_size = 0 }
 opt_into_language_servers = ["emmet-language-server"]
 
 [overrides.string]

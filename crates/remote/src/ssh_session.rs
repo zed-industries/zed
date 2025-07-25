@@ -1573,7 +1573,7 @@ impl SshRemoteConnection {
             // https://github.com/PowerShell/Win32-OpenSSH/wiki/Project-Scope
             #[cfg(target_os = "windows")]
             let args = ["-N"];
-            let mut master_process = process::Command::new("ssh");
+            let mut master_process = util::command::new_smol_command("ssh");
             master_process
                 .kill_on_drop(true)
                 .stdin(Stdio::null())
