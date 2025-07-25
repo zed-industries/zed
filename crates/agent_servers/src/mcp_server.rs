@@ -48,7 +48,6 @@ impl ZedMcpServer {
                 self.server.socket_path().display().to_string(),
             ],
             env: None,
-            enabled_tools: None,
         })
     }
 
