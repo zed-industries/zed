@@ -2016,65 +2016,69 @@ impl AgentPanel {
             )
             .anchor(Corner::TopRight)
             .with_handle(self.agent_panel_menu_handle.clone())
-            .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
-                    if let Some(usage) = usage {
+            .menu({
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
+                        menu = menu.context(focus_handle.clone());
+                        if let Some(usage) = usage {
+                            menu = menu
+                                .header_with_link("Prompt Usage", "Manage", account_url.clone())
+                                .custom_entry(
+                                    move |_window, cx| {
+                                        let used_percentage = match usage.limit {
+                                            UsageLimit::Limited(limit) => {
+                                                Some((usage.amount as f32 / limit as f32) * 100.)
+                                            }
+                                            UsageLimit::Unlimited => None,
+                                        };
+
+                                        h_flex()
+                                            .flex_1()
+                                            .gap_1p5()
+                                            .children(used_percentage.map(|percent| {
+                                                ProgressBar::new("usage", percent, 100., cx)
+                                            }))
+                                            .child(
+                                                Label::new(match usage.limit {
+                                                    UsageLimit::Limited(limit) => {
+                                                        format!("{} / {limit}", usage.amount)
+                                                    }
+                                                    UsageLimit::Unlimited => {
+                                                        format!("{} / ∞", usage.amount)
+                                                    }
+                                                })
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                            )
+                                            .into_any_element()
+                                    },
+                                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                                )
+                                .separator()
+                        }
+
                         menu = menu
-                            .header_with_link("Prompt Usage", "Manage", account_url.clone())
-                            .custom_entry(
-                                move |_window, cx| {
-                                    let used_percentage = match usage.limit {
-                                        UsageLimit::Limited(limit) => {
-                                            Some((usage.amount as f32 / limit as f32) * 100.)
-                                        }
-                                        UsageLimit::Unlimited => None,
-                                    };
-
-                                    h_flex()
-                                        .flex_1()
-                                        .gap_1p5()
-                                        .children(used_percentage.map(|percent| {
-                                            ProgressBar::new("usage", percent, 100., cx)
-                                        }))
-                                        .child(
-                                            Label::new(match usage.limit {
-                                                UsageLimit::Limited(limit) => {
-                                                    format!("{} / {limit}", usage.amount)
-                                                }
-                                                UsageLimit::Unlimited => {
-                                                    format!("{} / ∞", usage.amount)
-                                                }
-                                            })
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                },
-                                move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                            .header("MCP Servers")
+                            .action(
+                                "View Server Extensions",
+                                Box::new(zed_actions::Extensions {
+                                    category_filter: Some(
+                                        zed_actions::ExtensionCategoryFilter::ContextServers,
+                                    ),
+                                    id: None,
+                                }),
                             )
-                            .separator()
-                    }
+                            .action("Add Custom Server…", Box::new(AddContextServer))
+                            .separator();
 
-                    menu = menu
-                        .header("MCP Servers")
-                        .action(
-                            "View Server Extensions",
-                            Box::new(zed_actions::Extensions {
-                                category_filter: Some(
-                                    zed_actions::ExtensionCategoryFilter::ContextServers,
-                                ),
-                                id: None,
-                            }),
-                        )
-                        .action("Add Custom Server…", Box::new(AddContextServer))
-                        .separator();
-
-                    menu = menu
-                        .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration))
-                        .action(zoom_in_label, Box::new(ToggleZoom));
-                    menu
-                }))
+                        menu = menu
+                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                            .action("Settings", Box::new(OpenConfiguration))
+                            .action(zoom_in_label, Box::new(ToggleZoom));
+                        menu
+                    }))
+                }
             });
 
         h_flex()
