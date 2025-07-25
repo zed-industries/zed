@@ -22680,6 +22680,48 @@ async fn test_tab_in_leading_whitespace_auto_indents_for_bash(cx: &mut TestAppCo
 }
 
 #[gpui::test]
+async fn test_indent_after_input_for_bash(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("bash", tree_sitter_bash::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // test indents on comment insert
+    cx.set_state(indoc! {"
+        function main() {
+        ˇ    for item in $items; do
+        ˇ        while [ -n \"$item\" ]; do
+        ˇ            if [ \"$value\" -gt 10 ]; then
+        ˇ                continue
+        ˇ            elif [ \"$value\" -lt 0 ]; then
+        ˇ                break
+        ˇ            else
+        ˇ                echo \"$item\"
+        ˇ            fi
+        ˇ        done
+        ˇ    done
+        ˇ}
+    "});
+    cx.update_editor(|e, window, cx| e.handle_input("#", window, cx));
+    cx.assert_editor_state(indoc! {"
+        function main() {
+        #ˇ    for item in $items; do
+        #ˇ        while [ -n \"$item\" ]; do
+        #ˇ            if [ \"$value\" -gt 10 ]; then
+        #ˇ                continue
+        #ˇ            elif [ \"$value\" -lt 0 ]; then
+        #ˇ                break
+        #ˇ            else
+        #ˇ                echo \"$item\"
+        #ˇ            fi
+        #ˇ        done
+        #ˇ    done
+        #ˇ}
+    "});
+}
+
+#[gpui::test]
 async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22837,6 +22879,7 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
 
     // test correct indent after newline after `then`
     cx.set_state(indoc! {"
+
         if [ \"$1\" = \"test\" ]; thenˇ
     "});
     cx.update_editor(|editor, window, cx| {
@@ -22844,7 +22887,38 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     cx.assert_editor_state(indoc! {"
+
         if [ \"$1\" = \"test\" ]; then
+            ˇ
+    "});
+
+    // test correct indent after newline after `else`
+    cx.set_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+        elseˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+        else
+            ˇ
+    "});
+
+    // test correct indent after newline after `elif`
+    cx.set_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+        elifˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+        elif
             ˇ
     "});
 
