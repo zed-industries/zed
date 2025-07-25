@@ -97,23 +97,6 @@ else
     cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
-# Upload debug info to sentry.io
-if ! command -v sentry-cli >/dev/null 2>&1; then
-    echo "sentry-cli not found. skipping sentry upload."
-    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
-else
-    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
-        echo "Uploading zed debug symbols..."
-        # note: this uploads the unstripped binary which is needed because it contains
-        # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
-            "${target_dir}/aarch64-apple-darwin/ \
-            "${target_dir}/x86_64-apple-darwin/
-    else
-        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
-    fi
-fi
-
 echo "Creating application bundle"
 pushd crates/zed
 cp Cargo.toml Cargo.toml.backup
@@ -382,4 +365,21 @@ else
     sign_binary "target/aarch64-apple-darwin/release/remote_server"
     gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
     gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
+fi
+
+# Upload debug info to sentry.io
+if ! command -v sentry-cli >/dev/null 2>&1; then
+    echo "sentry-cli not found. skipping sentry upload."
+    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
+else
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        echo "Uploading zed debug symbols..."
+        # note: this uploads the unstripped binary which is needed because it contains
+        # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+            "target/${architecture}/${target_dir}/aarch64-apple-darwin/" \
+            "target/${architecture}/${target_dir}/x86_64-apple-darwin/"
+    else
+        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+    fi
 fi
