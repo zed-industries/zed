@@ -907,10 +907,7 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
-
-    let clipped_corner_radii = max_corner_radii(shadow.corner_radii,
-                                                shadow.content_mask.corner_radii);
-    let corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
     // The signal is only non-zero in a limited range, so don't waste samples
     let low = center_to_point.y - half_size.y;

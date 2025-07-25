@@ -490,9 +490,6 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 [[buffer(ShadowInputIndex_Shadows)]]) {
   Shadow shadow = shadows[input.shadow_id];
 
-  Corners_ScaledPixels clipped_corner_radii = max_corner_radii(shadow.corner_radii,
-                                                               shadow.content_mask.corner_radii);
-
   float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
   float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
   float2 half_size = size / 2.;
@@ -501,21 +498,21 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   float corner_radius;
   if (point.x < 0.) {
     if (point.y < 0.) {
-      corner_radius = clipped_corner_radii.top_left;
+      corner_radius = shadow.corner_radii.top_left;
     } else {
-      corner_radius = clipped_corner_radii.bottom_left;
+      corner_radius = shadow.corner_radii.bottom_left;
     }
   } else {
     if (point.y < 0.) {
-      corner_radius = clipped_corner_radii.top_right;
+      corner_radius = shadow.corner_radii.top_right;
     } else {
-      corner_radius = clipped_corner_radii.bottom_right;
+      corner_radius = shadow.corner_radii.bottom_right;
     }
   }
 
   float alpha;
   if (shadow.blur_radius == 0.) {
-    float distance = quad_sdf(input.position.xy, shadow.bounds, clipped_corner_radii);
+    float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha = saturate(0.5 - distance);
   } else {
     // The signal is only non-zero in a limited range, so don't waste samples

@@ -24,7 +24,7 @@ impl Render for HelloWorld {
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
             .child(
-                div().rounded_2xl().overflow_hidden().child(
+                div().rounded_2xl().overflow_hidden().shadow_2xl().child(
                     div()
                         .bg(gpui::black())
                         .text_color(gpui::white())
