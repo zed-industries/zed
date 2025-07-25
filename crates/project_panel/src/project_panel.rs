@@ -114,6 +114,7 @@ pub struct ProjectPanel {
     mouse_down: bool,
     hover_expand_task: Option<Task<()>>,
     previous_drag_position: Option<Point<Pixels>>,
+    sticky_items_count: usize,
 }
 
 struct DragTargetEntry {
@@ -572,6 +573,9 @@ impl ProjectPanel {
                     if project_panel_settings.hide_root != new_settings.hide_root {
                         this.update_visible_entries(None, cx);
                     }
+                    if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
+                        this.sticky_items_count = 0;
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
@@ -615,6 +619,7 @@ impl ProjectPanel {
                 mouse_down: false,
                 hover_expand_task: None,
                 previous_drag_position: None,
+                sticky_items_count: 0,
             };
             this.update_visible_entries(None, cx);
 
@@ -2267,8 +2272,11 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut Context<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.scroll_handle
-                .scroll_to_item(index, ScrollStrategy::Center);
+            self.scroll_handle.scroll_to_item_with_offset(
+                index,
+                ScrollStrategy::Center,
+                self.sticky_items_count,
+            );
             cx.notify();
         }
     }
@@ -5344,7 +5352,10 @@ impl Render for ProjectPanel {
                                 items
                             },
                             |this, marker_entry, window, cx| {
-                                this.render_sticky_entries(marker_entry, window, cx)
+                                let sticky_entries =
+                                    this.render_sticky_entries(marker_entry, window, cx);
+                                this.sticky_items_count = sticky_entries.len();
+                                sticky_entries
                             },
                         );
                         list.with_decoration(if show_indent_guides {
