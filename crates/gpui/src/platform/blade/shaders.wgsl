@@ -949,7 +949,7 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
     out.position = to_device_position_impl(v.xy_position);
     out.st_position = v.st_position;
     out.vertex_id = vertex_id;
-    // out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
+    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.bounds);
     return out;
 }
 
@@ -957,9 +957,9 @@ fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasteriza
 fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
     let dx = dpdx(input.st_position);
     let dy = dpdy(input.st_position);
-    // if (any(input.clip_distances < vec4<f32>(0.0))) {
-    //     return vec4<f32>(0.0);
-    // }
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
 
     let v = b_path_vertices[input.vertex_id];
     let background = v.color;
