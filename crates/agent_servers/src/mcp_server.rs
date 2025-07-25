@@ -8,6 +8,7 @@ use context_server::types::{
 };
 use futures::channel::oneshot;
 use gpui::{App, AsyncApp, Task, WeakEntity};
+use indoc::indoc;
 
 pub struct ZedMcpServer {
     server: context_server::listener::McpServer,
@@ -26,7 +27,7 @@ impl ZedMcpServer {
         mcp_server.add_tool(RequestPermissionTool {
             thread_rx: thread_rx.clone(),
         });
-        mcp_server.add_tool(ReadFileTool {
+        mcp_server.add_tool(ReadTextFileTool {
             thread_rx: thread_rx.clone(),
         });
 
@@ -86,7 +87,11 @@ impl McpServerTool for RequestPermissionTool {
     const NAME: &'static str = "Confirmation";
 
     fn description(&self) -> &'static str {
-        "Request permission for tool calls"
+        indoc! {"
+            Request permission for tool calls.
+
+            This tool is meant to be called programmatically by the agent loop, not the LLM.
+        "}
     }
 
     async fn run(
@@ -118,18 +123,18 @@ impl McpServerTool for RequestPermissionTool {
 }
 
 #[derive(Clone)]
-pub struct ReadFileTool {
+pub struct ReadTextFileTool {
     thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
 }
 
-impl McpServerTool for ReadFileTool {
+impl McpServerTool for ReadTextFileTool {
     type Input = acp::ReadTextFileArguments;
     type Output = ();
 
     const NAME: &'static str = "Read";
 
     fn description(&self) -> &'static str {
-        "Read text files"
+        "Reads the content of the given file in the project including unsaved changes."
     }
 
     async fn run(
