@@ -727,15 +727,12 @@ vertex PathRasterizationVertexOutput path_rasterization_vertex(
       position,
       float2(v.st_position.x, v.st_position.y),
       vertex_id,
-      // TODO(max): correctly apply context mask
-      // {
-      //   v.xy_position.x - v.content_mask.bounds.origin.x,
-      //   v.content_mask.bounds.origin.x + v.content_mask.bounds.size.width - v.xy_position.x,
-      //   v.xy_position.y - v.content_mask.bounds.origin.y,
-      //   v.content_mask.bounds.origin.y + v.content_mask.bounds.size.height -
-      //      v.xy_position.y
-      // }
-      {1, 1, 1, 1},
+      {
+        v.xy_position.x - v.bounds.origin.x,
+        v.bounds.origin.x + v.bounds.size.width - v.xy_position.x,
+        v.xy_position.y - v.bounds.origin.y,
+        v.bounds.origin.y + v.bounds.size.height - v.xy_position.y
+      }
   };
 }
 
