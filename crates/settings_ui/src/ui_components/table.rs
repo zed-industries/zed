@@ -739,14 +739,6 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         return diff_remaining;
     }
 
-    #[inline(always)]
-    const fn make_operations() -> [fn(usize, usize) -> usize; 2] {
-        [
-            |current, amount| current - amount,
-            |current, amount| current + amount,
-        ]
-    }
-
     fn drag_column_handle(
         // Negative diff means dragging left, positive diff means dragging right.
         diff: f32,
