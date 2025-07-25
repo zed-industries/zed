@@ -4214,6 +4214,8 @@ mod tests {
                     | "vim::PushJump"
                     | "vim::PushDigraph"
                     | "vim::PushLiteral"
+                    | "vim::PushHelixNext"
+                    | "vim::PushHelixPrevious"
                     | "vim::Number"
                     | "vim::SelectRegister"
                     | "git::StageAndNext"

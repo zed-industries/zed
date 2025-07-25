@@ -86,11 +86,13 @@ impl Object {
         match self {
             Self::Word { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(is_word_start(left, right, classifier) || is_buffer_start(left))
+                Ok(is_word_start(left, right, &classifier)
+                    || (is_buffer_start(left) && classifier.kind(right) != CharKind::Whitespace))
             }
             Self::Subword { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(movement::is_subword_start(left, right, &classifier) || is_buffer_start(left))
+                Ok(movement::is_subword_start(left, right, &classifier)
+                    || (is_buffer_start(left) && classifier.kind(right) != CharKind::Whitespace))
             }
             Self::AngleBrackets => Ok(left == '<'),
             Self::BackQuotes => Ok(left == '`'),
@@ -112,11 +114,13 @@ impl Object {
         match self {
             Self::Word { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(is_word_end(left, right, classifier) || is_buffer_end(right))
+                Ok(is_word_end(left, right, &classifier)
+                    || (is_buffer_end(right) && classifier.kind(left) != CharKind::Whitespace))
             }
             Self::Subword { ignore_punctuation } => {
                 let classifier = classifier.ignore_punctuation(ignore_punctuation);
-                Ok(movement::is_subword_end(left, right, &classifier) || is_buffer_end(right))
+                Ok(movement::is_subword_end(left, right, &classifier)
+                    || (is_buffer_end(right) && classifier.kind(right) != CharKind::Whitespace))
             }
             Self::AngleBrackets => Ok(right == '>'),
             Self::BackQuotes => Ok(right == '`'),
@@ -185,11 +189,11 @@ fn is_buffer_end(right: char) -> bool {
     right == '\0'
 }
 
-fn is_word_start(left: char, right: char, classifier: CharClassifier) -> bool {
+fn is_word_start(left: char, right: char, classifier: &CharClassifier) -> bool {
     classifier.kind(left) != classifier.kind(right)
         && classifier.kind(right) != CharKind::Whitespace
 }
 
-fn is_word_end(left: char, right: char, classifier: CharClassifier) -> bool {
+fn is_word_end(left: char, right: char, classifier: &CharClassifier) -> bool {
     classifier.kind(left) != classifier.kind(right) && classifier.kind(left) != CharKind::Whitespace
 }

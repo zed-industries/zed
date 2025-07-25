@@ -18,7 +18,7 @@ impl Object {
         selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = selection.head();
+        let relative_to = cursor_start(&selection, map);
         if let Ok(selection) = self.current_bounded_object(map, relative_to) {
             if around {
                 selection.map(|s| self.surround(map, s).unwrap())
@@ -26,10 +26,9 @@ impl Object {
                 selection
             }
         } else {
-            let head = selection.head();
             let range = self.range(map, selection, around, None)?;
 
-            if range.start > head {
+            if range.start > relative_to {
                 None
             } else {
                 Some(range)
@@ -45,7 +44,7 @@ impl Object {
         selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = selection.head();
+        let relative_to = cursor_start(&selection, map);
         if let Ok(selection) = self.next_bounded_object(map, relative_to) {
             if around {
                 selection.map(|s| self.surround(map, s).unwrap())
@@ -53,10 +52,9 @@ impl Object {
                 selection
             }
         } else {
-            let head = selection.head();
             let range = self.range(map, selection, around, None)?;
 
-            if range.start > head {
+            if range.start > relative_to {
                 Some(range)
             } else {
                 None
@@ -72,7 +70,7 @@ impl Object {
         selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Option<Range<DisplayPoint>> {
-        let relative_to = selection.head();
+        let relative_to = cursor_start(&selection, map);
         if let Ok(selection) = self.previous_bounded_object(map, relative_to) {
             if around {
                 selection.map(|s| self.surround(map, s).unwrap())
@@ -91,30 +89,29 @@ impl Object {
         map: &DisplaySnapshot,
         relative_to: DisplayPoint,
     ) -> Result<Option<Range<DisplayPoint>>, UnboundedErr> {
-        let maybe_prev_end = self.helix_previous_end(map, relative_to)?;
-        let Some(prev_start) = self.helix_previous_start(map, relative_to)? else {
+        let Some(start) = self.helix_previous_start(map, relative_to)? else {
             return Ok(None);
         };
-        let Some(next_end) = self.helix_next_end(map, movement::right(map, relative_to))? else {
+        let Some(end) = self.close_at_end(start, map)? else {
             return Ok(None);
         };
-        let maybe_next_start = self.helix_next_start(map, movement::right(map, relative_to))?;
 
-        if let Some(next_start) = maybe_next_start {
-            match next_start.cmp(&next_end) {
-                Ordering::Less => return Ok(None),
-                Ordering::Equal if self.can_be_zero_width() => return Ok(None),
-                _ => (),
-            }
-        }
-        if let Some(prev_end) = maybe_prev_end {
-            if prev_start == prev_end && self.can_be_zero_width() {
-                return Ok(None);
-            }
-            debug_assert!(prev_end <= prev_start)
+        if end > relative_to {
+            return Ok(Some(start..end));
         }
 
-        Ok(Some(prev_start..next_end))
+        let Some(end) = self.helix_next_end(map, movement::right(map, relative_to))? else {
+            return Ok(None);
+        };
+        let Some(start) = self.close_at_start(end, map)? else {
+            return Ok(None);
+        };
+
+        if start <= relative_to {
+            return Ok(Some(start..end));
+        }
+
+        Ok(None)
     }
 
     /// Returns the range of the next object the cursor is not over if it can be found with simple boundary checking.
@@ -128,12 +125,7 @@ impl Object {
         else {
             return Ok(None);
         };
-        let search_start = if self.can_be_zero_width() {
-            next_start
-        } else {
-            movement::right(map, next_start)
-        };
-        let Some(end) = self.helix_next_end(map, search_start)? else {
+        let Some(end) = self.close_at_end(next_start, map)? else {
             return Ok(None);
         };
 
@@ -150,12 +142,7 @@ impl Object {
         let Some(prev_end) = self.helix_previous_end(map, relative_to)? else {
             return Ok(None);
         };
-        let search_start = if self.can_be_zero_width() {
-            prev_end
-        } else {
-            movement::left(map, prev_end)
-        };
-        let Some(start) = self.helix_previous_start(map, search_start)? else {
+        let Some(start) = self.close_at_start(prev_end, map)? else {
             return Ok(None);
         };
 
@@ -202,6 +189,71 @@ impl Object {
         }
     }
 
+    fn close_at_end(
+        self,
+        start: DisplayPoint,
+        map: &DisplaySnapshot,
+    ) -> Result<Option<DisplayPoint>, UnboundedErr> {
+        let mut last_start = movement::right(map, start);
+        let mut opened = 1;
+        while let Some(next_end) = self.helix_next_end(map, last_start)? {
+            if !self.can_be_nested() {
+                return Ok(Some(next_end));
+            }
+            if let Some(next_start) = self.helix_next_start(map, last_start)? {
+                match next_start.cmp(&next_end) {
+                    Ordering::Less => {
+                        opened += 1;
+                        last_start = movement::right(map, next_start);
+                        continue;
+                    }
+                    Ordering::Equal if self.can_be_zero_width() => {
+                        last_start = movement::right(map, next_start);
+                        continue;
+                    }
+                    _ => (),
+                }
+            }
+            // When this is reached one opened object can be closed.
+            opened -= 1;
+            if opened == 0 {
+                return Ok(Some(next_end));
+            }
+            last_start = movement::right(map, next_end);
+        }
+        Ok(None)
+    }
+
+    fn close_at_start(
+        self,
+        end: DisplayPoint,
+        map: &DisplaySnapshot,
+    ) -> Result<Option<DisplayPoint>, UnboundedErr> {
+        let mut last_end = movement::left(map, end);
+        let mut opened = 1;
+        while let Some(previous_start) = self.helix_previous_start(map, last_end)? {
+            if !self.can_be_nested() {
+                return Ok(Some(previous_start));
+            }
+            if let Some(previous_end) = self.helix_previous_end(map, last_end)? {
+                if previous_end > previous_start
+                    || previous_end == previous_start && self.can_be_zero_width()
+                {
+                    opened += 1;
+                    last_end = movement::left(map, previous_end);
+                    continue;
+                }
+            }
+            // When this is reached one opened object can be closed.
+            opened -= 1;
+            if opened == 0 {
+                return Ok(Some(previous_start));
+            }
+            last_end = movement::left(map, previous_start);
+        }
+        Ok(None)
+    }
+
     const fn can_be_zero_width(&self) -> bool {
         match self {
             Self::AngleBrackets
@@ -220,6 +272,32 @@ impl Object {
             _ => false,
         }
     }
+
+    const fn can_be_nested(&self) -> bool {
+        match self {
+            Self::AngleBrackets
+            | Self::AnyBrackets
+            | Self::CurlyBrackets
+            | Self::MiniBrackets
+            | Self::Parentheses
+            | Self::SquareBrackets
+            | Self::AnyQuotes
+            | Self::Class
+            | Self::Method
+            | Self::Tag
+            | Self::Argument => true,
+            _ => false,
+        }
+    }
+}
+
+/// Returns the start of the cursor of a selection, whether that is collapsed or not.
+fn cursor_start(selection: &Selection<DisplayPoint>, map: &DisplaySnapshot) -> DisplayPoint {
+    if selection.is_empty() | selection.reversed {
+        selection.head()
+    } else {
+        movement::left(map, selection.head())
+    }
 }
 
 #[cfg(test)]
@@ -235,6 +313,7 @@ mod test {
                 The quick brˇowˇnˇ
                 fox «ˇjumps» ov«er
                 the laˇ»zy dogˇ
+
                 "
         };
 
@@ -247,6 +326,7 @@ mod test {
             The quick «brownˇ»
             fox «jumpsˇ» over
             the «lazyˇ» dogˇ
+
             "
             },
             Mode::HelixNormal,
@@ -261,6 +341,7 @@ mod test {
             The quick« brownˇ»
             fox «jumps ˇ»over
             the «lazy ˇ»dogˇ
+
             "
             },
             Mode::HelixNormal,
