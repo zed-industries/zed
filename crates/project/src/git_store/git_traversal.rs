@@ -35,14 +35,29 @@ impl<'a> GitTraversal<'a> {
     }
 
     fn repo_root_for_path(&self, path: &Path) -> Option<(&'a RepositorySnapshot, RepoPath)> {
-        let (_, snapshot) = self
-            .repo_root_to_snapshot
-            .range(Path::new("")..=path)
-            .last()?;
+        // We might need to perform a range search multiple times, as there may be a nested repository inbetween
+        // the target and our path. E.g:
+        // /our_root_repo/
+        //   .git/
+        //   other_repo/
+        //     .git/
+        //   our_query.txt
+        let mut query = path.ancestors();
+        while let Some(query) = query.next() {
+            let (_, snapshot) = self
+                .repo_root_to_snapshot
+                .range(Path::new("")..=query)
+                .last()?;
 
-        snapshot
-            .abs_path_to_repo_path(path)
-            .map(|repo_path| (*snapshot, repo_path))
+            let stripped = snapshot
+                .abs_path_to_repo_path(path)
+                .map(|repo_path| (*snapshot, repo_path));
+            if stripped.is_some() {
+                return stripped;
+            }
+        }
+
+        None
     }
 
     fn synchronize_statuses(&mut self, reset: bool) {
