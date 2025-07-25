@@ -9414,7 +9414,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "cxx",
  "jni",
@@ -9494,7 +9494,7 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 [[package]]
 name = "livekit"
 version = "0.7.8"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "chrono",
  "futures-util",
@@ -9517,7 +9517,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "futures-util",
  "http 0.2.12",
@@ -9541,7 +9541,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9558,7 +9558,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -18545,7 +18545,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "cc",
  "cxx",
@@ -18558,7 +18558,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=2806c1554bb2e3627ea35089208a196e19f24847#2806c1554bb2e3627ea35089208a196e19f24847"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
 dependencies = [
  "fs2",
  "hex-literal",
