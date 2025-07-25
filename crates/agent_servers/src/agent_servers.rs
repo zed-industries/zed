@@ -1,6 +1,7 @@
 mod claude;
 mod codex;
 mod gemini;
+mod mcp_server;
 mod settings;
 
 #[cfg(test)]

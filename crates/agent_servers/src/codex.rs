@@ -1,6 +1,7 @@
 use agent_client_protocol as acp;
 use anyhow::anyhow;
 use collections::HashMap;
+use context_server::listener::McpServerTool;
 use context_server::types::requests;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
@@ -15,7 +16,8 @@ use util::ResultExt;
 use anyhow::{Context, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
-use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings};
+use crate::mcp_server::ZedMcpServer;
+use crate::{AgentServer, AgentServerCommand, AllAgentServersSettings, mcp_server};
 use acp_thread::{AcpThread, AgentConnection};
 
 #[derive(Clone)]
@@ -122,6 +124,7 @@ struct CodexConnection {
 struct CodexSession {
     thread: WeakEntity<AcpThread>,
     cancel_tx: Option<oneshot::Sender<()>>,
+    _mcp_server: ZedMcpServer,
 }
 
 impl AgentConnection for CodexConnection {
@@ -140,14 +143,24 @@ impl AgentConnection for CodexConnection {
         let cwd = cwd.to_path_buf();
         cx.spawn(async move |cx| {
             let client = client.context("MCP server is not initialized yet")?;
+            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
+
+            let mcp_server = ZedMcpServer::new(thread_rx, cx).await?;
 
             let response = client
                 .request::<requests::CallTool>(context_server::types::CallToolParams {
                     name: acp::NEW_SESSION_TOOL_NAME.into(),
                     arguments: Some(serde_json::to_value(acp::NewSessionToolArguments {
-                        mcp_servers: Default::default(),
+                        mcp_servers: [(
+                            mcp_server::SERVER_NAME.to_string(),
+                            mcp_server.server_config()?,
+                        )]
+                        .into(),
                         client_tools: acp::ClientTools {
-                            confirm_permission: None,
+                            request_permission: Some(acp::McpToolId {
+                                mcp_server: mcp_server::SERVER_NAME.into(),
+                                tool_name: mcp_server::PermissionTool::NAME.into(),
+                            }),
                             write_text_file: None,
                             read_text_file: None,
                         },
@@ -168,9 +181,12 @@ impl AgentConnection for CodexConnection {
             let thread =
                 cx.new(|cx| AcpThread::new(self.clone(), project, result.session_id.clone(), cx))?;
 
+            thread_tx.send(thread.downgrade())?;
+
             let session = CodexSession {
                 thread: thread.downgrade(),
                 cancel_tx: None,
+                _mcp_server: mcp_server,
             };
             sessions.borrow_mut().insert(result.session_id, session);
 

@@ -1,0 +1,115 @@
+use acp_thread::AcpThread;
+use agent_client_protocol as acp;
+use anyhow::{Context, Result};
+use context_server::listener::{McpServerTool, ToolResponse};
+use context_server::types::{
+    Implementation, InitializeParams, InitializeResponse, ProtocolVersion, ServerCapabilities,
+    ToolsCapabilities, requests,
+};
+use futures::channel::oneshot;
+use gpui::{App, AsyncApp, Task, WeakEntity};
+
+pub struct ZedMcpServer {
+    server: context_server::listener::McpServer,
+}
+
+pub const SERVER_NAME: &str = "zed";
+
+impl ZedMcpServer {
+    pub async fn new(
+        thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+        cx: &AsyncApp,
+    ) -> Result<Self> {
+        let mut mcp_server = context_server::listener::McpServer::new(cx).await?;
+        mcp_server.handle_request::<requests::Initialize>(Self::handle_initialize);
+
+        mcp_server.add_tool(PermissionTool {
+            thread_rx: thread_rx.clone(),
+        });
+
+        Ok(Self { server: mcp_server })
+    }
+
+    pub fn server_config(&self) -> Result<acp::McpServerConfig> {
+        let zed_path = std::env::current_exe()
+            .context("finding current executable path for use in mcp_server")?;
+
+        Ok(acp::McpServerConfig {
+            command: zed_path,
+            args: vec![
+                "--nc".into(),
+                self.server.socket_path().display().to_string(),
+            ],
+            env: None,
+            enabled_tools: None,
+        })
+    }
+
+    fn handle_initialize(_: InitializeParams, cx: &App) -> Task<Result<InitializeResponse>> {
+        cx.foreground_executor().spawn(async move {
+            Ok(InitializeResponse {
+                protocol_version: ProtocolVersion("2025-06-18".into()),
+                capabilities: ServerCapabilities {
+                    experimental: None,
+                    logging: None,
+                    completions: None,
+                    prompts: None,
+                    resources: None,
+                    tools: Some(ToolsCapabilities {
+                        list_changed: Some(false),
+                    }),
+                },
+                server_info: Implementation {
+                    name: SERVER_NAME.into(),
+                    version: "0.1.0".into(),
+                },
+                meta: None,
+            })
+        })
+    }
+}
+
+// Tools
+
+#[derive(Clone)]
+pub struct PermissionTool {
+    thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+}
+
+impl McpServerTool for PermissionTool {
+    type Input = acp::PermissionToolArguments;
+    type Output = acp::PermissionOutcome;
+
+    const NAME: &'static str = "Confirmation";
+
+    fn description(&self) -> &'static str {
+        "Request permission for tool calls"
+    }
+
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
+        let mut thread_rx = self.thread_rx.clone();
+        let Some(thread) = thread_rx.recv().await?.upgrade() else {
+            anyhow::bail!("Thread closed");
+        };
+
+        let result = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_permission(input.tool_call, input.options, cx)
+            })?
+            .await;
+
+        let response = match result {
+            Ok(option_id) => acp::PermissionOutcome::Selected { option_id },
+            Err(oneshot::Canceled) => acp::PermissionOutcome::Canceled,
+        };
+
+        Ok(ToolResponse {
+            content: vec![],
+            structured_content: response,
+        })
+    }
+}
