@@ -165,7 +165,10 @@ impl AgentConnection for CodexConnection {
                                 mcp_server: mcp_server::SERVER_NAME.into(),
                                 tool_name: mcp_server::ReadTextFileTool::NAME.into(),
                             }),
-                            write_text_file: None,
+                            write_text_file: Some(acp::McpToolId {
+                                mcp_server: mcp_server::SERVER_NAME.into(),
+                                tool_name: mcp_server::WriteTextFileTool::NAME.into(),
+                            }),
                         },
                         cwd,
                     })?),
@@ -174,7 +177,7 @@ impl AgentConnection for CodexConnection {
                 .await?;
 
             if response.is_error.unwrap_or_default() {
-                return Err(anyhow!("{:?}", response.content));
+                return Err(anyhow!(response.text_contents()));
             }
 
             let result = serde_json::from_value::<acp::NewSessionToolResult>(
@@ -242,7 +245,7 @@ impl AgentConnection for CodexConnection {
             let response = result?;
 
             if response.is_error.unwrap_or_default() {
-                return Err(anyhow!("{:?}", response.content));
+                return Err(anyhow!(response.text_contents()));
             }
 
             Ok(())

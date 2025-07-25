@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use context_server::listener::{McpServerTool, ToolResponse};
 use context_server::types::{
     Implementation, InitializeParams, InitializeResponse, ProtocolVersion, ServerCapabilities,
-    ToolResponseContent, ToolsCapabilities, requests,
+    ToolsCapabilities, requests,
 };
 use futures::channel::oneshot;
 use gpui::{App, AsyncApp, Task, WeakEntity};
@@ -28,6 +28,9 @@ impl ZedMcpServer {
             thread_rx: thread_rx.clone(),
         });
         mcp_server.add_tool(ReadTextFileTool {
+            thread_rx: thread_rx.clone(),
+        });
+        mcp_server.add_tool(WriteTextFileTool {
             thread_rx: thread_rx.clone(),
         });
 
@@ -128,8 +131,8 @@ pub struct ReadTextFileTool {
 }
 
 impl McpServerTool for ReadTextFileTool {
-    type Input = acp::ReadTextFileArguments;
-    type Output = ();
+    type Input = acp::ReadTextFileToolArguments;
+    type Output = acp::ReadTextFileToolOutput;
 
     const NAME: &'static str = "Read";
 
@@ -147,14 +150,52 @@ impl McpServerTool for ReadTextFileTool {
             anyhow::bail!("Thread closed");
         };
 
-        let text = thread
+        let content = thread
             .update(cx, |thread, cx| {
                 thread.read_text_file(input.path, input.line, input.limit, false, cx)
             })?
             .await?;
 
         Ok(ToolResponse {
-            content: vec![ToolResponseContent::Text { text }],
+            content: vec![],
+            structured_content: acp::ReadTextFileToolOutput { content },
+        })
+    }
+}
+
+#[derive(Clone)]
+pub struct WriteTextFileTool {
+    thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
+}
+
+impl McpServerTool for WriteTextFileTool {
+    type Input = acp::WriteTextFileToolArguments;
+    type Output = ();
+
+    const NAME: &'static str = "Write";
+
+    fn description(&self) -> &'static str {
+        "Write to a file replacing its contents"
+    }
+
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
+        let mut thread_rx = self.thread_rx.clone();
+        let Some(thread) = thread_rx.recv().await?.upgrade() else {
+            anyhow::bail!("Thread closed");
+        };
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.write_text_file(input.path, input.content, cx)
+            })?
+            .await?;
+
+        Ok(ToolResponse {
+            content: vec![],
             structured_content: (),
         })
     }

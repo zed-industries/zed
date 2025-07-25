@@ -686,6 +686,18 @@ pub struct CallToolResponse {
     pub structured_content: Option<serde_json::Value>,
 }
 
+impl CallToolResponse {
+    pub fn text_contents(&self) -> String {
+        let mut text = String::new();
+        for chunk in &self.content {
+            if let ToolResponseContent::Text { text: chunk } = chunk {
+                text.push_str(&chunk)
+            };
+        }
+        text
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum ToolResponseContent {

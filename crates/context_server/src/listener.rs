@@ -238,7 +238,9 @@ impl McpServer {
         outgoing_tx: &UnboundedSender<String>,
     ) {
         let response = ListToolsResponse {
-            tools: tools.borrow().values().map(|t| t.tool.clone()).collect(),
+            // tools: tools.borrow().values().map(|t| t.tool.clone()).collect(),
+            // todo! bring back
+            tools: vec![],
             next_cursor: None,
             meta: None,
         };
@@ -419,7 +421,7 @@ pub struct ToolResponse<T> {
     pub structured_content: T,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RawRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<RequestId>,
