@@ -57,6 +57,35 @@ impl PlatformAtlas for MetalAtlas {
         }
     }
 
+    fn clear_glyphs(&self) {
+        let mut lock = self.0.lock();
+        let mut tile_ids_by_texture = FxHashMap::default();
+        lock.tiles_by_key.retain(|key, tile| {
+            if matches!(key, AtlasKey::Glyph(_)) {
+                tile_ids_by_texture
+                    .entry(tile.texture_id)
+                    .or_insert_with(Vec::new)
+                    .push(tile.tile_id);
+                false
+            } else {
+                true
+            }
+        });
+
+        for (texture_id, tile_ids) in tile_ids_by_texture {
+            let texture_slot = &mut lock.monochrome_textures.textures[texture_id.index as usize];
+            if let Some(texture) = texture_slot {
+                texture.live_atlas_keys -= tile_ids.len() as u32;
+                if texture.is_unreferenced() {
+                    texture_slot.take();
+                    lock.monochrome_textures
+                        .free_list
+                        .push(texture_id.index as usize);
+                }
+            }
+        }
+    }
+
     fn remove(&self, key: &AtlasKey) {
         let mut lock = self.0.lock();
         let Some(id) = lock.tiles_by_key.get(key).map(|v| v.texture_id) else {

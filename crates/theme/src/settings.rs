@@ -722,6 +722,7 @@ pub fn adjust_buffer_font_size(cx: &mut App, mut f: impl FnMut(&mut Pixels)) {
 
     f(&mut adjusted_size);
     cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
+    cx.clear_glyph_atlases();
     cx.refresh_windows();
 }
 

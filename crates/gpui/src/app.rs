@@ -447,6 +447,14 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
+    /// Clears cache of rasterized glyphs.
+    pub fn clear_glyph_atlases(&mut self) {
+        if let Some(window) = self.windows.values().find_map(|window| window.as_ref()) {
+            let atlas = window.platform_window.sprite_atlas();
+            atlas.clear_glyphs();
+        }
+    }
+
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
         self.start_update();
         let result = update(self);

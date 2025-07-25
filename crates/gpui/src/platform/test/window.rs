@@ -359,4 +359,11 @@ impl PlatformAtlas for TestAtlas {
         let mut state = self.0.lock();
         state.tiles.remove(key);
     }
+
+    fn clear_glyphs(&self) {
+        let mut state = self.0.lock();
+        state
+            .tiles
+            .retain(|key, _| !matches!(key, AtlasKey::Glyph(_)))
+    }
 }
