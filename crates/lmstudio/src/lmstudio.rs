@@ -276,10 +276,15 @@ impl Capabilities {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct LmStudioError {
+    pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: LmStudioError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -403,8 +408,8 @@ pub async fn stream_chat_completion(
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
+                                Ok(ResponseStreamResult::Err { error, .. }) => {
+                                    Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => Some(Err(anyhow!(error))),
                             }
