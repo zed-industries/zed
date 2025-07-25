@@ -71,7 +71,8 @@ impl TextSystem {
                 font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
                 font("Noto Sans"), // KDE
-                font("DejaVu Sans")
+                font("DejaVu Sans"),
+                font("Arial"), // macOS, Windows
             ],
         }
     }
