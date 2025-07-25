@@ -4979,6 +4979,7 @@ dependencies = [
  "text",
  "theme",
  "time",
+ "tree-sitter-bash",
  "tree-sitter-html",
  "tree-sitter-python",
  "tree-sitter-rust",
