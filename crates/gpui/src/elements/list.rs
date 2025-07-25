@@ -8,10 +8,10 @@
 //! If all of your elements are the same height, see [`UniformList`] for a simpler API
 
 use crate::{
-    AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
-    FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    AnyElement, App, AvailableSpace, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element,
+    EntityId, FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId,
+    IntoElement, Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style,
+    StyleRefinement, Styled, Window, point, px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -707,6 +707,7 @@ impl StateInner {
         &mut self,
         bounds: Bounds<Pixels>,
         padding: Edges<Pixels>,
+        corner_radii: Corners<Pixels>,
         autoscroll: bool,
         window: &mut Window,
         cx: &mut App,
@@ -728,9 +729,15 @@ impl StateInner {
                 let mut item_origin = bounds.origin + Point::new(px(0.), padding.top);
                 item_origin.y -= layout_response.scroll_top.offset_in_item;
                 for item in &mut layout_response.item_layouts {
-                    window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                        item.element.prepaint_at(item_origin, window, cx);
-                    });
+                    window.with_content_mask(
+                        Some(ContentMask {
+                            bounds,
+                            corner_radii,
+                        }),
+                        |window| {
+                            item.element.prepaint_at(item_origin, window, cx);
+                        },
+                    );
 
                     if let Some(autoscroll_bounds) = window.take_autoscroll() {
                         if autoscroll {
@@ -951,12 +958,13 @@ impl Element for List {
         let padding = style
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
-        let layout = match state.prepaint_items(bounds, padding, true, window, cx) {
+        let corner_radii = style.corner_radii.to_pixels(window.rem_size());
+        let layout = match state.prepaint_items(bounds, padding, corner_radii, true, window, cx) {
             Ok(layout) => layout,
             Err(autoscroll_request) => {
                 state.logical_scroll_top = Some(autoscroll_request);
                 state
-                    .prepaint_items(bounds, padding, false, window, cx)
+                    .prepaint_items(bounds, padding, corner_radii, false, window, cx)
                     .unwrap()
             }
         };
@@ -977,11 +985,17 @@ impl Element for List {
         cx: &mut App,
     ) {
         let current_view = window.current_view();
-        window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            for item in &mut prepaint.layout.item_layouts {
-                item.element.paint(window, cx);
-            }
-        });
+        window.with_content_mask(
+            Some(ContentMask {
+                bounds,
+                ..Default::default()
+            }),
+            |window| {
+                for item in &mut prepaint.layout.item_layouts {
+                    item.element.paint(window, cx);
+                }
+            },
+        );
 
         let list_state = self.state.clone();
         let height = bounds.size.height;
