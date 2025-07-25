@@ -5730,6 +5730,7 @@ impl EditorElement {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: layout.position_map.text_hitbox.bounds,
+                ..Default::default()
             }),
             |window| {
                 let editor = self.editor.read(cx);
@@ -6669,9 +6670,15 @@ impl EditorElement {
             } else {
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    block.element.paint(window, cx);
-                })
+                window.with_content_mask(
+                    Some(ContentMask {
+                        bounds,
+                        ..Default::default()
+                    }),
+                    |window| {
+                        block.element.paint(window, cx);
+                    },
+                )
             }
         }
     }
