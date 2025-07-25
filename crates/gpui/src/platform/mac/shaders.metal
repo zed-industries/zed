@@ -104,13 +104,13 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     input.background_solid, input.background_color0, input.background_color1);
 
   // Apply content_mask's corner radii to the quad's corner radii.
-  quad.corner_radii = max_corner_radii(quad.corner_radii,
-                                       quad.content_mask.corner_radii);
+  Corners_ScaledPixels clipped_corner_radii = max_corner_radii(quad.corner_radii,
+                                                               quad.content_mask.corner_radii);
 
-  bool unrounded = quad.corner_radii.top_left == 0.0 &&
-    quad.corner_radii.bottom_left == 0.0 &&
-    quad.corner_radii.top_right == 0.0 &&
-    quad.corner_radii.bottom_right == 0.0;
+  bool unrounded = clipped_corner_radii.top_left == 0.0 &&
+    clipped_corner_radii.bottom_left == 0.0 &&
+    clipped_corner_radii.top_right == 0.0 &&
+    clipped_corner_radii.bottom_right == 0.0;
 
   // Fast path when the quad is not rounded and doesn't have any border
   if (quad.border_widths.top == 0.0 &&
@@ -131,7 +131,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   const float antialias_threshold = 0.5;
 
   // Radius of the nearest corner
-  float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+  float corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
 
   // Width of the nearest borders
   float2 border = float2(
@@ -258,10 +258,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // When corners are rounded, the dashes are laid out clockwise
         // around the whole perimeter.
 
-        float r_tr = quad.corner_radii.top_right;
-        float r_br = quad.corner_radii.bottom_right;
-        float r_bl = quad.corner_radii.bottom_left;
-        float r_tl = quad.corner_radii.top_left;
+        float r_tr = clipped_corner_radii.top_right;
+        float r_br = clipped_corner_radii.bottom_right;
+        float r_bl = clipped_corner_radii.bottom_left;
+        float r_tl = clipped_corner_radii.top_left;
 
         float w_t = quad.border_widths.top;
         float w_r = quad.border_widths.right;
@@ -490,8 +490,8 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
                                 [[buffer(ShadowInputIndex_Shadows)]]) {
   Shadow shadow = shadows[input.shadow_id];
 
-  shadow.corner_radii = max_corner_radii(shadow.corner_radii,
-                                         shadow.content_mask.corner_radii);
+  Corners_ScaledPixels clipped_corner_radii = max_corner_radii(shadow.corner_radii,
+                                                               shadow.content_mask.corner_radii);
 
   float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
   float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
@@ -501,21 +501,21 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   float corner_radius;
   if (point.x < 0.) {
     if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_left;
+      corner_radius = clipped_corner_radii.top_left;
     } else {
-      corner_radius = shadow.corner_radii.bottom_left;
+      corner_radius = clipped_corner_radii.bottom_left;
     }
   } else {
     if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_right;
+      corner_radius = clipped_corner_radii.top_right;
     } else {
-      corner_radius = shadow.corner_radii.bottom_right;
+      corner_radius = clipped_corner_radii.bottom_right;
     }
   }
 
   float alpha;
   if (shadow.blur_radius == 0.) {
-    float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+    float distance = quad_sdf(input.position.xy, shadow.bounds, clipped_corner_radii);
     alpha = saturate(0.5 - distance);
   } else {
     // The signal is only non-zero in a limited range, so don't waste samples

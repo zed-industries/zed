@@ -497,15 +497,15 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let quad = b_quads[input.quad_id];
 
     // Apply content_mask's corner radii to the quad's corner radii.
-    quad.corner_radii = max_corner_radii(quad.corner_radii, quad.content_mask.corner_radii);
+    let clipped_corner_radii = max_corner_radii(quad.corner_radii, quad.content_mask.corner_radii);
 
     let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
         input.background_solid, input.background_color0, input.background_color1);
 
-    let unrounded = quad.corner_radii.top_left == 0.0 &&
-        quad.corner_radii.bottom_left == 0.0 &&
-        quad.corner_radii.top_right == 0.0 &&
-        quad.corner_radii.bottom_right == 0.0;
+    let unrounded = clipped_corner_radii.top_left == 0.0 &&
+        clipped_corner_radii.bottom_left == 0.0 &&
+        clipped_corner_radii.top_right == 0.0 &&
+        clipped_corner_radii.bottom_right == 0.0;
 
     // Fast path when the quad is not rounded and doesn't have any border
     if (quad.border_widths.top == 0.0 &&
@@ -526,7 +526,7 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     let antialias_threshold = 0.5;
 
     // Radius of the nearest corner
-    let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
 
     // Width of the nearest borders
     let border = vec2<f32>(
@@ -660,10 +660,10 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // When corners are rounded, the dashes are laid out clockwise
                 // around the whole perimeter.
 
-                let r_tr = quad.corner_radii.top_right;
-                let r_br = quad.corner_radii.bottom_right;
-                let r_bl = quad.corner_radii.bottom_left;
-                let r_tl = quad.corner_radii.top_left;
+                let r_tr = clipped_corner_radii.top_right;
+                let r_br = clipped_corner_radii.bottom_right;
+                let r_bl = clipped_corner_radii.bottom_left;
+                let r_tl = clipped_corner_radii.top_left;
 
                 let w_t = quad.border_widths.top;
                 let w_r = quad.border_widths.right;
@@ -908,9 +908,9 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     let center = shadow.bounds.origin + half_size;
     let center_to_point = input.position.xy - center;
 
-    shadow.corner_radii = max_corner_radii(shadow.corner_radii,
-                                           shadow.content_mask.corner_radii);
-    let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
+    let clipped_corner_radii = max_corner_radii(shadow.corner_radii,
+                                                shadow.content_mask.corner_radii);
+    let corner_radius = pick_corner_radius(center_to_point, clipped_corner_radii);
 
     // The signal is only non-zero in a limited range, so don't waste samples
     let low = center_to_point.y - half_size.y;
