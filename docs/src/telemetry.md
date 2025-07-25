@@ -23,8 +23,8 @@ Telemetry is sent from the application to our servers. Data is proxied through o
 
 - [Axiom](https://axiom.co): Cloud-monitoring service - stores diagnostic events
 - [Snowflake](https://snowflake.com): Data warehouse - stores both diagnostic and metric events
-- [Hex](https://www.hex.tech): Dashboards and data exploration - dashboards built around data pulled from Snowflake
-- [Amplitude](https://www.amplitude.com): Dashboards - dashboards built around data pulled from Snowflake
+- [Hex](https://www.hex.tech): Dashboards and data exploration - accesses data stored in Snowflake
+- [Amplitude](https://www.amplitude.com): Dashboards and data exploration - accesses data stored in Snowflake
 
 ## Types of Telemetry
 
