@@ -124,13 +124,19 @@ enum PermissionToolBehavior {
 
 impl McpServerTool for PermissionTool {
     type Input = PermissionToolParams;
+    type Output = ();
+
     const NAME: &'static str = "Confirmation";
 
     fn description(&self) -> &'static str {
         "Request permission for tool calls"
     }
 
-    async fn run(&self, input: Self::Input, cx: &mut AsyncApp) -> Result<ToolResponse> {
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
         let mut thread_rx = self.thread_rx.clone();
         let Some(thread) = thread_rx.recv().await?.upgrade() else {
             anyhow::bail!("Thread closed");
@@ -178,7 +184,7 @@ impl McpServerTool for PermissionTool {
             content: vec![ToolResponseContent::Text {
                 text: serde_json::to_string(&response)?,
             }],
-            structured_content: None,
+            structured_content: (),
         })
     }
 }
@@ -190,6 +196,8 @@ pub struct ReadTool {
 
 impl McpServerTool for ReadTool {
     type Input = ReadToolParams;
+    type Output = ();
+
     const NAME: &'static str = "Read";
 
     fn description(&self) -> &'static str {
@@ -206,7 +214,11 @@ impl McpServerTool for ReadTool {
         }
     }
 
-    async fn run(&self, input: Self::Input, cx: &mut AsyncApp) -> Result<ToolResponse> {
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
         let mut thread_rx = self.thread_rx.clone();
         let Some(thread) = thread_rx.recv().await?.upgrade() else {
             anyhow::bail!("Thread closed");
@@ -220,7 +232,7 @@ impl McpServerTool for ReadTool {
 
         Ok(ToolResponse {
             content: vec![ToolResponseContent::Text { text: content }],
-            structured_content: None,
+            structured_content: (),
         })
     }
 }
@@ -232,6 +244,8 @@ pub struct EditTool {
 
 impl McpServerTool for EditTool {
     type Input = EditToolParams;
+    type Output = ();
+
     const NAME: &'static str = "Edit";
 
     fn description(&self) -> &'static str {
@@ -248,7 +262,11 @@ impl McpServerTool for EditTool {
         }
     }
 
-    async fn run(&self, input: Self::Input, cx: &mut AsyncApp) -> Result<ToolResponse> {
+    async fn run(
+        &self,
+        input: Self::Input,
+        cx: &mut AsyncApp,
+    ) -> Result<ToolResponse<Self::Output>> {
         let mut thread_rx = self.thread_rx.clone();
         let Some(thread) = thread_rx.recv().await?.upgrade() else {
             anyhow::bail!("Thread closed");
@@ -273,7 +291,7 @@ impl McpServerTool for EditTool {
 
         Ok(ToolResponse {
             content: vec![],
-            structured_content: None,
+            structured_content: (),
         })
     }
 }

@@ -41,8 +41,12 @@ struct RegisteredTool {
     handler: ToolHandler,
 }
 
-type ToolHandler =
-    Box<dyn Fn(Option<serde_json::Value>, &mut AsyncApp) -> Task<Result<ToolResponse>>>;
+type ToolHandler = Box<
+    dyn Fn(
+        Option<serde_json::Value>,
+        &mut AsyncApp,
+    ) -> Task<Result<ToolResponse<serde_json::Value>>>,
+>;
 type RequestHandler = Box<dyn Fn(RequestId, Option<Box<RawValue>>, &App) -> Task<String>>;
 
 impl McpServer {
@@ -79,11 +83,19 @@ impl McpServer {
     }
 
     pub fn add_tool<T: McpServerTool + Clone + 'static>(&mut self, tool: T) {
+        let output_schema = schemars::schema_for!(T::Output);
+        let unit_schema = schemars::schema_for!(());
+
         let registered_tool = RegisteredTool {
             tool: Tool {
                 name: T::NAME.into(),
                 description: Some(tool.description().into()),
                 input_schema: schemars::schema_for!(T::Input).into(),
+                output_schema: if output_schema == unit_schema {
+                    None
+                } else {
+                    Some(output_schema.into())
+                },
                 annotations: Some(tool.annotations()),
             },
             handler: Box::new({
@@ -96,7 +108,15 @@ impl McpServer {
 
                     let tool = tool.clone();
                     match input {
-                        Ok(input) => cx.spawn(async move |cx| tool.run(input, cx).await),
+                        Ok(input) => cx.spawn(async move |cx| {
+                            let output = tool.run(input, cx).await?;
+
+                            Ok(ToolResponse {
+                                content: output.content,
+                                structured_content: serde_json::to_value(output.structured_content)
+                                    .unwrap_or_default(),
+                            })
+                        }),
                         Err(err) => Task::ready(Err(err.into())),
                     }
                 }
@@ -259,7 +279,11 @@ impl McpServer {
                                 content: result.content,
                                 is_error: Some(false),
                                 meta: None,
-                                structured_content: result.structured_content,
+                                structured_content: if result.structured_content.is_null() {
+                                    None
+                                } else {
+                                    Some(result.structured_content)
+                                },
                             },
                             Err(err) => CallToolResponse {
                                 content: vec![ToolResponseContent::Text {
@@ -367,6 +391,8 @@ impl McpServer {
 
 pub trait McpServerTool {
     type Input: DeserializeOwned + JsonSchema;
+    type Output: Serialize + JsonSchema;
+
     const NAME: &'static str;
 
     fn description(&self) -> &'static str;
@@ -385,12 +411,12 @@ pub trait McpServerTool {
         &self,
         input: Self::Input,
         cx: &mut AsyncApp,
-    ) -> impl Future<Output = Result<ToolResponse>>;
+    ) -> impl Future<Output = Result<ToolResponse<Self::Output>>>;
 }
 
-pub struct ToolResponse {
+pub struct ToolResponse<T> {
     pub content: Vec<ToolResponseContent>,
-    pub structured_content: Option<serde_json::Value>,
+    pub structured_content: T,
 }
 
 #[derive(Serialize, Deserialize)]
