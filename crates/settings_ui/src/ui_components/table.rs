@@ -582,15 +582,10 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         let mut shrinking = diff < 0.0;
         let go_left_first = if (diff < 0.0) {
-            left_diff < right_diff
-        } else {
             left_diff > right_diff
+        } else {
+            left_diff < right_diff
         };
-
-        if col_idx == COLS - 1 {
-            shrinking = !shrinking;
-            col_idx -= 1;
-        }
 
         if !go_left_first {
             let diff_remaining =
@@ -785,6 +780,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
         widths[column_idx + left_step] =
             widths[column_idx + left_step] + (diff - diff_remaining).abs();
+
+        widths[column_idx] = widths[column_idx] + dbg!((diff - diff_remaining));
 
         return diff_remaining;
     }
@@ -1774,11 +1771,20 @@ mod test {
         );
 
         check_reset_size!(
-            complex_shrink_right,
+            shrink_should_go_left,
             columns: 6,
             starting: "*|***|**|*|*|*",
             snapshot: "*|*|XXX|**|*|*",
-            expected: "*|*|**|***|*|*",
+            expected: "*|**|**|**|*|*",
+            minimums: "X|*|*|*|*|*",
+        );
+
+        check_reset_size!(
+            shrink_should_go_right,
+            columns: 6,
+            starting: "*|***|**|**|**|*",
+            snapshot: "*|****|XXX|*|*|*",
+            expected: "*|****|**|**|*|*",
             minimums: "X|*|*|*|*|*",
         );
     }
