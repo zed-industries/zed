@@ -17,6 +17,8 @@ use ui::{
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
+const RESIZE_COLUMN_WIDTH: f32 = 5.0;
+
 #[derive(Debug)]
 struct DraggedColumn(usize);
 
@@ -227,7 +229,7 @@ impl TableInteractionState {
                     .id("column-resize-handle")
                     .absolute()
                     .left_neg_0p5()
-                    .w(px(5.0))
+                    .w(px(RESIZE_COLUMN_WIDTH))
                     .h_full();
 
                 if resizable_columns
@@ -631,30 +633,31 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let bounds_width = bounds.right() - bounds.left();
         let col_idx = drag_event.drag(cx).0;
 
+        let column_handle_width = Self::get_fraction(
+            &DefiniteLength::Absolute(AbsoluteLength::Pixels(px(RESIZE_COLUMN_WIDTH))),
+            bounds_width,
+            rem_size,
+        );
+
         let mut widths = self
             .widths
             .map(|length| Self::get_fraction(&length, bounds_width, rem_size));
 
         for length in widths[0..=col_idx].iter() {
-            col_position += length;
+            col_position += length + column_handle_width;
         }
 
         let mut total_length_ratio = col_position;
         for length in widths[col_idx + 1..].iter() {
             total_length_ratio += length;
         }
+        total_length_ratio += (COLS - 1 - col_idx) as f32 * column_handle_width;
 
         let drag_fraction = (drag_position.x - bounds.left()) / bounds_width;
         let drag_fraction = drag_fraction * total_length_ratio;
-        let diff = drag_fraction - col_position;
+        let diff = drag_fraction - col_position - column_handle_width / 2.0;
 
-        let is_dragging_right = diff > 0.0;
-
-        if is_dragging_right {
-            Self::drag_column_handle_right(diff, col_idx, &mut widths, resize_behavior);
-        } else {
-            Self::drag_column_handle_left(diff, col_idx, &mut widths, resize_behavior);
-        }
+        Self::drag_column_handle(diff, col_idx, &mut widths, resize_behavior);
         self.widths = widths.map(DefiniteLength::Fraction);
     }
 
@@ -698,7 +701,6 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         widths: &mut [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
     ) -> f32 {
-        let summation = widths.iter().sum::<f32>();
         let mut diff_remaining = diff;
         if col_idx == 0 {
             return diff_remaining;
@@ -729,10 +731,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             }
             curr_column -= 1;
         }
-        widths[col_idx] = widths[col_idx] + dbg!((diff - diff_remaining));
+        widths[col_idx] = widths[col_idx] + diff - diff_remaining;
 
-        let summation_2 = widths.iter().sum::<f32>();
-        dbg!(summation == summation_2);
         return diff_remaining;
     }
 
@@ -745,7 +745,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         if diff > 0.0 {
             Self::drag_column_handle_right(diff, col_idx, widths, resize_behavior)
         } else {
-            Self::drag_column_handle_left(-diff, col_idx, widths, resize_behavior)
+            Self::drag_column_handle_left(diff, col_idx, widths, resize_behavior)
         }
     }
 
@@ -1527,13 +1527,6 @@ mod test {
             a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
         }
 
-        #[track_caller]
-        fn assert_almost_eq(a: &[f32], b: &[f32]) {
-            if !is_almost_eq(a, b) {
-                assert_eq!(a, b);
-            }
-        }
-
         fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
             let mut widths = [f32::NAN; COLS];
             let mut column_index = None;
@@ -1560,7 +1553,6 @@ mod test {
         ) -> [ResizeBehavior; COLS] {
             let mut resize_behavior = [ResizeBehavior::None; COLS];
             let mut max_index = 0;
-            dbg!(&input);
             for (index, col) in input.split('|').enumerate() {
                 if col.starts_with('X') || col.is_empty() {
                     resize_behavior[index] = ResizeBehavior::None;
@@ -1696,6 +1688,15 @@ mod test {
             snapshot: "**|XX|**",
             expected: "**|***|*",
             minimums: "X|*|*",
+        );
+
+        check_drag!(
+            drag_left_against_mins,
+            columns: 5,
+            distance: -1,
+            snapshot: "*|*|*|X|*******",
+            expected: "*|*|*|*|*******",
+            minimums: "X|*|*|*|*",
         );
 
         check_reset_size!(
