@@ -98,10 +98,16 @@ function ZipZedAndItsFriendsDebug {
 
 
 function UploadToSentry {
-    param (
-        [string]$exe,
-        [string]$debugArchive
-    )
+    if (-not Get-Command "sentry-cli" -ErrorAction SilentlyContinue) {
+        Write-Output "sentry-cli not found. skipping sentry upload."
+        Write-Output "install with: 'winget install -e --id=Sentry.sentry-cli'"
+        return
+    }
+    if (-not (Test-Path "env:SENTRY_AUTH_TOKEN")) {
+        Write-Output "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+        return
+    }
+    sentry-cli debug-files upload --include-sources --wait .\target\release\
 }
 
 function MakeAppx {
@@ -250,6 +256,8 @@ function BuildInstaller {
 
 ParseZedWorkspace
 $innoDir = "$env:ZED_WORKSPACE\inno"
+$debugArchive = ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
+$debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 
 CheckEnvironmentVariables
 PrepareForBundle
@@ -261,12 +269,8 @@ ZipZedAndItsFriendsDebug
 CollectFiles
 BuildInstaller
 
-$debugArchive = ".\target\release\zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
-$debugStoreKey = "$env:ZED_RELEASE_CHANNEL/zed-$env:RELEASE_VERSION-$env:ZED_RELEASE_CHANNEL.dbg.zip"
 UploadToBlobStorePublic -BucketName "zed-debug-symbols" -FileToUpload $debugArchive -BlobStoreKey $debugStoreKey
-if (Get-Command "sentry-cli" -ErrorAction SilentlyContinue) {
-    UploadToSentry
-}
+UploadToSentry
 
 if ($buildSuccess) {
     Write-Output "Build successful"
