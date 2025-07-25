@@ -1774,7 +1774,7 @@ impl Editor {
     ) -> Self {
         debug_assert!(
             display_map.is_none() || mode.is_minimap(),
-            "Providing a display map for a new editor is only intended for the minimap and might have unindended side effects otherwise!"
+            "Providing a display map for a new editor is only intended for the minimap and might have unintended side effects otherwise!"
         );
 
         let full_mode = mode.is_full();
@@ -6206,19 +6206,22 @@ impl Editor {
         let workspace = self.workspace()?;
 
         match action {
-            CodeActionsItem::Task(task_source_kind, resolved_task) => {
-                workspace.update(cx, |workspace, cx| {
+            CodeActionsItem::Task(task_source_kind, resolved_task) => workspace
+                .update(cx, |workspace, cx| {
                     workspace.schedule_resolved_task(
                         task_source_kind,
                         resolved_task,
                         false,
                         window,
                         cx,
-                    );
-
-                    Some(Task::ready(Ok(())))
+                    )
                 })
-            }
+                .map(|task| {
+                    cx.background_spawn(async move {
+                        task.await;
+                        Ok(())
+                    })
+                }),
             CodeActionsItem::CodeAction {
                 excerpt_id,
                 action,
@@ -8228,15 +8231,12 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((workspace, _)) = self.workspace.clone() else {
-            return;
-        };
-        let Some(project) = self.project.clone() else {
+        let Some(((workspace, _), project)) = self.workspace.clone().zip(self.project.clone())
+        else {
             return;
         };
 
-        // Try to find a closest, enclosing node using tree-sitter that has a
-        // task
+        // Try to find a closest, enclosing node using tree-sitter that has a task
         let Some((buffer, buffer_row, tasks)) = self
             .find_enclosing_node_task(cx)
             // Or find the task that's closest in row-distance.
@@ -8254,7 +8254,7 @@ impl Editor {
             let resolved = &mut resolved_task.resolved;
             resolved.reveal = reveal_strategy;
 
-            workspace
+            let task = workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.schedule_resolved_task(
                         task_source_kind,
@@ -8262,9 +8262,12 @@ impl Editor {
                         false,
                         window,
                         cx,
-                    );
+                    )
                 })
                 .ok()
+                .flatten()?;
+            task.await;
+            Some(())
         })
         .detach();
     }

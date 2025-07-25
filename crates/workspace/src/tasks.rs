@@ -53,7 +53,7 @@ impl Workspace {
         omit_history: bool,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> Option<Task<()>> {
         let spawn_in_terminal = resolved_task.resolved.clone();
         if !omit_history {
             if let Some(debugger_provider) = self.debugger_provider.as_ref() {
@@ -71,7 +71,7 @@ impl Workspace {
             });
         }
 
-        if let Some(terminal_provider) = self.terminal_provider.as_ref() {
+        self.terminal_provider.as_ref().map(|terminal_provider| {
             let task_status = terminal_provider.spawn(spawn_in_terminal, window, cx);
             cx.background_spawn(async move {
                 match task_status.await {
@@ -82,12 +82,11 @@ impl Workspace {
                             log::debug!("Task spawn failed, code: {:?}", status.code());
                         }
                     }
-                    Some(Err(e)) => log::error!("Task spawn failed: {e}"),
+                    Some(Err(e)) => log::error!("Task spawn failed: {e:#}"),
                     None => log::debug!("Task spawn got cancelled"),
                 }
             })
-            .detach();
-        }
+        })
     }
 
     pub fn start_debug_session(
