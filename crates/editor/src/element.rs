@@ -5730,7 +5730,6 @@ impl EditorElement {
         window.with_content_mask(
             Some(ContentMask {
                 bounds: layout.position_map.text_hitbox.bounds,
-                ..Default::default()
             }),
             |window| {
                 let editor = self.editor.read(cx);
@@ -6670,11 +6669,7 @@ impl EditorElement {
             } else {
                 let mut bounds = layout.hitbox.bounds;
                 bounds.origin.x += layout.gutter_hitbox.bounds.size.width;
-                let content_mask = ContentMask {
-                    bounds,
-                    ..Default::default()
-                };
-                window.with_content_mask(Some(content_mask), |window| {
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     block.element.paint(window, cx);
                 })
             }
@@ -8977,48 +8972,46 @@ impl Element for EditorElement {
             ..Default::default()
         };
         let rem_size = self.rem_size(cx);
+        let content_mask = ContentMask {
+            bounds,
+            ..Default::default()
+        };
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
-                window.with_content_mask(
-                    Some(ContentMask {
-                        bounds,
-                        ..Default::default()
-                    }),
-                    |window| {
-                        self.paint_mouse_listeners(layout, window, cx);
-                        self.paint_background(layout, window, cx);
-                        self.paint_indent_guides(layout, window, cx);
+                window.with_content_mask(Some(content_mask), |window| {
+                    self.paint_mouse_listeners(layout, window, cx);
+                    self.paint_background(layout, window, cx);
+                    self.paint_indent_guides(layout, window, cx);
 
-                        if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                            self.paint_blamed_display_rows(layout, window, cx);
-                            self.paint_line_numbers(layout, window, cx);
-                        }
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_blamed_display_rows(layout, window, cx);
+                        self.paint_line_numbers(layout, window, cx);
+                    }
 
-                        self.paint_text(layout, window, cx);
+                    self.paint_text(layout, window, cx);
 
-                        if layout.gutter_hitbox.size.width > Pixels::ZERO {
-                            self.paint_gutter_highlights(layout, window, cx);
-                            self.paint_gutter_indicators(layout, window, cx);
-                        }
+                    if layout.gutter_hitbox.size.width > Pixels::ZERO {
+                        self.paint_gutter_highlights(layout, window, cx);
+                        self.paint_gutter_indicators(layout, window, cx);
+                    }
 
-                        if !layout.blocks.is_empty() {
-                            window.with_element_namespace("blocks", |window| {
-                                self.paint_blocks(layout, window, cx);
-                            });
-                        }
-
+                    if !layout.blocks.is_empty() {
                         window.with_element_namespace("blocks", |window| {
-                            if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
-                                sticky_header.paint(window, cx)
-                            }
+                            self.paint_blocks(layout, window, cx);
                         });
+                    }
 
-                        self.paint_minimap(layout, window, cx);
-                        self.paint_scrollbars(layout, window, cx);
-                        self.paint_inline_completion_popover(layout, window, cx);
-                        self.paint_mouse_context_menu(layout, window, cx);
-                    },
-                );
+                    window.with_element_namespace("blocks", |window| {
+                        if let Some(mut sticky_header) = layout.sticky_buffer_header.take() {
+                            sticky_header.paint(window, cx)
+                        }
+                    });
+
+                    self.paint_minimap(layout, window, cx);
+                    self.paint_scrollbars(layout, window, cx);
+                    self.paint_inline_completion_popover(layout, window, cx);
+                    self.paint_mouse_context_menu(layout, window, cx);
+                });
             })
         })
     }
