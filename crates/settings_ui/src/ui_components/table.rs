@@ -597,7 +597,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                     col_idx,
                     &mut widths,
                     resize_behavior,
-                    -1
+                    -1,
                 );
             }
         } else {
@@ -610,7 +610,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                     col_idx,
                     &mut widths,
                     resize_behavior,
-                    1
+                    1,
                 );
             }
         }
@@ -1448,12 +1448,40 @@ impl Component for Table<3> {
 mod test {
     use super::*;
 
+    fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
+    }
+
+    fn cols_to_str<const COLS: usize>(cols: &[f32; COLS], total_size: f32) -> String {
+        cols.map(|f| "*".repeat(f32::round(f * total_size) as usize))
+            .join("|")
+    }
+
+    fn parse_resize_behavior<const COLS: usize>(
+        input: &str,
+        total_size: f32,
+    ) -> [ResizeBehavior; COLS] {
+        let mut resize_behavior = [ResizeBehavior::None; COLS];
+        let mut max_index = 0;
+        for (index, col) in input.split('|').enumerate() {
+            if col.starts_with('X') || col.is_empty() {
+                resize_behavior[index] = ResizeBehavior::None;
+            } else if col.starts_with('*') {
+                resize_behavior[index] = ResizeBehavior::MinSize(col.len() as f32 / total_size);
+            } else {
+                panic!("invalid test input: unrecognized resize behavior: {}", col);
+            }
+            max_index = index;
+        }
+
+        if max_index + 1 != COLS {
+            panic!("invalid test input: too many columns");
+        }
+        resize_behavior
+    }
+
     mod reset_column_size {
         use super::*;
-
-        fn is_almost_eq(a: &[f32], b: &[f32]) -> bool {
-            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-6)
-        }
 
         fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
             let mut widths = [f32::NAN; COLS];
@@ -1473,71 +1501,6 @@ mod test {
                 *width /= total;
             }
             (widths, total, column_index)
-        }
-
-        fn parse_resize_behavior<const COLS: usize>(
-            input: &str,
-            total_size: f32,
-        ) -> [ResizeBehavior; COLS] {
-            let mut resize_behavior = [ResizeBehavior::None; COLS];
-            let mut max_index = 0;
-            for (index, col) in input.split('|').enumerate() {
-                if col.starts_with('X') || col.is_empty() {
-                    resize_behavior[index] = ResizeBehavior::None;
-                } else if col.starts_with('*') {
-                    resize_behavior[index] = ResizeBehavior::MinSize(col.len() as f32 / total_size);
-                } else {
-                    panic!("invalid test input: unrecognized resize behavior: {}", col);
-                }
-                max_index = index;
-            }
-
-            if max_index + 1 != COLS {
-                panic!("invalid test input: too many columns");
-            }
-            resize_behavior
-        }
-
-        #[track_caller]
-        fn check_drag<const COLS: usize>(
-            distance: i32,
-            widths: &str,
-            expected: &str,
-            resize_behavior: &str,
-        ) {
-            let (mut widths, total_1, Some(column_index)) = parse::<COLS>(widths) else {
-                panic!("invalid test input: widths should be marked");
-            };
-            let (expected, total_2, None) = parse::<COLS>(expected) else {
-                panic!("invalid test input: expected should not be marked: {expected:?}");
-            };
-            assert_eq!(
-                total_1, total_2,
-                "invalid test input: total width not the same"
-            );
-            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
-
-            let distance = distance as f32 / total_1;
-
-            let result = ColumnWidths::drag_column_handle(
-                distance,
-                column_index,
-                &mut widths,
-                &resize_behavior,
-            );
-
-            let is_eq = is_almost_eq(&widths, &expected);
-            if !is_eq {
-                let result_str = widths
-                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
-                    .join("|");
-                let expected_str = expected
-                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
-                    .join("|");
-                panic!(
-                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
-                );
-            }
         }
 
         #[track_caller]
@@ -1573,12 +1536,8 @@ mod test {
             );
             let is_eq = is_almost_eq(&result, &expected);
             if !is_eq {
-                let result_str = result
-                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
-                    .join("|");
-                let expected_str = expected
-                    .map(|f| "*".repeat(f32::round(f * total_1) as usize))
-                    .join("|");
+                let result_str = cols_to_str(&result, total_1);
+                let expected_str = cols_to_str(&expected, total_1);
                 panic!(
                     "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
                 );
@@ -1596,36 +1555,6 @@ mod test {
                 }
             };
         }
-
-        macro_rules! check_drag {
-            (columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
-                check_drag!($cols, $dist, $snapshot, $expected, $resizing);
-            };
-            ($name:ident, columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
-                #[test]
-                fn $name() {
-                    check_drag::<$cols>($dist, $current, $expected, $resizing);
-                }
-            };
-        }
-
-        check_drag!(
-            basic_right_drag,
-            columns: 3,
-            distance: 1,
-            snapshot: "**|XX|**",
-            expected: "**|***|*",
-            minimums: "X|*|*",
-        );
-
-        check_drag!(
-            drag_left_against_mins,
-            columns: 5,
-            distance: -1,
-            snapshot: "*|*|*|X|*******",
-            expected: "*|*|*|*|*******",
-            minimums: "X|*|*|*|*",
-        );
 
         check_reset_size!(
             basic_right,
@@ -1733,6 +1662,95 @@ mod test {
             snapshot: "*|****|XXX|*|*|*",
             expected: "*|****|**|**|*|*",
             minimums: "X|*|*|*|*|*",
+        );
+    }
+
+    mod drag_handle {
+        use super::*;
+
+        fn parse<const COLS: usize>(input: &str) -> ([f32; COLS], f32, Option<usize>) {
+            let mut widths = [f32::NAN; COLS];
+            let column_index = input.replace("*", "").find("I");
+            for (index, col) in input.replace("I", "|").split('|').enumerate() {
+                widths[index] = col.len() as f32;
+            }
+
+            for w in widths {
+                assert!(w.is_finite(), "incorrect number of columns");
+            }
+            let total = widths.iter().sum::<f32>();
+            for width in &mut widths {
+                *width /= total;
+            }
+            (widths, total, column_index)
+        }
+
+        #[track_caller]
+        fn check<const COLS: usize>(
+            distance: i32,
+            widths: &str,
+            expected: &str,
+            resize_behavior: &str,
+        ) {
+            let (mut widths, total_1, Some(column_index)) = parse::<COLS>(widths) else {
+                panic!("invalid test input: widths should be marked");
+            };
+            let (expected, total_2, None) = parse::<COLS>(expected) else {
+                panic!("invalid test input: expected should not be marked: {expected:?}");
+            };
+            assert_eq!(
+                total_1, total_2,
+                "invalid test input: total width not the same"
+            );
+            let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
+
+            let distance = distance as f32 / total_1;
+
+            let result = ColumnWidths::drag_column_handle(
+                distance,
+                column_index,
+                &mut widths,
+                &resize_behavior,
+            );
+
+            let is_eq = is_almost_eq(&widths, &expected);
+            if !is_eq {
+                let result_str = cols_to_str(&widths, total_1);
+                let expected_str = cols_to_str(&expected, total_1);
+                panic!(
+                    "resize failed\ncomputed: {result_str}\nexpected: {expected_str}\n\ncomputed values: {result:?}\nexpected values: {expected:?}\n:minimum widths: {resize_behavior:?}"
+                );
+            }
+        }
+
+        macro_rules! check {
+            (columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, resizing: $resizing:expr $(,)?) => {
+                check!($cols, $dist, $snapshot, $expected, $resizing);
+            };
+            ($name:ident, columns: $cols:expr, distance: $dist:expr, snapshot: $current:expr, expected: $expected:expr, minimums: $resizing:expr $(,)?) => {
+                #[test]
+                fn $name() {
+                    check::<$cols>($dist, $current, $expected, $resizing);
+                }
+            };
+        }
+
+        check!(
+            basic_right_drag,
+            columns: 3,
+            distance: 1,
+            snapshot: "**|**I**",
+            expected: "**|***|*",
+            minimums: "X|*|*",
+        );
+
+        check!(
+            drag_left_against_mins,
+            columns: 5,
+            distance: -1,
+            snapshot: "*|*|*|*I*******",
+            expected: "*|*|*|*|*******",
+            minimums: "X|*|*|*|*",
         );
     }
 }
