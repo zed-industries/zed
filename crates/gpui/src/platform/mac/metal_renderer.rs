@@ -792,7 +792,6 @@ impl MetalRenderer {
                 .iter()
                 .map(|path| PathSprite {
                     bounds: path.bounds,
-                    color: Background::default(),
                 })
                 .collect();
         } else {
@@ -800,10 +799,7 @@ impl MetalRenderer {
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.bounds);
             }
-            sprites = vec![PathSprite {
-                bounds,
-                color: Background::default(),
-            }];
+            sprites = vec![PathSprite { bounds }];
         }
 
         align_offset(instance_offset);
@@ -1340,7 +1336,6 @@ enum PathRasterizationInputIndex {
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
-    pub color: Background,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

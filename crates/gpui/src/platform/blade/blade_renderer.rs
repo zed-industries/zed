@@ -109,7 +109,6 @@ struct ShaderSurfacesData {
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
-    color: Background,
 }
 
 #[derive(Clone, Debug)]
@@ -737,7 +736,6 @@ impl BladeRenderer {
                             .iter()
                             .map(|path| PathSprite {
                                 bounds: path.bounds,
-                                color: Background::default(),
                             })
                             .collect()
                     } else {
@@ -745,10 +743,7 @@ impl BladeRenderer {
                         for path in paths.iter().skip(1) {
                             bounds = bounds.union(&path.bounds);
                         }
-                        vec![PathSprite {
-                            bounds,
-                            color: Background::default(),
-                        }]
+                        vec![PathSprite { bounds }]
                     };
                     let instance_buf =
                         unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };

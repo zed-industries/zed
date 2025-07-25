@@ -990,7 +990,6 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
 
 struct PathSprite {
     bounds: Bounds,
-    color: Background,
 }
 var<storage, read> b_path_sprites: array<PathSprite>;
 
@@ -1012,7 +1011,7 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = PathVarying();
     out.position = device_position;
     out.texture_coords = texture_coords;
-    
+
     return out;
 }
 
