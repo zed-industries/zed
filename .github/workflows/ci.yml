@@ -269,6 +269,10 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
+      - name: Check that Cargo.lock is up to date
+        run: |
+          cargo update --frozen --workspace
+
       - name: cargo clippy
         run: ./script/clippy
 
