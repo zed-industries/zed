@@ -2855,9 +2855,9 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { link } => this
+                    PushPrLink { hint, link } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("Open Pull Request", move |_, cx| cx.open_url(&link)),
+                        .action(hint, move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
