@@ -1232,7 +1232,7 @@ impl GitRepository for RealGitRepository {
 
                 anyhow::ensure!(
                     output.status.success(),
-                    "Failed to commit:\n{}",
+                    "Failed to stash:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())
