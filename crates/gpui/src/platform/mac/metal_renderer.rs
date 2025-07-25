@@ -1268,7 +1268,7 @@ fn build_path_rasterization_pipeline_state(
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
     if path_sample_count > 1 {
         descriptor.set_raster_sample_count(path_sample_count as _);
-        descriptor.set_alpha_to_coverage_enabled(true);
+        descriptor.set_alpha_to_coverage_enabled(false);
     }
     let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
     color_attachment.set_pixel_format(pixel_format);
