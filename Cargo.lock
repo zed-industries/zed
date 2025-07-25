@@ -4802,6 +4802,7 @@ dependencies = [
  "util",
  "workspace-hack",
  "zed",
+ "zlog",
 ]
 
 [[package]]

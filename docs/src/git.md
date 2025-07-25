@@ -1,5 +1,4 @@
-{#zed-meta Zed is a text editor that supports lots of Git features
-}
+{#zed-meta Zed is a text editor that supports lots of Git features }
 
 # Git
 

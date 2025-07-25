@@ -21,6 +21,8 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
 fn main() -> Result<()> {
+    zlog::init();
+    zlog::init_output_stderr();
     // call a zed:: function so everything in `zed` crate is linked and
     // all actions in the actual app are registered
     zed::stdout_is_a_pty();
@@ -37,6 +39,7 @@ fn main() -> Result<()> {
             }
         }
         Some("postprocess") => {
+            let logger = zlog::scoped!("render");
             let mut ctx = mdbook::renderer::RenderContext::from_json(io::stdin())?;
             let output = ctx
                 .config
@@ -51,7 +54,7 @@ fn main() -> Result<()> {
             let root_dir = ctx.destination.clone();
             let mut files = Vec::with_capacity(128);
             let mut queue = Vec::with_capacity(64);
-            queue.push(std::path::PathBuf::from(root_dir));
+            queue.push(root_dir.clone());
             while let Some(dir) = queue.pop() {
                 for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
                     let Ok(entry) = entry else {
@@ -71,7 +74,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
-            eprintln!("Processing {} `.html` files", files.len());
+            zlog::info!(logger => "Processing {} `.html` files", files.len());
             let regex = Regex::new(r"<p>\s*\{#zed-meta \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
             for file in files {
                 let contents = std::fs::read_to_string(&file)?;
@@ -81,11 +84,22 @@ fn main() -> Result<()> {
                     String::new()
                 });
                 let Some(meta_description) = meta_description else {
+                    if contents.find("#zed-meta").is_some() {
+                        zlog::error!(logger => "Failed to parse meta for {:?}", pretty_path(&file, &root_dir));
+                    } else {
+                        zlog::warn!(logger => "No meta found for {:?}", pretty_path(&file, &root_dir));
+                    }
                     continue;
                 };
-                eprintln!("Updating {:?}", &file);
+                zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
                 let contents = contents.replace("#description#", &meta_description);
                 std::fs::write(file, contents)?;
+            }
+            fn pretty_path<'a>(
+                path: &'a std::path::PathBuf,
+                root: &'a std::path::PathBuf,
+            ) -> &'a std::path::Path {
+                &path.strip_prefix(&root).unwrap_or(&path)
             }
         }
         _ => handle_preprocessing()?,
