@@ -720,6 +720,11 @@ workspace-hack = { path = "tooling/workspace-hack" }
 split-debuginfo = "unpacked"
 codegen-units = 16
 
+# mirror configuration for crates compiled for the build platform
+# (without this cargo will compile ~400 crates twice)
+[profile.dev.build-override]
+codegen-units = 16
+
 [profile.dev.package]
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
