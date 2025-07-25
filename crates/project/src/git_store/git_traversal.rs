@@ -1,6 +1,6 @@
 use collections::HashMap;
-use git::status::GitSummary;
-use std::{ops::Deref, path::Path};
+use git::{repository::RepoPath, status::GitSummary};
+use std::{collections::BTreeMap, ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
 use worktree::{Entry, PathProgress, PathTarget, Traversal};
@@ -11,7 +11,7 @@ use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+    repo_root_to_snapshot: BTreeMap<&'a Path, &'a RepositorySnapshot>,
     repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
@@ -20,14 +20,29 @@ impl<'a> GitTraversal<'a> {
         repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         traversal: Traversal<'a>,
     ) -> GitTraversal<'a> {
+        let repo_root_to_snapshot = repo_snapshots
+            .values()
+            .map(|snapshot| (&*snapshot.work_directory_abs_path, snapshot))
+            .collect();
         let mut this = GitTraversal {
             traversal,
-            repo_snapshots,
             current_entry_summary: None,
             repo_location: None,
+            repo_root_to_snapshot,
         };
         this.synchronize_statuses(true);
         this
+    }
+
+    fn repo_root_for_path(&self, path: &Path) -> Option<(&'a RepositorySnapshot, RepoPath)> {
+        let (_, snapshot) = self
+            .repo_root_to_snapshot
+            .range(Path::new("")..=path)
+            .last()?;
+
+        snapshot
+            .abs_path_to_repo_path(path)
+            .map(|repo_path| (*snapshot, repo_path))
     }
 
     fn synchronize_statuses(&mut self, reset: bool) {
@@ -42,15 +57,7 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Some((repo, repo_path)) = self
-            .repo_snapshots
-            .values()
-            .filter_map(|repo_snapshot| {
-                let repo_path = repo_snapshot.abs_path_to_repo_path(&abs_path)?;
-                Some((repo_snapshot, repo_path))
-            })
-            .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
-        else {
+        let Some((repo, repo_path)) = self.repo_root_for_path(&abs_path) else {
             self.repo_location = None;
             return;
         };
