@@ -480,6 +480,7 @@ impl ResizeBehavior {
 
 pub struct ColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
+    visiable_widths: [DefiniteLength; COLS],
     cached_bounds_width: Pixels,
     initialized: bool,
 }
@@ -488,6 +489,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
+            visiable_widths: [DefiniteLength::default(); COLS],
             cached_bounds_width: Default::default(),
             initialized: false,
         }
@@ -525,6 +527,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             resize_behavior,
         );
         self.widths = updated_widths.map(DefiniteLength::Fraction);
+        self.visiable_widths = self.widths;
     }
 
     fn reset_to_initial_size(
@@ -658,7 +661,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         let diff = drag_fraction - col_position - column_handle_width / 2.0;
 
         Self::drag_column_handle(diff, col_idx, &mut widths, resize_behavior);
-        self.widths = widths.map(DefiniteLength::Fraction);
+        self.visiable_widths = widths.map(DefiniteLength::Fraction);
     }
 
     fn propagate_resize_diff_right(
@@ -836,7 +839,7 @@ impl<const COLS: usize> TableWidths<COLS> {
     fn lengths(&self, cx: &App) -> [Length; COLS] {
         self.current
             .as_ref()
-            .map(|entity| entity.read(cx).widths.map(Length::Definite))
+            .map(|entity| entity.read(cx).visiable_widths.map(Length::Definite))
             .unwrap_or(self.initial.map(Length::Definite))
     }
 }
@@ -949,6 +952,7 @@ impl<const COLS: usize> Table<COLS> {
                 if !widths.initialized {
                     widths.initialized = true;
                     widths.widths = table_widths.initial;
+                    widths.visiable_widths = widths.widths;
                 }
             })
         }
@@ -1174,18 +1178,27 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 .ok();
                         }
                     })
-                    .on_children_prepainted(move |bounds, _, cx| {
+                    .on_children_prepainted({
+                        let widths = widths.clone();
+                        move |bounds, _, cx| {
+                            widths
+                                .update(cx, |widths, _| {
+                                    // This works because all children x axis bounds are the same
+                                    widths.cached_bounds_width =
+                                        bounds[0].right() - bounds[0].left();
+                                })
+                                .ok();
+                        }
+                    })
+                    .on_drop::<DraggedColumn>(move |_, _, cx| {
                         widths
                             .update(cx, |widths, _| {
-                                // This works because all children x axis bounds are the same
-                                widths.cached_bounds_width = bounds[0].right() - bounds[0].left();
+                                widths.widths = widths.visiable_widths;
                             })
                             .ok();
+                        // Finish the resize operation
                     })
                 }
-            })
-            .on_drop::<DraggedColumn>(|_, _, _| {
-                // Finish the resize operation
             })
             .child(
                 div()
