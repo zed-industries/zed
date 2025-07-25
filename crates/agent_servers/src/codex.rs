@@ -210,12 +210,13 @@ impl AgentConnection for CodexConnection {
             let client = client.context("MCP server is not initialized yet")?;
 
             let (new_cancel_tx, cancel_rx) = oneshot::channel();
-            let mut sessions = sessions.borrow_mut();
-            let session = sessions
-                .get_mut(&params.session_id)
-                .context("Session not found")?;
-            session.cancel_tx.replace(new_cancel_tx);
-            drop(sessions);
+            {
+                let mut sessions = sessions.borrow_mut();
+                let session = sessions
+                    .get_mut(&params.session_id)
+                    .context("Session not found")?;
+                session.cancel_tx.replace(new_cancel_tx);
+            }
 
             let result = client
                 .request_with::<requests::CallTool>(
