@@ -133,8 +133,12 @@ pub enum Operator {
     ReplaceWithRegister,
     Exchange,
     HelixMatch,
-    SelectNext,
-    SelectPrevious,
+    HelixNext {
+        around: bool,
+    },
+    HelixPrevious {
+        around: bool,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1028,8 +1032,8 @@ impl Operator {
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
             Operator::HelixMatch => "helix_m",
-            Operator::SelectNext { .. } => "helix_]",
-            Operator::SelectPrevious { .. } => "helix_[",
+            Operator::HelixNext { .. } => "helix_next",
+            Operator::HelixPrevious { .. } => "helix_previous",
         }
     }
 
@@ -1044,8 +1048,8 @@ impl Operator {
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
             Operator::HelixMatch => "m".to_string(),
-            Operator::SelectNext => "]".to_string(),
-            Operator::SelectPrevious => "[".to_string(),
+            Operator::HelixNext { .. } => "]".to_string(),
+            Operator::HelixPrevious { .. } => "[".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1086,8 +1090,8 @@ impl Operator {
             | Operator::OppositeCase
             | Operator::ToggleComments
             | Operator::HelixMatch
-            | Operator::SelectNext { .. }
-            | Operator::SelectPrevious { .. } => false,
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
         }
     }
 
@@ -1112,8 +1116,8 @@ impl Operator {
             | Operator::ChangeSurrounds { target: None }
             | Operator::DeleteSurrounds
             | Operator::Exchange
-            | Operator::SelectNext { .. }
-            | Operator::SelectPrevious { .. } => true,
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }

@@ -785,19 +785,17 @@ impl Vim {
                 vim.push_operator(Operator::HelixMatch, window, cx)
             });
             Vim::action(editor, cx, |vim, action: &PushHelixNext, window, cx| {
-                vim.push_operator(Operator::SelectNext, window, cx);
                 vim.push_operator(
-                    Operator::Object {
+                    Operator::HelixNext {
                         around: action.around,
                     },
                     window,
                     cx,
-                )
+                );
             });
             Vim::action(editor, cx, |vim, action: &PushHelixPrevious, window, cx| {
-                vim.push_operator(Operator::SelectPrevious, window, cx);
                 vim.push_operator(
-                    Operator::Object {
+                    Operator::HelixPrevious {
                         around: action.around,
                     },
                     window,

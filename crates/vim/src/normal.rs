@@ -498,14 +498,16 @@ impl Vim {
                 Some(Operator::HelixMatch) => {
                     self.select_current_object(object, around, window, cx)
                 }
-                Some(Operator::SelectNext) => self.select_next_object(object, around, window, cx),
-                Some(Operator::SelectPrevious) => {
-                    self.select_previous_object(object, around, window, cx)
-                }
                 _ => {
                     // Can't do anything for namespace operators. Ignoring
                 }
             },
+            Some(Operator::HelixNext { around }) => {
+                self.select_next_object(object, around, window, cx);
+            }
+            Some(Operator::HelixPrevious { around }) => {
+                self.select_previous_object(object, around, window, cx);
+            }
             Some(Operator::DeleteSurrounds) => {
                 waiting_operator = Some(Operator::DeleteSurrounds);
             }

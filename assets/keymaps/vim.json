@@ -528,7 +528,7 @@
     }
   },
   {
-    "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "context": "vim_operator == a || vim_operator == i || vim_operator == cs || vim_operator == helix_next || vim_operator == helix_previous",
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignore_punctuation": true }],
