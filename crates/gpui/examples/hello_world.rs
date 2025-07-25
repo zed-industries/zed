@@ -24,14 +24,14 @@ impl Render for HelloWorld {
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
             .child(
-                div().rounded_md().overflow_hidden().child(
+                div().rounded_2xl().overflow_hidden().child(
                     div()
                         .bg(gpui::black())
                         .text_color(gpui::white())
                         .text_base()
                         .py_2()
-                        .px_5()
-                        .child("Let build applications with Rust and GPUI."),
+                        .px_7()
+                        .child("Let build applications with GPUI."),
                 ),
             )
             .child(

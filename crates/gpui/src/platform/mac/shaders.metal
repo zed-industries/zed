@@ -103,17 +103,17 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     input.background_solid, input.background_color0, input.background_color1);
 
   // Apply content_mask's corner radii to the quad's corner radii.
-  Corners_ScaledPixels corner_radii = quad.corner_radii;
+  Corners_ScaledPixels cliped_corner_radii;
   Corners_ScaledPixels mask_corner_radii = quad.content_mask.corner_radii;
-  corner_radii.top_left = max(corner_radii.top_left, mask_corner_radii.top_left);
-  corner_radii.top_right = max(corner_radii.top_right, mask_corner_radii.top_right);
-  corner_radii.bottom_right = max(corner_radii.bottom_right, mask_corner_radii.bottom_right);
-  corner_radii.bottom_left = max(corner_radii.bottom_left, mask_corner_radii.bottom_left);
+  cliped_corner_radii.top_left = max(quad.corner_radii.top_left, mask_corner_radii.top_left);
+  cliped_corner_radii.top_right = max(quad.corner_radii.top_right, mask_corner_radii.top_right);
+  cliped_corner_radii.bottom_right = max(quad.corner_radii.bottom_right, mask_corner_radii.bottom_right);
+  cliped_corner_radii.bottom_left = max(quad.corner_radii.bottom_left, mask_corner_radii.bottom_left);
 
-  bool unrounded = corner_radii.top_left == 0.0 &&
-    corner_radii.bottom_left == 0.0 &&
-    corner_radii.top_right == 0.0 &&
-    corner_radii.bottom_right == 0.0;
+  bool unrounded = cliped_corner_radii.top_left == 0.0 &&
+    cliped_corner_radii.bottom_left == 0.0 &&
+    cliped_corner_radii.top_right == 0.0 &&
+    cliped_corner_radii.bottom_right == 0.0;
 
   // Fast path when the quad is not rounded and doesn't have any border
   if (quad.border_widths.top == 0.0 &&
@@ -134,7 +134,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   const float antialias_threshold = 0.5;
 
   // Radius of the nearest corner
-  float corner_radius = pick_corner_radius(center_to_point, corner_radii);
+  float corner_radius = pick_corner_radius(center_to_point, cliped_corner_radii);
 
   // Width of the nearest borders
   float2 border = float2(
@@ -261,10 +261,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // When corners are rounded, the dashes are laid out clockwise
         // around the whole perimeter.
 
-        float r_tr = quad.corner_radii.top_right;
-        float r_br = quad.corner_radii.bottom_right;
-        float r_bl = quad.corner_radii.bottom_left;
-        float r_tl = quad.corner_radii.top_left;
+        float r_tr = cliped_corner_radii.top_right;
+        float r_br = cliped_corner_radii.bottom_right;
+        float r_bl = cliped_corner_radii.bottom_left;
+        float r_tl = cliped_corner_radii.top_left;
 
         float w_t = quad.border_widths.top;
         float w_r = quad.border_widths.right;
