@@ -16,44 +16,45 @@ struct PaintingViewer {
 impl PaintingViewer {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let mut lines = vec![];
-        let mut background_quads = vec![];
 
-        // Add black background quads beneath transparent paths.
-        background_quads.push((
-            Bounds {
-                origin: point(px(70.), px(70.)),
-                size: size(px(40.), px(40.)),
-            },
-            gpui::black().into(),
-        ));
-        background_quads.push((
-            Bounds {
-                origin: point(px(170.), px(70.)),
-                size: size(px(40.), px(40.)),
-            },
-            gpui::black().into(),
-        ));
-        background_quads.push((
-            Bounds {
-                origin: point(px(270.), px(70.)),
-                size: size(px(40.), px(40.)),
-            },
-            gpui::black().into(),
-        ));
-        background_quads.push((
-            Bounds {
-                origin: point(px(370.), px(70.)),
-                size: size(px(40.), px(40.)),
-            },
-            gpui::black().into(),
-        ));
-        background_quads.push((
-            Bounds {
-                origin: point(px(450.), px(50.)),
-                size: size(px(80.), px(80.)),
-            },
-            gpui::black().into(),
-        ));
+        // Black squares beneath transparent paths.
+        let background_quads = vec![
+            (
+                Bounds {
+                    origin: point(px(70.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(170.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(270.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(370.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(450.), px(50.)),
+                    size: size(px(80.), px(80.)),
+                },
+                gpui::black().into(),
+            ),
+        ];
 
         // 50% opaque red path that extends across black quad.
         let mut builder = PathBuilder::fill();
