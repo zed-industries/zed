@@ -584,7 +584,6 @@ impl Style {
                 };
 
                 let corner_radii = self.corner_radii.to_pixels(rem_size);
-                dbg!(&corner_radii);
 
                 Some(ContentMask {
                     bounds,

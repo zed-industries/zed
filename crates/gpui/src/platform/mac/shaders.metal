@@ -102,10 +102,18 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
-  bool unrounded = quad.corner_radii.top_left == 0.0 &&
-    quad.corner_radii.bottom_left == 0.0 &&
-    quad.corner_radii.top_right == 0.0 &&
-    quad.corner_radii.bottom_right == 0.0;
+  // Apply content_mask's corner radii to the quad's corner radii.
+  Corners_ScaledPixels corner_radii = quad.corner_radii;
+  Corners_ScaledPixels mask_corner_radii = quad.content_mask.corner_radii;
+  corner_radii.top_left = max(corner_radii.top_left, mask_corner_radii.top_left);
+  corner_radii.top_right = max(corner_radii.top_right, mask_corner_radii.top_right);
+  corner_radii.bottom_right = max(corner_radii.bottom_right, mask_corner_radii.bottom_right);
+  corner_radii.bottom_left = max(corner_radii.bottom_left, mask_corner_radii.bottom_left);
+
+  bool unrounded = corner_radii.top_left == 0.0 &&
+    corner_radii.bottom_left == 0.0 &&
+    corner_radii.top_right == 0.0 &&
+    corner_radii.bottom_right == 0.0;
 
   // Fast path when the quad is not rounded and doesn't have any border
   if (quad.border_widths.top == 0.0 &&
@@ -126,7 +134,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   const float antialias_threshold = 0.5;
 
   // Radius of the nearest corner
-  float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
+  float corner_radius = pick_corner_radius(center_to_point, corner_radii);
 
   // Width of the nearest borders
   float2 border = float2(
