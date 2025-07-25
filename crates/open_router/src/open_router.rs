@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -413,6 +413,31 @@ pub struct ModelArchitecture {
     pub input_modalities: Vec<String>,
 }
 
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ListModelEndpointsResponse {
+    pub data: ModelEndpointData,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct ModelEndpointData {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub endpoints: Vec<Endpoint>,
+}
+
+// https://openrouter.ai/docs/api-reference/list-endpoints-for-a-model
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct Endpoint {
+    pub name: String,
+    pub context_length: u64,
+    pub provider_name: String,
+    pub quantization: Option<String>,
+    pub max_completion_tokens: Option<u64>,
+    pub max_prompt_tokens: Option<u64>,
+    pub uptime_last_30m: Option<f32>,
+}
+
 pub async fn complete(
     client: &dyn HttpClient,
     api_url: &str,
@@ -643,4 +668,34 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
             body,
         ))
     }
+}
+
+/// Get the endpoints for a model, in openrouter.
+///
+/// An endpoint is a service provider who does the model inference, also called
+/// "provider" in the OpenRouter web page.
+pub async fn get_model_endpoints(
+    model: &Model,
+    client: &dyn HttpClient,
+    api_url: &str,
+) -> Result<Vec<Endpoint>> {
+    let parts: Vec<_> = model.name.split('/').collect();
+    let [author, slug] = parts.as_slice() else {
+        bail!("Can't parse model id: {}", model.name)
+    };
+    let request = HttpRequest::builder()
+        .method(Method::GET)
+        .uri(format!("{api_url}/models/{author}/{slug}/endpoints"))
+        .body(AsyncBody::default())?;
+    let mut response = client.send(request).await?;
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    if response.status().is_success() == false {
+        bail!("Failed to call OpenRouter API.")
+    }
+
+    let response: ListModelEndpointsResponse = serde_json::from_str(&body)
+        .context("Failed to parse OpenRouter model endpoints response")?;
+    Ok(response.data.endpoints)
 }

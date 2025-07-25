@@ -400,6 +400,18 @@ pub struct LanguageModelResponseMessage {
     pub content: Option<String>,
 }
 
+// https://openrouter.ai/docs/api-reference/list-endpoints-for-a-model
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct LanguageModelEndpoint {
+    pub name: String,
+    pub context_length: Option<u64>,
+    pub quantization: Option<String>,
+    /// Range: 0-100
+    ///
+    /// e.g. Uptime percentage in last 30mins.
+    pub availability: Option<f32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

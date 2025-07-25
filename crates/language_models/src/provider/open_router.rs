@@ -9,13 +9,16 @@ use gpui::{
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelEndpoint, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage,
 };
+use log::error;
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, get_model_endpoints, list_models,
+    stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -436,6 +439,28 @@ impl LanguageModel for OpenRouterLanguageModel {
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
+    }
+
+    async fn endpoints(&self) -> Vec<LanguageModelEndpoint> {
+        let Ok(api_url) = cx.read_entity(&self.state, |state, cx| {
+            let settings = &AllLanguageModelSettings::get_global(cx).open_router;
+            settings.api_url.clone()
+        }) else {
+            error!("Failed to get api_url when getting openrouter endpoints");
+            return vec![];
+        };
+
+        let openrouter_endpoints = get_model_endpoints(self, &self.http_client, &api_url);
+
+        openrouter_endpoints
+            .iter()
+            .map(|e| LanguageModelEndpoint {
+                name: e.provider_name,
+                context_length: Some(e.context_length),
+                quantization: e.quantization,
+                availability: e.uptime_last_30m,
+            })
+            .collect()
     }
 }
 
