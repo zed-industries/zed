@@ -531,7 +531,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     }
 
     fn reset_to_initial_size(
-        mut col_idx: usize,
+        col_idx: usize,
         mut widths: [f32; COLS],
         initial_sizes: [f32; COLS],
         resize_behavior: &[ResizeBehavior; COLS],
@@ -573,15 +573,15 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         //      grow the column to the left of the handle as much as we can shrink columns to the right of the handle
         //
 
-        let mut diff = initial_sizes[col_idx] - widths[col_idx];
+        let diff = initial_sizes[col_idx] - widths[col_idx];
 
         let left_diff =
             initial_sizes[..col_idx].iter().sum::<f32>() - widths[..col_idx].iter().sum::<f32>();
         let right_diff = initial_sizes[col_idx + 1..].iter().sum::<f32>()
             - widths[col_idx + 1..].iter().sum::<f32>();
 
-        let mut shrinking = diff < 0.0;
-        let go_left_first = if (diff < 0.0) {
+        let shrinking = diff < 0.0;
+        let go_left_first = if diff < 0.0 {
             left_diff > right_diff
         } else {
             left_diff < right_diff
@@ -684,7 +684,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
-        if !resize_behavior[col_idx].min_size().is_some() {
+        if resize_behavior[col_idx].min_size().is_none() {
             return diff;
         }
 
