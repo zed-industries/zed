@@ -262,7 +262,9 @@ fn update_command_palette_filter(cx: &mut App) {
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
+            filter.hide_namespace("copilot");
             filter.hide_namespace("zed_predict_onboarding");
+
             filter.hide_namespace("edit_prediction");
 
             use editor::actions::{
@@ -282,6 +284,7 @@ fn update_command_palette_filter(cx: &mut App) {
         } else {
             filter.show_namespace("agent");
             filter.show_namespace("assistant");
+            filter.show_namespace("copilot");
             filter.show_namespace("zed_predict_onboarding");
 
             filter.show_namespace("edit_prediction");
