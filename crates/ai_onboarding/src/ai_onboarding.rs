@@ -16,6 +16,7 @@ use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, TintColor, Tooltip, prelude::*};
 
+#[derive(IntoElement)]
 pub struct BulletItem {
     label: SharedString,
 }
@@ -28,18 +29,27 @@ impl BulletItem {
     }
 }
 
-impl IntoElement for BulletItem {
-    type Element = AnyElement;
+impl RenderOnce for BulletItem {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let line_height = 0.85 * window.line_height();
 
-    fn into_element(self) -> Self::Element {
         ListItem::new("list-item")
             .selectable(false)
-            .start_slot(
-                Icon::new(IconName::Dash)
-                    .size(IconSize::XSmall)
-                    .color(Color::Hidden),
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Hidden),
+                        ),
+                    )
+                    .child(div().w_full().min_w_0().child(Label::new(self.label))),
             )
-            .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
 }
@@ -183,6 +193,7 @@ impl ZedAiOnboarding {
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Upgrade To Pro Clicked", state = "young-account");
                             cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
                         }),
                 )
@@ -210,6 +221,7 @@ impl ZedAiOnboarding {
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "post-sign-in");
                             cx.open_url(&zed_urls::start_trial_url(cx))
                         }),
                 )
@@ -234,7 +246,10 @@ impl ZedAiOnboarding {
                     .icon(IconName::ArrowUpRight)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::XSmall)
-                    .on_click(move |_, _window, cx| cx.open_url(&zed_urls::terms_of_service(cx))),
+                    .on_click(move |_, _window, cx| {
+                        telemetry::event!("Review Terms of Service Clicked");
+                        cx.open_url(&zed_urls::terms_of_service(cx))
+                    }),
             )
             .child(
                 Button::new("accept_terms", "Accept")
@@ -242,7 +257,9 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
-                        move |_, window, cx| (callback)(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Terms of Service Accepted");
+                            (callback)(window, cx)}
                     }),
             )
             .into_any_element()
@@ -267,7 +284,10 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click({
                         let callback = self.sign_in.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "pre-sign-in");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()
@@ -294,7 +314,13 @@ impl ZedAiOnboarding {
                                     IconButton::new("dismiss_onboarding", IconName::Close)
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text("Dismiss"))
-                                        .on_click(move |_, window, cx| callback(window, cx)),
+                                        .on_click(move |_, window, cx| {
+                                            telemetry::event!(
+                                                "Banner Dismissed",
+                                                source = "AI Onboarding",
+                                            );
+                                            callback(window, cx)
+                                        }),
                                 ),
                             )
                         },
@@ -331,7 +357,13 @@ impl ZedAiOnboarding {
                             IconButton::new("dismiss_onboarding", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(move |_, window, cx| callback(window, cx)),
+                                .on_click(move |_, window, cx| {
+                                    telemetry::event!(
+                                        "Banner Dismissed",
+                                        source = "AI Onboarding",
+                                    );
+                                    callback(window, cx)
+                                }),
                         ),
                     )
                 },
@@ -351,7 +383,9 @@ impl ZedAiOnboarding {
             .child(
                 List::new()
                     .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("pro", "Continue with Zed Pro")
@@ -359,7 +393,10 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Outlined)
                     .on_click({
                         let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()
