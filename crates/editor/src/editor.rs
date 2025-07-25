@@ -10878,17 +10878,6 @@ impl Editor {
         });
     }
 
-    pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
-        self.manipulate_text(window, cx, |text| {
-            let has_upper_case_characters = text.chars().any(|c| c.is_uppercase());
-            if has_upper_case_characters {
-                text.to_lowercase()
-            } else {
-                text.to_uppercase()
-            }
-        })
-    }
-
     fn manipulate_immutable_lines<Fn>(
         &mut self,
         window: &mut Window,
@@ -11141,6 +11130,26 @@ impl Editor {
                     }
                     t
                 })
+        })
+    }
+
+    pub fn convert_to_sentence_case(
+        &mut self,
+        _: &ConvertToSentenceCase,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |text| text.to_case(Case::Sentence))
+    }
+
+    pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
+        self.manipulate_text(window, cx, |text| {
+            let has_upper_case_characters = text.chars().any(|c| c.is_uppercase());
+            if has_upper_case_characters {
+                text.to_lowercase()
+            } else {
+                text.to_uppercase()
+            }
         })
     }
 
@@ -16968,7 +16977,7 @@ impl Editor {
         now: Instant,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<TransactionId> {
         self.end_selection(window, cx);
         if let Some(tx_id) = self
             .buffer
@@ -16978,7 +16987,10 @@ impl Editor {
                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
-            })
+            });
+            Some(tx_id)
+        } else {
+            None
         }
     }
 
@@ -17004,6 +17016,17 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn modify_transaction_selection_history(
+        &mut self,
+        transaction_id: TransactionId,
+        modify: impl FnOnce(&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)),
+    ) -> bool {
+        self.selection_history
+            .transaction_mut(transaction_id)
+            .map(modify)
+            .is_some()
     }
 
     pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut Context<Self>) {

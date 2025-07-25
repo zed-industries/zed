@@ -4725,6 +4725,23 @@ async fn test_toggle_case(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_convert_to_sentence_case(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        «implement-windows-supportˇ»
+    "});
+    cx.update_editor(|e, window, cx| {
+        e.convert_to_sentence_case(&ConvertToSentenceCase, window, cx)
+    });
+    cx.assert_editor_state(indoc! {"
+        «Implement windows supportˇ»
+    "});
+}
+
+#[gpui::test]
 async fn test_manipulate_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -16864,7 +16881,7 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_mutlibuffer_in_navigation_history(cx: &mut TestAppContext) {
+async fn test_multibuffer_in_navigation_history(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let cols = 4;

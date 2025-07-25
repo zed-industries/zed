@@ -440,7 +440,7 @@ pub struct AgentPanel {
     local_timezone: UtcOffset,
     active_view: ActiveView,
     acp_message_history:
-        Rc<RefCell<crate::acp::MessageHistory<agentic_coding_protocol::SendUserMessageParams>>>,
+        Rc<RefCell<crate::acp::MessageHistory<Vec<agent_client_protocol::ContentBlock>>>>,
     previous_view: Option<ActiveView>,
     history_store: Entity<HistoryStore>,
     history: Entity<ThreadHistory>,
@@ -564,6 +564,17 @@ impl AgentPanel {
         let inline_assist_context_store =
             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
+        let thread_id = thread.read(cx).id().clone();
+
+        let history_store = cx.new(|cx| {
+            HistoryStore::new(
+                thread_store.clone(),
+                context_store.clone(),
+                [HistoryEntryId::Thread(thread_id)],
+                cx,
+            )
+        });
+
         let message_editor = cx.new(|cx| {
             MessageEditor::new(
                 fs.clone(),
@@ -573,18 +584,9 @@ impl AgentPanel {
                 prompt_store.clone(),
                 thread_store.downgrade(),
                 context_store.downgrade(),
+                Some(history_store.downgrade()),
                 thread.clone(),
                 window,
-                cx,
-            )
-        });
-
-        let thread_id = thread.read(cx).id().clone();
-        let history_store = cx.new(|cx| {
-            HistoryStore::new(
-                thread_store.clone(),
-                context_store.clone(),
-                [HistoryEntryId::Thread(thread_id)],
                 cx,
             )
         });
@@ -851,6 +853,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
+                Some(self.history_store.downgrade()),
                 thread.clone(),
                 window,
                 cx,
@@ -1124,6 +1127,7 @@ impl AgentPanel {
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
                 self.context_store.downgrade(),
+                Some(self.history_store.downgrade()),
                 thread.clone(),
                 window,
                 cx,
@@ -2012,65 +2016,69 @@ impl AgentPanel {
             )
             .anchor(Corner::TopRight)
             .with_handle(self.agent_panel_menu_handle.clone())
-            .menu(move |window, cx| {
-                Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
-                    if let Some(usage) = usage {
+            .menu({
+                let focus_handle = focus_handle.clone();
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |mut menu, _window, _| {
+                        menu = menu.context(focus_handle.clone());
+                        if let Some(usage) = usage {
+                            menu = menu
+                                .header_with_link("Prompt Usage", "Manage", account_url.clone())
+                                .custom_entry(
+                                    move |_window, cx| {
+                                        let used_percentage = match usage.limit {
+                                            UsageLimit::Limited(limit) => {
+                                                Some((usage.amount as f32 / limit as f32) * 100.)
+                                            }
+                                            UsageLimit::Unlimited => None,
+                                        };
+
+                                        h_flex()
+                                            .flex_1()
+                                            .gap_1p5()
+                                            .children(used_percentage.map(|percent| {
+                                                ProgressBar::new("usage", percent, 100., cx)
+                                            }))
+                                            .child(
+                                                Label::new(match usage.limit {
+                                                    UsageLimit::Limited(limit) => {
+                                                        format!("{} / {limit}", usage.amount)
+                                                    }
+                                                    UsageLimit::Unlimited => {
+                                                        format!("{} / ∞", usage.amount)
+                                                    }
+                                                })
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                            )
+                                            .into_any_element()
+                                    },
+                                    move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                                )
+                                .separator()
+                        }
+
                         menu = menu
-                            .header_with_link("Prompt Usage", "Manage", account_url.clone())
-                            .custom_entry(
-                                move |_window, cx| {
-                                    let used_percentage = match usage.limit {
-                                        UsageLimit::Limited(limit) => {
-                                            Some((usage.amount as f32 / limit as f32) * 100.)
-                                        }
-                                        UsageLimit::Unlimited => None,
-                                    };
-
-                                    h_flex()
-                                        .flex_1()
-                                        .gap_1p5()
-                                        .children(used_percentage.map(|percent| {
-                                            ProgressBar::new("usage", percent, 100., cx)
-                                        }))
-                                        .child(
-                                            Label::new(match usage.limit {
-                                                UsageLimit::Limited(limit) => {
-                                                    format!("{} / {limit}", usage.amount)
-                                                }
-                                                UsageLimit::Unlimited => {
-                                                    format!("{} / ∞", usage.amount)
-                                                }
-                                            })
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                        )
-                                        .into_any_element()
-                                },
-                                move |_, cx| cx.open_url(&zed_urls::account_url(cx)),
+                            .header("MCP Servers")
+                            .action(
+                                "View Server Extensions",
+                                Box::new(zed_actions::Extensions {
+                                    category_filter: Some(
+                                        zed_actions::ExtensionCategoryFilter::ContextServers,
+                                    ),
+                                    id: None,
+                                }),
                             )
-                            .separator()
-                    }
+                            .action("Add Custom Server…", Box::new(AddContextServer))
+                            .separator();
 
-                    menu = menu
-                        .header("MCP Servers")
-                        .action(
-                            "View Server Extensions",
-                            Box::new(zed_actions::Extensions {
-                                category_filter: Some(
-                                    zed_actions::ExtensionCategoryFilter::ContextServers,
-                                ),
-                                id: None,
-                            }),
-                        )
-                        .action("Add Custom Server…", Box::new(AddContextServer))
-                        .separator();
-
-                    menu = menu
-                        .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                        .action("Settings", Box::new(OpenConfiguration))
-                        .action(zoom_in_label, Box::new(ToggleZoom));
-                    menu
-                }))
+                        menu = menu
+                            .action("Rules…", Box::new(OpenRulesLibrary::default()))
+                            .action("Settings", Box::new(OpenConfiguration))
+                            .action(zoom_in_label, Box::new(ToggleZoom));
+                        menu
+                    }))
+                }
             });
 
         h_flex()
@@ -2283,20 +2291,21 @@ impl AgentPanel {
         }
 
         match &self.active_view {
-            ActiveView::Thread { thread, .. } => thread
-                .read(cx)
-                .thread()
-                .read(cx)
-                .configured_model()
-                .map_or(true, |model| {
-                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
-                }),
-            ActiveView::TextThread { .. } => LanguageModelRegistry::global(cx)
-                .read(cx)
-                .default_model()
-                .map_or(true, |model| {
-                    model.provider.id() == language_model::ZED_CLOUD_PROVIDER_ID
-                }),
+            ActiveView::Thread { .. } | ActiveView::TextThread { .. } => {
+                let history_is_empty = self
+                    .history_store
+                    .update(cx, |store, cx| store.recent_entries(1, cx).is_empty());
+
+                let has_configured_non_zed_providers = LanguageModelRegistry::read_global(cx)
+                    .providers()
+                    .iter()
+                    .any(|provider| {
+                        provider.is_authenticated(cx)
+                            && provider.id() != language_model::ZED_CLOUD_PROVIDER_ID
+                    });
+
+                history_is_empty || !has_configured_non_zed_providers
+            }
             ActiveView::ExternalAgentThread { .. }
             | ActiveView::History
             | ActiveView::Configuration => false,
@@ -2317,9 +2326,8 @@ impl AgentPanel {
 
         Some(
             div()
-                .size_full()
                 .when(thread_view, |this| {
-                    this.bg(cx.theme().colors().panel_background)
+                    this.size_full().bg(cx.theme().colors().panel_background)
                 })
                 .when(text_thread_view, |this| {
                     this.bg(cx.theme().colors().editor_background)
