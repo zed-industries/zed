@@ -983,7 +983,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f
     );
     let color = gradient_color(background, input.position.xy, bounds,
         gradient_color.solid, gradient_color.color0, gradient_color.color1);
-    return vec4<f32>(color.rgb * alpha, alpha);
+    return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
 }
 
 // --- paths --- //

@@ -147,10 +147,6 @@ impl BladePipelines {
         shader.check_struct_size::<SurfaceParams>();
         shader.check_struct_size::<Quad>();
         shader.check_struct_size::<Shadow>();
-        // assert_eq!(
-        //     mem::size_of::<PathVertex<ScaledPixels>>(),
-        //     shader.get_struct_size("PathVertex") as usize,
-        // );
         shader.check_struct_size::<PathRasterizationVertex>();
         shader.check_struct_size::<PathSprite>();
         shader.check_struct_size::<Underline>();
@@ -209,12 +205,18 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_path_rasterization")),
+                // The original implementation was using ADDITIVE blende mode,
+                // I don't know why
                 // color_targets: &[gpu::ColorTargetState {
                 //     format: PATH_TEXTURE_FORMAT,
                 //     blend: Some(gpu::BlendState::ADDITIVE),
                 //     write_mask: gpu::ColorWrites::default(),
                 // }],
-                color_targets,
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_info.format,
+                    blend: Some(gpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
                 multisample_state: gpu::MultisampleState {
                     sample_count: path_sample_count,
                     ..Default::default()
@@ -231,7 +233,14 @@ impl BladePipelines {
                 },
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_path")),
-                color_targets,
+                color_targets: &[gpu::ColorTargetState {
+                    format: surface_info.format,
+                    blend: Some(gpu::BlendState {
+                        color: gpu::BlendComponent::OVER,
+                        alpha: gpu::BlendComponent::ADDITIVE,
+                    }),
+                    write_mask: gpu::ColorWrites::default(),
+                }],
                 multisample_state: gpu::MultisampleState::default(),
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
@@ -553,7 +562,7 @@ impl BladeRenderer {
     }
 
     #[profiling::function]
-    fn rasterize_paths_to_intermediate(
+    fn draw_paths_to_intermediate(
         &mut self,
         paths: &[Path<ScaledPixels>],
         width: f32,
@@ -695,8 +704,11 @@ impl BladeRenderer {
                     encoder.draw(0, 4, 0, shadows.len() as u32);
                 }
                 PrimitiveBatch::Paths(paths) => {
+                    let Some(first_path) = paths.first() else {
+                        continue;
+                    };
                     drop(pass);
-                    self.rasterize_paths_to_intermediate(
+                    self.draw_paths_to_intermediate(
                         paths,
                         self.surface_config.size.width as f32,
                         self.surface_config.size.height as f32,
@@ -713,27 +725,43 @@ impl BladeRenderer {
                         },
                     );
                     let mut encoder = pass.with(&self.pipelines.paths);
-                    for path in paths {
-                        let sprites = [PathSprite {
-                            bounds: path
-                                .bounds
-                                .intersect(&path.content_mask.bounds)
-                                .map(|p| p.floor()),
-                            color: path.color,
-                        }];
-                        let instance_buf =
-                            unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
-                        encoder.bind(
-                            0,
-                            &ShaderPathsData {
-                                globals,
-                                t_sprite: self.path_intermediate_texture_view,
-                                s_sprite: self.atlas_sampler,
-                                b_path_sprites: instance_buf,
-                            },
-                        );
-                        encoder.draw(0, 4, 0, sprites.len() as u32);
-                    }
+                    // When copying paths from the intermediate texture to the drawable,
+                    // each pixel must only be copied once, in case of transparent paths.
+                    //
+                    // If all paths have the same draw order, then their bounds are all
+                    // disjoint, so we can copy each path's bounds individually. If this
+                    // batch combines different draw orders, we perform a single copy
+                    // for a minimal spanning rect.
+                    let sprites = if paths.last().unwrap().order == first_path.order {
+                        paths
+                            .iter()
+                            .map(|path| PathSprite {
+                                bounds: path.bounds,
+                                color: Background::default(),
+                            })
+                            .collect()
+                    } else {
+                        let mut bounds = first_path.bounds;
+                        for path in paths.iter().skip(1) {
+                            bounds = bounds.union(&path.bounds);
+                        }
+                        vec![PathSprite {
+                            bounds,
+                            color: Background::default(),
+                        }]
+                    };
+                    let instance_buf =
+                        unsafe { self.instance_belt.alloc_typed(&sprites, &self.gpu) };
+                    encoder.bind(
+                        0,
+                        &ShaderPathsData {
+                            globals,
+                            t_sprite: self.path_intermediate_texture_view,
+                            s_sprite: self.atlas_sampler,
+                            b_path_sprites: instance_buf,
+                        },
+                    );
+                    encoder.draw(0, 4, 0, sprites.len() as u32);
                 }
                 PrimitiveBatch::Underlines(underlines) => {
                     let instance_buf =
