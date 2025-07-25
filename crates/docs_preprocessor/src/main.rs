@@ -1,5 +1,4 @@
-use anyhow::Result;
-use clap::{Arg, ArgMatches, Command};
+use anyhow::{Context, Result};
 use mdbook::BookItem;
 use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
@@ -9,6 +8,7 @@ use std::collections::HashSet;
 use std::io::{self, Read};
 use std::process;
 use std::sync::LazyLock;
+use util::paths::PathExt;
 
 static KEYMAP_MACOS: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-macos.json").expect("Failed to load MacOS keymap")
@@ -20,26 +20,64 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
-pub fn make_app() -> Command {
-    Command::new("zed-docs-preprocessor")
-        .about("Preprocesses Zed Docs content to provide rich action & keybinding support and more")
-        .subcommand(
-            Command::new("supports")
-                .arg(Arg::new("renderer").required(true))
-                .about("Check whether a renderer is supported by this preprocessor"),
-        )
-}
-
 fn main() -> Result<()> {
-    let matches = make_app().get_matches();
     // call a zed:: function so everything in `zed` crate is linked and
     // all actions in the actual app are registered
     zed::stdout_is_a_pty();
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
 
-    if let Some(sub_args) = matches.subcommand_matches("supports") {
-        handle_supports(sub_args);
-    } else {
-        handle_preprocessing()?;
+    match args.get(0).map(String::as_str) {
+        Some("supports") => {
+            let renderer = args.get(1).expect("Required argument");
+            let supported = renderer != "not-supported";
+            if supported {
+                process::exit(0);
+            } else {
+                process::exit(1);
+            }
+        }
+        Some("postprocess") => {
+            let dir = args.get(1).expect("Book directory required");
+            let mut files = Vec::with_capacity(128);
+            let mut queue = Vec::with_capacity(64);
+            queue.push(std::path::PathBuf::from(dir));
+            while let Some(dir) = queue.pop() {
+                for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
+                    let Ok(entry) = entry else {
+                        continue;
+                    };
+                    let file_type = entry.file_type()?;
+                    if file_type.is_dir() {
+                        queue.push(entry.path());
+                    }
+                    if file_type.is_file()
+                        && matches!(
+                            entry.path().extension().and_then(std::ffi::OsStr::to_str),
+                            Some("html")
+                        )
+                    {
+                        files.push(entry.path());
+                    }
+                }
+            }
+            eprintln!("Processing {} `.html` files", files.len());
+            let regex = Regex::new(r"\s*\{#zed-meta (.*?)\}\s*").unwrap();
+            for file in files {
+                let contents = std::fs::read_to_string(&file)?;
+                let mut meta_description = None;
+                let contents = regex.replace(&contents, |caps: &regex::Captures| {
+                    meta_description = Some(caps[1].trim().to_string());
+                    String::new()
+                });
+                let Some(meta_description) = meta_description else {
+                    continue;
+                };
+                eprintln!("Updating {:?}", &file);
+                let contents = contents.replace("#description#", &meta_description);
+                std::fs::write(file, contents)?;
+            }
+        }
+        _ => handle_preprocessing()?,
     }
 
     Ok(())
@@ -106,18 +144,6 @@ fn handle_preprocessing() -> Result<()> {
     serde_json::to_writer(io::stdout(), &book)?;
 
     Ok(())
-}
-
-fn handle_supports(sub_args: &ArgMatches) -> ! {
-    let renderer = sub_args
-        .get_one::<String>("renderer")
-        .expect("Required argument");
-    let supported = renderer != "not-supported";
-    if supported {
-        process::exit(0);
-    } else {
-        process::exit(1);
-    }
 }
 
 fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error>) {

@@ -6,7 +6,11 @@ src = "src"
 title = "Zed"
 site-url = "/docs/"
 
+[build]
+extra-watch-dirs = ["../crates/docs_preprocessor"]
+
 [output.html]
+command = "cargo run -p docs_preprocessor -- postprocess"
 no-section-label = true
 preferred-dark-theme = "dark"
 additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css"]

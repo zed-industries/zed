@@ -1,3 +1,5 @@
+{#zed-meta Zed is a text editor that supports Git features }
+
 # Git
 
 Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones, like conflict resolution tools, line by line staging, and more.
