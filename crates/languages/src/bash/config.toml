@@ -19,12 +19,15 @@ brackets = [
 ]
 
 auto_indent_using_last_non_empty_line = false
-increase_indent_pattern = "(^|\\s+|;)(do|then|in)\\b.*$"
+# increase indent after:
+# - lines containing 'do', 'then', or 'in' keywords at start, after whitespace, or after semicolon
+# - case patterns ending with ')'
+increase_indent_pattern = "(^|\\s+|;)(do|then|in)\\b.*$|^\\s*\\S+\\)\\s*$"
 decrease_indent_patterns = [
   { pattern = "^\\s*elif\\b.*",  valid_after = ["if", "elif"] },
   { pattern = "^\\s*else\\b.*",  valid_after = ["if", "elif", "for", "while"] },
   { pattern = "^\\s*fi\\b.*",    valid_after = ["if", "elif", "else"] },
   { pattern = "^\\s*done\\b.*",  valid_after = ["for", "while"] },
   { pattern = "^\\s*esac\\b.*",  valid_after = ["case"] },
-  { pattern = "^\\s*\\)\\s*",    valid_after = ["case"] },
+  { pattern = "^\\s*\\)\\s*",    valid_after = ["case", "case_item"] },
 ]
