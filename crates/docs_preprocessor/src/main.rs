@@ -48,6 +48,12 @@ fn main() -> Result<()> {
                 .as_table_mut()
                 .expect("output is table");
             let zed_html = output.remove("zed-html").expect("zed-html output defined");
+            let default_description = zed_html
+                .get("default-description")
+                .expect("Default description not found")
+                .as_str()
+                .expect("Default description not a string")
+                .to_string();
             output.insert("html".to_string(), zed_html);
             mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
 
@@ -74,6 +80,7 @@ fn main() -> Result<()> {
                     }
                 }
             }
+
             zlog::info!(logger => "Processing {} `.html` files", files.len());
             let regex = Regex::new(r"<p>\s*\{#zed-meta \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
             for file in files {
@@ -83,16 +90,16 @@ fn main() -> Result<()> {
                     meta_description = Some(caps[1].trim().to_string());
                     String::new()
                 });
-                let Some(meta_description) = meta_description else {
+                let meta_description = meta_description.as_ref().unwrap_or_else(|| {
                     if contents.find("#zed-meta").is_some() {
                         zlog::error!(logger => "Failed to parse meta for {:?}", pretty_path(&file, &root_dir));
                     } else {
                         zlog::warn!(logger => "No meta found for {:?}", pretty_path(&file, &root_dir));
                     }
-                    continue;
-                };
+                    &default_description
+                });
                 zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
-                let contents = contents.replace("#description#", &meta_description);
+                let contents = contents.replace("#description#", meta_description);
                 std::fs::write(file, contents)?;
             }
             fn pretty_path<'a>(
