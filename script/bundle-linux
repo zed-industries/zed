@@ -92,7 +92,7 @@ else
         echo "Uploading zed debug symbols..."
         # note: this uploads the unstripped binary which is needed because it contains
         # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
-        sentry-cli debug-files upload --include-sources --wait \
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
             "${target_dir}/${target_triple}"/release/zed \
             "${target_dir}/${remote_server_triple}"/release/remote_server
     else

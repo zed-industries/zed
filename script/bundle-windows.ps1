@@ -98,7 +98,7 @@ function ZipZedAndItsFriendsDebug {
 
 
 function UploadToSentry {
-    if (-not Get-Command "sentry-cli" -ErrorAction SilentlyContinue) {
+    if (-not (Get-Command "sentry-cli" -ErrorAction SilentlyContinue)) {
         Write-Output "sentry-cli not found. skipping sentry upload."
         Write-Output "install with: 'winget install -e --id=Sentry.sentry-cli'"
         return
@@ -107,7 +107,7 @@ function UploadToSentry {
         Write-Output "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
         return
     }
-    sentry-cli debug-files upload --include-sources --wait .\target\release\
+    sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev .\target\release\
 }
 
 function MakeAppx {
