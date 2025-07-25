@@ -739,6 +739,14 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         return diff_remaining;
     }
 
+    #[inline(always)]
+    const fn make_operations() -> [fn(usize, usize) -> usize; 2] {
+        [
+            |current, amount| current - amount,
+            |current, amount| current + amount,
+        ]
+    }
+
     fn drag_column_handle(
         // Negative diff means dragging left, positive diff means dragging right.
         diff: f32,
@@ -764,11 +772,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
                 continue;
             };
 
-            let mut curr_width = if going_right {
-                widths[curr_column_idx] - diff_remaining
-            } else {
-                widths[curr_column_idx] + diff_remaining
-            };
+            let mut curr_width = widths[curr_column_idx] - diff_remaining.abs();
 
             diff_remaining = 0.0;
             if min_size > curr_width && going_right {
@@ -787,11 +791,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
             curr_column_idx = curr_column_idx + right_step - left_step;
         }
 
-        if going_right {
-            widths[column_idx] = widths[column_idx] + (diff - diff_remaining);
-        } else {
-            widths[column_idx + 1] = widths[column_idx + 1] - (diff - diff_remaining);
-        }
+        widths[column_idx + left_step] =
+            widths[column_idx + left_step] + (diff - diff_remaining).abs();
 
         return diff_remaining;
     }
