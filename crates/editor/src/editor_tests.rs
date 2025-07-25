@@ -22744,22 +22744,20 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
         elseˇ
     "});
 
-    // TODO: bug in tree-sitter
-    //
     // test `elif` auto outdents when typed inside `if` block
-    // cx.set_state(indoc! {"
-    //     if [ \"$1\" = \"test\" ]; then
-    //         echo \"foo bar\"
-    //         ˇ
-    // "});
-    // cx.update_editor(|editor, window, cx| {
-    //     editor.handle_input("elif", window, cx);
-    // });
-    // cx.assert_editor_state(indoc! {"
-    //     if [ \"$1\" = \"test\" ]; then
-    //         echo \"foo bar\"
-    //     elifˇ
-    // "});
+    cx.set_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+            echo \"foo bar\"
+            ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("elif", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        if [ \"$1\" = \"test\" ]; then
+            echo \"foo bar\"
+        elifˇ
+    "});
 
     // test `fi` auto outdents when typed inside `else` block
     cx.set_state(indoc! {"
@@ -22833,6 +22831,25 @@ async fn test_outdent_after_input_for_bash(cx: &mut TestAppContext) {
                 echo \"bar baz\"
                 ;;
         esacˇ
+    "});
+
+    // test `*)` auto outdents when typed inside `case` block
+    cx.set_state(indoc! {"
+        case \"$1\" in
+            start)
+                echo \"foo bar\"
+                ;;
+                ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("*)", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        case \"$1\" in
+            start)
+                echo \"foo bar\"
+                ;;
+            *)ˇ
     "});
 
     // test `fi` outdents to correct level with nested if blocks
@@ -22947,6 +22964,25 @@ async fn test_indent_on_newline_for_bash(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         case \"$1\" in
             start)
+                ˇ
+    "});
+
+    // test correct indent after newline after case pattern
+    cx.set_state(indoc! {"
+        case \"$1\" in
+            start)
+                ;;
+            *)ˇ
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.newline(&Newline, window, cx);
+    });
+    cx.run_until_parked();
+    cx.assert_editor_state(indoc! {"
+        case \"$1\" in
+            start)
+                ;;
+            *)
                 ˇ
     "});
 
