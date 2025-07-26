@@ -29,7 +29,6 @@ Assign distinct and specific models for the following AI-powered features in Zed
 - Inline assistant model: Used for the inline assistant feature
 - Commit message model: Used for generating Git commit messages
 
-
 ```json
 {
   "agent": {
@@ -80,7 +79,7 @@ One with Claude Sonnet 4 (the default model), and one with GPT-4o.
         "provider": "zed.dev",
         "model": "gpt-4o"
       }
-    ],
+    ]
   }
 }
 ```
