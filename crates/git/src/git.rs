@@ -89,6 +89,8 @@ actions!(
         Init,
         /// Opens all modified files in the editor.
         OpenModifiedFiles,
+        /// Renames the current branch.
+        RenameBranch,
     ]
 );
 
