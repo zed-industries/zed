@@ -115,7 +115,7 @@ Note that some of these settings are also surfaced in the Agent Panel's settings
 
 ### Default View
 
-Use the `default_view` setting to set change the default view of the Agent Panel.
+Use the `default_view` setting to change the default view of the Agent Panel.
 You can choose between `thread` (the default) and `text_thread`:
 
 ```json

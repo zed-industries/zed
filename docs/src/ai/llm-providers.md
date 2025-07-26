@@ -109,7 +109,7 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 > ✅ Supports tool use
 
-You can use Anthropic models by choosing it via the model dropdown in the Agent Panel.
+You can use Anthropic models by choosing them via the model dropdown in the Agent Panel.
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
@@ -234,7 +234,7 @@ You can use Gemini models with the Zed agent by choosing it via the model dropdo
 
 The Google AI API key will be saved in your keychain.
 
-Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See [Using Gemini API keys](Using Gemini API keys) in the Gemini docs for more.
+Zed will also use the `GEMINI_API_KEY` environment variable if it's defined. See [Using Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key) in the Gemini docs for more.
 
 #### Custom Models {#google-ai-custom-models}
 

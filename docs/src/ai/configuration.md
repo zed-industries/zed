@@ -8,7 +8,7 @@ When using AI in Zed, you can customize several aspects:
 
 ## Turning AI off entirely
 
-We want to respect users who wants to use Zed without interacting with AI whatsoever.
+We want to respect users who want to use Zed without interacting with AI whatsoever.
 To do that, add the following key to your `settings.json`:
 
 ```json
