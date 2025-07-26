@@ -920,9 +920,9 @@ impl Window {
             },
         )?;
 
-        let windows = platform_window.tabbed_windows();
-        if let Some(windows) = windows {
-            SystemWindowTabController::open_window(cx, handle.window_id(), windows);
+        let tabs = platform_window.tabbed_windows();
+        if let Some(tabs) = tabs {
+            SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
         }
 
         let display_id = platform_window.display().map(|display| display.id());
@@ -959,7 +959,7 @@ impl Window {
             move || {
                 let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
                 let _ = cx.update(|cx| {
-                    SystemWindowTabController::remove_window(cx, window_id);
+                    SystemWindowTabController::remove_tab(cx, window_id);
                 });
             }
         }));

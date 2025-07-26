@@ -4349,7 +4349,7 @@ impl Workspace {
         }
 
         window.set_window_title(&title);
-        SystemWindowTabController::update_window_title(
+        SystemWindowTabController::update_tab_title(
             cx,
             window.window_handle().window_id(),
             SharedString::from(title),
