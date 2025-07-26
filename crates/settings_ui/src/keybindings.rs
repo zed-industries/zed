@@ -3027,7 +3027,7 @@ impl KeystrokeInput {
     }
 
     fn key_context() -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::default();
         key_context.add("KeystrokeInput");
         key_context
     }
@@ -3374,7 +3374,7 @@ impl Render for KeystrokeInput {
             })
             .key_context(Self::key_context())
             .on_action(cx.listener(Self::start_recording))
-            .on_action(cx.listener(Self::stop_recording))
+            .on_action(cx.listener(Self::clear_keystrokes))
             .child(
                 h_flex()
                     .w(horizontal_padding)
