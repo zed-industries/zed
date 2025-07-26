@@ -7,9 +7,9 @@ use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionCapability, ExtensionHostProxy, KeyValueStoreDelegate,
-    ProcessExecCapability, ProjectDelegate, SlashCommand, SlashCommandArgumentCompletion,
-    SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
+    KeyValueStoreDelegate, ProcessExecCapability, ProjectDelegate, SlashCommand,
+    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -576,10 +576,16 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
-            granted_capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
-                command: "*".to_string(),
-                args: vec!["**".to_string()],
-            })],
+            granted_capabilities: vec![
+                ExtensionCapability::ProcessExec(ProcessExecCapability {
+                    command: "*".to_string(),
+                    args: vec!["**".to_string()],
+                }),
+                ExtensionCapability::DownloadFile(DownloadFileCapability {
+                    host: "*".to_string(),
+                    path: vec!["**".to_string()],
+                }),
+            ],
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })

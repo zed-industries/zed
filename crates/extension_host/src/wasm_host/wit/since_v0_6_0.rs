@@ -30,6 +30,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
+use url::Url;
 use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
@@ -1011,6 +1012,9 @@ impl ExtensionImports for WasmState {
         file_type: DownloadedFileType,
     ) -> wasmtime::Result<Result<(), String>> {
         maybe!(async {
+            let parsed_url = Url::parse(&url)?;
+            self.capability_granter.grant_download_file(&parsed_url)?;
+
             let path = PathBuf::from(path);
             let extension_work_dir = self.host.work_dir.join(self.manifest.id.as_ref());
 
