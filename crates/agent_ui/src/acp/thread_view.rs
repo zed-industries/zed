@@ -960,6 +960,8 @@ impl AcpThreadView {
                                 Icon::new(match tool_call.kind {
                                     acp::ToolKind::Read => IconName::ToolRead,
                                     acp::ToolKind::Edit => IconName::ToolPencil,
+                                    acp::ToolKind::Delete => IconName::ToolDeleteFile,
+                                    acp::ToolKind::Move => IconName::ArrowRightLeft,
                                     acp::ToolKind::Search => IconName::ToolSearch,
                                     acp::ToolKind::Execute => IconName::ToolTerminal,
                                     acp::ToolKind::Think => IconName::ToolBulb,
