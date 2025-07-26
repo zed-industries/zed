@@ -8,8 +8,8 @@ use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
     DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
-    KeyValueStoreDelegate, ProcessExecCapability, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -584,6 +584,9 @@ impl WasmHost {
                 ExtensionCapability::DownloadFile(DownloadFileCapability {
                     host: "*".to_string(),
                     path: vec!["**".to_string()],
+                }),
+                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
+                    package: "*".to_string(),
                 }),
             ],
             _main_thread_message_task: task,

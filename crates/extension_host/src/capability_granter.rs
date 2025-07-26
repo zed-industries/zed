@@ -63,6 +63,24 @@ impl CapabilityGranter {
 
         Ok(())
     }
+
+    pub fn grant_npm_install_package(&self, package_name: &str) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| match capability {
+                ExtensionCapability::NpmInstallPackage(capability) => {
+                    capability.allows(package_name)
+                }
+                _ => false,
+            });
+
+        if !is_allowed {
+            bail!("capability for npm:install {package_name} is not granted by the extension host",);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
