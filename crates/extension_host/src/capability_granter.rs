@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use extension::{ExtensionCapability, ExtensionManifest};
+use url::Url;
 
 pub struct CapabilityGranter {
     granted_capabilities: Vec<ExtensionCapability>,
@@ -33,11 +34,30 @@ impl CapabilityGranter {
                 ExtensionCapability::ProcessExec(capability) => {
                     capability.allows(desired_command, desired_args)
                 }
+                _ => false,
             });
 
         if !is_allowed {
             bail!(
                 "capability for process:exec {desired_command} {desired_args:?} is not granted by the extension host",
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn grant_download_file(&self, desired_url: &Url) -> Result<()> {
+        let is_allowed = self
+            .granted_capabilities
+            .iter()
+            .any(|capability| match capability {
+                ExtensionCapability::DownloadFile(capability) => capability.allows(desired_url),
+                _ => false,
+            });
+
+        if !is_allowed {
+            bail!(
+                "capability for download_file {desired_url} is not granted by the extension host",
             );
         }
 
