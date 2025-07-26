@@ -166,7 +166,7 @@ pub struct ToolCall {
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
-    pub structured_content: Option<serde_json::Value>,
+    pub raw_input: Option<serde_json::Value>,
 }
 
 impl ToolCall {
@@ -194,7 +194,7 @@ impl ToolCall {
                 .collect(),
             locations: tool_call.locations,
             status,
-            structured_content: tool_call.structured_content,
+            raw_input: tool_call.raw_input,
         }
     }
 
@@ -210,7 +210,7 @@ impl ToolCall {
             label,
             content,
             locations,
-            structured_content,
+            raw_input,
         } = fields;
 
         if let Some(kind) = kind {
@@ -236,8 +236,8 @@ impl ToolCall {
             self.locations = locations;
         }
 
-        if let Some(structured_content) = structured_content {
-            self.structured_content = Some(structured_content);
+        if let Some(raw_input) = raw_input {
+            self.raw_input = Some(raw_input);
         }
     }
 

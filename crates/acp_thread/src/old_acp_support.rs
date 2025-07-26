@@ -277,7 +277,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .into_iter()
             .map(into_new_tool_call_location)
             .collect(),
-        structured_content: None,
+        raw_input: None,
     }
 }
 
