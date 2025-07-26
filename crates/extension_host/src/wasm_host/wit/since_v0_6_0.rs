@@ -847,7 +847,8 @@ impl process::Host for WasmState {
         command: process::Command,
     ) -> wasmtime::Result<Result<process::Output, String>> {
         maybe!(async {
-            self.manifest.allow_exec(&command.command, &command.args)?;
+            self.capability_granter
+                .grant_exec(&command.command, &command.args)?;
 
             let output = util::command::new_smol_command(command.command.as_str())
                 .args(&command.args)
