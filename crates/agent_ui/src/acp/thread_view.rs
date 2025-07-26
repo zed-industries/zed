@@ -1073,6 +1073,7 @@ impl AcpThreadView {
                                             options,
                                             entry_ix,
                                             tool_call.id.clone(),
+                                            tool_call.content.is_empty(),
                                             cx,
                                         )),
                                     ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
@@ -1131,6 +1132,7 @@ impl AcpThreadView {
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        empty_content: bool,
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
@@ -1138,8 +1140,10 @@ impl AcpThreadView {
             .px_1p5()
             .gap_1()
             .justify_end()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
+            .when(!empty_content, |this| {
+                this.border_t_1()
+                    .border_color(self.tool_card_border_color(cx))
+            })
             .children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
                 Button::new((option_id, entry_ix), option.label.clone())
