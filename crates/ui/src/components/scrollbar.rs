@@ -339,7 +339,7 @@ impl Element for Scrollbar {
                 move |event: &MouseDownEvent, phase, _, _| {
                     if !phase.bubble()
                         || event.button != MouseButton::Left
-                        || bounds.contains(&event.position)
+                        || !bounds.contains(&event.position)
                     {
                         return;
                     }
