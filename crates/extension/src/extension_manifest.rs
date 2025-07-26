@@ -11,6 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use url::Url;
 
 /// This is the old version of the extension manifest, from when it was `extension.json`.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -103,6 +104,7 @@ impl ExtensionManifest {
             ExtensionCapability::ProcessExec(capability) => {
                 capability.allows(desired_command, desired_args)
             }
+            _ => false,
         });
 
         if !is_allowed {
@@ -133,10 +135,11 @@ pub fn build_debug_adapter_schema_path(
 
 /// A capability for an extension.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtensionCapability {
     #[serde(rename = "process:exec")]
     ProcessExec(ProcessExecCapability),
+    DownloadFile(DownloadFileCapability),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
@@ -175,6 +178,51 @@ impl ProcessExecCapability {
         }
 
         if self.args.len() < desired_args.len() {
+            return false;
+        }
+
+        true
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct DownloadFileCapability {
+    pub host: String,
+    pub path: Vec<String>,
+}
+
+impl DownloadFileCapability {
+    /// Returns whether the capability allows downloading a file from the given URL.
+    pub fn allows(&self, url: &Url) -> bool {
+        let Some(desired_host) = url.host_str() else {
+            return false;
+        };
+
+        let Some(desired_path) = url.path_segments() else {
+            return false;
+        };
+        let desired_path = desired_path.collect::<Vec<_>>();
+
+        if self.host != desired_host && self.host != "*" {
+            return false;
+        }
+
+        for (ix, path_segment) in self.path.iter().enumerate() {
+            if path_segment == "**" {
+                return true;
+            }
+
+            if ix >= desired_path.len() {
+                return false;
+            }
+
+            if path_segment != "*" && path_segment != desired_path[ix] {
+                return false;
+            }
+        }
+
+        if self.path.len() < desired_path.len() {
             return false;
         }
 
@@ -329,6 +377,8 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     fn extension_manifest() -> ExtensionManifest {
@@ -380,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_exact_match() {
+    fn test_allow_exec_exact_match() {
         let manifest = ExtensionManifest {
             capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "ls".to_string(),
@@ -395,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_wildcard_arg() {
+    fn test_allow_exec_wildcard_arg() {
         let manifest = ExtensionManifest {
             capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "git".to_string(),
@@ -411,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_double_wildcard() {
+    fn test_allow_exec_double_wildcard() {
         let manifest = ExtensionManifest {
             capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "cargo".to_string(),
@@ -431,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_mixed_wildcards() {
+    fn test_allow_exec_mixed_wildcards() {
         let manifest = ExtensionManifest {
             capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "docker".to_string(),
@@ -453,5 +503,72 @@ mod tests {
                 .is_ok()
         );
         assert!(manifest.allow_exec("docker", &["ps"]).is_err()); // wrong first arg
+    }
+
+    #[test]
+    fn test_download_file_capability_allows() {
+        let capability = DownloadFileCapability {
+            host: "*".to_string(),
+            path: vec!["**".to_string()],
+        };
+        assert_eq!(
+            capability.allows(&"https://example.com/some/path".parse().unwrap()),
+            true
+        );
+
+        let capability = DownloadFileCapability {
+            host: "github.com".to_string(),
+            path: vec!["**".to_string()],
+        };
+        assert_eq!(
+            capability.allows(&"https://github.com/some-owner/some-repo".parse().unwrap()),
+            true
+        );
+        assert_eq!(
+            capability.allows(
+                &"https://fake-github.com/some-owner/some-repo"
+                    .parse()
+                    .unwrap()
+            ),
+            false
+        );
+
+        let capability = DownloadFileCapability {
+            host: "github.com".to_string(),
+            path: vec!["specific-owner".to_string(), "*".to_string()],
+        };
+        assert_eq!(
+            capability.allows(&"https://github.com/some-owner/some-repo".parse().unwrap()),
+            false
+        );
+        assert_eq!(
+            capability.allows(
+                &"https://github.com/specific-owner/some-repo"
+                    .parse()
+                    .unwrap()
+            ),
+            true
+        );
+
+        let capability = DownloadFileCapability {
+            host: "github.com".to_string(),
+            path: vec!["specific-owner".to_string(), "*".to_string()],
+        };
+        assert_eq!(
+            capability.allows(
+                &"https://github.com/some-owner/some-repo/extra"
+                    .parse()
+                    .unwrap()
+            ),
+            false
+        );
+        assert_eq!(
+            capability.allows(
+                &"https://github.com/specific-owner/some-repo/extra"
+                    .parse()
+                    .unwrap()
+            ),
+            false
+        );
     }
 }
