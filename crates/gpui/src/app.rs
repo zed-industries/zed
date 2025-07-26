@@ -239,7 +239,7 @@ type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
 
 #[doc(hidden)]
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SystemWindowTab {
     pub id: WindowId,
     pub title: SharedString,
@@ -260,7 +260,7 @@ impl SystemWindowTab {
 /// A controller for managing window tabs.
 #[derive(Default)]
 pub struct SystemWindowTabController {
-    tabs: FxHashMap<usize, Vec<SystemWindowTab>>,
+    tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
 }
 
 impl Global for SystemWindowTabController {}
@@ -269,7 +269,7 @@ impl SystemWindowTabController {
     /// Create a new instance of the window tab controller.
     pub fn new() -> Self {
         Self {
-            tabs: FxHashMap::default(),
+            tab_groups: FxHashMap::default(),
         }
     }
 
@@ -278,20 +278,29 @@ impl SystemWindowTabController {
         cx.set_global(SystemWindowTabController::new());
     }
 
-    /// Get all tabs.
-    pub fn tabs(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
-        &self.tabs
+    /// Get all tab groups.
+    pub fn tab_groups(&self) -> &FxHashMap<usize, Vec<SystemWindowTab>> {
+        &self.tab_groups
     }
 
-    /// Get all windows in a tab.
-    pub fn windows(&self, tab_group: usize) -> Option<&Vec<SystemWindowTab>> {
-        self.tabs.get(&tab_group)
+    /// Get all tabs in the same window.
+    pub fn tabs(&self, id: WindowId) -> Option<&Vec<SystemWindowTab>> {
+        let tab_group = self
+            .tab_groups
+            .iter()
+            .find_map(|(group, tabs)| tabs.iter().find(|tab| tab.id == id).map(|_| *group));
+
+        if let Some(tab_group) = tab_group {
+            self.tab_groups.get(&tab_group)
+        } else {
+            None
+        }
     }
 
-    /// Move window to a new position within the same tab group.
-    pub fn update_window_position(cx: &mut App, id: WindowId, ix: usize) {
+    /// Update the position of a tab within its group.
+    pub fn update_tab_position(cx: &mut App, id: WindowId, ix: usize) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        for (_, windows) in controller.tabs.iter_mut() {
+        for (_, windows) in controller.tab_groups.iter_mut() {
             if let Some(current_pos) = windows.iter().position(|tab| tab.id == id) {
                 if ix < windows.len() && current_pos != ix {
                     let window_tab = windows.remove(current_pos);
@@ -302,11 +311,11 @@ impl SystemWindowTabController {
         }
     }
 
-    /// Update the title of a window.
-    pub fn update_window_title(cx: &mut App, id: WindowId, title: SharedString) {
+    /// Update the title of a tab.
+    pub fn update_tab_title(cx: &mut App, id: WindowId, title: SharedString) {
         let controller = cx.global::<SystemWindowTabController>();
         let tab = controller
-            .tabs
+            .tab_groups
             .values()
             .flat_map(|windows| windows.iter())
             .find(|tab| tab.id == id);
@@ -316,7 +325,7 @@ impl SystemWindowTabController {
         }
 
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        for windows in controller.tabs.values_mut() {
+        for windows in controller.tab_groups.values_mut() {
             for tab in windows.iter_mut() {
                 if tab.id == id {
                     tab.title = title.clone();
@@ -325,124 +334,96 @@ impl SystemWindowTabController {
         }
     }
 
-    /// Insert a window into a tab group.
-    pub fn open_window(cx: &mut App, id: WindowId, windows: Vec<SystemWindowTab>) {
+    /// Insert a tab into a tab group.
+    pub fn add_tab(cx: &mut App, id: WindowId, tabs: Vec<SystemWindowTab>) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let mut expected_window_ids: Vec<_> = windows
+        let Some(tab) = tabs.clone().into_iter().find(|tab| tab.id == id) else {
+            return;
+        };
+
+        let mut expected_tab_ids: Vec<_> = tabs
             .iter()
             .filter(|tab| tab.id != id)
             .map(|tab| tab.id)
             .sorted()
             .collect();
 
-        let tab_group = {
-            controller.tabs.iter().find_map(|(key, group)| {
-                let mut group_ids: Vec<_> = group.iter().map(|tab| tab.id).sorted().collect();
-                if group_ids == expected_window_ids {
-                    Some(*key)
-                } else {
-                    None
-                }
-            })
-        };
-
-        if let Some(tab_group) = tab_group {
-            if let Some(new_window) = windows.iter().find(|tab| tab.id == id) {
-                if let Some(group) = controller.tabs.get_mut(&tab_group) {
-                    group.push(new_window.clone());
-                }
-            }
-        } else {
-            let new_group_id = controller.tabs.len();
-            controller.tabs.insert(new_group_id, windows);
-        }
-    }
-
-    /// Remove a window from a tab group.
-    pub fn remove_window(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        controller.tabs.retain(|_, windows| {
-            if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
-                windows.remove(pos);
-            }
-            !windows.is_empty()
-        });
-    }
-
-    /// Move a window to a different tab group.
-    pub fn move_tab_to_new_window(cx: &mut App, id: WindowId) {
-        let mut controller = cx.global_mut::<SystemWindowTabController>();
-        // Find and remove the window from its current group
-        let mut removed_tab: Option<SystemWindowTab> = None;
-        let mut empty_group_key: Option<usize> = None;
-
-        for (group_id, windows) in controller.tabs.iter_mut() {
-            if let Some(pos) = windows.iter().position(|tab| tab.id == id) {
-                removed_tab = Some(windows.remove(pos));
-                if windows.is_empty() {
-                    empty_group_key = Some(*group_id);
-                }
+        let mut tab_group_id = None;
+        for (group_id, group_tabs) in &controller.tab_groups {
+            let tab_ids: Vec<_> = group_tabs.iter().map(|tab| tab.id).sorted().collect();
+            if tab_ids == expected_tab_ids {
+                tab_group_id = Some(*group_id);
                 break;
             }
         }
 
-        // Remove the group if it became empty
-        if let Some(group_id) = empty_group_key {
-            controller.tabs.remove(&group_id);
+        if let Some(tab_group_id) = tab_group_id {
+            if let Some(tabs) = controller.tab_groups.get_mut(&tab_group_id) {
+                tabs.push(tab);
+            }
+        } else {
+            let new_group_id = controller.tab_groups.len();
+            controller.tab_groups.insert(new_group_id, tabs);
         }
+    }
 
-        // Insert the removed tab into a new group if it was found
+    /// Remove a tab from a tab group.
+    pub fn remove_tab(cx: &mut App, id: WindowId) -> Option<SystemWindowTab> {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        let mut removed_tab = None;
+
+        controller.tab_groups.retain(|_, tabs| {
+            if let Some(pos) = tabs.iter().position(|tab| tab.id == id) {
+                removed_tab = Some(tabs.remove(pos));
+            }
+            !tabs.is_empty()
+        });
+
+        removed_tab
+    }
+
+    /// Move a tab to a new tab group.
+    pub fn move_tab_to_new_window(cx: &mut App, id: WindowId) {
+        let mut removed_tab = Self::remove_tab(cx, id);
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+
         if let Some(tab) = removed_tab {
-            let new_group_id = controller.tabs.keys().max().map_or(0, |k| k + 1);
-            controller.tabs.insert(new_group_id, vec![tab]);
+            let new_group_id = controller.tab_groups.keys().max().map_or(0, |k| k + 1);
+            controller.tab_groups.insert(new_group_id, vec![tab]);
         }
     }
 
     /// Merge all tab groups into a single group.
     pub fn merge_all_windows(cx: &mut App, id: WindowId) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let mut merged_windows = Vec::new();
-        let mut first_group_windows = None;
+        let Some(initial_tabs) = controller.tabs(id) else {
+            return;
+        };
 
-        // Drain all tab groups, but keep track of the group containing the given id
-        for (_, mut windows) in controller.tabs.drain() {
-            if windows.iter().any(|tab| tab.id == id) {
-                first_group_windows = Some(windows);
-            } else {
-                merged_windows.extend(windows);
-            }
+        let mut all_tabs = initial_tabs.clone();
+        for tabs in controller.tab_groups.values() {
+            all_tabs.extend(
+                tabs.iter()
+                    .filter(|tab| !initial_tabs.contains(tab))
+                    .cloned(),
+            );
         }
 
-        // Place the group with the given id first, then all others
-        let mut final_windows = Vec::new();
-        if let Some(mut first) = first_group_windows {
-            final_windows.append(&mut first);
-        }
-        final_windows.append(&mut merged_windows);
-
-        controller.tabs.insert(0, final_windows);
+        controller.tab_groups.clear();
+        controller.tab_groups.insert(0, all_tabs);
     }
 
     /// Selects the next tab in the tab group in the trailing direction.
     pub fn select_next_tab(cx: &mut App, id: WindowId) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let tab_group = controller
-            .tabs
-            .iter()
-            .find_map(|(group_id, windows)| {
-                if windows.iter().any(|tab| tab.id == id) {
-                    Some(*group_id)
-                } else {
-                    None
-                }
-            })
-            .expect("WindowId not found in any tab group");
+        let Some(tabs) = controller.tabs(id) else {
+            return;
+        };
 
-        let windows = controller.tabs.get_mut(&tab_group).unwrap();
-        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
-        let next_index = (current_index + 1) % windows.len();
+        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
+        let next_index = (current_index + 1) % tabs.len();
 
-        let _ = &windows[next_index].handle.update(cx, |_, window, _| {
+        let _ = &tabs[next_index].handle.update(cx, |_, window, _| {
             window.activate_window();
         });
     }
@@ -450,27 +431,18 @@ impl SystemWindowTabController {
     /// Selects the previous tab in the tab group in the leading direction.
     pub fn select_previous_tab(cx: &mut App, id: WindowId) {
         let mut controller = cx.global_mut::<SystemWindowTabController>();
-        let tab_group = controller
-            .tabs
-            .iter()
-            .find_map(|(group_id, windows)| {
-                if windows.iter().any(|tab| tab.id == id) {
-                    Some(*group_id)
-                } else {
-                    None
-                }
-            })
-            .expect("WindowId not found in any tab group");
+        let Some(tabs) = controller.tabs(id) else {
+            return;
+        };
 
-        let windows = controller.tabs.get_mut(&tab_group).unwrap();
-        let current_index = windows.iter().position(|tab| tab.id == id).unwrap();
+        let current_index = tabs.iter().position(|tab| tab.id == id).unwrap();
         let previous_index = if current_index == 0 {
-            windows.len() - 1
+            tabs.len() - 1
         } else {
             current_index - 1
         };
 
-        let _ = &windows[previous_index].handle.update(cx, |_, window, _| {
+        let _ = &tabs[previous_index].handle.update(cx, |_, window, _| {
             window.activate_window();
         });
     }
