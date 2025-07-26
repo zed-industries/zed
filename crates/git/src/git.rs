@@ -95,6 +95,8 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        /// Renames the current branch.
+        RenameBranch,
     ]
 );
 

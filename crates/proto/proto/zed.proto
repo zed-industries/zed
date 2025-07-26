@@ -402,7 +402,10 @@ message Envelope {
         GetCrashFilesResponse get_crash_files_response = 362;
 
         GitClone git_clone = 363;
-        GitCloneResponse git_clone_response = 364; // current max
+        GitCloneResponse git_clone_response = 364;
+        
+        GitRenameBranch git_rename_branch = 365; // current max
+
     }
 
     reserved 87 to 88;

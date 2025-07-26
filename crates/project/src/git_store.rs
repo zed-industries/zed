@@ -4199,6 +4199,24 @@ impl Repository {
         )
     }
 
+    pub fn rename_branch(&mut self, new_name: String) -> oneshot::Receiver<Result<()>> {
+        let _id = self.id;
+        self.send_job(
+            Some(format!("git branch -m {new_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => backend.rename_branch(new_name).await,
+                    RepositoryState::Remote { .. } => {
+                        // Remote branch renaming not implemented yet
+                        Err(anyhow::anyhow!(
+                            "Branch renaming is not supported for remote repositories yet"
+                        ))
+                    }
+                }
+            },
+        )
+    }
+
     pub fn check_for_pushed_commits(&mut self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {

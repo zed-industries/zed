@@ -4,6 +4,13 @@ use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
 use editor::{Editor, EditorElement, EditorStyle, actions::DiffClipboardWithSelectionData};
+use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, SharedString};
+use ui::{
+    Headline, HeadlineSize, Icon, IconName, IconSize, IntoElement, ParentElement, Render, Styled,
+    StyledExt, div, h_flex, rems, v_flex,
+};
+use workspace::{ModalView, notifications::DetachAndPromptErr};
+
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
@@ -14,7 +21,9 @@ use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle,
     Window, actions,
 };
+use menu::{Cancel, Confirm};
 use onboarding::GitOnboardingModal;
+use project::git_store::Repository;
 use project_diff::ProjectDiff;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -185,6 +194,9 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
+        workspace.register_action(|workspace, _: &git::RenameBranch, window, cx| {
+            rename_current_branch(workspace, window, cx);
+        });
         workspace.register_action(
             |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
                 if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
@@ -226,6 +238,127 @@ fn open_modified_files(
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
     GitStatusIcon::new(status)
+}
+
+struct RenameBranchModal {
+    current_branch: SharedString,
+    editor: Entity<Editor>,
+    repo: Entity<Repository>,
+}
+
+impl RenameBranchModal {
+    fn new(
+        current_branch: String,
+        repo: Entity<Repository>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_text(current_branch.clone(), window, cx);
+            editor
+        });
+        Self {
+            current_branch: current_branch.into(),
+            editor,
+            repo,
+        }
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let new_name = self.editor.read(cx).text(cx);
+        if new_name.is_empty() || new_name == self.current_branch.as_ref() {
+            cx.emit(DismissEvent);
+            return;
+        }
+
+        let repo = self.repo.clone();
+        cx.spawn(async move |_, cx| {
+            repo.update(cx, |repo, _| repo.rename_branch(new_name))?
+                .await??;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to rename branch", window, cx, |_, _, _| None);
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for RenameBranchModal {}
+impl ModalView for RenameBranchModal {}
+impl Focusable for RenameBranchModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl Render for RenameBranchModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("RenameBranchModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .w_full()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(Headline::new("Rename Branch").size(HeadlineSize::XSmall)),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .pb_3()
+                    .w_full()
+                    .child(
+                        div()
+                            .mb_2()
+                            .text_sm()
+                            .text_color(cx.theme().colors().text_muted)
+                            .child(format!("Current: {}", self.current_branch)),
+                    )
+                    .child(self.editor.clone()),
+            )
+    }
+}
+
+fn rename_current_branch(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+        return;
+    };
+    let current_branch = panel.update(cx, |panel, cx| {
+        let Some(repo) = panel.active_repository.as_ref() else {
+            return None;
+        };
+        let repo = repo.read(cx);
+        repo.branch.as_ref().map(|branch| branch.name().to_string())
+    });
+
+    let Some(current_branch_name) = current_branch else {
+        return;
+    };
+
+    let repo = panel.read(cx).active_repository.clone();
+    let Some(repo) = repo else {
+        return;
+    };
+
+    workspace.toggle_modal(window, cx, |window, cx| {
+        RenameBranchModal::new(current_branch_name, repo, window, cx)
+    });
 }
 
 fn render_remote_button(
@@ -467,6 +600,8 @@ mod remote_button {
                         .action("Push", git::Push.boxed_clone())
                         .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
+                        .separator()
+                        .action("Rename Branch", git::RenameBranch.boxed_clone())
                 }))
             })
             .anchor(Corner::TopRight)

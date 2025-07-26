@@ -344,6 +344,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1089,6 +1090,21 @@ impl GitRepository for RealGitRepository {
                 let repo = repo.lock();
                 let current_commit = repo.head()?.peel_to_commit()?;
                 repo.branch(&name, &current_commit, false)?;
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["branch", "-m", &new_name])
+                    .await?;
                 Ok(())
             })
             .boxed()
