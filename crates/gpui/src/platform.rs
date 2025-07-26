@@ -40,8 +40,8 @@ use crate::{
     DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
     ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
     Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, SystemWindowTab, Task,
+    TaskLabel, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -503,21 +503,17 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn get_title(&self) -> String {
         String::new()
     }
-    fn get_tab_bar_visible(&self) -> bool {
-        false
+    fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
+        None
     }
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
-    fn on_tab_group_changed(&self, _callback: Box<dyn FnMut(usize)>) {}
     fn merge_all_windows(&self) {}
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}
-    fn tab_group(&self) -> Option<usize> {
-        None
-    }
 
     #[cfg(target_os = "windows")]
     fn get_raw_handle(&self) -> windows::HWND;

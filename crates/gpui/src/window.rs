@@ -12,11 +12,11 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTabController, TabHandles,
-    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
-    size, transparent_black,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, SystemWindowTab,
+    SystemWindowTabController, TabHandles, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement,
+    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
+    point, prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -1135,11 +1135,11 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, window, cx| {
-                        let window_id = handle.window_id();
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
-                        }
+                    .update(&mut cx, |_, _window, _cx| {
+                        // let window_id = handle.window_id();
+                        // if let Some(tab_group) = window.tab_group() {
+                        //     SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
+                        // }
                     })
                     .log_err();
             })
@@ -1148,23 +1148,13 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, window, cx| {
-                        let window_id = handle.window_id();
-                        if let Some(tab_group) = window.tab_group() {
-                            SystemWindowTabController::select_previous_tab(
-                                cx, tab_group, window_id,
-                            );
-                        }
-                    })
-                    .log_err();
-            })
-        });
-        platform_window.on_tab_group_changed({
-            let mut cx = cx.to_async();
-            Box::new(move |tab_group| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        SystemWindowTabController::insert_window(cx, window, tab_group);
+                    .update(&mut cx, |_, _window, _cx| {
+                        // let window_id = handle.window_id();
+                        // if let Some(tab_group) = window.tab_group() {
+                        //     SystemWindowTabController::select_previous_tab(
+                        //         cx, tab_group, window_id,
+                        //     );
+                        // }
                     })
                     .log_err();
             })
@@ -4332,16 +4322,10 @@ impl Window {
         self.platform_window.get_title()
     }
 
-    /// Gets the visibility of the tab bar at the platform level.
+    /// Returns a list of all tabbed windows and their titles.
     /// This is macOS specific.
-    pub fn tab_bar_visible(&self) -> bool {
-        self.platform_window.get_tab_bar_visible()
-    }
-
-    /// Returns the tab group pointer of the window.
-    /// This is macOS specific.
-    pub fn tab_group(&self) -> Option<usize> {
-        self.platform_window.tab_group()
+    pub fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
+        self.platform_window.tabbed_windows()
     }
 
     /// Merges all open windows into a single tabbed window.

@@ -4,9 +4,10 @@ use crate::{
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
-    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
+    ScaledPixels, SharedString, Size, SystemWindowTab, Timer, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
+    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
+    px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -366,16 +367,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
             select_previous_tab as extern "C" fn(&Object, Sel, id),
         );
 
-        decl.add_method(
-            sel!(toggleTabBar:),
-            toggle_tab_bar as extern "C" fn(&Object, Sel, id),
-        );
-
-        decl.add_method(
-            sel!(observeValueForKeyPath:ofObject:change:context:),
-            observe_value_for_key_path as extern "C" fn(&Object, Sel, id, id, id, *mut c_void),
-        );
-
         decl.register()
     }
 }
@@ -410,7 +401,6 @@ struct MacWindowState {
     fullscreen_restore_bounds: Bounds<Pixels>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
-    tab_group_changed_callback: Option<Box<dyn FnMut(usize)>>,
 }
 
 impl MacWindowState {
@@ -704,7 +694,6 @@ impl MacWindow {
                 fullscreen_restore_bounds: Bounds::default(),
                 select_next_tab_callback: None,
                 select_previous_tab_callback: None,
-                tab_group_changed_callback: None,
             })));
 
             (*native_window).set_ivar(
@@ -792,7 +781,6 @@ impl MacWindow {
                 }
             }
 
-            init_tab_group_observer(native_window);
             let app = NSApplication::sharedApplication(nil);
             let main_window: id = msg_send![app, mainWindow];
             if allows_automatic_window_tabbing
@@ -915,7 +903,6 @@ impl Drop for MacWindow {
         let window = this.native_window;
         this.display_link.take();
         unsafe {
-            remove_tab_group_kvo_observer(window);
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
@@ -1374,23 +1361,27 @@ impl PlatformWindow for MacWindow {
         self.0.lock().appearance_changed_callback = Some(callback);
     }
 
-    fn tab_group(&self) -> Option<usize> {
+    fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
         unsafe {
-            let tabgroup: id = msg_send![self.0.lock().native_window, tabGroup];
-            let tabgroup_id = tabgroup as *const Object as usize;
-            Some(tabgroup_id)
-        }
-    }
-
-    fn get_tab_bar_visible(&self) -> bool {
-        unsafe {
-            let tab_group: id = msg_send![self.0.lock().native_window, tabGroup];
-            if tab_group.is_null() {
-                false
-            } else {
-                let tab_bar_visible: BOOL = msg_send![tab_group, isTabBarVisible];
-                tab_bar_visible == YES
+            let windows: id = msg_send![self.0.lock().native_window, tabbedWindows];
+            if windows.is_null() {
+                return None;
             }
+
+            let count: NSUInteger = msg_send![windows, count];
+            let mut result = Vec::new();
+            for i in 0..count {
+                let window: id = msg_send![windows, objectAtIndex:i];
+                if msg_send![window, isKindOfClass: WINDOW_CLASS] {
+                    let handle = get_window_state(&*window).lock().handle;
+                    let title: id = msg_send![window, title];
+                    let title = SharedString::from(title.to_str().to_string());
+
+                    result.push(SystemWindowTab::new(title, handle));
+                }
+            }
+
+            Some(result)
         }
     }
 
@@ -1400,10 +1391,6 @@ impl PlatformWindow for MacWindow {
 
     fn on_select_previous_tab(&self, callback: Box<dyn FnMut()>) {
         self.0.as_ref().lock().select_previous_tab_callback = Some(callback);
-    }
-
-    fn on_tab_group_changed(&self, _callback: Box<dyn FnMut(usize)>) {
-        self.0.as_ref().lock().tab_group_changed_callback = Some(_callback);
     }
 
     fn draw(&self, scene: &crate::Scene) {
@@ -1940,9 +1927,7 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
             lock.renderer.set_presents_with_transaction(true);
             lock.stop_display_link();
             drop(lock);
-            callback(RequestFrameOptions {
-                require_presentation: true,
-            });
+            callback(Default::default());
 
             let mut lock = window_state.lock();
             lock.request_frame_callback = Some(callback);
@@ -2525,60 +2510,5 @@ extern "C" fn select_previous_tab(this: &Object, _sel: Sel, _id: id) {
         drop(lock);
         callback();
         window_state.lock().select_previous_tab_callback = Some(callback);
-    }
-}
-
-extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
-    unsafe {
-        let _: () = msg_send![super(this, class!(NSWindow)), toggleTabBar:nil];
-
-        let window_state = get_window_state(this);
-        window_state.as_ref().lock().move_traffic_light();
-    }
-}
-
-unsafe fn init_tab_group_observer(this: *mut Object) {
-    unsafe {
-        let _: () = msg_send![this,
-            addObserver:this
-            forKeyPath:ns_string("tabGroup")
-            options:1u64 // NSKeyValueObservingOptionNew
-            context:std::ptr::null_mut::<c_void>()];
-    }
-}
-
-unsafe fn remove_tab_group_kvo_observer(this: *mut Object) {
-    unsafe {
-        let _: () = msg_send![this,
-            removeObserver:this
-            forKeyPath:ns_string("tabGroup")
-            context:std::ptr::null_mut::<c_void>()];
-    }
-}
-
-extern "C" fn observe_value_for_key_path(
-    this: &Object,
-    _sel: Sel,
-    key_path: id,
-    _object: id,
-    change: id,
-    _context: *mut c_void,
-) {
-    unsafe {
-        if key_path.isEqualToString("tabGroup") {
-            let tabgroup_id: id = msg_send![change, objectForKey: ns_string("new")];
-            let window_state = get_window_state(this);
-            let queue: id = msg_send![class!(NSOperationQueue), mainQueue];
-            let block = ConcreteBlock::new(move || {
-                let mut lock = window_state.as_ref().lock();
-                if let Some(mut callback) = lock.tab_group_changed_callback.take() {
-                    drop(lock);
-                    callback(tabgroup_id as usize);
-                    window_state.lock().tab_group_changed_callback = Some(callback);
-                }
-            })
-            .copy();
-            let _: () = msg_send![queue, addOperationWithBlock: &*block];
-        }
     }
 }
