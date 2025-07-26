@@ -74,33 +74,63 @@ impl SystemWindowTabs {
 
     pub fn init(cx: &mut App) {
         cx.observe_new(|workspace: &mut Workspace, _, _| {
-            workspace
-                .register_action(|_, _: &ShowNextWindowTab, window, cx| {
-                    SystemWindowTabController::select_next_tab(
-                        cx,
-                        window.window_handle().window_id(),
-                    );
-                })
-                .register_action(|_, _: &ShowPreviousWindowTab, window, cx| {
-                    SystemWindowTabController::select_previous_tab(
-                        cx,
-                        window.window_handle().window_id(),
-                    );
-                })
-                .register_action(|_, _: &MergeAllWindows, window, cx| {
-                    SystemWindowTabController::merge_all_windows(
-                        cx,
-                        window.window_handle().window_id(),
-                    );
-                    window.merge_all_windows();
-                })
-                .register_action(|_, _: &MoveTabToNewWindow, window, cx| {
-                    SystemWindowTabController::move_tab_to_new_window(
-                        cx,
-                        window.window_handle().window_id(),
-                    );
-                    window.move_tab_to_new_window();
+            workspace.register_action_renderer(|div, _, window, cx| {
+                let window_id = window.window_handle().window_id();
+                let controller = cx.global::<SystemWindowTabController>();
+                let tab_group = controller.tabs().iter().find_map(|(group, windows)| {
+                    windows
+                        .iter()
+                        .find(|tab| tab.id == window_id)
+                        .map(|_| *group)
                 });
+
+                if let Some(tab_group) = tab_group {
+                    let all_tab_groups = controller.tabs();
+                    let tabs = controller.windows(tab_group);
+                    let show_merge_all_windows = all_tab_groups.len() > 1;
+                    let show_other_tab_actions = if let Some(tabs) = tabs {
+                        tabs.len() > 1
+                    } else {
+                        false
+                    };
+
+                    return div
+                        .when(show_other_tab_actions, |div| {
+                            div.on_action(move |_: &ShowNextWindowTab, window, cx| {
+                                SystemWindowTabController::select_next_tab(
+                                    cx,
+                                    window.window_handle().window_id(),
+                                );
+                            })
+                            .on_action(move |_: &ShowPreviousWindowTab, window, cx| {
+                                SystemWindowTabController::select_previous_tab(
+                                    cx,
+                                    window.window_handle().window_id(),
+                                );
+                            })
+                            .on_action(
+                                move |_: &MoveTabToNewWindow, window, cx| {
+                                    SystemWindowTabController::move_tab_to_new_window(
+                                        cx,
+                                        window.window_handle().window_id(),
+                                    );
+                                    window.move_tab_to_new_window();
+                                },
+                            )
+                        })
+                        .when(show_merge_all_windows, |div| {
+                            div.on_action(move |_: &MergeAllWindows, window, cx| {
+                                SystemWindowTabController::merge_all_windows(
+                                    cx,
+                                    window.window_handle().window_id(),
+                                );
+                                window.merge_all_windows();
+                            })
+                        });
+                }
+
+                div
+            });
         })
         .detach();
     }
