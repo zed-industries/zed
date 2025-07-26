@@ -40,6 +40,7 @@ enable = false
 "/assistant/prompting.html" = "/docs/ai/rules.html"
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
 "/model-improvement.html" = "/docs/ai/ai-improvement.html"
+"/ai/temperature.html" = "/docs/ai/agent-settings.html#model-temperature"
 
 # Community
 "/community/feedback.html" = "/community-links"
