@@ -1,9 +1,10 @@
-# C++
+# C/C++
 
-C++ support is available natively in Zed.
+C and C++ support is available natively in Zed.
 
-- Tree-sitter: [tree-sitter/tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp)
+- Tree-sitter: [tree-sitter/tree-sitter-c](https://github.com/tree-sitter/tree-sitter-c), [tree-sitter/tree-sitter-cpp](https://github.com/tree-sitter/tree-sitter-cpp)
 - Language Server: [clangd/clangd](https://github.com/clangd/clangd)
+- Debug Adapter: [CodeLLDB](https://github.com/vadimcn) (primary), [GDB](https://sourceware.org/gdb/) (secondary, not available on Apple silicon)
 
 ## Binary
 
@@ -57,7 +58,18 @@ You can pass any number of arguments to clangd. To see a full set of available o
 
 ## Formatting
 
-By default Zed will use the `clangd` language server for formatting C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+By default Zed will use the `clangd` language server for formatting C/C++ code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
+
+### C Example
+
+```yaml
+---
+BasedOnStyle: GNU
+IndentWidth: 2
+---
+```
+
+### C++ Example
 
 ```yaml
 ---
@@ -75,13 +87,28 @@ See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOpt
 
 You can trigger formatting via {#kb editor::Format} or the `editor: format` action from the command palette or by adding `format_on_save` to your Zed settings:
 
+### For C:
 ```json
+{
+  "languages": {
+    "C": {
+      "format_on_save": "on",
+      "tab_size": 2
+    }
+  }
+}
+```
+
+### For C++:
+```json
+{
   "languages": {
     "C++": {
       "format_on_save": "on",
       "tab_size": 2
     }
   }
+}
 ```
 
 ## More server configuration
@@ -99,6 +126,26 @@ Diagnostics:
 
 For more advanced usage of clangd configuration file, take a look into their [official page](https://clangd.llvm.org/config.html).
 
+
+## Force detect as C
+
+Clangd out of the box assumes mixed C++/C projects. If you have a C-only project you may wish to instruct clangd to treat all files as C using the `-xc` flag. To do this, create a `.clangd` file in the root of your project with the following:
+
+```yaml
+CompileFlags:
+  Add: [-xc]
+```
+
+By default clang and gcc will recognize `*.C` and `*.H` (uppercase extensions) as C++ and not C and so Zed too follows this convention. If you are working with a C-only project (perhaps one with legacy uppercase pathing like `FILENAME.C`) you can override this behavior by adding this to your settings:
+
+```json
+{
+  "file_types": {
+    "C": ["C", "H"]
+  }
+}
+```
+
 ## Compile Commands
 
 For some projects Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
@@ -115,7 +162,7 @@ After building your project, CMake will generate the `compile_commands.json` fil
 
 ## Debugging
 
-You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
+You can use CodeLLDB or GDB to debug native binaries. (Make sure that your build process passes `-g` to the C/C++ compiler, so that debug information is included in the resulting binary.) See below for examples of debug configurations that you can add to `.zed/debug.json`.
 
 ### Build and Debug Binary
 
