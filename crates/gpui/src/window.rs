@@ -964,6 +964,12 @@ impl Window {
                 tabbing_identifier,
             },
         )?;
+
+        let windows = platform_window.tabbed_windows();
+        if let Some(windows) = windows {
+            SystemWindowTabController::open_window(cx, handle.window_id(), windows);
+        }
+
         let display_id = platform_window.display().map(|display| display.id());
         let sprite_atlas = platform_window.sprite_atlas();
         let mouse_position = platform_window.mouse_position();
@@ -1131,15 +1137,32 @@ impl Window {
                     .unwrap_or(None)
             })
         });
+        platform_window.on_move_tab_to_new_window({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::move_tab_to_new_window(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_merge_all_windows({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::merge_all_windows(cx, handle.window_id());
+                    })
+                    .log_err();
+            })
+        });
         platform_window.on_select_next_tab({
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, _window, _cx| {
-                        // let window_id = handle.window_id();
-                        // if let Some(tab_group) = window.tab_group() {
-                        //     SystemWindowTabController::select_next_tab(cx, tab_group, window_id);
-                        // }
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_next_tab(cx, handle.window_id());
                     })
                     .log_err();
             })
@@ -1148,13 +1171,8 @@ impl Window {
             let mut cx = cx.to_async();
             Box::new(move || {
                 handle
-                    .update(&mut cx, |_, _window, _cx| {
-                        // let window_id = handle.window_id();
-                        // if let Some(tab_group) = window.tab_group() {
-                        //     SystemWindowTabController::select_previous_tab(
-                        //         cx, tab_group, window_id,
-                        //     );
-                        // }
+                    .update(&mut cx, |_, _window, cx| {
+                        SystemWindowTabController::select_previous_tab(cx, handle.window_id())
                     })
                     .log_err();
             })

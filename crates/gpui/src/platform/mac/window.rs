@@ -358,6 +358,16 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
         );
 
         decl.add_method(
+            sel!(moveTabToNewWindow:),
+            move_tab_to_new_window as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_method(
+            sel!(mergeAllWindows:),
+            merge_all_windows as extern "C" fn(&Object, Sel, id),
+        );
+
+        decl.add_method(
             sel!(selectNextTab:),
             select_next_tab as extern "C" fn(&Object, Sel, id),
         );
@@ -399,6 +409,8 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
+    move_tab_to_new_window_callback: Option<Box<dyn FnMut()>>,
+    merge_all_windows_callback: Option<Box<dyn FnMut()>>,
     select_next_tab_callback: Option<Box<dyn FnMut()>>,
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
 }
@@ -692,6 +704,8 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                move_tab_to_new_window_callback: None,
+                merge_all_windows_callback: None,
                 select_next_tab_callback: None,
                 select_previous_tab_callback: None,
             })));
@@ -1383,6 +1397,14 @@ impl PlatformWindow for MacWindow {
 
             Some(result)
         }
+    }
+
+    fn on_move_tab_to_new_window(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().move_tab_to_new_window_callback = Some(callback);
+    }
+
+    fn on_merge_all_windows(&self, callback: Box<dyn FnMut()>) {
+        self.0.as_ref().lock().merge_all_windows_callback = Some(callback);
     }
 
     fn on_select_next_tab(&self, callback: Box<dyn FnMut()>) {
@@ -2490,6 +2512,34 @@ extern "C" fn add_titlebar_accessory_view_controller(this: &Object, _: Sel, view
         let mut frame: NSRect = msg_send![accessory_view, frame];
         frame.size.height = 0.0;
         let _: () = msg_send![accessory_view, setFrame: frame];
+    }
+}
+
+extern "C" fn move_tab_to_new_window(this: &Object, _: Sel, _: id) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), moveTabToNewWindow:nil];
+
+        let window_state = get_window_state(this);
+        let mut lock = window_state.as_ref().lock();
+        if let Some(mut callback) = lock.move_tab_to_new_window_callback.take() {
+            drop(lock);
+            callback();
+            window_state.lock().move_tab_to_new_window_callback = Some(callback);
+        }
+    }
+}
+
+extern "C" fn merge_all_windows(this: &Object, _: Sel, _: id) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSWindow)), mergeAllWindows:nil];
+
+        let window_state = get_window_state(this);
+        let mut lock = window_state.as_ref().lock();
+        if let Some(mut callback) = lock.merge_all_windows_callback.take() {
+            drop(lock);
+            callback();
+            window_state.lock().merge_all_windows_callback = Some(callback);
+        }
     }
 }
 

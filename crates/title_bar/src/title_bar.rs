@@ -287,7 +287,7 @@ impl TitleBar {
             )
         });
 
-        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
+        let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, window, cx));
 
         Self {
             platform_titlebar,
