@@ -398,7 +398,10 @@ message Envelope {
         GetColorPresentation get_color_presentation = 355;
         GetColorPresentationResponse get_color_presentation_response = 356;
 
-        GitRenameBranch git_rename_branch = 357;
+        Stash stash = 357;
+        StashPop stash_pop = 358;
+        
+        GitRenameBranch git_rename_branch = 359; // current max
 
     }
 
