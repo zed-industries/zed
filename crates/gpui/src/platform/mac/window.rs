@@ -5,7 +5,8 @@ use crate::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
+    WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
+    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -963,15 +964,34 @@ impl PlatformWindow for MacWindow {
 
     fn merge_all_windows(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe {
+        unsafe extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
             let _: () = msg_send![native_window, mergeAllWindows:nil];
+        }
+
+        unsafe {
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(merge_windows_async),
+            );
         }
     }
 
     fn move_tab_to_new_window(&self) {
         let native_window = self.0.lock().native_window;
-        unsafe {
+        unsafe extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
+            let native_window = context as id;
             let _: () = msg_send![native_window, moveTabToNewWindow:nil];
+            let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
+        }
+
+        unsafe {
+            dispatch_async_f(
+                dispatch_get_main_queue(),
+                native_window as *mut std::ffi::c_void,
+                Some(move_tab_async),
+            );
         }
     }
 
