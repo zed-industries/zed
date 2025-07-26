@@ -45,7 +45,7 @@ impl AgentServer for ClaudeCode {
     }
 
     fn empty_state_message(&self) -> &'static str {
-        ""
+        "How can I help you today?"
     }
 
     fn logo(&self) -> ui::IconName {

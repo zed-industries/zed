@@ -2665,7 +2665,7 @@ impl AgentPanel {
                                         )
                                         .child(
                                             NewThreadButton::new(
-                                                "new-claude-thread-btn",
+                                                "new-codex-thread-btn",
                                                 "New Codex Thread",
                                                 IconName::AiOpenAi,
                                             )

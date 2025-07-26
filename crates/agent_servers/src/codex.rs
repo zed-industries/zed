@@ -33,7 +33,7 @@ impl AgentServer for Codex {
     }
 
     fn empty_state_message(&self) -> &'static str {
-        ""
+        "What can I help with?"
     }
 
     fn logo(&self) -> ui::IconName {
