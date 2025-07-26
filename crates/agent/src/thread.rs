@@ -2557,7 +2557,7 @@ impl Thread {
             return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
         }
 
-        if tool.needs_confirmation(&tool_use.input, cx)
+        if tool.needs_confirmation(&tool_use.input, &self.project, cx)
             && !AgentSettings::get_global(cx).always_allow_tool_actions
         {
             self.tool_use.confirm_tool_use(
