@@ -942,7 +942,7 @@ impl Thread {
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id, cx)
+        self.tool_use.tool_uses_for_message(id, &self.project, cx)
     }
 
     pub fn tool_results_for_message(
