@@ -595,6 +595,10 @@ pub trait LanguageModel: Send + Sync {
         unimplemented!()
     }
 
+    fn allow_configure_endpoint(&self) -> bool {
+        false
+    }
+
     async fn endpoints(&self) -> Vec<LanguageModelEndpoint> {
         vec![]
     }
