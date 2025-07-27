@@ -7,6 +7,7 @@ use std::{
 use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
@@ -241,6 +242,57 @@ pub async fn test_tool_call_with_confirmation(
     });
 }
 
+pub async fn test_tool_call_always_allow(
+    server: impl AgentServer + 'static,
+    cx: &mut TestAppContext,
+) {
+    let fs = init_test(cx).await;
+    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
+
+    // Enable always_allow_tool_actions
+    cx.update(|cx| {
+        AgentSettings::override_global(
+            AgentSettings {
+                always_allow_tool_actions: true,
+                ..Default::default()
+            },
+            cx,
+        );
+    });
+
+    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let full_turn = thread.update(cx, |thread, cx| {
+        thread.send_raw(
+            r#"Run `touch hello.txt && echo "Hello, world!" | tee hello.txt`"#,
+            cx,
+        )
+    });
+
+    // Wait for the tool call to complete
+    full_turn.await.unwrap();
+
+    thread.read_with(cx, |thread, _cx| {
+        // With always_allow_tool_actions enabled, the tool call should be immediately allowed
+        // without waiting for confirmation
+        let tool_call_entry = thread
+            .entries()
+            .iter()
+            .find(|entry| matches!(entry, AgentThreadEntry::ToolCall(_)))
+            .expect("Expected a tool call entry");
+
+        let AgentThreadEntry::ToolCall(tool_call) = tool_call_entry else {
+            panic!("Expected tool call entry");
+        };
+
+        // Should be allowed, not waiting for confirmation
+        assert!(
+            matches!(tool_call.status, ToolCallStatus::Allowed { .. }),
+            "Expected tool call to be allowed automatically, but got {:?}",
+            tool_call.status
+        );
+    });
+}
+
 pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
     let fs = init_test(cx).await;
 
@@ -350,6 +402,12 @@ macro_rules! common_e2e_tests {
             #[cfg_attr(not(feature = "e2e"), ignore)]
             async fn cancel(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_cancel($server, cx).await;
+            }
+
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn tool_call_always_allow(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_tool_call_always_allow($server, cx).await;
             }
         }
     };
