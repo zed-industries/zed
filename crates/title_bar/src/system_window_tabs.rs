@@ -1,8 +1,8 @@
 use settings::Settings;
 
 use gpui::{
-    Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled, Subscription,
-    SystemWindowTab, SystemWindowTabController, Window, WindowId, actions, canvas, div,
+    Context, Hsla, InteractiveElement, ParentElement, ScrollHandle, Styled, SystemWindowTab,
+    SystemWindowTabController, Window, WindowId, actions, canvas, div,
 };
 
 use ui::{
@@ -38,28 +38,14 @@ pub struct SystemWindowTabs {
     tabs: Vec<SystemWindowTab>,
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
-    _subscriptions: Vec<Subscription>,
 }
 
 impl SystemWindowTabs {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let window_id = window.window_handle().window_id();
-        let mut subscriptions = Vec::new();
-
-        subscriptions.push(
-            cx.observe_global::<SystemWindowTabController>(move |this, cx| {
-                let controller = cx.global::<SystemWindowTabController>();
-                if let Some(tabs) = controller.tabs(window_id) {
-                    this.tabs = tabs.clone();
-                }
-            }),
-        );
-
+    pub fn new() -> Self {
         Self {
             tabs: Vec::new(),
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: px(0.),
-            _subscriptions: subscriptions,
         }
     }
 
@@ -327,8 +313,18 @@ impl Render for SystemWindowTabs {
         let inactive_background_color = cx.theme().colors().tab_bar_background;
         let entity = cx.entity();
 
-        let tab_items = self
-            .tabs
+        let controller = cx.global::<SystemWindowTabController>();
+        let visible = controller.is_visible();
+        let current_window_tab = vec![SystemWindowTab::new(
+            SharedString::from(window.window_title()),
+            window.window_handle(),
+        )];
+        let tabs = controller
+            .tabs(window.window_handle().window_id())
+            .unwrap_or(&current_window_tab)
+            .clone();
+
+        let tab_items = tabs
             .iter()
             .enumerate()
             .map(|(ix, item)| {
@@ -344,7 +340,7 @@ impl Render for SystemWindowTabs {
             .collect::<Vec<_>>();
 
         let number_of_tabs = tab_items.len().max(1);
-        if number_of_tabs <= 1 {
+        if !window.tab_bar_visible() && !visible {
             return h_flex().into_any_element();
         }
 

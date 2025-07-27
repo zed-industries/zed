@@ -260,6 +260,7 @@ impl SystemWindowTab {
 /// A controller for managing window tabs.
 #[derive(Default)]
 pub struct SystemWindowTabController {
+    visible: Option<bool>,
     tab_groups: FxHashMap<usize, Vec<SystemWindowTab>>,
 }
 
@@ -269,6 +270,7 @@ impl SystemWindowTabController {
     /// Create a new instance of the window tab controller.
     pub fn new() -> Self {
         Self {
+            visible: None,
             tab_groups: FxHashMap::default(),
         }
     }
@@ -295,6 +297,25 @@ impl SystemWindowTabController {
         } else {
             None
         }
+    }
+
+    /// Initialize the visibility of the system window tab controller.
+    pub fn init_visible(cx: &mut App, visible: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        if !controller.visible.is_some() {
+            controller.visible = Some(visible);
+        }
+    }
+
+    /// Get the visibility of the system window tab controller.
+    pub fn is_visible(&self) -> bool {
+        self.visible.unwrap_or(false)
+    }
+
+    /// Set the visibility of the system window tab controller.
+    pub fn set_visible(cx: &mut App, visible: bool) {
+        let mut controller = cx.global_mut::<SystemWindowTabController>();
+        controller.visible = Some(visible);
     }
 
     /// Update the position of a tab within its group.
