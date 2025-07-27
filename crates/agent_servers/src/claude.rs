@@ -414,11 +414,19 @@ impl ClaudeAgentSession {
                 }
             }
             SdkMessage::Result {
-                is_error, subtype, ..
+                is_error,
+                subtype,
+                result,
+                ..
             } => {
                 if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
                     if is_error {
-                        end_turn_tx.send(Err(anyhow!("Error: {subtype}"))).ok();
+                        end_turn_tx
+                            .send(Err(anyhow!(
+                                "Error: {}",
+                                result.unwrap_or_else(|| subtype.to_string())
+                            )))
+                            .ok();
                     } else {
                         end_turn_tx.send(Ok(())).ok();
                     }
