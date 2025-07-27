@@ -222,22 +222,36 @@ impl BranchListDelegate {
             return;
         };
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
+
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, _| {
-                repo.create_branch(new_branch_name.to_string())
-            })?
-            .await??;
-            repo.update(cx, |repo, _| {
-                repo.change_branch(new_branch_name.to_string())
-            })?
-            .await??;
+            match repo
+                .update(cx, |repo, _| repo.create_branch(new_branch_name.clone()))?
+                .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    return Err(error);
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!("Operation was canceled"));
+                }
+            }
+            match repo
+                .update(cx, |repo, _| repo.change_branch(new_branch_name))?
+                .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => {
+                    return Err(error);
+                }
+                Err(_) => {
+                    return Err(anyhow::anyhow!("Operation was canceled"));
+                }
+            }
 
             Ok(())
         })
-        .detach_and_prompt_err("Failed to create branch", window, cx, |e, _, _| {
-            Some(e.to_string())
-        });
-        cx.emit(DismissEvent);
+        .detach_and_prompt_err("Failed to create branch", window, cx, |_, _, _| None);
     }
 }
 
@@ -379,6 +393,8 @@ impl PickerDelegate for BranchListDelegate {
         cx.spawn_in(window, {
             let branch = entry.branch.clone();
             async move |picker, cx| {
+                let branch_name = branch.name().to_string();
+
                 let branch_change_task = picker.update(cx, |this, cx| {
                     let repo = this
                         .delegate
@@ -390,23 +406,31 @@ impl PickerDelegate for BranchListDelegate {
                     let mut cx = cx.to_async();
 
                     anyhow::Ok(async move {
-                        repo.update(&mut cx, |repo, _| {
-                            repo.change_branch(branch.name().to_string())
-                        })?
-                        .await?
+                        repo.update(&mut cx, |repo, _| repo.change_branch(branch_name))?
+                            .await?
                     })
                 })??;
 
-                branch_change_task.await?;
+                match branch_change_task.await {
+                    Ok(_) => {
+                        let _ = picker.update(cx, |_, cx| {
+                            cx.emit(DismissEvent);
+                            anyhow::Ok(())
+                        })?;
+                    }
+                    Err(error) => {
+                        let _ = picker.update(cx, |_, cx| {
+                            cx.emit(DismissEvent);
+                            anyhow::Ok(())
+                        })?;
+                        return Err(error);
+                    }
+                }
 
-                picker.update(cx, |_, cx| {
-                    cx.emit(DismissEvent);
-
-                    anyhow::Ok(())
-                })
+                anyhow::Ok(())
             }
         })
-        .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
+        .detach_and_prompt_err("Failed to switch branch", window, cx, |_, _, _| None);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
