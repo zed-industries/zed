@@ -53,7 +53,7 @@ Assign distinct and specific models for the following AI-powered features in Zed
 }
 ```
 
-> If a model isn't set for one of these features, they automatically fall back to using the default model.
+> If a custom model isn't set for one of these features, they automatically fall back to using the default model.
 
 ### Alternative Models for Inline Assists {#alternative-assists}
 
@@ -128,6 +128,7 @@ You can choose between `thread` (the default) and `text_thread`:
 ### Auto-run Commands
 
 Control whether you want to allow the agent to run commands without asking you for permission.
+The default value is `false`.
 
 ```json
 {
@@ -142,6 +143,7 @@ Control whether you want to allow the agent to run commands without asking you f
 ### Single-file Review
 
 Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
+The default value is `false`.
 
 ```json
 {
@@ -158,6 +160,7 @@ When set to false, these controls are only available in the multibuffer review t
 ### Sound Notification
 
 Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
+The default value is `false`.
 
 ```json
 {
@@ -173,6 +176,7 @@ Control whether you want to hear a notification sound when the agent is done gen
 
 Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
 This is encouraged for more thoughtful prompt crafting.
+The default value is `false`.
 
 ```json
 {
@@ -213,6 +217,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 ### Feedback Controls
 
 Control whether you want to see the thumbs up/down buttons to give Zed feedback about the agent's performance.
+The default value is `true`.
 
 ```json
 {
