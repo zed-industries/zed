@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::FontFamilyName;
-use ui::{Pixels, TextSize};
+use ui::Pixels;
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
@@ -47,6 +47,8 @@ pub struct PresentationModeConfiguration {
     pub buffer_font_size: Option<Pixels>,
     /// The theme to use in presentation mode.
     pub theme: Option<String>,
+    /// Whether to enable full screen when using this presentation mode.
+    pub full_screen: Option<bool>,
 }
 
 impl Settings for PresentationModeSettings {

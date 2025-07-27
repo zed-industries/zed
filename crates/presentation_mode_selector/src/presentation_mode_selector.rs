@@ -5,7 +5,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use settings::{Settings, SettingsStore};
-use theme::{FontFamilyName, ThemeRegistry, ThemeSettings};
+use theme::{ThemeRegistry, ThemeSettings};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 mod presentation_mode_settings;
@@ -205,10 +205,12 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
     fn confirm(
         &mut self,
         _: bool,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Picker<PresentationModeSelectorDelegate>>,
     ) {
         self.selection_completed = true;
+
+        set_screen_state(&self.selected_mode, window);
 
         update_settings(&self.selected_mode, cx);
 
@@ -261,7 +263,7 @@ fn update_settings(
     revert_settings(cx);
 
     if let Some(mode) = presentation_mode {
-        if let Some(buffer_font_family) = &mode.settings.buffer_font_family {
+        if let Some(_buffer_font_family) = &mode.settings.buffer_font_family {
             // TODO: adjust buffer_font_family
         };
 
@@ -301,3 +303,21 @@ fn revert_settings(cx: &mut Context<Picker<PresentationModeSelectorDelegate>>) {
 }
 
 // TODO: Follow theme selector for template for live updating on new options
+
+fn set_screen_state(presentation_mode: &Option<PresentationMode>, window: &mut Window) {
+    match presentation_mode {
+        Some(presentation_mode) => {
+            if let Some(full_screen) = presentation_mode.settings.full_screen {
+                if full_screen {
+                    window.enter_fullscreen();
+                } else {
+                    window.exit_fullscreen();
+                }
+            }
+        }
+        None => {
+            // TODO: Improve this by caching the window state when opening picker and last selected mode was disabled
+            window.exit_fullscreen();
+        }
+    }
+}

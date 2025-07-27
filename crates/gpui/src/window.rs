@@ -4014,6 +4014,20 @@ impl Window {
         self.platform_window.toggle_fullscreen();
     }
 
+    /// Enter full screen mode
+    pub fn enter_fullscreen(&self) {
+        if !self.is_fullscreen() {
+            self.platform_window.toggle_fullscreen();
+        }
+    }
+
+    /// Exit full screen mode
+    pub fn exit_fullscreen(&self) {
+        if self.is_fullscreen() {
+            self.platform_window.toggle_fullscreen();
+        }
+    }
+
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
     pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|window, cx| {
