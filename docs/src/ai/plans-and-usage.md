@@ -11,7 +11,7 @@ Please note that if you’re interested in just using Zed as the world’s faste
 
 ## Usage {#usage}
 
-- A `prompt` in Zed is an input from the user, initiated on pressing enter, composed of one or many `requests`. A `prompt` can be initiated from the Agent Panel, or via Inline Assist.
+- A `prompt` in Zed is an input from the user, initiated by pressing enter, composed of one or many `requests`. A `prompt` can be initiated from the Agent Panel, or via Inline Assist.
 - A `request` in Zed is a response to a `prompt`, plus any tool calls that are initiated as part of that response. There may be one `request` per `prompt`, or many.
 
 Most models offered by Zed are metered per-prompt.
