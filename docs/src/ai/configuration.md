@@ -6,7 +6,7 @@ When using AI in Zed, you can customize several aspects:
 2. [Model parameters and usage](./agent-settings.md#model-settings)
 3. [Interactions with the Agent Panel](./agent-settings.md#agent-panel-settings)
 
-## Turning AI off entirely
+## Turning AI Off Entirely
 
 We want to respect users who want to use Zed without interacting with AI whatsoever.
 To do that, add the following key to your `settings.json`:
