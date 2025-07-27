@@ -506,6 +506,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
         None
     }
+    fn tab_bar_visible(&self) -> bool {
+        false
+    }
     fn set_edited(&mut self, _edited: bool) {}
     fn show_character_palette(&self) {}
     fn titlebar_double_click(&self) {}
@@ -513,6 +516,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn on_merge_all_windows(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_previous_tab(&self, _callback: Box<dyn FnMut()>) {}
     fn on_select_next_tab(&self, _callback: Box<dyn FnMut()>) {}
+    fn on_toggle_tab_bar(&self, _callback: Box<dyn FnMut()>) {}
     fn merge_all_windows(&self) {}
     fn move_tab_to_new_window(&self) {}
     fn toggle_window_tab_overview(&self) {}

@@ -965,8 +965,9 @@ impl Window {
             },
         )?;
 
-        let tabs = platform_window.tabbed_windows();
-        if let Some(tabs) = tabs {
+        let tab_bar_visible = platform_window.tab_bar_visible();
+        SystemWindowTabController::init_visible(cx, tab_bar_visible);
+        if let Some(tabs) = platform_window.tabbed_windows() {
             SystemWindowTabController::add_tab(cx, handle.window_id(), tabs);
         }
 
@@ -1173,6 +1174,17 @@ impl Window {
                 handle
                     .update(&mut cx, |_, _window, cx| {
                         SystemWindowTabController::select_previous_tab(cx, handle.window_id())
+                    })
+                    .log_err();
+            })
+        });
+        platform_window.on_toggle_tab_bar({
+            let mut cx = cx.to_async();
+            Box::new(move || {
+                handle
+                    .update(&mut cx, |_, window, cx| {
+                        let tab_bar_visible = window.platform_window.tab_bar_visible();
+                        SystemWindowTabController::set_visible(cx, tab_bar_visible);
                     })
                     .log_err();
             })
@@ -4344,6 +4356,12 @@ impl Window {
     /// This is macOS specific.
     pub fn tabbed_windows(&self) -> Option<Vec<SystemWindowTab>> {
         self.platform_window.tabbed_windows()
+    }
+
+    /// Returns the tab bar visibility.
+    /// This is macOS specific.
+    pub fn tab_bar_visible(&self) -> bool {
+        self.platform_window.tab_bar_visible()
     }
 
     /// Merges all open windows into a single tabbed window.
