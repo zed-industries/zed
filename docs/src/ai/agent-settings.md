@@ -12,7 +12,6 @@ But if you're not subscribed to the hosted service or simply just want to change
 ```json
 {
   "agent": {
-    "version": "2",
     "default_model": {
       "provider": "zed.dev",
       "model": "gpt-4o"
@@ -32,7 +31,6 @@ Assign distinct and specific models for the following AI-powered features in Zed
 ```json
 {
   "agent": {
-    "version": "2",
     "default_model": {
       "provider": "zed.dev",
       "model": "claude-sonnet-4"
