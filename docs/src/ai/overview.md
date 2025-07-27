@@ -1,7 +1,6 @@
 # AI
 
-Zed smoothly integrates LLMs in multiple ways across the editor.
-Learn how to get started with AI on Zed and all its capabilities.
+Learn how to get started using AI with Zed and all its capabilities.
 
 ## Setting up AI in Zed
 

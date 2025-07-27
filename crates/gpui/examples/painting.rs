@@ -1,11 +1,12 @@
 use gpui::{
     Application, Background, Bounds, ColorSpace, Context, MouseDownEvent, Path, PathBuilder,
     PathStyle, Pixels, Point, Render, SharedString, StrokeOptions, Window, WindowOptions, canvas,
-    div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    div, linear_color_stop, linear_gradient, point, prelude::*, px, quad, rgb, size,
 };
 
 struct PaintingViewer {
     default_lines: Vec<(Path<Pixels>, Background)>,
+    background_quads: Vec<(Bounds<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
     dashed: bool,
@@ -16,12 +17,148 @@ impl PaintingViewer {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let mut lines = vec![];
 
+        // Black squares beneath transparent paths.
+        let background_quads = vec![
+            (
+                Bounds {
+                    origin: point(px(70.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(170.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(270.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(370.), px(70.)),
+                    size: size(px(40.), px(40.)),
+                },
+                gpui::black().into(),
+            ),
+            (
+                Bounds {
+                    origin: point(px(450.), px(50.)),
+                    size: size(px(80.), px(80.)),
+                },
+                gpui::black().into(),
+            ),
+        ];
+
+        // 50% opaque red path that extends across black quad.
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(50.), px(50.)));
+        builder.line_to(point(px(130.), px(50.)));
+        builder.line_to(point(px(130.), px(130.)));
+        builder.line_to(point(px(50.), px(130.)));
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut red = rgb(0xFF0000);
+        red.a = 0.5;
+        lines.push((path, red.into()));
+
+        // 50% opaque blue path that extends across black quad.
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(150.), px(50.)));
+        builder.line_to(point(px(230.), px(50.)));
+        builder.line_to(point(px(230.), px(130.)));
+        builder.line_to(point(px(150.), px(130.)));
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut blue = rgb(0x0000FF);
+        blue.a = 0.5;
+        lines.push((path, blue.into()));
+
+        // 50% opaque green path that extends across black quad.
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(250.), px(50.)));
+        builder.line_to(point(px(330.), px(50.)));
+        builder.line_to(point(px(330.), px(130.)));
+        builder.line_to(point(px(250.), px(130.)));
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut green = rgb(0x00FF00);
+        green.a = 0.5;
+        lines.push((path, green.into()));
+
+        // 50% opaque black path that extends across black quad.
+        let mut builder = PathBuilder::fill();
+        builder.move_to(point(px(350.), px(50.)));
+        builder.line_to(point(px(430.), px(50.)));
+        builder.line_to(point(px(430.), px(130.)));
+        builder.line_to(point(px(350.), px(130.)));
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut black = rgb(0x000000);
+        black.a = 0.5;
+        lines.push((path, black.into()));
+
+        // Two 50% opaque red circles overlapping - center should be darker red
+        let mut builder = PathBuilder::fill();
+        let center = point(px(530.), px(85.));
+        let radius = px(30.);
+        builder.move_to(point(center.x + radius, center.y));
+        builder.arc_to(
+            point(radius, radius),
+            px(0.),
+            false,
+            false,
+            point(center.x - radius, center.y),
+        );
+        builder.arc_to(
+            point(radius, radius),
+            px(0.),
+            false,
+            false,
+            point(center.x + radius, center.y),
+        );
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut red1 = rgb(0xFF0000);
+        red1.a = 0.5;
+        lines.push((path, red1.into()));
+
+        let mut builder = PathBuilder::fill();
+        let center = point(px(570.), px(85.));
+        let radius = px(30.);
+        builder.move_to(point(center.x + radius, center.y));
+        builder.arc_to(
+            point(radius, radius),
+            px(0.),
+            false,
+            false,
+            point(center.x - radius, center.y),
+        );
+        builder.arc_to(
+            point(radius, radius),
+            px(0.),
+            false,
+            false,
+            point(center.x + radius, center.y),
+        );
+        builder.close();
+        let path = builder.build().unwrap();
+        let mut red2 = rgb(0xFF0000);
+        red2.a = 0.5;
+        lines.push((path, red2.into()));
+
         // draw a Rust logo
         let mut builder = lyon::path::Path::svg_builder();
         lyon::extra::rust_logo::build_logo_path(&mut builder);
         // move down the Path
         let mut builder: PathBuilder = builder.into();
-        builder.translate(point(px(10.), px(100.)));
+        builder.translate(point(px(10.), px(200.)));
         builder.scale(0.9);
         let path = builder.build().unwrap();
         lines.push((path, gpui::black().into()));
@@ -30,10 +167,10 @@ impl PaintingViewer {
         let mut builder = PathBuilder::fill();
         builder.add_polygon(
             &[
-                point(px(150.), px(200.)),
-                point(px(200.), px(125.)),
-                point(px(200.), px(175.)),
-                point(px(250.), px(100.)),
+                point(px(150.), px(300.)),
+                point(px(200.), px(225.)),
+                point(px(200.), px(275.)),
+                point(px(250.), px(200.)),
             ],
             false,
         );
@@ -42,17 +179,17 @@ impl PaintingViewer {
 
         // draw a ⭐
         let mut builder = PathBuilder::fill();
-        builder.move_to(point(px(350.), px(100.)));
-        builder.line_to(point(px(370.), px(160.)));
-        builder.line_to(point(px(430.), px(160.)));
-        builder.line_to(point(px(380.), px(200.)));
-        builder.line_to(point(px(400.), px(260.)));
-        builder.line_to(point(px(350.), px(220.)));
-        builder.line_to(point(px(300.), px(260.)));
-        builder.line_to(point(px(320.), px(200.)));
-        builder.line_to(point(px(270.), px(160.)));
-        builder.line_to(point(px(330.), px(160.)));
-        builder.line_to(point(px(350.), px(100.)));
+        builder.move_to(point(px(350.), px(200.)));
+        builder.line_to(point(px(370.), px(260.)));
+        builder.line_to(point(px(430.), px(260.)));
+        builder.line_to(point(px(380.), px(300.)));
+        builder.line_to(point(px(400.), px(360.)));
+        builder.line_to(point(px(350.), px(320.)));
+        builder.line_to(point(px(300.), px(360.)));
+        builder.line_to(point(px(320.), px(300.)));
+        builder.line_to(point(px(270.), px(260.)));
+        builder.line_to(point(px(330.), px(260.)));
+        builder.line_to(point(px(350.), px(200.)));
         let path = builder.build().unwrap();
         lines.push((
             path,
@@ -66,7 +203,7 @@ impl PaintingViewer {
 
         // draw linear gradient
         let square_bounds = Bounds {
-            origin: point(px(450.), px(100.)),
+            origin: point(px(450.), px(200.)),
             size: size(px(200.), px(80.)),
         };
         let height = square_bounds.size.height;
@@ -96,31 +233,31 @@ impl PaintingViewer {
 
         // draw a pie chart
         let center = point(px(96.), px(96.));
-        let pie_center = point(px(775.), px(155.));
+        let pie_center = point(px(775.), px(255.));
         let segments = [
             (
-                point(px(871.), px(155.)),
-                point(px(747.), px(63.)),
+                point(px(871.), px(255.)),
+                point(px(747.), px(163.)),
                 rgb(0x1374e9),
             ),
             (
-                point(px(747.), px(63.)),
-                point(px(679.), px(163.)),
+                point(px(747.), px(163.)),
+                point(px(679.), px(263.)),
                 rgb(0xe13527),
             ),
             (
-                point(px(679.), px(163.)),
-                point(px(754.), px(249.)),
+                point(px(679.), px(263.)),
+                point(px(754.), px(349.)),
                 rgb(0x0751ce),
             ),
             (
-                point(px(754.), px(249.)),
-                point(px(854.), px(210.)),
+                point(px(754.), px(349.)),
+                point(px(854.), px(310.)),
                 rgb(0x209742),
             ),
             (
-                point(px(854.), px(210.)),
-                point(px(871.), px(155.)),
+                point(px(854.), px(310.)),
+                point(px(871.), px(255.)),
                 rgb(0xfbc10a),
             ),
         ];
@@ -140,11 +277,11 @@ impl PaintingViewer {
             .with_line_width(1.)
             .with_line_join(lyon::path::LineJoin::Bevel);
         let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
-        builder.move_to(point(px(40.), px(320.)));
+        builder.move_to(point(px(40.), px(420.)));
         for i in 1..50 {
             builder.line_to(point(
                 px(40.0 + i as f32 * 10.0),
-                px(320.0 + (i as f32 * 10.0).sin() * 40.0),
+                px(420.0 + (i as f32 * 10.0).sin() * 40.0),
             ));
         }
         let path = builder.build().unwrap();
@@ -152,6 +289,7 @@ impl PaintingViewer {
 
         Self {
             default_lines: lines.clone(),
+            background_quads,
             lines: vec![],
             start: point(px(0.), px(0.)),
             dashed: false,
@@ -185,6 +323,7 @@ fn button(
 impl Render for PaintingViewer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
+        let background_quads = self.background_quads.clone();
         let lines = self.lines.clone();
         let dashed = self.dashed;
 
@@ -221,6 +360,19 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _, _| {},
                             move |_, _, window, _| {
+                                // First draw background quads
+                                for (bounds, color) in background_quads.iter() {
+                                    window.paint_quad(quad(
+                                        *bounds,
+                                        px(0.),
+                                        *color,
+                                        px(0.),
+                                        gpui::transparent_black(),
+                                        Default::default(),
+                                    ));
+                                }
+
+                                // Then draw the default paths on top
                                 for (path, color) in default_lines {
                                     window.paint_path(path, color);
                                 }
@@ -303,6 +455,10 @@ fn main() {
             |window, cx| cx.new(|cx| PaintingViewer::new(window, cx)),
         )
         .unwrap();
+        cx.on_window_closed(|cx| {
+            cx.quit();
+        })
+        .detach();
         cx.activate(true);
     });
 }

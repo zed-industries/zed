@@ -12,7 +12,7 @@ You can also perform multiple generation requests in parallel by pressing `ctrl-
 
 Give the Inline Assistant context the same way you can in [the Agent Panel](./agent-panel.md), allowing you to provide additional instructions or rules for code transformations with @-mentions.
 
-A useful pattern here is to create a thread in the Agent Panel, and then use the mention that thread with `@thread` in the Inline Assistant to include it as context.
+A useful pattern here is to create a thread in the Agent Panel, and then mention that thread with `@thread` in the Inline Assistant to include it as context.
 
 > The Inline Assistant is limited to normal mode context windows ([see Models](./models.md) for more).
 

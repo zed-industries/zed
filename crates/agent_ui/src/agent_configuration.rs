@@ -404,9 +404,9 @@ impl AgentConfiguration {
         let fs = self.fs.clone();
 
         SwitchField::new(
-            "single-file-review",
-            "Enable single-file agent reviews",
-            "Agent edits are also displayed in single-file editors for review.",
+            "always-allow-tool-actions-switch",
+            "Allow running commands without asking for confirmation",
+            "The agent can perform potentially destructive actions without asking for your confirmation.",
             always_allow_tool_actions,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
