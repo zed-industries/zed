@@ -43,10 +43,10 @@ impl PresentationMode {
 pub struct PresentationModeConfiguration {
     /// The font family to use for buffer text in presentation mode.
     pub buffer_font_family: Option<FontFamilyName>,
+    /// The font size to use for buffer text in presentation mode.
     pub buffer_font_size: Option<Pixels>,
-    // pub theme: String,
-    // Terminal buffer_font_family
-    // Terminal buffer_font_size
+    /// The theme to use in presentation mode.
+    pub theme: Option<String>,
 }
 
 impl Settings for PresentationModeSettings {

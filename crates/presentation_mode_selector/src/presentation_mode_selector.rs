@@ -1,9 +1,11 @@
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
+    App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, UpdateGlobal,
+    WeakEntity, Window,
 };
 use picker::{Picker, PickerDelegate};
-use settings::Settings;
+use settings::{Settings, SettingsStore};
+use theme::{FontFamilyName, ThemeRegistry, ThemeSettings};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
 mod presentation_mode_settings;
@@ -256,27 +258,46 @@ fn update_settings(
     presentation_mode: &Option<PresentationMode>,
     cx: &mut Context<Picker<PresentationModeSelectorDelegate>>,
 ) {
-    match &presentation_mode {
-        Some(mode) => {
-            // TODO: Reset all settings
+    revert_settings(cx);
 
-            if let Some(buffer_font_family) = &mode.settings.buffer_font_family {
-                // TODO: adjust buffer_font_family
-            };
+    if let Some(mode) = presentation_mode {
+        if let Some(buffer_font_family) = &mode.settings.buffer_font_family {
+            // TODO: adjust buffer_font_family
+        };
 
-            if let Some(buffer_font_size) = &mode.settings.buffer_font_size {
-                theme::adjust_buffer_font_size(cx, |size| {
-                    *size = px(buffer_font_size.0);
-                });
-            };
-        }
-        None => {
-            // TODO: Reset all settings
-            // TODO: Can we just reload all settings?
-            // TODO: reset buffer_font_family
-            theme::reset_buffer_font_size(cx);
+        if let Some(buffer_font_size) = &mode.settings.buffer_font_size {
+            // Do it manually here to avoid multiple refresh_windows calls
+            theme::adjust_buffer_font_size(cx, |size| {
+                *size = px(buffer_font_size.0);
+            });
+        };
+
+        if let Some(theme) = &mode.settings.theme {
+            let registry = ThemeRegistry::global(cx);
+
+            match registry.get(theme) {
+                Ok(theme) => {
+                    SettingsStore::update_global(cx, |store, _| {
+                        let mut theme_settings = store.get::<ThemeSettings>(None).clone();
+                        theme_settings.active_theme = theme;
+                        theme_settings.apply_theme_overrides();
+                        store.override_global(theme_settings);
+                    });
+                }
+                Err(_) => log::warn!("Theme not found: {}", theme),
+            }
         }
     };
+
+    cx.refresh_windows();
+}
+
+fn revert_settings(cx: &mut Context<Picker<PresentationModeSelectorDelegate>>) {
+    // TODO: Reset all settings
+    // TODO: Can we just reload all settings?
+    // TODO: reset buffer_font_family
+    theme::reset_buffer_font_size(cx);
+    // TODO: reset theme
 }
 
 // TODO: Follow theme selector for template for live updating on new options
