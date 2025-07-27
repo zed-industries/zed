@@ -1105,7 +1105,7 @@ impl GitRepository for RealGitRepository {
                 {
                     Ok(_) => anyhow::Ok(()),
                     Err(e) => {
-                        if let Some(git_error) = e.downcast_ref::<GitBranchCommandError>() {
+                        if let Some(git_error) = e.downcast_ref::<GitBinaryCommandError>() {
                             anyhow::bail!("{}", git_error.stderr.trim());
                         }
                         Err(e)
@@ -1140,7 +1140,7 @@ impl GitRepository for RealGitRepository {
                 {
                     Ok(_) => Ok(()),
                     Err(e) => {
-                        if let Some(git_error) = e.downcast_ref::<GitBranchCommandError>() {
+                        if let Some(git_error) = e.downcast_ref::<GitBinaryCommandError>() {
                             anyhow::bail!("{}", git_error.stderr.trim());
                         }
                         Err(e)
@@ -1846,7 +1846,7 @@ impl GitBinary {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            return Err(GitBranchCommandError {
+            return Err(GitBinaryCommandError {
                 stdout: stdout.clone(),
                 stderr: stderr.clone(),
                 status: output.status,
@@ -1893,14 +1893,6 @@ impl GitBinary {
 #[derive(Error, Debug)]
 #[error("Git command failed: {}", .stderr.trim().if_empty(.stdout.trim()))]
 struct GitBinaryCommandError {
-    stdout: String,
-    stderr: String,
-    status: ExitStatus,
-}
-
-#[derive(Error, Debug)]
-#[error("Git branch command failed: {}", .stderr.trim().if_empty(.stdout.trim()))]
-struct GitBranchCommandError {
     stdout: String,
     stderr: String,
     status: ExitStatus,
