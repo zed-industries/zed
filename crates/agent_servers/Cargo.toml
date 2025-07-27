@@ -29,6 +29,7 @@ itertools.workspace = true
 log.workspace = true
 paths.workspace = true
 project.workspace = true
+rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
