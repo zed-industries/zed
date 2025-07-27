@@ -12,6 +12,7 @@ use ui::{
 use workspace::{ModalView, notifications::DetachAndPromptErr};
 
 mod blame_ui;
+
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
@@ -278,10 +279,14 @@ impl RenameBranchModal {
 
         let repo = self.repo.clone();
         cx.spawn(async move |_, cx| {
-            repo.update(cx, |repo, _| repo.rename_branch(new_name))?
-                .await??;
-
-            Ok(())
+            match repo
+                .update(cx, |repo, _| repo.rename_branch(new_name.clone()))?
+                .await
+            {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(error)) => Err(error),
+                Err(_) => Err(anyhow::anyhow!("Operation was canceled")),
+            }
         })
         .detach_and_prompt_err("Failed to rename branch", window, cx, |_, _, _| None);
         cx.emit(DismissEvent);
