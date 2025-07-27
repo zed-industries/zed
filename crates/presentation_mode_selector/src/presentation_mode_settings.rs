@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::FontFamilyName;
+use ui::{Pixels, TextSize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
@@ -42,7 +43,7 @@ impl PresentationMode {
 pub struct PresentationModeConfiguration {
     /// The font family to use for buffer text in presentation mode.
     pub buffer_font_family: Option<FontFamilyName>,
-    // pub buffer_font_size: TextSize,
+    pub buffer_font_size: Option<Pixels>,
     // pub theme: String,
     // Terminal buffer_font_family
     // Terminal buffer_font_size

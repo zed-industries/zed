@@ -67,7 +67,7 @@ impl PresentationModeSelector {
 }
 
 pub struct PresentationModeSelectorDelegate {
-    configurations: Vec<Option<PresentationMode>>,
+    presentation_modes: Vec<Option<PresentationMode>>,
     matches: Vec<StringMatch>,
     selected_mode: Option<PresentationMode>,
     selected_index: usize,
@@ -97,7 +97,7 @@ impl PresentationModeSelectorDelegate {
             .collect();
 
         Self {
-            configurations,
+            presentation_modes: configurations,
             matches,
             selected_mode: None,
             selected_index: 0,
@@ -108,20 +108,19 @@ impl PresentationModeSelectorDelegate {
 
     fn apply_presentation_mode(
         &mut self,
-        _cx: &mut Context<Picker<PresentationModeSelectorDelegate>>,
+        cx: &mut Context<Picker<PresentationModeSelectorDelegate>>,
     ) -> Option<PresentationMode> {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return None;
         };
 
-        let Some(Some(configuration)) = self.configurations.get(mat.candidate_id) else {
+        let Some(presentation_mode) = self.presentation_modes.get(mat.candidate_id) else {
             return None;
         };
 
-        // TODO: Actually apply the presentation mode settings
-        // This would involve updating the settings store with the mode's configuration
+        update_settings(presentation_mode, cx);
 
-        Some(configuration.clone())
+        presentation_mode.clone()
     }
 }
 
@@ -158,7 +157,7 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
     ) -> Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self
-            .configurations
+            .presentation_modes
             .iter()
             .enumerate()
             .map(|(id, mode)| StringMatchCandidate::new(id, &PresentationMode::display_name(mode)))
@@ -209,16 +208,7 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
     ) {
         self.selection_completed = true;
 
-        let Some(mode) = &self.selected_mode else {
-            return;
-        };
-
-        let Some(buffer_font_family) = &mode.settings.buffer_font_family else {
-            return;
-        };
-
-        // TODO: Apply the settings (emit)
-        dbg!(&buffer_font_family);
+        update_settings(&self.selected_mode, cx);
 
         self.selector
             .update(cx, |_, cx| {
@@ -247,7 +237,7 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let mode = &self.configurations[mat.candidate_id];
+        let mode = &self.presentation_modes[mat.candidate_id];
 
         Some(
             ListItem::new(ix)
@@ -261,3 +251,32 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
         )
     }
 }
+
+fn update_settings(
+    presentation_mode: &Option<PresentationMode>,
+    cx: &mut Context<Picker<PresentationModeSelectorDelegate>>,
+) {
+    match &presentation_mode {
+        Some(mode) => {
+            // TODO: Reset all settings
+
+            if let Some(buffer_font_family) = &mode.settings.buffer_font_family {
+                // TODO: adjust buffer_font_family
+            };
+
+            if let Some(buffer_font_size) = &mode.settings.buffer_font_size {
+                theme::adjust_buffer_font_size(cx, |size| {
+                    *size = px(buffer_font_size.0);
+                });
+            };
+        }
+        None => {
+            // TODO: Reset all settings
+            // TODO: Can we just reload all settings?
+            // TODO: reset buffer_font_family
+            theme::reset_buffer_font_size(cx);
+        }
+    };
+}
+
+// TODO: Follow theme selector for template for live updating on new options

@@ -733,6 +733,29 @@ pub fn reset_buffer_font_size(cx: &mut App) {
     }
 }
 
+// /// Adjust the buffer font family.
+// pub fn adjust_buffer_font_family(cx: &mut App, new_family: impl Into<SharedString>) {
+//     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
+//     let mut adjusted_size = cx
+//         .try_global::<BufferFontSize>()
+//         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
+
+//     f(&mut adjusted_size);
+//     cx.set_global(BufferFontSize(clamp_font_size(adjusted_size)));
+//     cx.refresh_windows();
+// }
+
+// /// Reset the buffer font family to the default value.
+// pub fn reset_buffer_font_family(cx: &mut App) {
+//     if let Some(settings) = cx.try_global::<settings::SettingsStore>() {
+//         if let Ok(sources) = settings.get_sources::<ThemeSettings>() {
+//             if let Some(default_family) = sources.default.buffer_font_family.as_ref() {
+//                 adjust_buffer_font_family(cx, default_family.0.clone());
+//             }
+//         }
+//     }
+// }
+
 // TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
 pub fn setup_ui_font(window: &mut Window, cx: &mut App) -> gpui::Font {
