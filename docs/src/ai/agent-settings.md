@@ -6,8 +6,8 @@ Learn about all the settings you can customize in Zed's Agent Panel.
 
 ### Default Model {#default-model}
 
-If you're using Zed's hosted LLM service, it sets `claude-sonnet-4` as the default model.
-But if you're not subscribed to the hosted service or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./plans-and-usage.md), it sets `claude-sonnet-4` as the default model.
+But if you're not subscribed to it or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
 
 ```json
 {
