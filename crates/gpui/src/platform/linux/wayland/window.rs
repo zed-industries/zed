@@ -380,7 +380,12 @@ impl WaylandWindowStatePtr {
                             configure.size = if got_unmaximized {
                                 Some(state.window_bounds.size)
                             } else {
-                                compute_outer_size(state.inset, configure.size, state.tiling)
+                                compute_outer_size(
+                                    state.inset,
+                                    configure.size,
+                                    state.tiling,
+                                    state.decorations,
+                                )
                             };
                             if let Some(size) = configure.size {
                                 state.window_bounds = Bounds {
@@ -1172,7 +1177,11 @@ fn compute_outer_size(
     inset: Option<Pixels>,
     new_size: Option<Size<Pixels>>,
     tiling: Tiling,
+    decorations: WindowDecorations,
 ) -> Option<Size<Pixels>> {
+    if matches!(decorations, WindowDecorations::Server) {
+        return new_size;
+    };
     let Some(inset) = inset else { return new_size };
 
     new_size.map(|mut new_size| {
