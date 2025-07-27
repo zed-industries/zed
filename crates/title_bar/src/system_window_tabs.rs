@@ -35,7 +35,6 @@ pub struct DraggedWindowTab {
 }
 
 pub struct SystemWindowTabs {
-    tabs: Vec<SystemWindowTab>,
     tab_bar_scroll_handle: ScrollHandle,
     measured_tab_width: Pixels,
 }
@@ -43,7 +42,6 @@ pub struct SystemWindowTabs {
 impl SystemWindowTabs {
     pub fn new() -> Self {
         Self {
-            tabs: Vec::new(),
             tab_bar_scroll_handle: ScrollHandle::new(),
             measured_tab_width: px(0.),
         }
@@ -100,6 +98,7 @@ impl SystemWindowTabs {
         &self,
         ix: usize,
         item: SystemWindowTab,
+        tabs: Vec<SystemWindowTab>,
         active_background_color: Hsla,
         inactive_background_color: Hsla,
         window: &mut Window,
@@ -199,7 +198,6 @@ impl SystemWindowTabs {
             })
             .into_any();
 
-        let tabs = self.tabs.clone();
         let menu = right_click_menu(ix)
             .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
@@ -331,6 +329,7 @@ impl Render for SystemWindowTabs {
                 self.render_tab(
                     ix,
                     item.clone(),
+                    tabs.clone(),
                     active_background_color,
                     inactive_background_color,
                     window,
