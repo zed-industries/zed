@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::claude::tools::{ClaudeTool, EditToolParams, ReadToolParams};
 use acp_thread::AcpThread;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Context, Result};
 use collections::HashMap;
 use context_server::listener::{McpServerTool, ToolResponse};
@@ -13,6 +14,7 @@ use context_server::types::{
 use gpui::{App, AsyncApp, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 
 pub struct ClaudeZedMcpServer {
     server: context_server::listener::McpServer,
@@ -114,6 +116,7 @@ pub struct PermissionToolParams {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(serde::Deserialize))]
 pub struct PermissionToolResponse {
     behavior: PermissionToolBehavior,
     updated_input: serde_json::Value,
@@ -121,7 +124,8 @@ pub struct PermissionToolResponse {
 
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
-enum PermissionToolBehavior {
+#[cfg_attr(test, derive(serde::Deserialize))]
+pub enum PermissionToolBehavior {
     Allow,
     Deny,
 }
@@ -141,6 +145,26 @@ impl McpServerTool for PermissionTool {
         input: Self::Input,
         cx: &mut AsyncApp,
     ) -> Result<ToolResponse<Self::Output>> {
+        // Check if we should automatically allow tool actions
+        let always_allow =
+            cx.update(|cx| AgentSettings::get_global(cx).always_allow_tool_actions)?;
+
+        if always_allow {
+            // If always_allow_tool_actions is true, immediately return Allow without prompting
+            let response = PermissionToolResponse {
+                behavior: PermissionToolBehavior::Allow,
+                updated_input: input.input,
+            };
+
+            return Ok(ToolResponse {
+                content: vec![ToolResponseContent::Text {
+                    text: serde_json::to_string(&response)?,
+                }],
+                structured_content: (),
+            });
+        }
+
+        // Otherwise, proceed with the normal permission flow
         let mut thread_rx = self.thread_rx.clone();
         let Some(thread) = thread_rx.recv().await?.upgrade() else {
             anyhow::bail!("Thread closed");
@@ -298,5 +322,80 @@ impl McpServerTool for EditTool {
             content: vec![],
             structured_content: (),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::Project;
+    use settings::{Settings, SettingsStore};
+
+    #[gpui::test]
+    async fn test_permission_tool_respects_always_allow_setting(cx: &mut TestAppContext) {
+        // Initialize settings
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            agent_settings::init(cx);
+        });
+
+        // Create a test thread
+        let project = cx.update(|cx| gpui::Entity::new(cx, |_cx| Project::local()));
+        let thread = cx.update(|cx| {
+            gpui::Entity::new(cx, |_cx| {
+                acp_thread::AcpThread::new(
+                    acp::ConnectionId("test".into()),
+                    project,
+                    std::path::Path::new("/tmp"),
+                )
+            })
+        });
+
+        let (tx, rx) = watch::channel(thread.downgrade());
+        let tool = PermissionTool { thread_rx: rx };
+
+        // Test with always_allow_tool_actions = true
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    always_allow_tool_actions: true,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+
+        let input = PermissionToolParams {
+            tool_name: "test_tool".to_string(),
+            input: serde_json::json!({"test": "data"}),
+            tool_use_id: Some("test_id".to_string()),
+        };
+
+        let result = tool.run(input.clone(), &mut cx.to_async()).await.unwrap();
+
+        // Should return Allow without prompting
+        assert_eq!(result.content.len(), 1);
+        if let ToolResponseContent::Text { text } = &result.content[0] {
+            let response: PermissionToolResponse = serde_json::from_str(text).unwrap();
+            assert!(matches!(response.behavior, PermissionToolBehavior::Allow));
+        } else {
+            panic!("Expected text response");
+        }
+
+        // Test with always_allow_tool_actions = false
+        cx.update(|cx| {
+            AgentSettings::override_global(
+                AgentSettings {
+                    always_allow_tool_actions: false,
+                    ..Default::default()
+                },
+                cx,
+            );
+        });
+
+        // This test would require mocking the permission prompt response
+        // In the real scenario, it would wait for user input
     }
 }
