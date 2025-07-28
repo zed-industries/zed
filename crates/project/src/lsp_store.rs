@@ -5714,7 +5714,11 @@ impl LspStore {
         }
     }
 
-    pub fn code_lens(&mut self, buffer: &Entity<Buffer>, cx: &mut Context<Self>) -> CodeLensTask {
+    pub fn code_lens_actions(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
@@ -5811,7 +5815,7 @@ impl LspStore {
                     return Ok(HashMap::default());
                 };
                 let responses = request_task.await?.responses;
-                let code_lens = join_all(
+                let code_lens_actions = join_all(
                     responses
                         .into_iter()
                         .filter_map(|lsp_response| {
@@ -5849,7 +5853,7 @@ impl LspStore {
                 .await;
 
                 let mut has_errors = false;
-                let code_lens = code_lens
+                let code_lens_actions = code_lens_actions
                     .into_iter()
                     .filter_map(|(server_id, code_lens)| match code_lens {
                         Ok(code_lens) => Some((server_id, code_lens)),
@@ -5861,15 +5865,17 @@ impl LspStore {
                     })
                     .collect::<HashMap<_, _>>();
                 anyhow::ensure!(
-                    !has_errors || !code_lens.is_empty(),
+                    !has_errors || !code_lens_actions.is_empty(),
                     "Failed to fetch code lens"
                 );
-                Ok(code_lens)
+                Ok(code_lens_actions)
             })
         } else {
-            let code_lens_task =
+            let code_lens_actions_task =
                 self.request_multiple_lsp_locally(buffer, None::<usize>, GetCodeLens, cx);
-            cx.spawn(async move |_, _| code_lens_task.await.into_iter().collect())
+            cx.background_spawn(
+                async move { Ok(code_lens_actions_task.await.into_iter().collect()) },
+            )
         }
     }
 

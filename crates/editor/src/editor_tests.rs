@@ -10088,9 +10088,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -10236,6 +10236,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
+    dbg!("!");
     fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -10247,6 +10248,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .next()
         .await;
+    dbg!("2");
     save.await;
 }
 
@@ -21310,15 +21312,31 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         },
     );
 
-    let (buffer, _handle) = project
-        .update(cx, |p, cx| {
-            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/dir/a.ts")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
         })
+        .unwrap()
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
     cx.executor().run_until_parked();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+
+    let buffer = editor.update(cx, |editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("have opened a single file by path")
+    });
 
     let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
@@ -21377,7 +21395,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     assert_eq!(
         actions.len(),
         1,
-        "Should have only one valid action for the 0..0 range"
+        "Should have only one valid action for the 0..0 range, got: {actions:#?}"
     );
     let action = actions[0].clone();
     let apply = project.update(cx, |project, cx| {
@@ -21423,7 +21441,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                         .into_iter()
                                         .collect(),
                                     ),
-                                    ..Default::default()
+                                    ..lsp::WorkspaceEdit::default()
                                 },
                             },
                         )
@@ -21446,6 +21464,38 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         buffer.undo(cx);
         assert_eq!(buffer.text(), "a");
     });
+
+    let actions_after_edits = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        actions, actions_after_edits,
+        "For the same selection, same code lens actions should be returned"
+    );
+
+    let _responses =
+        fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+            panic!("No more code lens requests are expected");
+        });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+    });
+    cx.executor().run_until_parked();
+    let new_actions = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        actions, new_actions,
+        "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
+    );
 }
 
 #[gpui::test]
