@@ -279,7 +279,7 @@ impl AgentConfiguration {
                                 "Start New Thread",
                             )
                             .icon_position(IconPosition::Start)
-                            .icon(IconName::Plus)
+                            .icon(IconName::NewThread)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .label_size(LabelSize::Small)
@@ -1019,7 +1019,7 @@ impl AgentConfiguration {
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Plus)
+                                .icon(IconName::NewThread)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted),
@@ -1050,7 +1050,7 @@ impl AgentConfiguration {
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::Plus)
+                                .icon(IconName::NewThread)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted),
@@ -1075,7 +1075,11 @@ impl AgentConfiguration {
                         )
                         .child(
                             Button::new("start_acp_thread", "Install Agent")
-                                .label_size(LabelSize::Small),
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted),
                         ),
                 ),
             )
