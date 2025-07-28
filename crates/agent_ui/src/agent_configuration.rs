@@ -215,7 +215,6 @@ impl AgentConfiguration {
                     .child(
                         h_flex()
                             .id(provider_id_string.clone())
-                            .cursor_pointer()
                             .px_2()
                             .py_0p5()
                             .w_full()
@@ -235,10 +234,7 @@ impl AgentConfiguration {
                                         h_flex()
                                             .w_full()
                                             .gap_1()
-                                            .child(
-                                                Label::new(provider_name.clone())
-                                                    .size(LabelSize::Large),
-                                            )
+                                            .child(Label::new(provider_name.clone()))
                                             .map(|this| {
                                                 if is_zed_provider && is_signed_in {
                                                     this.child(
@@ -970,6 +966,84 @@ impl AgentConfiguration {
                 ))
             })
     }
+
+    fn render_agent_servers_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                v_flex()
+                    .p(DynamicSpacing::Base16.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .pb_0()
+                    .gap_0p5()
+                    .child(Headline::new("Agent Client Protocol (ACP) Servers"))
+                    .child(Label::new("TODO: Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
+            )
+            .child(self.render_agent_server(window, cx))
+    }
+
+    fn render_agent_server(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .pl(DynamicSpacing::Base08.rems(cx))
+            .pr(DynamicSpacing::Base20.rems(cx))
+            .pb(DynamicSpacing::Base08.rems(cx))
+            .child(
+                v_flex().py_1().child(
+                    h_flex()
+                        .p_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::AiClaude)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Claude Code")),
+                        )
+                        .child(
+                            Button::new("start_acp_thread", "Start New Thread")
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted),
+                        ),
+                ),
+            )
+            .child(Divider::horizontal())
+            .child(
+                v_flex().py_1().child(
+                    h_flex()
+                        .p_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::AiGemini)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("Google Gemini")),
+                        )
+                        .child(
+                            Button::new("start_acp_thread", "Start New Thread")
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Plus)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted),
+                        ),
+                ),
+            )
+    }
 }
 
 impl Render for AgentConfiguration {
@@ -989,6 +1063,7 @@ impl Render for AgentConfiguration {
                     .size_full()
                     .overflow_y_scroll()
                     .child(self.render_general_settings_section(cx))
+                    .child(self.render_agent_servers_section(window, cx))
                     .child(self.render_context_servers_section(window, cx))
                     .child(self.render_provider_configuration_section(cx)),
             )
