@@ -376,10 +376,6 @@ impl TitleBar {
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .toggle_state(is_shared)
                 .label_size(LabelSize::Small)
-                .icon(IconName::ShareProject)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .icon_position(IconPosition::Start)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     if is_shared {
                         this.unshare_project(window, cx);
