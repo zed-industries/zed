@@ -10072,8 +10072,14 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_range_format_during_save(cx: &mut TestAppContext) {
+async fn setup_range_format_test(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -10105,13 +10111,21 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|window, cx| {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+#[gpui::test]
+async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
-
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -10147,13 +10161,18 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         "one, two\nthree\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    // Ensure we can still save even if formatting hangs.
+    // Test that save still works when formatting hangs
     fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
         move |params, _| async move {
             assert_eq!(
@@ -10185,8 +10204,13 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         "one\ntwo\nthree\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
 
-    // For non-dirty buffer, no formatting request should be sent
+#[gpui::test]
+async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    // Buffer starts clean, no formatting should be requested
     let save = editor
         .update_in(cx, |editor, window, cx| {
             editor.save(
@@ -10208,6 +10232,11 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     cx.executor().start_waiting();
     save.await;
     cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -10221,7 +10250,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("somehting_new\n", window, cx)
+        editor.set_text("something_new\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
     let save = editor
