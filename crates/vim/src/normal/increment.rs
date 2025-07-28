@@ -788,15 +788,20 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_increment_multiple_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
+    async fn test_increment_negative_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state(indoc! {
-            "2025-0ˇ5-10;"
-        })
-        .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-        2025-0ˇ4-10;"});
+
+        cx.simulate("ctrl-a", "2025-0ˇ5-10").await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_increment_negative_numbers_on_hyphens(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.simulate("ctrl-a", "2025-05ˇ-").await.assert_matches();
+        cx.simulate("ctrl-a", "2025-05ˇ- 345")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
