@@ -44,7 +44,7 @@ impl AgentServer for ClaudeCode {
     }
 
     fn empty_state_message(&self) -> &'static str {
-        ""
+        "How can I help you today?"
     }
 
     fn logo(&self) -> ui::IconName {
@@ -190,7 +190,7 @@ impl AgentConnection for ClaudeAgentConnection {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -350,7 +350,7 @@ impl ClaudeAgentSession {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(text.into(), false, cx)
+                                    thread.push_assistant_content_block(text.into(), false, cx)
                                 })
                                 .log_err();
                         }
@@ -387,9 +387,15 @@ impl ClaudeAgentSession {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.update_tool_call(
-                                        acp::ToolCallId(tool_use_id.into()),
-                                        acp::ToolCallStatus::Completed,
-                                        (!content.is_empty()).then(|| vec![content.into()]),
+                                        acp::ToolCallUpdate {
+                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            fields: acp::ToolCallUpdateFields {
+                                                status: Some(acp::ToolCallStatus::Completed),
+                                                content: (!content.is_empty())
+                                                    .then(|| vec![content.into()]),
+                                                ..Default::default()
+                                            },
+                                        },
                                         cx,
                                     )
                                 })
@@ -402,7 +408,7 @@ impl ClaudeAgentSession {
                         | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(
+                                    thread.push_assistant_content_block(
                                         format!("Unsupported content: {:?}", chunk).into(),
                                         false,
                                         cx,
