@@ -227,6 +227,15 @@ fn find_target(
             break;
         }
 
+        // vim's ctrl-a/ctrl-x operate on the number at or after the cursor and
+        // do not require it to be whitespace-separated. Stop the backward scan
+        // at a '-' so we keep the number the cursor is on (e.g. `05` in
+        // `2025-05-10`) instead of scanning past the '-' to an earlier number on
+        // the line. vim folds a leading '-' into the number, making it negative.
+        if ch == '-' {
+            break;
+        }
+
         // Avoid the influence of hexadecimal letters
         if first_char_is_num
             && !ch.is_ascii_hexdigit()
@@ -776,6 +785,18 @@ mod test {
             18  2
             24
             30"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_multiple_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "2025-0ˇ5-10;"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        2025-0ˇ4-10;"});
     }
 
     #[gpui::test]
