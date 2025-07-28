@@ -1,9 +1,11 @@
+use editor::display_map::DisplaySnapshot;
 use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
 use text::{Bias, SelectionGoal};
 
+use crate::motion;
 use crate::{
     Vim,
     motion::{Motion, right},
@@ -53,6 +55,33 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.helix_move_cursor(motion, times, window, cx);
+    }
+
+    /// Updates all selections based on where the cursors are.
+    fn helix_new_selection(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut change: impl FnMut(
+            // the start of the cursor
+            DisplayPoint,
+            &DisplaySnapshot,
+        ) -> (DisplayPoint, DisplayPoint),
+    ) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let cursor_start = if selection.reversed || selection.is_empty() {
+                        selection.head()
+                    } else {
+                        movement::left(map, selection.head())
+                    };
+                    let (head, tail) = change(cursor_start, map);
+
+                    selection.set_head_tail(head, tail, SelectionGoal::None);
+                });
+            });
+        });
     }
 
     fn helix_find_range_forward(
@@ -252,58 +281,53 @@ impl Vim {
                     found
                 })
             }
-            Motion::FindForward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(movement::right(map, point), goal);
-                        })
-                    });
+            Motion::FindForward {
+                before,
+                char,
+                mode,
+                smartcase,
+            } => {
+                self.helix_new_selection(window, cx, |cursor, map| {
+                    let start = cursor;
+                    let mut last_boundary = start;
+                    for _ in 0..times.unwrap_or(1) {
+                        last_boundary = movement::find_boundary(
+                            map,
+                            movement::right(map, last_boundary),
+                            mode,
+                            |left, right| {
+                                let current_char = if before { right } else { left };
+                                motion::is_character_match(char, current_char, smartcase)
+                            },
+                        );
+                    }
+                    (last_boundary, start)
                 });
             }
-            Motion::FindBackward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(point, goal);
-                        })
-                    });
+            Motion::FindBackward {
+                after,
+                char,
+                mode,
+                smartcase,
+            } => {
+                self.helix_new_selection(window, cx, |cursor, map| {
+                    let start = cursor;
+                    let mut last_boundary = start;
+                    for _ in 0..times.unwrap_or(1) {
+                        last_boundary = movement::find_preceding_boundary_display_point(
+                            map,
+                            last_boundary,
+                            mode,
+                            |left, right| {
+                                let current_char = if after { left } else { right };
+                                motion::is_character_match(char, current_char, smartcase)
+                            },
+                        );
+                    }
+                    // The original cursor was one character wide,
+                    // but the search started from the left side of it,
+                    // so to include that space the selection must end one character to the right.
+                    (last_boundary, movement::right(map, start))
                 });
             }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
