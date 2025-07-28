@@ -313,6 +313,15 @@ impl Attach {
     }
 }
 
+/// Determines what gets sent out as a workspace folders content
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WorkspaceFoldersContent {
+    /// Send out a single entry with the root of the workspace.
+    WorktreeRoot,
+    /// Send out a list of subproject roots.
+    SubprojectRoots,
+}
+
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
 // e.g. to display a notification or fetch data from the web.
 #[async_trait]
@@ -604,6 +613,13 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     fn attach_kind(&self) -> Attach {
         Attach::Shared
+    }
+
+    /// Determines whether a language server supports workspace folders.
+    ///
+    /// And does not trip over itself in the process.
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::SubprojectRoots
     }
 
     fn manifest_name(&self) -> Option<ManifestName> {
