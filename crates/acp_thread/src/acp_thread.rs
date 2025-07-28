@@ -1597,6 +1597,7 @@ mod tests {
                 name: "test",
                 connection,
                 child_status: io_task,
+                current_thread: thread_rc,
             };
 
             AcpThread::new(
