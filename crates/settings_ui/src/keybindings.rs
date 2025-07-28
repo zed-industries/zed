@@ -1690,7 +1690,7 @@ impl Render for KeymapEditor {
                         move |window, cx| this.read(cx).render_no_matches_hint(window, cx)
                     })
                     .column_widths([
-                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(40.))),
+                        DefiniteLength::Absolute(AbsoluteLength::Pixels(px(36.))),
                         DefiniteLength::Fraction(0.25),
                         DefiniteLength::Fraction(0.20),
                         DefiniteLength::Fraction(0.14),
@@ -1765,6 +1765,7 @@ impl Render for KeymapEditor {
                                             },
                                         )
                                         .into_any_element();
+
                                     let keystrokes = binding.ui_key_binding().cloned().map_or(
                                         binding
                                             .keystroke_text()
@@ -1773,6 +1774,7 @@ impl Render for KeymapEditor {
                                             .into_any_element(),
                                         IntoElement::into_any_element,
                                     );
+
                                     let action_arguments = match binding.action().arguments.clone()
                                     {
                                         Some(arguments) => arguments.into_any_element(),
@@ -1785,6 +1787,7 @@ impl Render for KeymapEditor {
                                             }
                                         }
                                     };
+
                                     let context = binding.context().cloned().map_or(
                                         gpui::Empty.into_any_element(),
                                         |context| {
@@ -1809,11 +1812,13 @@ impl Render for KeymapEditor {
                                                 .into_any_element()
                                         },
                                     );
+
                                     let source = binding
                                         .keybind_source()
                                         .map(|source| source.name())
                                         .unwrap_or_default()
                                         .into_any_element();
+
                                     Some([
                                         icon.into_any_element(),
                                         action,
