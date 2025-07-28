@@ -326,6 +326,7 @@
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-[": "editor::Cancel",
+      ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
       "left": "vim::WrappingLeft",
       "right": "vim::WrappingRight",
