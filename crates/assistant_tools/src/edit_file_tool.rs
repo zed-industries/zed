@@ -2258,8 +2258,8 @@ mod tests {
                     "path": ".zed/settings.json",
                     "mode": "edit"
                 }),
-                "Update config (Zed settings)",
-                ".zed path should show Zed settings context",
+                "Update config (local settings)",
+                ".zed path should show local settings context",
             ),
             (
                 json!({
@@ -2267,8 +2267,8 @@ mod tests {
                     "path": "src/.zed/local.json",
                     "mode": "edit"
                 }),
-                "Fix bug (Zed settings)",
-                "Nested .zed path should show Zed settings context",
+                "Fix bug (local settings)",
+                "Nested .zed path should show local settings context",
             ),
             (
                 json!({
