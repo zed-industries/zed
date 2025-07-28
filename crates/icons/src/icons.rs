@@ -228,7 +228,6 @@ pub enum IconName {
     Server,
     Settings,
     SettingsAlt,
-    ShareProject,
     Shift,
     Slash,
     SlashSquare,
