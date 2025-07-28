@@ -219,11 +219,15 @@ async fn test_sort_positions(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_fuzzy_over_sort_positions(cx: &mut TestAppContext) {
     let completions = vec![
-        CompletionBuilder::variable("lsp_document_colors", None, "1"), // 0.29 fuzzy score
-        CompletionBuilder::function("language_servers_running_disk_based_diagnostics", None, "1"), // 0.168 fuzzy score
-        CompletionBuilder::function("code_lens", None, "1"), // 3.2 fuzzy score
-        CompletionBuilder::variable("lsp_code_lens", None, "1"), // 3.2 fuzzy score
-        CompletionBuilder::function("fetch_code_lens", None, "1"), // 3.2 fuzzy score
+        CompletionBuilder::variable("lsp_document_colors", None, "7fffffff"), // 0.29 fuzzy score
+        CompletionBuilder::function(
+            "language_servers_running_disk_based_diagnostics",
+            None,
+            "7fffffff",
+        ), // 0.168 fuzzy score
+        CompletionBuilder::function("code_lens", None, "7fffffff"),           // 3.2 fuzzy score
+        CompletionBuilder::variable("lsp_code_lens", None, "7fffffff"),       // 3.2 fuzzy score
+        CompletionBuilder::function("fetch_code_lens", None, "7fffffff"),     // 3.2 fuzzy score
     ];
 
     let matches =
