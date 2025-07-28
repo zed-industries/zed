@@ -44,7 +44,7 @@ impl KeyBinding {
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
-        window: &mut Window,
+        window: &Window,
         cx: &App,
     ) -> Option<Self> {
         let key_binding = window.highest_precedence_binding_for_action_in(action, focus)?;
