@@ -4,7 +4,8 @@ use mdbook::book::{Book, Chapter};
 use mdbook::preprocess::CmdPreprocessor;
 use regex::Regex;
 use settings::KeymapFile;
-use std::collections::HashSet;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read};
 use std::process;
 use std::sync::LazyLock;
@@ -19,6 +20,8 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
 });
 
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
+
+const FRONT_MATTER_COMMENT: &'static str = "<!-- ZED_META {} -->";
 
 fn main() -> Result<()> {
     zlog::init();
@@ -46,34 +49,40 @@ fn main() -> Result<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Error {
+enum PreprocessorError {
     ActionNotFound { action_name: String },
     DeprecatedActionUsed { used: String, should_be: String },
+    InvalidFrontmatterLine(String),
 }
 
-impl Error {
+impl PreprocessorError {
     fn new_for_not_found_action(action_name: String) -> Self {
         for action in &*ALL_ACTIONS {
             for alias in action.deprecated_aliases {
                 if alias == &action_name {
-                    return Error::DeprecatedActionUsed {
+                    return PreprocessorError::DeprecatedActionUsed {
                         used: action_name.clone(),
                         should_be: action.name.to_string(),
                     };
                 }
             }
         }
-        Error::ActionNotFound {
+        PreprocessorError::ActionNotFound {
             action_name: action_name.to_string(),
         }
     }
 }
 
-impl std::fmt::Display for Error {
+impl std::fmt::Display for PreprocessorError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::ActionNotFound { action_name } => write!(f, "Action not found: {}", action_name),
-            Error::DeprecatedActionUsed { used, should_be } => write!(
+            PreprocessorError::InvalidFrontmatterLine(line) => {
+                write!(f, "Invalid frontmatter line: {}", line)
+            }
+            PreprocessorError::ActionNotFound { action_name } => {
+                write!(f, "Action not found: {}", action_name)
+            }
+            PreprocessorError::DeprecatedActionUsed { used, should_be } => write!(
                 f,
                 "Deprecated action used: {} should be {}",
                 used, should_be
@@ -89,8 +98,9 @@ fn handle_preprocessing() -> Result<()> {
 
     let (_ctx, mut book) = CmdPreprocessor::parse_input(input.as_bytes())?;
 
-    let mut errors = HashSet::<Error>::new();
+    let mut errors = HashSet::<PreprocessorError>::new();
 
+    handle_frontmatter(&mut book, &mut errors);
     template_and_validate_keybindings(&mut book, &mut errors);
     template_and_validate_actions(&mut book, &mut errors);
 
@@ -108,7 +118,41 @@ fn handle_preprocessing() -> Result<()> {
     Ok(())
 }
 
-fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error>) {
+fn handle_frontmatter(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
+    let frontmatter_regex = Regex::new(r"(?s)^\s*---(.*?)---").unwrap();
+    for_each_chapter_mut(book, |chapter| {
+        let new_content = frontmatter_regex.replace(&chapter.content, |caps: &regex::Captures| {
+            let frontmatter = caps[1].trim();
+            let frontmatter = frontmatter.trim_matches(&[' ', '-', '\n']);
+            let mut metadata = HashMap::<String, String>::default();
+            for line in frontmatter.lines() {
+                let Some((name, value)) = line.split_once(':') else {
+                    errors.insert(PreprocessorError::InvalidFrontmatterLine(format!(
+                        "{}: {}",
+                        chapter_breadcrumbs(&chapter),
+                        line
+                    )));
+                    continue;
+                };
+                let name = name.trim();
+                let value = value.trim();
+                metadata.insert(name.to_string(), value.to_string());
+            }
+            FRONT_MATTER_COMMENT.replace(
+                "{}",
+                &serde_json::to_string(&metadata).expect("Failed to serialize metadata"),
+            )
+        });
+        match new_content {
+            Cow::Owned(content) => {
+                chapter.content = content;
+            }
+            Cow::Borrowed(_) => {}
+        }
+    });
+}
+
+fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
     let regex = Regex::new(r"\{#kb (.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
@@ -116,7 +160,9 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let action = caps[1].trim();
                 if find_action_by_name(action).is_none() {
-                    errors.insert(Error::new_for_not_found_action(action.to_string()));
+                    errors.insert(PreprocessorError::new_for_not_found_action(
+                        action.to_string(),
+                    ));
                     return String::new();
                 }
                 let macos_binding = find_binding("macos", action).unwrap_or_default();
@@ -132,7 +178,7 @@ fn template_and_validate_keybindings(book: &mut Book, errors: &mut HashSet<Error
     });
 }
 
-fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Error>) {
+fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<PreprocessorError>) {
     let regex = Regex::new(r"\{#action (.*?)\}").unwrap();
 
     for_each_chapter_mut(book, |chapter| {
@@ -140,7 +186,9 @@ fn template_and_validate_actions(book: &mut Book, errors: &mut HashSet<Error>) {
             .replace_all(&chapter.content, |caps: &regex::Captures| {
                 let name = caps[1].trim();
                 let Some(action) = find_action_by_name(name) else {
-                    errors.insert(Error::new_for_not_found_action(name.to_string()));
+                    errors.insert(PreprocessorError::new_for_not_found_action(
+                        name.to_string(),
+                    ));
                     return String::new();
                 };
                 format!("<code class=\"hljs\">{}</code>", &action.human_name)
@@ -205,6 +253,13 @@ fn name_for_action(action_as_str: String) -> String {
         .unwrap_or(action_as_str)
 }
 
+fn chapter_breadcrumbs(chapter: &Chapter) -> String {
+    let mut breadcrumbs = Vec::with_capacity(chapter.parent_names.len() + 1);
+    breadcrumbs.extend(chapter.parent_names.iter().map(String::as_str));
+    breadcrumbs.push(chapter.name.as_str());
+    format!("[{:?}] {}", chapter.source_path, breadcrumbs.join(" > "))
+}
+
 fn load_keymap(asset_path: &str) -> Result<KeymapFile> {
     let content = util::asset_str::<settings::SettingsAssets>(asset_path);
     KeymapFile::parse(content.as_ref())
@@ -266,9 +321,9 @@ fn handle_postprocessing() -> Result<()> {
         .expect("Default title not a string")
         .to_string();
 
-    let ignore_list = ["toc.html"];
     output.insert("html".to_string(), zed_html);
     mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
+    let ignore_list = ["toc.html"];
 
     let root_dir = ctx.destination.clone();
     let mut files = Vec::with_capacity(128);
@@ -299,45 +354,37 @@ fn handle_postprocessing() -> Result<()> {
     }
 
     zlog::info!(logger => "Processing {} `.html` files", files.len());
-    let meta_regex =
-        Regex::new(r"<p>\s*\{#zed-meta-(\w+) \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
+    let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
     for file in files {
         let contents = std::fs::read_to_string(&file)?;
         let mut meta_description = None;
         let mut meta_title = None;
-        let contents = meta_regex.replace_all(&contents, |caps: &regex::Captures| {
-                        let kind = caps[1].trim();
-                        let content = caps[2].trim().to_string();
-                        match kind {
-                            "description" => {
-                                meta_description = Some(content);
-                            }
-                            "title" => {
-                                meta_title = Some(content);
-                            }
-                            _ => {
-                                zlog::error!(logger => "Failed to parse meta for {:?}: `{}` is not a valid meta format. Expected kind 'description' or 'title'", pretty_path(&file, &root_dir), kind);
-                            }
-                        }
-                        String::new()
-                    });
+        let contents = meta_regex.replace(&contents, |caps: &regex::Captures| {
+            let metadata: HashMap<String, String> = serde_json::from_str(&caps[1]).with_context(|| format!("JSON Metadata: {:?}", &caps[1])).expect("Failed to deserialize metadata");
+            for (kind, content) in metadata {
+                match kind.as_str() {
+                    "description" => {
+                        meta_description = Some(content);
+                    }
+                    "title" => {
+                        meta_title = Some(content);
+                    }
+                    _ => {
+                        zlog::warn!(logger => "Unrecognized frontmatter key: {} in {:?}", kind, pretty_path(&file, &root_dir));
+                    }
+                }
+            }
+            String::new()
+        });
         let meta_description = meta_description.as_ref().unwrap_or_else(|| {
-                        if contents.find("#zed-meta-description").is_some() {
-                            zlog::error!(logger => "Failed to parse meta description for {:?}", pretty_path(&file, &root_dir));
-                        } else {
-                            zlog::warn!(logger => "No meta description found for {:?}", pretty_path(&file, &root_dir));
-                        }
-                        &default_description
-                    });
+            zlog::warn!(logger => "No meta description found for {:?}", pretty_path(&file, &root_dir));
+            &default_description
+        });
         let page_title = extract_title_from_page(&contents, pretty_path(&file, &root_dir));
         let meta_title = meta_title.as_ref().unwrap_or_else(|| {
-                        if contents.find("#zed-meta-title").is_some() {
-                            zlog::error!(logger => "Failed to parse meta title for {:?}", pretty_path(&file, &root_dir));
-                        } else {
-                            zlog::debug!(logger => "No meta title found for {:?}", pretty_path(&file, &root_dir));
-                        }
-                        &default_title
-                    });
+            zlog::debug!(logger => "No meta title found for {:?}", pretty_path(&file, &root_dir));
+            &default_title
+        });
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
