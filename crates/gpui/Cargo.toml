@@ -289,6 +289,10 @@ name = "svg"
 path = "examples/svg/svg.rs"
 
 [[example]]
+name = "tab_stop"
+path = "examples/tab_stop.rs"
+
+[[example]]
 name = "text"
 path = "examples/text.rs"
 

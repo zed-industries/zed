@@ -5,7 +5,7 @@ use crate::{FocusHandle, FocusId};
 /// Used to manage the `Tab` event to switch between focus handles.
 #[derive(Default)]
 pub(crate) struct TabHandles {
-    handles: Vec<FocusHandle>,
+    pub(crate) handles: Vec<FocusHandle>,
 }
 
 impl TabHandles {
