@@ -48,6 +48,7 @@ impl AgentServer for Codex {
             else {
                 anyhow::bail!("Failed to find codex binary");
             };
+            // todo! check supported version
 
             let conn = AcpConnection::stdio(server_name, command, cx).await?;
             Ok(Rc::new(conn) as _)
