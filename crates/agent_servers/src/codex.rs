@@ -302,7 +302,7 @@ pub(crate) mod tests {
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Codex);
+    crate::common_e2e_tests!(Codex, allow_option_id = "approve");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -178,6 +178,7 @@ impl McpServerTool for PermissionTool {
                 updated_input: input.input,
             }
         } else {
+            debug_assert_eq!(chosen_option, reject_option_id);
             PermissionToolResponse {
                 behavior: PermissionToolBehavior::Deny,
                 updated_input: input.input,
