@@ -10237,7 +10237,6 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
             )
         })
         .unwrap();
-    dbg!("!");
     fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
@@ -10249,7 +10248,6 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         })
         .next()
         .await;
-    dbg!("2");
     save.await;
 }
 
