@@ -85,8 +85,7 @@ jobs:
     name: Create a macOS bundle
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - bundle
+      - self-mini-macos
     needs: tests
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -132,7 +131,7 @@ jobs:
           clean: false
 
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
@@ -187,7 +186,7 @@ jobs:
 
   freebsd:
     timeout-minutes: 60
-    if: github.repository_owner == 'zed-industries'
+    if: false && github.repository_owner == 'zed-industries'
     runs-on: github-8vcpu-ubuntu-2404
     needs: tests
     name: Build Zed on FreeBSD

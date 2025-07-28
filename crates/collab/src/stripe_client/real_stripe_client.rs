@@ -10,16 +10,17 @@ use stripe::{
     CreateCheckoutSessionSubscriptionData, CreateCheckoutSessionSubscriptionDataTrialSettings,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehavior,
     CreateCheckoutSessionSubscriptionDataTrialSettingsEndBehaviorMissingPaymentMethod,
-    CreateCustomer, Customer, CustomerId, ListCustomers, Price, PriceId, Recurring, Subscription,
-    SubscriptionId, SubscriptionItem, SubscriptionItemId, UpdateCustomer, UpdateSubscriptionItems,
-    UpdateSubscriptionTrialSettings, UpdateSubscriptionTrialSettingsEndBehavior,
+    CreateCustomer, CreateSubscriptionAutomaticTax, Customer, CustomerId, ListCustomers, Price,
+    PriceId, Recurring, Subscription, SubscriptionId, SubscriptionItem, SubscriptionItemId,
+    UpdateCustomer, UpdateSubscriptionItems, UpdateSubscriptionTrialSettings,
+    UpdateSubscriptionTrialSettingsEndBehavior,
     UpdateSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod,
 };
 
 use crate::stripe_client::{
-    CreateCustomerParams, StripeBillingAddressCollection, StripeCancellationDetails,
-    StripeCancellationDetailsReason, StripeCheckoutSession, StripeCheckoutSessionMode,
-    StripeCheckoutSessionPaymentMethodCollection, StripeClient,
+    CreateCustomerParams, StripeAutomaticTax, StripeBillingAddressCollection,
+    StripeCancellationDetails, StripeCancellationDetailsReason, StripeCheckoutSession,
+    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
     StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
     StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
     StripeCreateSubscriptionParams, StripeCustomer, StripeCustomerId, StripeCustomerUpdate,
@@ -151,6 +152,7 @@ impl StripeClient for RealStripeClient {
                 })
                 .collect(),
         );
+        create_subscription.automatic_tax = params.automatic_tax.map(Into::into);
 
         let subscription = Subscription::create(&self.client, create_subscription).await?;
 
@@ -362,6 +364,15 @@ impl From<SubscriptionItem> for StripeSubscriptionItem {
         Self {
             id: value.id.into(),
             price: value.price.map(Into::into),
+        }
+    }
+}
+
+impl From<StripeAutomaticTax> for CreateSubscriptionAutomaticTax {
+    fn from(value: StripeAutomaticTax) -> Self {
+        Self {
+            enabled: value.enabled,
+            liability: None,
         }
     }
 }

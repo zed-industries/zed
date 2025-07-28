@@ -1,5 +1,5 @@
 [package]
-name = "acp"
+name = "acp_thread"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,15 +9,14 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/acp.rs"
+path = "src/acp_thread.rs"
 doctest = false
 
 [features]
 test-support = ["gpui/test-support", "project/test-support"]
-gemini = []
 
 [dependencies]
-agent_servers.workspace = true
+agent-client-protocol.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
@@ -29,6 +28,8 @@ itertools.workspace = true
 language.workspace = true
 markdown.workspace = true
 project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 ui.workspace = true
@@ -41,7 +42,6 @@ env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
-serde_json.workspace = true
 tempfile.workspace = true
 util.workspace = true
 settings.workspace = true

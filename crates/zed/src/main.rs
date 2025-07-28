@@ -1,6 +1,7 @@
 mod reliability;
 mod zed;
 
+use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -14,7 +15,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -54,6 +55,8 @@ use zed::{
     handle_settings_changed, handle_settings_file_changes, initialize_workspace,
     inline_completion_registry, open_paths_with_positions,
 };
+
+use crate::zed::OpenRequestKind;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -173,6 +176,17 @@ pub fn main() {
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
         return;
+    }
+
+    // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
+    if let Some(socket) = &args.nc {
+        match nc::main(socket) {
+            Ok(()) => return,
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                process::exit(1);
+            }
+        }
     }
 
     // `zed --printenv` Outputs environment variables as JSON to stdout
@@ -540,6 +554,7 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        agent_settings::init(cx);
         agent_servers::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
@@ -608,6 +623,7 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         welcome::init(cx);
+        onboarding::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
@@ -734,15 +750,46 @@ pub fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
-    if let Some(connection) = request.cli_connection {
-        let app_state = app_state.clone();
-        cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
-            .detach();
-        return;
-    }
+    if let Some(kind) = request.kind {
+        match kind {
+            OpenRequestKind::CliConnection(connection) => {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
+                    .detach();
+            }
+            OpenRequestKind::Extension { extension_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(zed_actions::Extensions {
+                                category_filter: None,
+                                id: Some(extension_id),
+                            }),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::AgentPanel => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |workspace, window, cx| {
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.focus_handle(cx).focus(window);
+                        }
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::DockMenuAction { index } => {
+                cx.perform_dock_menu_action(index);
+            }
+        }
 
-    if let Some(action_index) = request.dock_menu_action {
-        cx.perform_dock_menu_action(action_index);
         return;
     }
 
@@ -1151,6 +1198,11 @@ struct Args {
     #[arg(long, hide = true)]
     askpass: Option<String>,
 
+    /// Used for the MCP Server, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    nc: Option<String>,
+
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]
     #[cfg(target_os = "windows")]
@@ -1391,7 +1443,6 @@ fn dump_all_gpui_actions() {
         documentation: Option<&'static str>,
     }
     let mut actions = gpui::generate_list_of_all_registered_actions()
-        .into_iter()
         .map(|action| ActionDef {
             name: action.name,
             human_name: command_palette::humanize_action_name(action.name),

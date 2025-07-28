@@ -249,8 +249,8 @@ impl ListState {
         let state = &mut *self.0.borrow_mut();
 
         let mut old_items = state.items.cursor::<Count>(&());
-        let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right, &());
-        old_items.seek_forward(&Count(old_range.end), Bias::Right, &());
+        let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
+        old_items.seek_forward(&Count(old_range.end), Bias::Right);
 
         let mut spliced_count = 0;
         new_items.extend(
@@ -260,7 +260,7 @@ impl ListState {
             }),
             &(),
         );
-        new_items.append(old_items.suffix(&()), &());
+        new_items.append(old_items.suffix(), &());
         drop(old_items);
         state.items = new_items;
 
@@ -300,14 +300,14 @@ impl ListState {
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
-        cursor.seek(&Count(current_offset.item_ix), Bias::Right, &());
+        cursor.seek(&Count(current_offset.item_ix), Bias::Right);
 
         let start_pixel_offset = cursor.start().height + current_offset.offset_in_item;
         let new_pixel_offset = (start_pixel_offset + distance).max(px(0.));
         if new_pixel_offset > start_pixel_offset {
-            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right, &());
+            cursor.seek_forward(&Height(new_pixel_offset), Bias::Right);
         } else {
-            cursor.seek(&Height(new_pixel_offset), Bias::Right, &());
+            cursor.seek(&Height(new_pixel_offset), Bias::Right);
         }
 
         state.logical_scroll_top = Some(ListOffset {
@@ -343,11 +343,11 @@ impl ListState {
             scroll_top.offset_in_item = px(0.);
         } else {
             let mut cursor = state.items.cursor::<ListItemSummary>(&());
-            cursor.seek(&Count(ix + 1), Bias::Right, &());
+            cursor.seek(&Count(ix + 1), Bias::Right);
             let bottom = cursor.start().height + padding.top;
             let goal_top = px(0.).max(bottom - height + padding.bottom);
 
-            cursor.seek(&Height(goal_top), Bias::Left, &());
+            cursor.seek(&Height(goal_top), Bias::Left);
             let start_ix = cursor.start().count;
             let start_item_top = cursor.start().height;
 
@@ -372,11 +372,11 @@ impl ListState {
         }
 
         let mut cursor = state.items.cursor::<(Count, Height)>(&());
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
         let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
 
-        cursor.seek_forward(&Count(ix), Bias::Right, &());
+        cursor.seek_forward(&Count(ix), Bias::Right);
         if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
             let &(Count(count), Height(top)) = cursor.start();
             if count == ix {
@@ -411,9 +411,9 @@ impl ListState {
         self.0.borrow_mut().set_offset_from_scrollbar(point);
     }
 
-    /// Returns the size of items we have measured.
+    /// Returns the maximum scroll offset according to the items we have measured.
     /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
-    pub fn content_size_for_scrollbar(&self) -> Size<Pixels> {
+    pub fn max_offset_for_scrollbar(&self) -> Size<Pixels> {
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds.unwrap_or_default();
 
@@ -421,7 +421,7 @@ impl ListState {
             .scrollbar_drag_start_height
             .unwrap_or_else(|| state.items.summary().height);
 
-        Size::new(bounds.size.width, height)
+        Size::new(Pixels::ZERO, Pixels::ZERO.max(height - bounds.size.height))
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar
@@ -431,7 +431,7 @@ impl ListState {
 
         let mut cursor = state.items.cursor::<ListItemSummary>(&());
         let summary: ListItemSummary =
-            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right, &());
+            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
         let content_height = state.items.summary().height;
         let drag_offset =
             // if dragging the scrollbar, we want to offset the point if the height changed
@@ -450,9 +450,9 @@ impl ListState {
 impl StateInner {
     fn visible_range(&self, height: Pixels, scroll_top: &ListOffset) -> Range<usize> {
         let mut cursor = self.items.cursor::<ListItemSummary>(&());
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
         let start_y = cursor.start().height + scroll_top.offset_in_item;
-        cursor.seek_forward(&Height(start_y + height), Bias::Left, &());
+        cursor.seek_forward(&Height(start_y + height), Bias::Left);
         scroll_top.item_ix..cursor.start().count + 1
     }
 
@@ -482,7 +482,7 @@ impl StateInner {
             self.logical_scroll_top = None;
         } else {
             let mut cursor = self.items.cursor::<ListItemSummary>(&());
-            cursor.seek(&Height(new_scroll_top), Bias::Right, &());
+            cursor.seek(&Height(new_scroll_top), Bias::Right);
             let item_ix = cursor.start().count;
             let offset_in_item = new_scroll_top - cursor.start().height;
             self.logical_scroll_top = Some(ListOffset {
@@ -523,7 +523,7 @@ impl StateInner {
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> Pixels {
         let mut cursor = self.items.cursor::<ListItemSummary>(&());
-        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
+        cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right);
         cursor.start().height + logical_scroll_top.offset_in_item
     }
 
@@ -553,7 +553,7 @@ impl StateInner {
         let mut cursor = old_items.cursor::<Count>(&());
 
         // Render items after the scroll top, including those in the trailing overdraw
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
         for (ix, item) in cursor.by_ref().enumerate() {
             let visible_height = rendered_height - scroll_top.offset_in_item;
             if visible_height >= available_height + self.overdraw {
@@ -592,13 +592,13 @@ impl StateInner {
         rendered_height += padding.bottom;
 
         // Prepare to start walking upward from the item at the scroll top.
-        cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
+        cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
         // If the rendered items do not fill the visible region, then adjust
         // the scroll top upward.
         if rendered_height - scroll_top.offset_in_item < available_height {
             while rendered_height < available_height {
-                cursor.prev(&());
+                cursor.prev();
                 if let Some(item) = cursor.item() {
                     let item_index = cursor.start().0;
                     let mut element = (self.render_item)(item_index, window, cx);
@@ -645,7 +645,7 @@ impl StateInner {
         // Measure items in the leading overdraw
         let mut leading_overdraw = scroll_top.offset_in_item;
         while leading_overdraw < self.overdraw {
-            cursor.prev(&());
+            cursor.prev();
             if let Some(item) = cursor.item() {
                 let size = if let ListItem::Measured { size, .. } = item {
                     *size
@@ -666,10 +666,10 @@ impl StateInner {
 
         let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
         let mut cursor = old_items.cursor::<Count>(&());
-        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
+        let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right);
         new_items.extend(measured_items, &());
-        cursor.seek(&Count(measured_range.end), Bias::Right, &());
-        new_items.append(cursor.suffix(&()), &());
+        cursor.seek(&Count(measured_range.end), Bias::Right);
+        new_items.append(cursor.suffix(), &());
         self.items = new_items;
 
         // If none of the visible items are focused, check if an off-screen item is focused
@@ -679,7 +679,7 @@ impl StateInner {
             let mut cursor = self
                 .items
                 .filter::<_, Count>(&(), |summary| summary.has_focus_handles);
-            cursor.next(&());
+            cursor.next();
             while let Some(item) = cursor.item() {
                 if item.contains_focused(window, cx) {
                     let item_index = cursor.start().0;
@@ -692,7 +692,7 @@ impl StateInner {
                     });
                     break;
                 }
-                cursor.next(&());
+                cursor.next();
             }
         }
 
@@ -741,7 +741,7 @@ impl StateInner {
                                 });
                             } else if autoscroll_bounds.bottom() > bounds.bottom() {
                                 let mut cursor = self.items.cursor::<Count>(&());
-                                cursor.seek(&Count(item.index), Bias::Right, &());
+                                cursor.seek(&Count(item.index), Bias::Right);
                                 let mut height = bounds.size.height - padding.top - padding.bottom;
 
                                 // Account for the height of the element down until the autoscroll bottom.
@@ -749,7 +749,7 @@ impl StateInner {
 
                                 // Keep decreasing the scroll top until we fill all the available space.
                                 while height > Pixels::ZERO {
-                                    cursor.prev(&());
+                                    cursor.prev();
                                     let Some(item) = cursor.item() else { break };
 
                                     let size = item.size().unwrap_or_else(|| {
@@ -806,7 +806,7 @@ impl StateInner {
             self.logical_scroll_top = None;
         } else {
             let mut cursor = self.items.cursor::<ListItemSummary>(&());
-            cursor.seek(&Height(new_scroll_top), Bias::Right, &());
+            cursor.seek(&Height(new_scroll_top), Bias::Right);
 
             let item_ix = cursor.start().count;
             let offset_in_item = new_scroll_top - cursor.start().height;

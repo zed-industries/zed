@@ -85,6 +85,11 @@ impl FeatureFlag for ThreadAutoCaptureFeatureFlag {
         false
     }
 }
+pub struct PanicFeatureFlag;
+
+impl FeatureFlag for PanicFeatureFlag {
+    const NAME: &'static str = "panic";
+}
 
 pub struct JjUiFeatureFlag {}
 
@@ -96,17 +101,6 @@ pub struct AcpFeatureFlag;
 
 impl FeatureFlag for AcpFeatureFlag {
     const NAME: &'static str = "acp";
-}
-
-pub struct ZedCloudFeatureFlag {}
-
-impl FeatureFlag for ZedCloudFeatureFlag {
-    const NAME: &'static str = "zed-cloud";
-
-    fn enabled_for_staff() -> bool {
-        // Require individual opt-in, for now.
-        false
-    }
 }
 
 pub trait FeatureFlagViewExt<V: 'static> {

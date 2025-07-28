@@ -376,7 +376,7 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
-        if model_id.contains("gemini") {
+        if model_id.contains("gemini") || model_id.contains("grok-4") {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema

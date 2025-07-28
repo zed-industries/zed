@@ -123,8 +123,9 @@ mod macos {
             "ContentMask".into(),
             "Uniforms".into(),
             "AtlasTile".into(),
-            "PathInputIndex".into(),
+            "PathRasterizationInputIndex".into(),
             "PathVertex_ScaledPixels".into(),
+            "PathRasterizationVertex".into(),
             "ShadowInputIndex".into(),
             "Shadow".into(),
             "QuadInputIndex".into(),
@@ -250,9 +251,6 @@ mod windows {
     };
 
     pub(super) fn build() {
-        // Link the AMD AGS library
-        link_amd_ags();
-
         // Compile HLSL shaders
         #[cfg(not(debug_assertions))]
         compile_shaders();
@@ -260,24 +258,6 @@ mod windows {
         // Embed the Windows manifest and resource file
         #[cfg(feature = "windows-manifest")]
         embed_resource();
-    }
-
-    fn link_amd_ags() {
-        // We can not use relative paths in `cargo:rustc-link-search`, so we need to use the absolute path.
-        // See: https://stackoverflow.com/questions/41917096/how-do-i-make-rustc-link-search-relative-to-the-project-location
-        let lib_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("libs");
-        #[cfg(target_pointer_width = "64")]
-        let lib_name = "amd_ags_x64_2022_MT";
-        #[cfg(target_pointer_width = "32")]
-        let lib_name = "amd_ags_x86_2022_MT";
-
-        println!("cargo:rustc-link-lib=static={}", lib_name);
-        println!("cargo:rustc-link-search=native={}", lib_dir.display());
-        println!(
-            "cargo:rerun-if-changed={}/{}.lib",
-            lib_dir.display(),
-            lib_name
-        );
     }
 
     #[cfg(feature = "windows-manifest")]
@@ -342,6 +322,13 @@ mod windows {
 
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
+        // Check environment variable
+        if let Ok(path) = std::env::var("GPUI_FXC_PATH") {
+            if Path::new(&path).exists() {
+                return path;
+            }
+        }
+
         // Try to find in PATH
         if let Ok(output) = std::process::Command::new("where").arg("fxc.exe").output() {
             if output.status.success() {
@@ -356,13 +343,6 @@ mod windows {
         {
             return r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe"
                 .to_string();
-        }
-
-        // Check environment variable
-        if let Ok(path) = std::env::var("GPUI_FXC_PATH") {
-            if Path::new(&path).exists() {
-                return path;
-            }
         }
 
         panic!("Failed to find fxc.exe");
@@ -458,7 +438,6 @@ mod windows {
             const_definition.replace('{', "[").replace('}', "]")
         );
         let mut options = fs::OpenOptions::new()
-            .write(true)
             .create(true)
             .append(true)
             .open(output_path)

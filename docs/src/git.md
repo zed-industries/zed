@@ -76,7 +76,7 @@ You can ask AI to generate a commit message by focusing on the message editor wi
 
 > Note that you need to have an LLM provider configured. Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
 
-You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/configuration.md#feature-specific-models) for more information.
+You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
 ```json
 {
@@ -151,3 +151,17 @@ When viewing files with changes, Zed displays diff hunks that can be expanded or
 | {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
+
+## Git CLI Configuration
+
+If you would like to also use Zed for your [git commit message editor](https://git-scm.com/book/en/v2/Customizing-Git-Git-Configuration#_core_editor) when committing from the command line you can use `zed --wait`:
+
+```sh
+git config --global core.editor "zed --wait"
+```
+
+Or add the following to your shell environment (in `~/.zshrc`, `~/.bashrc`, etc):
+
+```sh
+export GIT_EDITOR="zed --wait"
+```

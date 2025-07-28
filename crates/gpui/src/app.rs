@@ -448,15 +448,23 @@ impl App {
     }
 
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.pending_updates += 1;
+        self.start_update();
         let result = update(self);
+        self.finish_update();
+        result
+    }
+
+    pub(crate) fn start_update(&mut self) {
+        self.pending_updates += 1;
+    }
+
+    pub(crate) fn finish_update(&mut self) {
         if !self.flushing_effects && self.pending_updates == 1 {
             self.flushing_effects = true;
             self.flush_effects();
             self.flushing_effects = false;
         }
         self.pending_updates -= 1;
-        result
     }
 
     /// Arrange a callback to be invoked when the given entity calls `notify` on its respective context.
@@ -688,7 +696,7 @@ impl App {
     /// Returns a list of available screen capture sources.
     pub fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         self.platform.screen_capture_sources()
     }
 
@@ -868,7 +876,6 @@ impl App {
         loop {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
-
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
                     Effect::Notify { emitter } => {
@@ -947,8 +954,8 @@ impl App {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, count| {
-                if count.load(SeqCst) == 0 {
+            .retain(|handle_id, focus| {
+                if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
@@ -1250,11 +1257,7 @@ impl App {
                         .downcast::<T>()
                         .unwrap()
                         .update(cx, |entity_state, cx| {
-                            if let Some(window) = window {
-                                on_new(entity_state, Some(window), cx);
-                            } else {
-                                on_new(entity_state, None, cx);
-                            }
+                            on_new(entity_state, window.as_deref_mut(), cx)
                         })
                 },
             ),
@@ -1367,7 +1370,9 @@ impl App {
         self.keymap.clone()
     }
 
-    /// Register a global listener for actions invoked via the keyboard.
+    /// Register a global handler for actions invoked via the keyboard. These handlers are run at
+    /// the end of the bubble phase for actions, and so will only be invoked if there are no other
+    /// handlers or if they called `cx.propagate()`.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
@@ -1823,6 +1828,13 @@ impl AppContext for App {
         })
     }
 
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
+    where
+        T: 'static,
+    {
+        GpuiBorrow::new(handle.clone(), self)
+    }
+
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
@@ -2017,5 +2029,81 @@ impl HttpClient for NullHttpClient {
 
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
+    }
+}
+
+/// A mutable reference to an entity owned by GPUI
+pub struct GpuiBorrow<'a, T> {
+    inner: Option<Lease<T>>,
+    app: &'a mut App,
+}
+
+impl<'a, T: 'static> GpuiBorrow<'a, T> {
+    fn new(inner: Entity<T>, app: &'a mut App) -> Self {
+        app.start_update();
+        let lease = app.entities.lease(&inner);
+        Self {
+            inner: Some(lease),
+            app,
+        }
+    }
+}
+
+impl<'a, T: 'static> std::borrow::Borrow<T> for GpuiBorrow<'a, T> {
+    fn borrow(&self) -> &T {
+        self.inner.as_ref().unwrap().borrow()
+    }
+}
+
+impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        self.inner.as_mut().unwrap().borrow_mut()
+    }
+}
+
+impl<'a, T> Drop for GpuiBorrow<'a, T> {
+    fn drop(&mut self) {
+        let lease = self.inner.take().unwrap();
+        self.app.notify(lease.id);
+        self.app.entities.end_lease(lease);
+        self.app.finish_update();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{AppContext, TestAppContext};
+
+    #[test]
+    fn test_gpui_borrow() {
+        let cx = TestAppContext::single();
+        let observation_count = Rc::new(RefCell::new(0));
+
+        let state = cx.update(|cx| {
+            let state = cx.new(|_| false);
+            cx.observe(&state, {
+                let observation_count = observation_count.clone();
+                move |_, _| {
+                    let mut count = observation_count.borrow_mut();
+                    *count += 1;
+                }
+            })
+            .detach();
+
+            state
+        });
+
+        cx.update(|cx| {
+            // Calling this like this so that we don't clobber the borrow_mut above
+            *std::borrow::BorrowMut::borrow_mut(&mut state.as_mut(cx)) = true;
+        });
+
+        cx.update(|cx| {
+            state.write(cx, false);
+        });
+
+        assert_eq!(*observation_count.borrow(), 2);
     }
 }

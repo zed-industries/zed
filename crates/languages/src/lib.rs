@@ -212,6 +212,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             name: "gitcommit",
             ..Default::default()
         },
+        LanguageInfo {
+            name: "zed-keybind-context",
+            ..Default::default()
+        },
     ];
 
     for registration in built_in_languages {
@@ -269,6 +273,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         "Astro",
         "CSS",
         "ERB",
+        "HTML/ERB",
         "HEEX",
         "HTML",
         "JavaScript",

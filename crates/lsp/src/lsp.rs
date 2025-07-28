@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{Context as _, Result, anyhow};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap};
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
     channel::oneshot::{self, Canceled},
@@ -40,7 +40,7 @@ use std::{
     time::{Duration, Instant},
 };
 use std::{path::Path, process::Stdio};
-use util::{ConnectionResult, ResultExt, TryFutureExt};
+use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -633,7 +633,7 @@ impl LanguageServer {
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     }),
-                    diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
+                    diagnostics: Some(DiagnosticWorkspaceClientCapabilities {
                         refresh_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
@@ -874,43 +874,44 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
-            outbound_tx.close();
 
             let server = self.server.clone();
             let name = self.name.clone();
+            let server_id = self.server_id;
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
-                async move {
-                    log::debug!("language server shutdown started");
+            Some(async move {
+                log::debug!("language server shutdown started");
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            match request_result {
-                                ConnectionResult::Timeout => {
-                                    log::warn!("timeout waiting for language server {name} to shutdown");
-                                },
-                                ConnectionResult::ConnectionReset => {},
-                                ConnectionResult::Result(r) => r?,
-                            }
+                select! {
+                    request_result = shutdown_request.fuse() => {
+                        match request_result {
+                            ConnectionResult::Timeout => {
+                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                            },
+                            ConnectionResult::ConnectionReset => {
+                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                            },
+                            ConnectionResult::Result(Err(e)) => {
+                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                            },
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
                     }
 
-                    response_handlers.lock().take();
-                    exit?;
-                    output_done.recv().await;
-                    server.lock().take().map(|mut child| child.kill());
-                    log::debug!("language server shutdown finished");
-
-                    drop(tasks);
-                    anyhow::Ok(())
+                    _ = timer => {
+                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    },
                 }
-                .log_err(),
-            )
+
+                response_handlers.lock().take();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                outbound_tx.close();
+                output_done.recv().await;
+                server.lock().take().map(|mut child| child.kill());
+                drop(tasks);
+                log::debug!("language server shutdown finished");
+                Some(())
+            })
         } else {
             None
         }
@@ -1107,6 +1108,7 @@ impl LanguageServer {
     pub fn binary(&self) -> &LanguageServerBinary {
         &self.binary
     }
+
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1126,16 +1128,40 @@ impl LanguageServer {
         )
     }
 
-    fn request_internal<T>(
+    /// Sends a RPC request to the language server, with a custom timer, a future which when becoming
+    /// ready causes the request to be timed out with the future's output message.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
+    pub fn request_with_timer<T: request::Request, U: Future<Output = String>>(
+        &self,
+        params: T::Params,
+        timer: U,
+    ) -> impl LspRequestFuture<T::Result> + use<T, U>
+    where
+        T::Result: 'static + Send,
+    {
+        Self::request_internal_with_timer::<T, U>(
+            &self.next_id,
+            &self.response_handlers,
+            &self.outbound_tx,
+            &self.executor,
+            timer,
+            params,
+        )
+    }
+
+    fn request_internal_with_timer<T, U>(
         next_id: &AtomicI32,
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
+        timer: U,
         params: T::Params,
-    ) -> impl LspRequestFuture<T::Result> + use<T>
+    ) -> impl LspRequestFuture<T::Result> + use<T, U>
     where
         T::Result: 'static + Send,
         T: request::Request,
+        U: Future<Output = String>,
     {
         let id = next_id.fetch_add(1, SeqCst);
         let message = serde_json::to_string(&Request {
@@ -1180,7 +1206,6 @@ impl LanguageServer {
             .context("failed to write to language server's stdin");
 
         let outbound_tx = outbound_tx.downgrade();
-        let mut timeout = executor.timer(LSP_REQUEST_TIMEOUT).fuse();
         let started = Instant::now();
         LspRequest::new(id, async move {
             if let Err(e) = handle_response {
@@ -1217,12 +1242,39 @@ impl LanguageServer {
                     }
                 }
 
-                _ = timeout => {
-                    log::error!("Cancelled LSP request task for {method:?} id {id} which took over {LSP_REQUEST_TIMEOUT:?}");
+                message = timer.fuse() => {
+                    log::error!("Cancelled LSP request task for {method:?} id {id} {message}");
                     ConnectionResult::Timeout
                 }
             }
         })
+    }
+
+    fn request_internal<T>(
+        next_id: &AtomicI32,
+        response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
+        outbound_tx: &channel::Sender<String>,
+        executor: &BackgroundExecutor,
+        params: T::Params,
+    ) -> impl LspRequestFuture<T::Result> + use<T>
+    where
+        T::Result: 'static + Send,
+        T: request::Request,
+    {
+        Self::request_internal_with_timer::<T, _>(
+            next_id,
+            response_handlers,
+            outbound_tx,
+            executor,
+            Self::default_request_timer(executor.clone()),
+            params,
+        )
+    }
+
+    pub fn default_request_timer(executor: BackgroundExecutor) -> impl Future<Output = String> {
+        executor
+            .timer(LSP_REQUEST_TIMEOUT)
+            .map(|_| format!("which took over {LSP_REQUEST_TIMEOUT:?}"))
     }
 
     /// Sends a RPC notification to the language server.
@@ -1398,6 +1450,33 @@ impl fmt::Debug for LanguageServer {
     }
 }
 
+impl fmt::Debug for LanguageServerBinary {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("LanguageServerBinary");
+        debug.field("path", &self.path);
+        debug.field("arguments", &self.arguments);
+
+        if let Some(env) = &self.env {
+            let redacted_env: BTreeMap<String, String> = env
+                .iter()
+                .map(|(key, value)| {
+                    let redacted_value = if redact::should_redact(key) {
+                        "REDACTED".to_string()
+                    } else {
+                        value.clone()
+                    };
+                    (key.clone(), redacted_value)
+                })
+                .collect();
+            debug.field("env", &Some(redacted_env));
+        } else {
+            debug.field("env", &self.env);
+        }
+
+        debug.finish()
+    }
+}
+
 impl Drop for Subscription {
     fn drop(&mut self) {
         match self {
@@ -1507,6 +1586,8 @@ impl FakeLanguageServer {
                 }
             }
         });
+
+        fake.set_request_handler::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         (server, fake)
     }

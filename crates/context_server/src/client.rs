@@ -1,6 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
-use futures::{FutureExt, StreamExt, channel::oneshot, select};
+use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
 use postage::barrier;
@@ -10,15 +10,19 @@ use smol::channel;
 use std::{
     fmt,
     path::PathBuf,
+    pin::pin,
     sync::{
         Arc,
         atomic::{AtomicI32, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 
-use crate::transport::{StdioTransport, Transport};
+use crate::{
+    transport::{StdioTransport, Transport},
+    types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
+};
 
 const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -32,6 +36,7 @@ pub const INTERNAL_ERROR: i32 = -32603;
 
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncApp)>;
+type RequestHandler = Box<dyn Send + FnMut(RequestId, &RawValue, AsyncApp)>;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -70,12 +75,21 @@ fn is_null_value<T: Serialize>(value: &T) -> bool {
 }
 
 #[derive(Serialize, Deserialize)]
-struct Request<'a, T> {
-    jsonrpc: &'static str,
-    id: RequestId,
-    method: &'a str,
+pub struct Request<'a, T> {
+    pub jsonrpc: &'static str,
+    pub id: RequestId,
+    pub method: &'a str,
     #[serde(skip_serializing_if = "is_null_value")]
-    params: T,
+    pub params: T,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct AnyRequest<'a> {
+    pub jsonrpc: &'a str,
+    pub id: RequestId,
+    pub method: &'a str,
+    #[serde(skip_serializing_if = "is_null_value")]
+    pub params: Option<&'a RawValue>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -88,18 +102,18 @@ struct AnyResponse<'a> {
     result: Option<&'a RawValue>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[allow(dead_code)]
-struct Response<T> {
-    jsonrpc: &'static str,
-    id: RequestId,
+pub(crate) struct Response<T> {
+    pub jsonrpc: &'static str,
+    pub id: RequestId,
     #[serde(flatten)]
-    value: CspResult<T>,
+    pub value: CspResult<T>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum CspResult<T> {
+pub(crate) enum CspResult<T> {
     #[serde(rename = "result")]
     Ok(Option<T>),
     #[allow(dead_code)]
@@ -123,8 +137,9 @@ struct AnyNotification<'a> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Error {
-    message: String,
+pub(crate) struct Error {
+    pub message: String,
+    pub code: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -175,15 +190,23 @@ impl Client {
             Arc::new(Mutex::new(HashMap::<_, NotificationHandler>::default()));
         let response_handlers =
             Arc::new(Mutex::new(Some(HashMap::<_, ResponseHandler>::default())));
+        let request_handlers = Arc::new(Mutex::new(HashMap::<_, RequestHandler>::default()));
 
         let receive_input_task = cx.spawn({
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
+            let request_handlers = request_handlers.clone();
             let transport = transport.clone();
             async move |cx| {
-                Self::handle_input(transport, notification_handlers, response_handlers, cx)
-                    .log_err()
-                    .await
+                Self::handle_input(
+                    transport,
+                    notification_handlers,
+                    request_handlers,
+                    response_handlers,
+                    cx,
+                )
+                .log_err()
+                .await
             }
         });
         let receive_err_task = cx.spawn({
@@ -229,13 +252,24 @@ impl Client {
     async fn handle_input(
         transport: Arc<dyn Transport>,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
+        request_handlers: Arc<Mutex<HashMap<&'static str, RequestHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         cx: &mut AsyncApp,
     ) -> anyhow::Result<()> {
         let mut receiver = transport.receive();
 
         while let Some(message) = receiver.next().await {
-            if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
+            log::trace!("recv: {}", &message);
+            if let Ok(request) = serde_json::from_str::<AnyRequest>(&message) {
+                let mut request_handlers = request_handlers.lock();
+                if let Some(handler) = request_handlers.get_mut(request.method) {
+                    handler(
+                        request.id,
+                        request.params.unwrap_or(RawValue::NULL),
+                        cx.clone(),
+                    );
+                }
+            } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
                 if let Some(handlers) = response_handlers.lock().as_mut() {
                     if let Some(handler) = handlers.remove(&response.id) {
                         handler(Ok(message.to_string()));
@@ -246,6 +280,8 @@ impl Client {
                 if let Some(handler) = notification_handlers.get_mut(notification.method.as_str()) {
                     handler(notification.params.unwrap_or(Value::Null), cx.clone());
                 }
+            } else {
+                log::error!("Unhandled JSON from context_server: {}", message);
             }
         }
 
@@ -294,6 +330,24 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
+        self.request_impl(method, params, None).await
+    }
+
+    pub async fn cancellable_request<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: impl Serialize,
+        cancel_rx: oneshot::Receiver<()>,
+    ) -> Result<T> {
+        self.request_impl(method, params, Some(cancel_rx)).await
+    }
+
+    pub async fn request_impl<T: DeserializeOwned>(
+        &self,
+        method: &str,
+        params: impl Serialize,
+        cancel_rx: Option<oneshot::Receiver<()>>,
+    ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
         let request = serde_json::to_string(&Request {
             jsonrpc: JSON_RPC_VERSION,
@@ -329,6 +383,16 @@ impl Client {
         send?;
 
         let mut timeout = executor.timer(REQUEST_TIMEOUT).fuse();
+        let mut cancel_fut = pin!(
+            match cancel_rx {
+                Some(rx) => future::Either::Left(async {
+                    rx.await.log_err();
+                }),
+                None => future::Either::Right(future::pending()),
+            }
+            .fuse()
+        );
+
         select! {
             response = rx.fuse() => {
                 let elapsed = started.elapsed();
@@ -346,6 +410,16 @@ impl Client {
                     }
                     Err(_) => anyhow::bail!("cancelled")
                 }
+            }
+            _ = cancel_fut => {
+                self.notify(
+                    Cancelled::METHOD,
+                    ClientNotification::Cancelled(CancelledParams {
+                        request_id: RequestId::Int(id),
+                        reason: None
+                    })
+                ).log_err();
+                anyhow::bail!("Request cancelled")
             }
             _ = timeout => {
                 log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", REQUEST_TIMEOUT);

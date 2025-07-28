@@ -1,30 +1,79 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+mod claude;
+mod gemini;
+mod settings;
 
-use anyhow::{Context as _, Result};
+#[cfg(test)]
+mod e2e_tests;
+
+pub use claude::*;
+pub use gemini::*;
+pub use settings::*;
+
+use acp_thread::AgentConnection;
+use anyhow::Result;
 use collections::HashMap;
-use gpui::{App, AsyncApp, Entity, SharedString};
+use gpui::{App, AsyncApp, Entity, SharedString, Task};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore};
-use util::{ResultExt, paths};
+use std::{
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
+use util::ResultExt as _;
 
 pub fn init(cx: &mut App) {
-    AllAgentServersSettings::register(cx);
+    settings::init(cx);
 }
 
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug)]
-pub struct AllAgentServersSettings {
-    gemini: Option<AgentServerSettings>,
+pub trait AgentServer: Send {
+    fn logo(&self) -> ui::IconName;
+    fn name(&self) -> &'static str;
+    fn empty_state_headline(&self) -> &'static str;
+    fn empty_state_message(&self) -> &'static str;
+
+    fn connect(
+        &self,
+        // these will go away when old_acp is fully removed
+        root_dir: &Path,
+        project: &Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<Rc<dyn AgentConnection>>>;
 }
 
-#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug)]
-pub struct AgentServerSettings {
-    #[serde(flatten)]
-    command: AgentServerCommand,
+impl std::fmt::Debug for AgentServerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let filtered_env = self.env.as_ref().map(|env| {
+            env.iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        if util::redact::should_redact(k) {
+                            "[REDACTED]"
+                        } else {
+                            v
+                        },
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+
+        f.debug_struct("AgentServerCommand")
+            .field("path", &self.path)
+            .field("args", &self.args)
+            .field("env", &filtered_env)
+            .finish()
+    }
+}
+
+pub enum AgentServerVersion {
+    Supported,
+    Unsupported {
+        error_message: SharedString,
+        upgrade_message: SharedString,
+        upgrade_command: String,
+    },
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
@@ -36,105 +85,34 @@ pub struct AgentServerCommand {
     pub env: Option<HashMap<String, String>>,
 }
 
-pub struct Gemini;
-
-pub struct AgentServerVersion {
-    pub current_version: SharedString,
-    pub supported: bool,
-}
-
-pub trait AgentServer: Send {
-    fn command(
-        &self,
+impl AgentServerCommand {
+    pub(crate) async fn resolve(
+        path_bin_name: &'static str,
+        extra_args: &[&'static str],
+        settings: Option<AgentServerSettings>,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
-    ) -> impl Future<Output = Result<AgentServerCommand>>;
-
-    fn version(
-        &self,
-        command: &AgentServerCommand,
-    ) -> impl Future<Output = Result<AgentServerVersion>> + Send;
-}
-
-const GEMINI_ACP_ARG: &str = "--acp";
-
-impl AgentServer for Gemini {
-    async fn command(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<AgentServerCommand> {
-        let custom_command = cx.read_global(|settings: &SettingsStore, _| {
-            let settings = settings.get::<AllAgentServersSettings>(None);
-            settings
-                .gemini
-                .as_ref()
-                .map(|gemini_settings| AgentServerCommand {
-                    path: gemini_settings.command.path.clone(),
-                    args: gemini_settings
-                        .command
-                        .args
-                        .iter()
-                        .cloned()
-                        .chain(std::iter::once(GEMINI_ACP_ARG.into()))
-                        .collect(),
-                    env: gemini_settings.command.env.clone(),
-                })
-        })?;
-
-        if let Some(custom_command) = custom_command {
-            return Ok(custom_command);
-        }
-
-        if let Some(path) = find_bin_in_path("gemini", project, cx).await {
-            return Ok(AgentServerCommand {
-                path,
-                args: vec![GEMINI_ACP_ARG.into()],
-                env: None,
+    ) -> Option<Self> {
+        if let Some(agent_settings) = settings {
+            return Some(Self {
+                path: agent_settings.command.path,
+                args: agent_settings
+                    .command
+                    .args
+                    .into_iter()
+                    .chain(extra_args.iter().map(|arg| arg.to_string()))
+                    .collect(),
+                env: agent_settings.command.env,
             });
+        } else {
+            find_bin_in_path(path_bin_name, project, cx)
+                .await
+                .map(|path| Self {
+                    path,
+                    args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                    env: None,
+                })
         }
-
-        let (fs, node_runtime) = project.update(cx, |project, _| {
-            (project.fs().clone(), project.node_runtime().cloned())
-        })?;
-        let node_runtime = node_runtime.context("gemini not found on path")?;
-
-        let directory = ::paths::agent_servers_dir().join("gemini");
-        fs.create_dir(&directory).await?;
-        node_runtime
-            .npm_install_packages(&directory, &[("@google/gemini-cli", "latest")])
-            .await?;
-        let path = directory.join("node_modules/.bin/gemini");
-
-        Ok(AgentServerCommand {
-            path,
-            args: vec![GEMINI_ACP_ARG.into()],
-            env: None,
-        })
-    }
-
-    async fn version(&self, command: &AgentServerCommand) -> Result<AgentServerVersion> {
-        let version_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--version")
-            .kill_on_drop(true)
-            .output();
-
-        let help_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--help")
-            .kill_on_drop(true)
-            .output();
-
-        let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
-
-        let current_version = String::from_utf8(version_output?.stdout)?.into();
-        let supported = String::from_utf8(help_output?.stdout)?.contains(GEMINI_ACP_ARG);
-
-        Ok(AgentServerVersion {
-            current_version,
-            supported,
-        })
     }
 }
 
@@ -183,49 +161,4 @@ async fn find_bin_in_path(
             which_result.log_err()
         })
         .await
-}
-
-impl std::fmt::Debug for AgentServerCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let filtered_env = self.env.as_ref().map(|env| {
-            env.iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        if util::redact::should_redact(k) {
-                            "[REDACTED]"
-                        } else {
-                            v
-                        },
-                    )
-                })
-                .collect::<Vec<_>>()
-        });
-
-        f.debug_struct("AgentServerCommand")
-            .field("path", &self.path)
-            .field("args", &self.args)
-            .field("env", &filtered_env)
-            .finish()
-    }
-}
-
-impl settings::Settings for AllAgentServersSettings {
-    const KEY: Option<&'static str> = Some("agent_servers");
-
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut settings = AllAgentServersSettings::default();
-
-        for value in sources.defaults_and_customizations() {
-            if value.gemini.is_some() {
-                settings.gemini = value.gemini.clone();
-            }
-        }
-
-        Ok(settings)
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

@@ -25,13 +25,14 @@ const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 const MULTISAMPLE_COUNT: u32 = 4;
 
 pub(crate) struct DirectXRenderer {
+    hwnd: HWND,
     atlas: Arc<DirectXAtlas>,
-    devices: DirectXDevices,
-    resources: DirectXResources,
+    devices: ManuallyDrop<DirectXDevices>,
+    resources: ManuallyDrop<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
     #[cfg(not(feature = "enable-renderdoc"))]
-    _direct_composition: DirectComposition,
+    _direct_composition: ManuallyDrop<DirectComposition>,
 }
 
 /// Direct3D objects
@@ -114,16 +115,14 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(devices: &DirectXDevices, hwnd: HWND) -> Result<Self> {
-        let atlas = Arc::new(DirectXAtlas::new(
-            devices.device.clone(),
-            devices.device_context.clone(),
-        ));
+    pub(crate) fn new(hwnd: HWND) -> Result<Self> {
+        let devices = ManuallyDrop::new(DirectXDevices::new().context("Creating DirectX devices")?);
+        let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
         #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(devices)?;
+        let resources = DirectXResources::new(&devices, 1, 1)?;
         #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(devices, hwnd)?;
+        let resources = DirectXResources::new(&devices, 1, 1, hwnd)?;
 
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
@@ -134,8 +133,9 @@ impl DirectXRenderer {
         direct_composition.set_swap_chain(&resources.swap_chain)?;
 
         Ok(DirectXRenderer {
+            hwnd,
             atlas,
-            devices: devices.clone(),
+            devices,
             resources,
             globals,
             pipelines,
@@ -179,7 +179,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
-    fn present(&self) -> Result<()> {
+    fn present(&mut self) -> Result<()> {
         unsafe {
             self.devices.device_context.ResolveSubresource(
                 &*self.resources.render_target,
@@ -191,7 +191,68 @@ impl DirectXRenderer {
             self.devices
                 .device_context
                 .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
-            self.resources.swap_chain.Present(0, DXGI_PRESENT(0)).ok()?;
+            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
+            // Presenting the swap chain can fail if the DirectX device was removed or reset.
+            if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
+                let reason = self.devices.device.GetDeviceRemovedReason();
+                log::error!(
+                    "DirectX device removed or reset when drawing. Reason: {:?}",
+                    reason
+                );
+                self.handle_device_lost()?;
+            } else {
+                result.ok()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_device_lost(&mut self) -> Result<()> {
+        unsafe {
+            ManuallyDrop::drop(&mut self.devices);
+            ManuallyDrop::drop(&mut self.resources);
+            #[cfg(not(feature = "enable-renderdoc"))]
+            ManuallyDrop::drop(&mut self._direct_composition);
+        }
+        let devices =
+            ManuallyDrop::new(DirectXDevices::new().context("Recreating DirectX devices")?);
+        unsafe {
+            devices.device_context.OMSetRenderTargets(None, None);
+            devices.device_context.ClearState();
+            devices.device_context.Flush();
+        }
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let resources =
+            DirectXResources::new(&devices, self.resources.width, self.resources.height)?;
+        #[cfg(feature = "enable-renderdoc")]
+        let resources = DirectXResources::new(
+            &devices,
+            self.resources.width,
+            self.resources.height,
+            self.hwnd,
+        )?;
+        let globals = DirectXGlobalElements::new(&devices.device)?;
+        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
+
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let direct_composition = DirectComposition::new(&devices.dxgi_device, self.hwnd)?;
+        #[cfg(not(feature = "enable-renderdoc"))]
+        direct_composition.set_swap_chain(&resources.swap_chain)?;
+
+        self.atlas
+            .handle_device_lost(&devices.device, &devices.device_context);
+        self.devices = devices;
+        self.resources = resources;
+        self.globals = globals;
+        self.pipelines = pipelines;
+        #[cfg(not(feature = "enable-renderdoc"))]
+        {
+            self._direct_composition = direct_composition;
+        }
+        unsafe {
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
         }
         Ok(())
     }
@@ -237,13 +298,33 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.resources.render_target);
             drop(self.resources.render_target_view[0].take().unwrap());
 
-            self.resources.swap_chain.ResizeBuffers(
+            let result = self.resources.swap_chain.ResizeBuffers(
                 BUFFER_COUNT as u32,
                 width,
                 height,
                 RENDER_TARGET_FORMAT,
                 DXGI_SWAP_CHAIN_FLAG(0),
-            )?;
+            );
+            // Resizing the swap chain requires a call to the underlying DXGI adapter, which can return the device removed error.
+            // The app might have moved to a monitor that's attached to a different graphics device.
+            // When a graphics device is removed or reset, the desktop resolution often changes, resulting in a window size change.
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    if e.code() == DXGI_ERROR_DEVICE_REMOVED || e.code() == DXGI_ERROR_DEVICE_RESET
+                    {
+                        let reason = self.devices.device.GetDeviceRemovedReason();
+                        log::error!(
+                            "DirectX device removed or reset when resizing. Reason: {:?}",
+                            reason
+                        );
+                        self.handle_device_lost()?;
+                        return Ok(());
+                    }
+                    log::error!("Failed to resize swap chain: {:?}", e);
+                    return Err(e.into());
+                }
+            }
 
             self.resources
                 .recreate_resources(&self.devices, width, height)?;
@@ -437,11 +518,10 @@ impl DirectXRenderer {
 impl DirectXResources {
     pub fn new(
         devices: &DirectXDevices,
+        width: u32,
+        height: u32,
         #[cfg(feature = "enable-renderdoc")] hwnd: HWND,
-    ) -> Result<Self> {
-        let width = 1;
-        let height = 1;
-
+    ) -> Result<ManuallyDrop<Self>> {
         #[cfg(not(feature = "enable-renderdoc"))]
         let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
         #[cfg(feature = "enable-renderdoc")]
@@ -452,7 +532,7 @@ impl DirectXResources {
             create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             swap_chain,
             render_target,
             render_target_view,
@@ -461,7 +541,7 @@ impl DirectXResources {
             width,
             height,
             viewport,
-        })
+        }))
     }
 
     #[inline]
@@ -518,16 +598,16 @@ impl DirectXRenderPipelines {
 
 #[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<ManuallyDrop<Self>> {
         let comp_device = get_comp_device(&dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             comp_device,
             comp_target,
             comp_visual,
-        })
+        }))
     }
 
     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
@@ -910,6 +990,17 @@ struct PathSprite {
     color: Background,
 }
 
+impl Drop for DirectXRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.devices);
+            ManuallyDrop::drop(&mut self.resources);
+            #[cfg(not(feature = "enable-renderdoc"))]
+            ManuallyDrop::drop(&mut self._direct_composition);
+        }
+    }
+}
+
 impl Drop for DirectXResources {
     fn drop(&mut self) {
         unsafe {
@@ -958,7 +1049,7 @@ fn get_device(
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
     #[cfg(not(debug_assertions))]
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    Ok(unsafe {
+    unsafe {
         D3D11CreateDevice(
             adapter,
             D3D_DRIVER_TYPE_UNKNOWN,
@@ -971,8 +1062,9 @@ fn get_device(
             device,
             None,
             context,
-        )?
-    })
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "enable-renderdoc"))]
@@ -1482,11 +1574,9 @@ mod nvidia {
         unsafe {
             // Try to load the NVIDIA driver DLL
             #[cfg(target_pointer_width = "64")]
-            let nvidia_dll =
-                LoadLibraryA(s!("nvapi64.dll")).context(format!("Can't load nvapi64.dll"))?;
+            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
             #[cfg(target_pointer_width = "32")]
-            let nvidia_dll =
-                LoadLibraryA(s!("nvapi.dll")).context(format!("Can't load nvapi.dll"))?;
+            let nvidia_dll = LoadLibraryA(s!("nvapi.dll")).context("Can't load nvapi.dll")?;
 
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
@@ -1529,8 +1619,14 @@ mod nvidia {
 mod amd {
     use std::os::raw::{c_char, c_int, c_void};
 
+    use anyhow::{Context, Result};
+    use windows::{
+        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
+        core::s,
+    };
+
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
-    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12) | 0;
+    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L204
     // This is an opaque type, using struct to represent it properly for FFI
@@ -1547,19 +1643,36 @@ mod amd {
         pub devices: *mut c_void,
     }
 
-    unsafe extern "C" {
-        fn agsInitialize(
-            version: c_int,
-            config: *const c_void,
-            context: *mut *mut AGSContext,
-            gpu_info: *mut AGSGPUInfo,
-        ) -> c_int;
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L429
+    #[allow(non_camel_case_types)]
+    type agsInitialize_t = unsafe extern "C" fn(
+        version: c_int,
+        config: *const c_void,
+        context: *mut *mut AGSContext,
+        gpu_info: *mut AGSGPUInfo,
+    ) -> c_int;
 
-        fn agsDeInitialize(context: *mut AGSContext) -> c_int;
-    }
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L436
+    #[allow(non_camel_case_types)]
+    type agsDeInitialize_t = unsafe extern "C" fn(context: *mut AGSContext) -> c_int;
 
-    pub(super) fn get_driver_version() -> anyhow::Result<String> {
+    pub(super) fn get_driver_version() -> Result<String> {
         unsafe {
+            #[cfg(target_pointer_width = "64")]
+            let amd_dll =
+                LoadLibraryA(s!("amd_ags_x64.dll")).context("Failed to load AMD AGS library")?;
+            #[cfg(target_pointer_width = "32")]
+            let amd_dll =
+                LoadLibraryA(s!("amd_ags_x86.dll")).context("Failed to load AMD AGS library")?;
+
+            let ags_initialize_addr = GetProcAddress(amd_dll, s!("agsInitialize"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get agsInitialize address"))?;
+            let ags_deinitialize_addr = GetProcAddress(amd_dll, s!("agsDeInitialize"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get agsDeInitialize address"))?;
+
+            let ags_initialize: agsInitialize_t = std::mem::transmute(ags_initialize_addr);
+            let ags_deinitialize: agsDeInitialize_t = std::mem::transmute(ags_deinitialize_addr);
+
             let mut context: *mut AGSContext = std::ptr::null_mut();
             let mut gpu_info: AGSGPUInfo = AGSGPUInfo {
                 driver_version: std::ptr::null(),
@@ -1568,17 +1681,14 @@ mod amd {
                 devices: std::ptr::null_mut(),
             };
 
-            let result = agsInitialize(
+            let result = ags_initialize(
                 AGS_CURRENT_VERSION,
                 std::ptr::null(),
                 &mut context,
                 &mut gpu_info,
             );
             if result != 0 {
-                return Err(anyhow::anyhow!(
-                    "Failed to initialize AGS, error code: {}",
-                    result
-                ));
+                anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
             }
 
             // Vulkan acctually returns this as the driver version
@@ -1598,7 +1708,7 @@ mod amd {
                 "Unknown Radeon Driver Version".to_string()
             };
 
-            agsDeInitialize(context);
+            ags_deinitialize(context);
             Ok(format!("{} ({})", software_version, driver_version))
         }
     }
