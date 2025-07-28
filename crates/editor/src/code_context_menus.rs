@@ -1051,8 +1051,6 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         completions: &[Completion],
     ) -> Vec<StringMatch> {
-        dbg!(&matches);
-
         let mut matches = matches;
 
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
