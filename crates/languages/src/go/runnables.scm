@@ -69,7 +69,7 @@
 (
   (
     (function_declaration name: (_) @run @_name
-      (#match? @_name "^Benchmark.+"))
+      (#match? @_name "^Benchmark.*"))
   ) @_
   (#set! tag go-benchmark)
 )

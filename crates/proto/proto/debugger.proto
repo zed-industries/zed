@@ -188,7 +188,7 @@ message DapSetVariableValueResponse {
 message DapPauseRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
 }
 
 message DapDisconnectRequest {
@@ -202,7 +202,7 @@ message DapDisconnectRequest {
 message DapTerminateThreadsRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    repeated uint64 thread_ids = 3;
+    repeated int64 thread_ids = 3;
 }
 
 message DapThreadsRequest {
@@ -246,7 +246,7 @@ message IgnoreBreakpointState {
 message DapNextRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional bool single_thread = 4;
     optional SteppingGranularity granularity = 5;
 }
@@ -254,7 +254,7 @@ message DapNextRequest {
 message DapStepInRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional uint64 target_id = 4;
     optional bool single_thread = 5;
     optional SteppingGranularity granularity = 6;
@@ -263,7 +263,7 @@ message DapStepInRequest {
 message DapStepOutRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional bool single_thread = 4;
     optional SteppingGranularity granularity = 5;
 }
@@ -271,7 +271,7 @@ message DapStepOutRequest {
 message DapStepBackRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional bool single_thread = 4;
     optional SteppingGranularity granularity = 5;
 }
@@ -279,7 +279,7 @@ message DapStepBackRequest {
 message DapContinueRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional bool single_thread = 4;
 }
 
@@ -311,7 +311,7 @@ message DapLoadedSourcesResponse {
 message DapStackTraceRequest {
     uint64 project_id = 1;
     uint64 client_id = 2;
-    uint64 thread_id = 3;
+    int64 thread_id = 3;
     optional uint64 start_frame = 4;
     optional uint64 stack_trace_levels = 5;
 }
@@ -358,7 +358,7 @@ message DapVariable {
 }
 
 message DapThread {
-    uint64 id = 1;
+    int64 id = 1;
     string name = 2;
 }
 

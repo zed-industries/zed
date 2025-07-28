@@ -4,8 +4,8 @@ use crate::{IntoElement, prelude::*, px, relative};
 use gpui::{
     Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Corners, CursorStyle,
     Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
-    IsZero, LayoutId, ListState, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollHandle, ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
+    IsZero, LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, ScrollHandle, ScrollWheelEvent, Size, Style, UniformListScrollHandle, Window, quad,
 };
 
 pub struct Scrollbar {
@@ -301,8 +301,6 @@ impl Element for Scrollbar {
                 window.set_cursor_style(CursorStyle::Arrow, hitbox);
             }
 
-            let scroll = self.state.scroll_handle.clone();
-
             enum ScrollbarMouseEvent {
                 GutterClick,
                 ThumbDrag(Pixels),
@@ -337,10 +335,12 @@ impl Element for Scrollbar {
                 };
 
             window.on_mouse_event({
-                let scroll = scroll.clone();
                 let state = self.state.clone();
                 move |event: &MouseDownEvent, phase, _, _| {
-                    if !(phase.bubble() && bounds.contains(&event.position)) {
+                    if !phase.bubble()
+                        || event.button != MouseButton::Left
+                        || !bounds.contains(&event.position)
+                    {
                         return;
                     }
 
@@ -348,56 +348,70 @@ impl Element for Scrollbar {
                         let offset = event.position.along(axis) - thumb_bounds.origin.along(axis);
                         state.set_dragging(offset);
                     } else {
+                        let scroll_handle = state.scroll_handle();
                         let click_offset = compute_click_offset(
                             event.position,
-                            scroll.max_offset(),
+                            scroll_handle.max_offset(),
                             ScrollbarMouseEvent::GutterClick,
                         );
-                        scroll.set_offset(scroll.offset().apply_along(axis, |_| click_offset));
+                        scroll_handle
+                            .set_offset(scroll_handle.offset().apply_along(axis, |_| click_offset));
                     }
                 }
             });
 
             window.on_mouse_event({
-                let scroll = scroll.clone();
+                let scroll_handle = self.state.scroll_handle().clone();
                 move |event: &ScrollWheelEvent, phase, window, _| {
                     if phase.bubble() && bounds.contains(&event.position) {
-                        let current_offset = scroll.offset();
-                        scroll.set_offset(
+                        let current_offset = scroll_handle.offset();
+                        scroll_handle.set_offset(
                             current_offset + event.delta.pixel_delta(window.line_height()),
                         );
                     }
                 }
             });
 
-            let state = self.state.clone();
-            window.on_mouse_event(move |event: &MouseMoveEvent, _, window, cx| {
-                match state.thumb_state.get() {
-                    ThumbState::Dragging(drag_state) if event.dragging() => {
-                        let drag_offset = compute_click_offset(
-                            event.position,
-                            scroll.max_offset(),
-                            ScrollbarMouseEvent::ThumbDrag(drag_state),
-                        );
-                        scroll.set_offset(scroll.offset().apply_along(axis, |_| drag_offset));
-                        window.refresh();
-                        if let Some(id) = state.parent_id {
-                            cx.notify(id);
+            window.on_mouse_event({
+                let state = self.state.clone();
+                move |event: &MouseMoveEvent, phase, window, cx| {
+                    if phase.bubble() {
+                        match state.thumb_state.get() {
+                            ThumbState::Dragging(drag_state) if event.dragging() => {
+                                let scroll_handle = state.scroll_handle();
+                                let drag_offset = compute_click_offset(
+                                    event.position,
+                                    scroll_handle.max_offset(),
+                                    ScrollbarMouseEvent::ThumbDrag(drag_state),
+                                );
+                                scroll_handle.set_offset(
+                                    scroll_handle.offset().apply_along(axis, |_| drag_offset),
+                                );
+                                window.refresh();
+                                if let Some(id) = state.parent_id {
+                                    cx.notify(id);
+                                }
+                            }
+                            _ if event.pressed_button.is_none() => {
+                                state.set_thumb_hovered(thumb_bounds.contains(&event.position))
+                            }
+                            _ => {}
                         }
                     }
-                    _ => state.set_thumb_hovered(thumb_bounds.contains(&event.position)),
                 }
             });
-            let state = self.state.clone();
-            let scroll = self.state.scroll_handle.clone();
-            window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                if phase.bubble() {
-                    if state.is_dragging() {
+
+            window.on_mouse_event({
+                let state = self.state.clone();
+                move |event: &MouseUpEvent, phase, _, cx| {
+                    if phase.bubble() {
+                        if state.is_dragging() {
+                            state.scroll_handle().drag_ended();
+                            if let Some(id) = state.parent_id {
+                                cx.notify(id);
+                            }
+                        }
                         state.set_thumb_hovered(thumb_bounds.contains(&event.position));
-                    }
-                    scroll.drag_ended();
-                    if let Some(id) = state.parent_id {
-                        cx.notify(id);
                     }
                 }
             });
