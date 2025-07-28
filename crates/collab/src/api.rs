@@ -106,7 +106,6 @@ pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
         .route("/users/:id/refresh_llm_tokens", post(refresh_llm_tokens))
         .route("/users/:id/update_plan", post(update_plan))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
-        .merge(billing::router())
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
