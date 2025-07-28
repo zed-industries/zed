@@ -77,10 +77,6 @@ struct Section<const COLS: usize> {
 }
 
 impl<const COLS: usize> Section<COLS> {
-    pub fn new(title: &'static str, entries: [SectionEntry; COLS]) -> Self {
-        Self { title, entries }
-    }
-
     fn render(
         self,
         index_offset: usize,
@@ -117,8 +113,6 @@ struct SectionEntry {
     title: &'static str,
     action: &'static dyn Action,
 }
-
-const BUTTON_OPACITY: f32 = 0.9;
 
 impl SectionEntry {
     fn render(
