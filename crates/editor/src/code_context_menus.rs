@@ -1051,15 +1051,17 @@ impl CompletionsMenu {
         snippet_sort_order: SnippetSortOrder,
         completions: &[Completion],
     ) -> Vec<StringMatch> {
+        dbg!(&matches);
+
         let mut matches = matches;
 
         #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
         enum MatchTier<'a> {
             WordStartMatch {
                 sort_exact: Reverse<i32>,
-                sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
+                sort_positions: Vec<usize>,
                 sort_text: Option<&'a str>,
                 sort_kind: usize,
                 sort_label: &'a str,
@@ -1137,9 +1139,9 @@ impl CompletionsMenu {
 
                 MatchTier::WordStartMatch {
                     sort_exact,
-                    sort_positions,
                     sort_snippet,
                     sort_score,
+                    sort_positions,
                     sort_text,
                     sort_kind,
                     sort_label,
