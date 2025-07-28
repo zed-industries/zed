@@ -3423,77 +3423,18 @@ impl BufferSnapshot {
     ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
-            let mut cursor = layer.node().walk();
+            let layer_result = layer.syntax_ancestor(&range);
 
-            // Descend to the first leaf that touches the start of the range.
-            //
-            // If the range is non-empty and the current node ends exactly at the start,
-            // move to the next sibling to find a node that extends beyond the start.
-            //
-            // If the range is empty and the current node starts after the range position,
-            // move to the previous sibling to find the node that contains the position.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
+            match (result, layer_result) {
+                (None, None) | (Some(_), None) => {}
+                (Some(previous_result), Some(layer_result))
+                    if previous_result.byte_range().len() < layer_result.byte_range().len() => {}
+                (None, Some(_)) | (Some(_), Some(_)) => result = layer_result,
             }
-
-            // Ascend to the smallest ancestor that strictly contains the range.
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start
-                    && node_range.end >= range.end
-                    && node_range.len() > range.len()
-                {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
-            }
-
-            let left_node = cursor.node();
-            let mut layer_result = left_node;
-
-            // For an empty range, try to find another node immediately to the right of the range.
-            if left_node.end_byte() == range.start {
-                let mut right_node = None;
-                while !cursor.goto_next_sibling() {
-                    if !cursor.goto_parent() {
-                        break;
-                    }
-                }
-
-                while cursor.node().start_byte() == range.start {
-                    right_node = Some(cursor.node());
-                    if !cursor.goto_first_child() {
-                        break;
-                    }
-                }
-
-                // If there is a candidate node on both sides of the (empty) range, then
-                // decide between the two by favoring a named node over an anonymous token.
-                // If both nodes are the same in that regard, favor the right one.
-                if let Some(right_node) = right_node {
-                    if right_node.is_named() || !left_node.is_named() {
-                        layer_result = right_node;
-                    }
-                }
-            }
-
-            if let Some(previous_result) = &result {
-                if previous_result.byte_range().len() < layer_result.byte_range().len() {
-                    continue;
-                }
-            }
-            result = Some(layer_result);
         }
 
         result

@@ -6110,6 +6110,37 @@ impl MultiBufferSnapshot {
         Some((node, range))
     }
 
+    pub fn syntax_ancestor_all_layers<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Vec<(tree_sitter::Node<'_>, MultiOrSingleBufferOffsetRange)> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let Some(mut excerpt) = self.excerpt_containing(range.clone()) else {
+            return Vec::new();
+        };
+
+        excerpt
+            .buffer()
+            .syntax_layers()
+            .filter_map(|layer| {
+                layer
+                    // FIXME pass range as ref
+                    .syntax_ancestor(&excerpt.map_range_to_buffer(range.clone()))
+                    .map(|node| {
+                        let node_range = node.byte_range();
+                        let range = if excerpt.contains_buffer_range(node_range.clone()) {
+                            MultiOrSingleBufferOffsetRange::Multi(
+                                excerpt.map_range_from_buffer(node_range),
+                            )
+                        } else {
+                            MultiOrSingleBufferOffsetRange::Single(node_range)
+                        };
+                        (node, range)
+                    })
+            })
+            .collect()
+    }
+
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let (excerpt_id, _, buffer) = self.as_singleton()?;
         let outline = buffer.outline(theme)?;
