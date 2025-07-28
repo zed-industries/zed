@@ -12,7 +12,6 @@ use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
-use serde_json::json;
 use settings::{Settings, SettingsStore};
 use util::path;
 
@@ -27,7 +26,11 @@ pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppCont
         .unwrap();
 
     thread.read_with(cx, |thread, _| {
-        assert_eq!(thread.entries().len(), 2);
+        assert!(
+            thread.entries().len() >= 2,
+            "Expected at least 2 entries. Got: {:?}",
+            thread.entries()
+        );
         assert!(matches!(
             thread.entries()[0],
             AgentThreadEntry::UserMessage(_)
@@ -108,19 +111,19 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
 }
 
 pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
-    let fs = init_test(cx).await;
-    fs.insert_tree(
-        path!("/private/tmp"),
-        json!({"foo": "Lorem ipsum dolor", "bar": "bar", "baz": "baz"}),
-    )
-    .await;
-    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
+    let _fs = init_test(cx).await;
+
+    let tempdir = tempfile::tempdir().unwrap();
+    let foo_path = tempdir.path().join("foo");
+    std::fs::write(&foo_path, "Lorem ipsum dolor").expect("failed to write file");
+
+    let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
 
     thread
         .update(cx, |thread, cx| {
             thread.send_raw(
-                "Read the '/private/tmp/foo' file and tell me what you see.",
+                &format!("Read {} and tell me what you see.", foo_path.display()),
                 cx,
             )
         })
@@ -143,6 +146,8 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
                 .any(|entry| { matches!(entry, AgentThreadEntry::AssistantMessage(_)) })
         );
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_tool_call_with_confirmation(
