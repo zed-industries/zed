@@ -4,6 +4,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum WhichKeyLocation {
+    Buffer,
+    LeftPanel,
+}
+
 #[derive(Deserialize, Debug)]
 pub struct WhichKeySettings {
     #[serde(default = "default_enabled")]
@@ -12,6 +19,8 @@ pub struct WhichKeySettings {
     pub delay_ms: u64,
     #[serde(default = "default_group")]
     pub group: bool,
+    #[serde(default = "default_location")]
+    pub location: WhichKeyLocation,
 }
 
 fn default_enabled() -> bool {
@@ -24,6 +33,10 @@ fn default_delay_ms() -> u64 {
 
 fn default_group() -> bool {
     true
+}
+
+fn default_location() -> WhichKeyLocation {
+    WhichKeyLocation::Buffer
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -40,6 +53,10 @@ pub struct WhichKeySettingsContent {
     ///
     /// Default: true
     pub group: Option<bool>,
+    /// Where to show the which-key popup.
+    ///
+    /// Default: buffer
+    pub location: Option<WhichKeyLocation>,
 }
 
 impl Settings for WhichKeySettings {

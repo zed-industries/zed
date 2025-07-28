@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::{BottomDockLayout, WorkspaceSettings};
 use gpui::{
     AvailableSpace, FontWeight, KeyBinding, Keystroke, Task, WeakEntity, humanize_action_name,
 };
@@ -7,7 +8,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{DynamicSpacing, prelude::*, text_for_keystrokes};
 use util::ResultExt;
-use which_key::WhichKeySettings;
+use which_key::{WhichKeyLocation, WhichKeySettings};
 
 use crate::Workspace;
 
@@ -75,14 +76,20 @@ impl Render for WhichKeyLayer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let which_key_settings = WhichKeySettings::get_global(cx);
         if !which_key_settings.enabled || !self.show {
-            return div();
+            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
+            return div().into_any_element();
         }
         let (Some(pending_keys), Some(bindings)) = (&self.pending_keys, &self.bindings) else {
-            return div();
+            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
+            return div().into_any_element();
         };
         if bindings.is_empty() {
-            return div();
+            // All return paths must return the same concrete type, so we convert `div()` into an `AnyElement`.
+            return div().into_any_element();
         }
+
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let status_bar_height = DynamicSpacing::Base08.px(cx) * 2.0 + ui_font_size;
 
         // Get dock widths and bottom dock height for dynamic padding
         let (left_margin, right_margin, bottom_margin) = if let Ok(margins) =
@@ -103,16 +110,30 @@ impl Render for WhichKeyLayer {
                     .active_panel_size(window, cx)
                     .unwrap_or_default();
 
-                // Status bar height
-                let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
-                let status_bar_height = DynamicSpacing::Base08.px(cx) * 2.0 + ui_font_size;
-
-                (left_width, right_width, bottom_height + status_bar_height)
+                (left_width, right_width, bottom_height)
             }) {
             margins
         } else {
             (Pixels::ZERO, Pixels::ZERO, Pixels::ZERO)
         };
+
+        // Check if we should show in left panel
+        let show_in_left_panel = which_key_settings.location == WhichKeyLocation::LeftPanel
+            && left_margin >= ui_font_size * 20.0;
+
+        if show_in_left_panel {
+            return self
+                .render_in_left_panel(
+                    pending_keys,
+                    bindings,
+                    left_margin,
+                    bottom_margin,
+                    status_bar_height,
+                    window,
+                    cx,
+                )
+                .into_any_element();
+        }
 
         let margin = DynamicSpacing::Base12.px(cx);
         let padding = DynamicSpacing::Base16.px(cx);
@@ -235,13 +256,16 @@ impl Render for WhichKeyLayer {
         }
 
         div()
+            .id("which-key-buffer-panel-scroll")
             .occlude()
             .absolute()
-            .bottom(bottom_margin + margin)
+            .bottom(bottom_margin + status_bar_height + margin)
             .left(left_margin + margin)
             .right(right_margin + margin)
             .elevation_3(cx)
             .p(padding)
+            .overflow_y_scroll()
+            .max_h_128()
             .child(
                 v_flex()
                     .gap_3()
@@ -255,6 +279,7 @@ impl Render for WhichKeyLayer {
                             .children(column_elements),
                     ),
             )
+            .into_any_element() // All return paths must return the same concrete type.
     }
 }
 
@@ -321,4 +346,119 @@ fn create_aligned_binding_element(
             .truncate()
             .into_any_element(),
     ])
+}
+
+impl WhichKeyLayer {
+    fn render_in_left_panel(
+        &self,
+        pending_keys: &[Keystroke],
+        bindings: &[KeyBinding],
+        left_margin: Pixels,
+        bottom_margin: Pixels,
+        status_bar_height: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let which_key_settings = WhichKeySettings::get_global(cx);
+        let workspace_settings = WorkspaceSettings::get_global(cx);
+        let margin = DynamicSpacing::Base12.px(&cx);
+        let padding = DynamicSpacing::Base16.px(&cx);
+        let bottom_offset = if workspace_settings.bottom_dock_layout == BottomDockLayout::Contained
+        {
+            margin + status_bar_height
+        } else {
+            margin + status_bar_height + bottom_margin
+        };
+
+        let mut binding_data: Vec<_> = bindings
+            .iter()
+            .map(|binding| {
+                let remaining_keystrokes = binding.keystrokes()[pending_keys.len()..].to_vec();
+                let action_name = humanize_action_name(binding.action().name());
+                (remaining_keystrokes, action_name)
+            })
+            .collect();
+
+        // Group bindings if enabled
+        if which_key_settings.group {
+            binding_data = group_bindings(binding_data);
+        }
+
+        // Sort bindings from shortest to longest, with groups last
+        binding_data.sort_by(|(keystrokes_a, action_a), (keystrokes_b, action_b)| {
+            // Groups (actions starting with "+") should go last
+            let is_group_a = action_a.starts_with('+');
+            let is_group_b = action_b.starts_with('+');
+
+            // First, separate groups from non-groups
+            let group_cmp = is_group_a.cmp(&is_group_b);
+            if group_cmp != std::cmp::Ordering::Equal {
+                return group_cmp;
+            }
+
+            // Then sort by keystroke count
+            let keystroke_cmp = keystrokes_a.len().cmp(&keystrokes_b.len());
+            if keystroke_cmp != std::cmp::Ordering::Equal {
+                return keystroke_cmp;
+            }
+
+            // Finally sort by text length, then lexicographically for full stability
+            let text_a = text_for_keystrokes(keystrokes_a, cx);
+            let text_b = text_for_keystrokes(keystrokes_b, cx);
+            let text_len_cmp = text_a.len().cmp(&text_b.len());
+            if text_len_cmp != std::cmp::Ordering::Equal {
+                return text_len_cmp;
+            }
+            text_a.cmp(&text_b)
+        });
+        // Remove duplicates
+        binding_data.dedup();
+
+        // For left panel, we use a single column layout
+        let available_width = left_margin - (padding * 2.0);
+
+        // Find the longest keystroke text width for alignment
+        let longest_keystroke_width = binding_data
+            .iter()
+            .map(|(remaining_keystrokes, _)| {
+                Label::new(text_for_keystrokes(remaining_keystrokes, cx))
+                    .weight(FontWeight::BOLD)
+                    .into_any_element()
+                    .layout_as_root(AvailableSpace::min_size(), window, cx)
+                    .width
+            })
+            .max_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+
+        let items = binding_data
+            .iter()
+            .map(|(remaining_keystrokes, action_name)| {
+                create_aligned_binding_element(
+                    remaining_keystrokes,
+                    action_name,
+                    longest_keystroke_width,
+                    cx,
+                )
+            });
+
+        div()
+            .id("which-key-left-panel-scroll")
+            .occlude()
+            .absolute()
+            .top(margin)
+            .left(margin)
+            .bottom(bottom_offset)
+            .w(available_width)
+            .elevation_3(cx)
+            .p(padding)
+            .overflow_y_scroll()
+            .child(
+                v_flex()
+                    .max_h_full()
+                    .gap_3()
+                    .child(
+                        Label::new(text_for_keystrokes(pending_keys, cx)).weight(FontWeight::BOLD),
+                    )
+                    .child(div().flex_grow().child(v_flex().gap_1().children(items))),
+            )
+    }
 }
