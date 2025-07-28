@@ -271,7 +271,7 @@ jobs:
 
       - name: Check that Cargo.lock is up to date
         run: |
-          cargo update --frozen --workspace
+          cargo update --locked --workspace
 
       - name: cargo clippy
         run: ./script/clippy
