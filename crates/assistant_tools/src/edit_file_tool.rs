@@ -2077,7 +2077,7 @@ mod tests {
                 "Global keymap file should require confirmation",
             ),
             (
-                "/project/normal_file.rs".to_string(),
+                "project/normal_file.rs".to_string(),
                 false,
                 "Normal project file should not require confirmation",
             ),
