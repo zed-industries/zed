@@ -1601,6 +1601,7 @@ mod tests {
             };
 
             AcpThread::new(
+                "Test",
                 Rc::new(connection),
                 project,
                 acp::SessionId("test".into()),
