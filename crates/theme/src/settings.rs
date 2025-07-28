@@ -240,9 +240,13 @@ impl SystemAppearance {
 }
 
 #[derive(Default)]
-struct BufferFontSize(Pixels);
+pub(crate) struct BufferFontSize(Pixels);
 
 impl Global for BufferFontSize {}
+
+struct BufferFontFamily(FontFamilyName);
+
+impl Global for BufferFontFamily {}
 
 #[derive(Default)]
 pub(crate) struct UiFontSize(Pixels);
@@ -588,6 +592,19 @@ impl ThemeSettings {
             .map(|size| size.0)
             .unwrap_or(self.ui_font_size);
         clamp_font_size(font_size)
+    }
+
+    /// Returns the ui font family.
+    pub fn ui_font_family(
+        &self,
+        default_ui_font_family: Option<FontFamilyName>,
+        cx: &App,
+    ) -> FontFamilyName {
+        if let Some(ui_font_family) = cx.try_global::<BufferFontFamily>() {
+            return ui_font_family.0.clone();
+        };
+
+        default_ui_font_family.unwrap()
     }
 
     /// Returns the UI font size.

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::App;
+use gpui::{App, Global};
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -51,6 +51,17 @@ pub struct PresentationModeConfiguration {
     pub full_screen: Option<bool>,
 }
 
+impl Default for PresentationModeConfiguration {
+    fn default() -> Self {
+        Self {
+            buffer_font_family: None,
+            buffer_font_size: None,
+            theme: None,
+            full_screen: None,
+        }
+    }
+}
+
 impl Settings for PresentationModeSettings {
     const KEY: Option<&'static str> = Some("presentation_modes");
 
@@ -67,3 +78,12 @@ impl Settings for PresentationModeSettings {
 
     fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut Self::FileContent) {}
 }
+
+/// Global state for the currently active presentation mode
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActivePresentationMode {
+    pub presentation_mode: PresentationMode,
+    pub disabled_mode_is_in_full_screen: bool,
+}
+
+impl Global for ActivePresentationMode {}

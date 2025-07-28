@@ -261,15 +261,13 @@ pub mod icon_theme_selector {
 }
 
 pub mod presentation_mode_selector {
-    use gpui::actions;
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
-    actions!(
-        presentation_mode_selector,
-        [
-            /// Toggles the presentation mode selector interface.
-            Toggle
-        ]
-    );
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = presentation_mode_selector)]
+    pub struct Toggle;
 }
 
 pub mod agent {
