@@ -295,11 +295,13 @@ impl CommitModal {
                                     IconPosition::Start,
                                     Some(Box::new(Amend)),
                                     {
-                                        let git_panel = git_panel_entity.clone();
-                                        move |window, cx| {
-                                            git_panel.update(cx, |git_panel, cx| {
-                                                git_panel.toggle_amend_pending(&Amend, window, cx);
-                                            })
+                                        let git_panel = git_panel_entity.downgrade();
+                                        move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.toggle_amend_pending(cx);
+                                                })
+                                                .ok();
                                         }
                                     },
                                 )
