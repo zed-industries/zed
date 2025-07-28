@@ -3620,7 +3620,9 @@ impl Project {
             .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
 
         cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions.await?;
+            let mut code_lens_actions = code_lens_actions
+                .await
+                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
             code_lens_actions.retain(|code_lens_action| {
                 range
                     .start
