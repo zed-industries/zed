@@ -417,17 +417,6 @@ impl Modifiers {
         self.control || self.alt || self.shift || self.platform || self.function
     }
 
-    /// Returns the XOR of two modifier sets
-    pub fn xor(&self, other: &Modifiers) -> Modifiers {
-        Modifiers {
-            control: self.control ^ other.control,
-            alt: self.alt ^ other.alt,
-            shift: self.shift ^ other.shift,
-            platform: self.platform ^ other.platform,
-            function: self.function ^ other.function,
-        }
-    }
-
     /// Whether the semantically 'secondary' modifier key is pressed.
     ///
     /// On macOS, this is the command key.
@@ -550,6 +539,61 @@ impl Modifiers {
             && (other.shift || !self.shift)
             && (other.platform || !self.platform)
             && (other.function || !self.function)
+    }
+}
+
+impl std::ops::BitOr for Modifiers {
+    type Output = Self;
+
+    fn bitor(mut self, other: Self) -> Self::Output {
+        self |= other;
+        self
+    }
+}
+
+impl std::ops::BitOrAssign for Modifiers {
+    fn bitor_assign(&mut self, other: Self) {
+        self.control |= other.control;
+        self.alt |= other.alt;
+        self.shift |= other.shift;
+        self.platform |= other.platform;
+        self.function |= other.function;
+    }
+}
+
+impl std::ops::BitXor for Modifiers {
+    type Output = Self;
+    fn bitxor(mut self, rhs: Self) -> Self::Output {
+        self ^= rhs;
+        self
+    }
+}
+
+impl std::ops::BitXorAssign for Modifiers {
+    fn bitxor_assign(&mut self, other: Self) {
+        self.control ^= other.control;
+        self.alt ^= other.alt;
+        self.shift ^= other.shift;
+        self.platform ^= other.platform;
+        self.function ^= other.function;
+    }
+}
+
+impl std::ops::BitAnd for Modifiers {
+    type Output = Self;
+    fn bitand(mut self, rhs: Self) -> Self::Output {
+        self &= rhs;
+        self
+    }
+}
+
+impl std::ops::BitAndAssign for Modifiers {
+    fn bitand_assign(&mut self, other: Self) {
+        self.control &= other.control;
+        self.alt &= other.alt;
+        self.shift &= other.shift;
+        self.platform &= other.platform;
+        self.function &= other.function;
     }
 }
 

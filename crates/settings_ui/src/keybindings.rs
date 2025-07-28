@@ -566,24 +566,40 @@ impl KeymapEditor {
                                                     && query.modifiers == keystroke.modifiers
                                             },
                                         )
+                                } else if keystroke_query.len() > keystrokes.len() {
+                                    return false;
                                 } else {
-                                    let key_press_query =
-                                        KeyPressIterator::new(keystroke_query.as_slice());
-                                    let mut last_match_idx = 0;
+                                    for keystroke_offset in 0..keystrokes.len() {
+                                        let mut found_count = 0;
+                                        let mut query_cursor = 0;
+                                        let mut keystroke_cursor = keystroke_offset;
+                                        while query_cursor < keystroke_query.len()
+                                            && keystroke_cursor < keystrokes.len()
+                                        {
+                                            let query = &keystroke_query[query_cursor];
+                                            let keystroke = &keystrokes[keystroke_cursor];
+                                            let matches =
+                                                query.modifiers.is_subset_of(&keystroke.modifiers)
+                                                    && ((query.key.is_empty()
+                                                        || query.key == keystroke.key)
+                                                        && query
+                                                            .key_char
+                                                            .as_ref()
+                                                            .map_or(true, |q_kc| {
+                                                                q_kc == &keystroke.key
+                                                            }));
+                                            if matches {
+                                                found_count += 1;
+                                                query_cursor += 1;
+                                            }
+                                            keystroke_cursor += 1;
+                                        }
 
-                                    key_press_query.into_iter().all(|key| {
-                                        let key_presses = KeyPressIterator::new(keystrokes);
-                                        key_presses.into_iter().enumerate().any(
-                                            |(index, keystroke)| {
-                                                if last_match_idx > index || keystroke != key {
-                                                    return false;
-                                                }
-
-                                                last_match_idx = index;
-                                                true
-                                            },
-                                        )
-                                    })
+                                        if found_count == keystroke_query.len() {
+                                            return true;
+                                        }
+                                    }
+                                    return false;
                                 }
                             })
                     });
@@ -1232,11 +1248,14 @@ impl KeymapEditor {
 
         match self.search_mode {
             SearchMode::KeyStroke { .. } => {
-                window.focus(&self.keystroke_editor.read(cx).recording_focus_handle(cx));
+                self.keystroke_editor.update(cx, |editor, cx| {
+                    editor.start_recording(&StartRecording, window, cx);
+                });
             }
             SearchMode::Normal => {
                 self.keystroke_editor.update(cx, |editor, cx| {
-                    editor.clear_keystrokes(&ClearKeystrokes, window, cx)
+                    editor.stop_recording(&StopRecording, window, cx);
+                    editor.clear_keystrokes(&ClearKeystrokes, window, cx);
                 });
                 window.focus(&self.filter_editor.focus_handle(cx));
             }
@@ -2962,16 +2981,6 @@ enum CloseKeystrokeResult {
     None,
 }
 
-#[derive(PartialEq, Eq, Debug, Clone)]
-enum KeyPress<'a> {
-    Alt,
-    Control,
-    Function,
-    Shift,
-    Platform,
-    Key(&'a String),
-}
-
 struct KeystrokeInput {
     keystrokes: Vec<Keystroke>,
     placeholder_keystrokes: Option<Vec<Keystroke>>,
@@ -2983,6 +2992,7 @@ struct KeystrokeInput {
     /// Handles tripe escape to stop recording
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
+    previous_modifiers: Modifiers,
 }
 
 impl KeystrokeInput {
@@ -3009,6 +3019,7 @@ impl KeystrokeInput {
             search: false,
             close_keystrokes: None,
             close_keystrokes_start: None,
+            previous_modifiers: Modifiers::default(),
         }
     }
 
@@ -3031,7 +3042,7 @@ impl KeystrokeInput {
     }
 
     fn key_context() -> KeyContext {
-        let mut key_context = KeyContext::new_with_defaults();
+        let mut key_context = KeyContext::default();
         key_context.add("KeystrokeInput");
         key_context
     }
@@ -3098,12 +3109,24 @@ impl KeystrokeInput {
     ) {
         let keystrokes_len = self.keystrokes.len();
 
+        if event.modifiers.is_subset_of(&self.previous_modifiers) {
+            self.previous_modifiers &= event.modifiers;
+            cx.stop_propagation();
+            return;
+        }
+
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if self.search {
-                last.modifiers = last.modifiers.xor(&event.modifiers);
+                if self.previous_modifiers.modified() {
+                    last.modifiers |= event.modifiers;
+                    self.previous_modifiers |= event.modifiers;
+                } else {
+                    self.keystrokes.push(Self::dummy(event.modifiers));
+                    self.previous_modifiers |= event.modifiers;
+                }
             } else if !event.modifiers.modified() {
                 self.keystrokes.pop();
             } else {
@@ -3113,6 +3136,9 @@ impl KeystrokeInput {
             self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
+            if self.search {
+                self.previous_modifiers |= event.modifiers;
+            }
             self.keystrokes_changed(cx);
         }
         cx.stop_propagation();
@@ -3138,6 +3164,9 @@ impl KeystrokeInput {
                     {
                         self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
                     }
+                    if self.search {
+                        self.previous_modifiers = keystroke.modifiers;
+                    }
                     self.keystrokes_changed(cx);
                     cx.stop_propagation();
                     return;
@@ -3152,7 +3181,9 @@ impl KeystrokeInput {
                     self.close_keystrokes_start = Some(self.keystrokes.len());
                 }
                 self.keystrokes.push(keystroke.clone());
-                if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                if self.search {
+                    self.previous_modifiers = keystroke.modifiers;
+                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
             } else if close_keystroke_result != CloseKeystrokeResult::Partial {
@@ -3222,17 +3253,11 @@ impl KeystrokeInput {
         })
     }
 
-    fn recording_focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.inner_focus_handle.clone()
-    }
-
     fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.outer_focus_handle.is_focused(window) {
-            return;
-        }
-        self.clear_keystrokes(&ClearKeystrokes, window, cx);
         window.focus(&self.inner_focus_handle);
-        cx.notify();
+        self.clear_keystrokes(&ClearKeystrokes, window, cx);
+        self.previous_modifiers = window.modifiers();
+        cx.stop_propagation();
     }
 
     fn stop_recording(&mut self, _: &StopRecording, window: &mut Window, cx: &mut Context<Self>) {
@@ -3364,7 +3389,7 @@ impl Render for KeystrokeInput {
             })
             .key_context(Self::key_context())
             .on_action(cx.listener(Self::start_recording))
-            .on_action(cx.listener(Self::stop_recording))
+            .on_action(cx.listener(Self::clear_keystrokes))
             .child(
                 h_flex()
                     .w(horizontal_padding)
@@ -3629,75 +3654,6 @@ mod persistence {
                 SELECT item_id
                 FROM keybinding_editors
                 WHERE item_id = ? AND workspace_id = ?
-            }
-        }
-    }
-}
-
-/// Iterator that yields KeyPress values from a slice of Keystrokes
-struct KeyPressIterator<'a> {
-    keystrokes: &'a [Keystroke],
-    current_keystroke_index: usize,
-    current_key_press_index: usize,
-}
-
-impl<'a> KeyPressIterator<'a> {
-    fn new(keystrokes: &'a [Keystroke]) -> Self {
-        Self {
-            keystrokes,
-            current_keystroke_index: 0,
-            current_key_press_index: 0,
-        }
-    }
-}
-
-impl<'a> Iterator for KeyPressIterator<'a> {
-    type Item = KeyPress<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let keystroke = self.keystrokes.get(self.current_keystroke_index)?;
-
-            match self.current_key_press_index {
-                0 => {
-                    self.current_key_press_index = 1;
-                    if keystroke.modifiers.platform {
-                        return Some(KeyPress::Platform);
-                    }
-                }
-                1 => {
-                    self.current_key_press_index = 2;
-                    if keystroke.modifiers.alt {
-                        return Some(KeyPress::Alt);
-                    }
-                }
-                2 => {
-                    self.current_key_press_index = 3;
-                    if keystroke.modifiers.control {
-                        return Some(KeyPress::Control);
-                    }
-                }
-                3 => {
-                    self.current_key_press_index = 4;
-                    if keystroke.modifiers.shift {
-                        return Some(KeyPress::Shift);
-                    }
-                }
-                4 => {
-                    self.current_key_press_index = 5;
-                    if keystroke.modifiers.function {
-                        return Some(KeyPress::Function);
-                    }
-                }
-                _ => {
-                    self.current_keystroke_index += 1;
-                    self.current_key_press_index = 0;
-
-                    if keystroke.key.is_empty() {
-                        continue;
-                    }
-                    return Some(KeyPress::Key(&keystroke.key));
-                }
             }
         }
     }
