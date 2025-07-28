@@ -1991,6 +1991,20 @@ impl AgentPanel {
                                                 );
                                             }),
                                     )
+                                    .item(
+                                        ContextMenuEntry::new("New Codex Thread")
+                                            .icon(IconName::AiOpenAi)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    NewExternalAgentThread {
+                                                        agent: Some(crate::ExternalAgent::Codex),
+                                                    }
+                                                    .boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
                             });
                         menu
                     }))
@@ -2646,6 +2660,25 @@ impl AgentPanel {
                                                         Box::new(NewExternalAgentThread {
                                                             agent: Some(
                                                                 crate::ExternalAgent::ClaudeCode,
+                                                            ),
+                                                        }),
+                                                        cx,
+                                                    )
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            NewThreadButton::new(
+                                                "new-codex-thread-btn",
+                                                "New Codex Thread",
+                                                IconName::AiOpenAi,
+                                            )
+                                            .on_click(
+                                                |window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(NewExternalAgentThread {
+                                                            agent: Some(
+                                                                crate::ExternalAgent::Codex,
                                                             ),
                                                         }),
                                                         cx,
