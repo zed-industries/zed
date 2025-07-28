@@ -1104,6 +1104,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    scheduled_tasks: Vec<Task<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1435,6 +1436,7 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            scheduled_tasks: Vec::new(),
         }
     }
 
