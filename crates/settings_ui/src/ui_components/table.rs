@@ -17,7 +17,7 @@ use ui::{
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
 
-const RESIZE_COLUMN_WIDTH: f32 = 5.0;
+const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
 #[derive(Debug)]
 struct DraggedColumn(usize);
@@ -214,6 +214,7 @@ impl TableInteractionState {
         let mut column_ix = 0;
         let resizable_columns_slice = *resizable_columns;
         let mut resizable_columns = resizable_columns.into_iter();
+
         let dividers = intersperse_with(spacers, || {
             window.with_id(column_ix, |window| {
                 let mut resize_divider = div()
@@ -221,9 +222,9 @@ impl TableInteractionState {
                     .id(column_ix)
                     .relative()
                     .top_0()
-                    .w_0p5()
+                    .w_px()
                     .h_full()
-                    .bg(cx.theme().colors().border.opacity(0.5));
+                    .bg(cx.theme().colors().border.opacity(0.8));
 
                 let mut resize_handle = div()
                     .id("column-resize-handle")
@@ -237,9 +238,11 @@ impl TableInteractionState {
                     .is_some_and(ResizeBehavior::is_resizable)
                 {
                     let hovered = window.use_state(cx, |_window, _cx| false);
+
                     resize_divider = resize_divider.when(*hovered.read(cx), |div| {
                         div.bg(cx.theme().colors().border_focused)
                     });
+
                     resize_handle = resize_handle
                         .on_hover(move |&was_hovered, _, cx| hovered.write(cx, was_hovered))
                         .cursor_col_resize()
@@ -269,12 +272,11 @@ impl TableInteractionState {
             })
         });
 
-        div()
+        h_flex()
             .id("resize-handles")
-            .h_flex()
             .absolute()
-            .w_full()
             .inset_0()
+            .w_full()
             .children(dividers)
             .into_any_element()
     }
@@ -896,7 +898,6 @@ fn base_cell_style(width: Option<Length>) -> Div {
         .px_1p5()
         .when_some(width, |this, width| this.w(width))
         .when(width.is_none(), |this| this.flex_1())
-        .justify_start()
         .whitespace_nowrap()
         .text_ellipsis()
         .overflow_hidden()
@@ -941,7 +942,7 @@ pub fn render_row<const COLS: usize>(
             .map(IntoElement::into_any_element)
             .into_iter()
             .zip(column_widths)
-            .map(|(cell, width)| base_cell_style_text(width, cx).px_1p5().py_1().child(cell)),
+            .map(|(cell, width)| base_cell_style_text(width, cx).px_1().py_0p5().child(cell)),
     );
 
     let row = if let Some(map_row) = table_context.map_row {
@@ -950,7 +951,7 @@ pub fn render_row<const COLS: usize>(
         row.into_any_element()
     };
 
-    div().h_full().w_full().child(row).into_any_element()
+    div().size_full().child(row).into_any_element()
 }
 
 pub fn render_header<const COLS: usize>(
