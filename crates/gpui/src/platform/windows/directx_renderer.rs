@@ -1607,6 +1607,12 @@ mod nvidia {
 mod amd {
     use std::os::raw::{c_char, c_int, c_void};
 
+    use anyhow::{Context, Result};
+    use windows::{
+        Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA},
+        core::s,
+    };
+
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
     const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12) | 0;
 
@@ -1625,19 +1631,36 @@ mod amd {
         pub devices: *mut c_void,
     }
 
-    unsafe extern "C" {
-        fn agsInitialize(
-            version: c_int,
-            config: *const c_void,
-            context: *mut *mut AGSContext,
-            gpu_info: *mut AGSGPUInfo,
-        ) -> c_int;
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L429
+    #[allow(non_camel_case_types)]
+    type agsInitialize_t = unsafe extern "C" fn(
+        version: c_int,
+        config: *const c_void,
+        context: *mut *mut AGSContext,
+        gpu_info: *mut AGSGPUInfo,
+    ) -> c_int;
 
-        fn agsDeInitialize(context: *mut AGSContext) -> c_int;
-    }
+    // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L436
+    #[allow(non_camel_case_types)]
+    type agsDeInitialize_t = unsafe extern "C" fn(context: *mut AGSContext) -> c_int;
 
-    pub(super) fn get_driver_version() -> anyhow::Result<String> {
+    pub(super) fn get_driver_version() -> Result<String> {
         unsafe {
+            #[cfg(target_pointer_width = "64")]
+            let amd_dll =
+                LoadLibraryA(s!("amd_ags_x64.dll")).context("Failed to load AMD AGS library")?;
+            #[cfg(target_pointer_width = "32")]
+            let amd_dll =
+                LoadLibraryA(s!("amd_ags_x86.dll")).context("Failed to load AMD AGS library")?;
+
+            let ags_initialize_addr = GetProcAddress(amd_dll, s!("agsInitialize"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get agsInitialize address"))?;
+            let ags_deinitialize_addr = GetProcAddress(amd_dll, s!("agsDeInitialize"))
+                .ok_or_else(|| anyhow::anyhow!("Failed to get agsDeInitialize address"))?;
+
+            let ags_initialize: agsInitialize_t = std::mem::transmute(ags_initialize_addr);
+            let ags_deinitialize: agsDeInitialize_t = std::mem::transmute(ags_deinitialize_addr);
+
             let mut context: *mut AGSContext = std::ptr::null_mut();
             let mut gpu_info: AGSGPUInfo = AGSGPUInfo {
                 driver_version: std::ptr::null(),
@@ -1646,17 +1669,14 @@ mod amd {
                 devices: std::ptr::null_mut(),
             };
 
-            let result = agsInitialize(
+            let result = ags_initialize(
                 AGS_CURRENT_VERSION,
                 std::ptr::null(),
                 &mut context,
                 &mut gpu_info,
             );
             if result != 0 {
-                return Err(anyhow::anyhow!(
-                    "Failed to initialize AGS, error code: {}",
-                    result
-                ));
+                anyhow::bail!("Failed to initialize AMD AGS, error code: {}", result);
             }
 
             // Vulkan acctually returns this as the driver version
@@ -1676,7 +1696,7 @@ mod amd {
                 "Unknown Radeon Driver Version".to_string()
             };
 
-            agsDeInitialize(context);
+            ags_deinitialize(context);
             Ok(format!("{} ({})", software_version, driver_version))
         }
     }
