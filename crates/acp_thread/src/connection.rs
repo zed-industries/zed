@@ -9,8 +9,6 @@ use ui::App;
 use crate::AcpThread;
 
 pub trait AgentConnection {
-    fn name(&self) -> &'static str;
-
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,

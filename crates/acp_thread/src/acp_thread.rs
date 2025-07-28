@@ -616,6 +616,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
+        title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         session_id: acp::SessionId,
@@ -628,7 +629,7 @@ impl AcpThread {
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
-            title: connection.name().into(),
+            title: title.into(),
             project,
             send_task: None,
             connection,

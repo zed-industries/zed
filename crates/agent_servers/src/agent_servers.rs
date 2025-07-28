@@ -1,3 +1,4 @@
+mod acp_connection;
 mod claude;
 mod codex;
 mod gemini;
