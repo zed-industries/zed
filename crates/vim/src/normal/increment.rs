@@ -199,9 +199,13 @@ fn find_number(
     if ch0.as_ref().is_some_and(char::is_ascii_hexdigit) || matches!(ch0, Some('-' | 'b' | 'x')) {
         // go backwards to the start of any number the selection is within
         for ch in snapshot.reversed_chars_at(offset) {
-            if ch.is_ascii_hexdigit() || ch == '-' || ch == 'b' || ch == 'x' {
+            if ch.is_ascii_hexdigit() {
                 offset -= ch.len_utf8();
                 continue;
+            }
+            if ch == '-' || ch == 'b' || ch == 'x' {
+                offset -= ch.len_utf8();
+                break;
             }
             break;
         }
@@ -704,6 +708,18 @@ mod test {
             18  2
             24
             30"});
+    }
+
+    #[gpui::test]
+    async fn test_increment_multiple_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {
+            "2025-0ˇ5-10;"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+        2025-0ˇ4-10;"});
     }
 
     #[gpui::test]
