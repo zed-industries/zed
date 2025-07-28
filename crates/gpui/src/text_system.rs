@@ -68,8 +68,9 @@ impl TextSystem {
                 font("Zed Plex Mono"),
                 font("Helvetica"),
                 font("Segoe UI"),  // Windows
-                font("Cantarell"), // Gnome
                 font("Ubuntu"),    // Gnome (Ubuntu)
+                font("Adwaita Sans"), // Gnome 47
+                font("Cantarell"), // Gnome
                 font("Noto Sans"), // KDE
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
