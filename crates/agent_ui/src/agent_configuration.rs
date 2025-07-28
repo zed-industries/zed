@@ -987,7 +987,11 @@ impl AgentConfiguration {
             .child(self.render_agent_server(window, cx))
     }
 
-    fn render_agent_server(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_agent_server(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         v_flex()
             .pl(DynamicSpacing::Base08.rems(cx))
             .pr(DynamicSpacing::Base20.rems(cx))
@@ -1005,7 +1009,12 @@ impl AgentConfiguration {
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .child(Label::new("Claude Code")),
+                                .child(Label::new("Claude Code"))
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                ),
                         )
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
@@ -1031,7 +1040,12 @@ impl AgentConfiguration {
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .child(Label::new("Google Gemini")),
+                                .child(Label::new("Google Gemini"))
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                ),
                         )
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
@@ -1040,6 +1054,28 @@ impl AgentConfiguration {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted),
+                        ),
+                ),
+            )
+            .child(Divider::horizontal())
+            .child(
+                v_flex().py_1().child(
+                    h_flex()
+                        .p_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .gap_1p5()
+                                .child(
+                                    Icon::new(IconName::AiOpenAi)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Label::new("OpenAI Codex")),
+                        )
+                        .child(
+                            Button::new("start_acp_thread", "Install Agent")
+                                .label_size(LabelSize::Small),
                         ),
                 ),
             )
