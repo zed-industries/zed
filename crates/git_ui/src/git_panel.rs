@@ -3054,6 +3054,7 @@ impl GitPanel {
                     ),
             )
             .menu({
+                let git_panel = cx.entity();
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
@@ -3070,7 +3071,16 @@ impl GitPanel {
                                     amend,
                                     IconPosition::Start,
                                     Some(Box::new(Amend)),
-                                    move |window, cx| window.dispatch_action(Box::new(Amend), cx),
+                                    {
+                                        let git_panel = git_panel.downgrade();
+                                        move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.toggle_amend_pending(cx);
+                                                })
+                                                .ok();
+                                        }
+                                    },
                                 )
                             })
                             .toggleable_entry(
@@ -3441,9 +3451,11 @@ impl GitPanel {
                             .truncate(),
                     ),
             )
-            .child(panel_button("Cancel").size(ButtonSize::Default).on_click(
-                cx.listener(|this, _, window, cx| this.toggle_amend_pending(&Amend, window, cx)),
-            ))
+            .child(
+                panel_button("Cancel")
+                    .size(ButtonSize::Default)
+                    .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
+            )
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -4204,17 +4216,8 @@ impl GitPanel {
 
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         self.amend_pending = value;
-        cx.notify();
-    }
-
-    pub fn toggle_amend_pending(
-        &mut self,
-        _: &Amend,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_amend_pending(!self.amend_pending, cx);
         self.serialize(cx);
+        cx.notify();
     }
 
     pub fn signoff_enabled(&self) -> bool {
@@ -4308,6 +4311,13 @@ impl GitPanel {
             anchor: path,
         });
     }
+
+    pub(crate) fn toggle_amend_pending(&mut self, cx: &mut Context<Self>) {
+        self.set_amend_pending(!self.amend_pending, cx);
+        if self.amend_pending {
+            self.load_last_commit_message_if_empty(cx);
+        }
+    }
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
@@ -4352,7 +4362,6 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::commit))
                     .on_action(cx.listener(GitPanel::amend))
-                    .on_action(cx.listener(GitPanel::toggle_amend_pending))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
