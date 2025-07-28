@@ -502,7 +502,7 @@ impl TitleBar {
                     trigger.render(window, cx),
                     self.render_screen_list().into_any_element(),
                 )
-                .style(SplitButtonStyle::Outlined)
+                .style(SplitButtonStyle::Transparent)
                 .into_any_element(),
             );
         }
