@@ -17,10 +17,10 @@ test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
 acp_thread.workspace = true
+agent-client-protocol.workspace = true
 agent.workspace = true
-agentic-coding-protocol.workspace = true
-agent_settings.workspace = true
 agent_servers.workspace = true
+agent_settings.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 assistant_context.workspace = true

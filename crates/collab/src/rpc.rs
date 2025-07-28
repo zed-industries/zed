@@ -433,6 +433,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
+            .add_request_handler(forward_mutating_project_request::<proto::Stash>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -829,7 +831,7 @@ impl Server {
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
             let mut foreground_message_handlers = FuturesUnordered::new();
-            let concurrent_handlers = Arc::new(Semaphore::new(256));
+            let concurrent_handlers = Arc::new(Semaphore::new(512));
             loop {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();

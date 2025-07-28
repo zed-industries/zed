@@ -396,8 +396,10 @@ message Envelope {
         GetDocumentColor get_document_color = 353;
         GetDocumentColorResponse get_document_color_response = 354;
         GetColorPresentation get_color_presentation = 355;
-        GetColorPresentationResponse get_color_presentation_response = 356; // current max
+        GetColorPresentationResponse get_color_presentation_response = 356;
 
+        Stash stash = 357;
+        StashPop stash_pop = 358; // current max
     }
 
     reserved 87 to 88;
