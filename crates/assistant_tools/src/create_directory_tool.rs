@@ -37,7 +37,7 @@ impl Tool for CreateDirectoryTool {
         include_str!("./create_directory_tool/description.md").into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 

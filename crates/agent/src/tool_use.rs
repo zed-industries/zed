@@ -165,7 +165,12 @@ impl ToolUseState {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+    pub fn tool_uses_for_message(
+        &self,
+        id: MessageId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Vec<ToolUse> {
         let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
             return Vec::new();
         };
@@ -211,7 +216,10 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) =
                 if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                    (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
+                    (
+                        tool.icon(),
+                        tool.needs_confirmation(&tool_use.input, project, cx),
+                    )
                 } else {
                     (IconName::Cog, false)
                 };
