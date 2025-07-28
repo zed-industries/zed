@@ -1,9 +1,6 @@
 use editor::EditorSettings;
 use settings::Settings as _;
-use ui::{
-    ButtonCommon, ButtonLike, Clickable, Color, Context, Icon, IconName, IconSize, ParentElement,
-    Render, Styled, Tooltip, Window, h_flex,
-};
+use ui::{ButtonCommon, Clickable, Context, Render, Tooltip, Window, prelude::*};
 use workspace::{ItemHandle, StatusItemView};
 
 pub struct SearchButton;
@@ -16,18 +13,15 @@ impl SearchButton {
 
 impl Render for SearchButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
-        let button = h_flex().gap_2();
+        let button = div();
+
         if !EditorSettings::get_global(cx).search.button {
-            return button;
+            return button.w_0().invisible();
         }
 
         button.child(
-            ButtonLike::new("project-search-indicator")
-                .child(
-                    Icon::new(IconName::MagnifyingGlass)
-                        .size(IconSize::Small)
-                        .color(Color::Default),
-                )
+            IconButton::new("project-search-indicator", IconName::MagnifyingGlass)
+                .icon_size(IconSize::Small)
                 .tooltip(|window, cx| {
                     Tooltip::for_action(
                         "Project Search",

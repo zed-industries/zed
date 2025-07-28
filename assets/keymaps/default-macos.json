@@ -310,11 +310,31 @@
     }
   },
   {
-    "context": "MessageEditor > Editor",
+    "context": "AgentPanel && external_agent_thread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-n": "agent::NewExternalAgentThread",
+      "cmd-alt-t": "agent::NewThread"
+    }
+  },
+  {
+    "context": "MessageEditor && !Picker > Editor && !use_modifier_to_send",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "cmd-enter": "agent::ChatWithFollow",
+      "cmd-i": "agent::ToggleProfileSelector",
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll"
+    }
+  },
+  {
+    "context": "MessageEditor && !Picker > Editor && use_modifier_to_send",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "agent::Chat",
+      "enter": "editor::Newline",
       "cmd-i": "agent::ToggleProfileSelector",
       "shift-ctrl-r": "agent::OpenAgentDiff",
       "cmd-shift-y": "agent::KeepAll",
@@ -355,6 +375,16 @@
     "context": "AgentConfiguration",
     "bindings": {
       "ctrl--": "pane::GoBack"
+    }
+  },
+  {
+    "context": "AcpThread > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "agent::Chat",
+      "up": "agent::PreviousHistoryMessage",
+      "down": "agent::NextHistoryMessage",
+      "shift-ctrl-r": "agent::OpenAgentDiff"
     }
   },
   {
@@ -459,7 +489,7 @@
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": ["pane::CloseActiveItem", { "close_pinned": false }],
-      "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
+      "alt-cmd-t": ["pane::CloseOtherItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
       "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
@@ -507,11 +537,10 @@
       "ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": false }], // editor.action.addSelectionToPreviousFindMatch
       "cmd-k ctrl-cmd-d": ["editor::SelectPrevious", { "replace_newest": true }], // editor.action.moveSelectionToPreviousFindMatch
       "cmd-k cmd-i": "editor::Hover",
+      "cmd-k cmd-b": "editor::BlameHover",
       "cmd-/": ["editor::ToggleComments", { "advance_downwards": false }],
-      "cmd-u": "editor::UndoSelection",
-      "cmd-shift-u": "editor::RedoSelection",
-      "f8": "editor::GoToDiagnostic",
-      "shift-f8": "editor::GoToPreviousDiagnostic",
+      "f8": ["editor::GoToDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
+      "shift-f8": ["editor::GoToPreviousDiagnostic", { "severity": { "min": "hint", "max": "error" } }],
       "f2": "editor::Rename",
       "f12": "editor::GoToDefinition",
       "alt-f12": "editor::GoToDefinitionSplit",
@@ -634,7 +663,7 @@
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-k cmd-s": "zed::OpenKeymap",
+      "cmd-k cmd-s": "zed::OpenKeymapEditor",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
       "cmd-p": "file_finder::Toggle",
@@ -696,6 +725,8 @@
     "context": "Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-u": "editor::UndoSelection",
+      "cmd-shift-u": "editor::RedoSelection",
       "ctrl-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
       "ctrl-alt-h": "editor::DeleteToPreviousSubwordStart",
@@ -912,6 +943,7 @@
       "enter": "menu::Confirm",
       "cmd-alt-y": "git::ToggleStaged",
       "space": "git::ToggleStaged",
+      "shift-space": "git::StageRange",
       "cmd-y": "git::StageFile",
       "cmd-shift-y": "git::UnstageFile",
       "alt-down": "git_panel::FocusEditor",
@@ -944,7 +976,7 @@
     }
   },
   {
-    "context": "GitPanel > Editor",
+    "context": "CommitEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "editor::Newline",
@@ -1005,9 +1037,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm",
-      "cmd-up": "collab_panel::MoveChannelUp",
-      "cmd-down": "collab_panel::MoveChannelDown"
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "CollabPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "collab_panel::MoveChannelUp",
+      "alt-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -1079,13 +1117,16 @@
       "ctrl-cmd-space": "terminal::ShowCharacterPalette",
       "cmd-c": "terminal::Copy",
       "cmd-v": "terminal::Paste",
+      "cmd-f": "buffer_search::Deploy",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
       "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       "ctrl-_": null, // emacs undo
       // Some nice conveniences
-      "cmd-backspace": ["terminal::SendText", "\u0015"],
+      "cmd-backspace": ["terminal::SendText", "\u0015"], // ctrl-u: clear line
+      "alt-delete": ["terminal::SendText", "\u001bd"], // alt-d: delete word forward
+      "cmd-delete": ["terminal::SendText", "\u000b"], // ctrl-k: delete to end of line
       "cmd-right": ["terminal::SendText", "\u0005"],
       "cmd-left": ["terminal::SendText", "\u0001"],
       // Terminal.app compatibility
@@ -1194,7 +1235,39 @@
     "context": "KeymapEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-f": "search::FocusSearch"
+      "cmd-f": "search::FocusSearch",
+      "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
+      "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
+      "enter": "keymap_editor::EditBinding",
+      "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-c": "keymap_editor::CopyAction",
+      "cmd-shift-c": "keymap_editor::CopyContext",
+      "cmd-t": "keymap_editor::ShowMatchingKeybinds"
+    }
+  },
+  {
+    "context": "KeystrokeInput",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "keystroke_input::StartRecording",
+      "escape escape escape": "keystroke_input::StopRecording",
+      "delete": "keystroke_input::ClearKeystrokes"
+    }
+  },
+  {
+    "context": "KeybindEditorModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "menu::Confirm",
+      "escape": "menu::Cancel"
+    }
+  },
+  {
+    "context": "KeybindEditorModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrevious",
+      "down": "menu::SelectNext"
     }
   }
 ]

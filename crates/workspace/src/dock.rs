@@ -221,9 +221,9 @@ pub enum DockPosition {
 impl DockPosition {
     fn label(&self) -> &'static str {
         match self {
-            Self::Left => "left",
-            Self::Bottom => "bottom",
-            Self::Right => "right",
+            Self::Left => "Left",
+            Self::Bottom => "Bottom",
+            Self::Right => "Right",
         }
     }
 
@@ -242,6 +242,7 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -833,7 +834,11 @@ impl Render for Dock {
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-        Self { dock }
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+        Self {
+            dock,
+            _settings_subscription: settings_subscription,
+        }
     }
 }
 
@@ -864,7 +869,7 @@ impl Render for PanelButtons {
                     let action = dock.toggle_action();
 
                     let tooltip: SharedString =
-                        format!("Close {} dock", dock.position.label()).into();
+                        format!("Close {} Dock", dock.position.label()).into();
 
                     (action, tooltip)
                 } else {
@@ -872,6 +877,8 @@ impl Render for PanelButtons {
 
                     (action, icon_tooltip.into())
                 };
+
+                let focus_handle = dock.focus_handle(cx);
 
                 Some(
                     right_click_menu(name)
@@ -909,6 +916,7 @@ impl Render for PanelButtons {
                                 .on_click({
                                     let action = action.boxed_clone();
                                     move |_, window, cx| {
+                                        window.focus(&focus_handle);
                                         window.dispatch_action(action.boxed_clone(), cx)
                                     }
                                 })
@@ -923,8 +931,13 @@ impl Render for PanelButtons {
             .collect();
 
         let has_buttons = !buttons.is_empty();
+
         h_flex()
             .gap_1()
+            .when(
+                has_buttons && dock.position == DockPosition::Bottom,
+                |this| this.child(Divider::vertical().color(DividerColor::Border)),
+            )
             .children(buttons)
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))

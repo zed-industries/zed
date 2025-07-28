@@ -61,10 +61,7 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
             let mut command = extension
                 .context_server_command(id.clone(), extension_project.clone())
                 .await?;
-            command.command = extension
-                .path_from_extension(command.command.as_ref())
-                .to_string_lossy()
-                .to_string();
+            command.command = extension.path_from_extension(&command.command);
 
             log::info!("loaded command for context server {id}: {command:?}");
 

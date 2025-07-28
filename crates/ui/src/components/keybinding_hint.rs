@@ -206,7 +206,7 @@ impl RenderOnce for KeybindingHint {
 
 impl Component for KeybindingHint {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {

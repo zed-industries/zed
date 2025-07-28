@@ -286,6 +286,17 @@ message Unstage {
     repeated string paths = 4;
 }
 
+message Stash {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    repeated string paths = 3;
+}
+
+message StashPop {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
 message Commit {
     uint64 project_id = 1;
     reserved 2;
@@ -294,9 +305,11 @@ message Commit {
     optional string email = 5;
     string message = 6;
     optional CommitOptions options = 7;
+    reserved 8;
 
     message CommitOptions {
         bool amend = 1;
+        bool signoff = 2;
     }
 }
 

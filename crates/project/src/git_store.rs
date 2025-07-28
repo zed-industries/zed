@@ -14,9 +14,10 @@ use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
 use fs::Fs;
 use futures::{
-    FutureExt, StreamExt as _,
+    FutureExt, StreamExt,
     channel::{mpsc, oneshot},
     future::{self, Shared},
+    stream::FuturesOrdered,
 };
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
@@ -63,8 +64,8 @@ use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
 use util::{ResultExt, debug_panic, post_inc};
 use worktree::{
-    File, PathKey, PathProgress, PathSummary, PathTarget, UpdatedGitRepositoriesSet,
-    UpdatedGitRepository, Worktree,
+    File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
+    UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
 };
 
 pub struct GitStore {
@@ -419,6 +420,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_fetch);
         client.add_entity_request_handler(Self::handle_stage);
         client.add_entity_request_handler(Self::handle_unstage);
+        client.add_entity_request_handler(Self::handle_stash);
+        client.add_entity_request_handler(Self::handle_stash_pop);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -1083,27 +1086,26 @@ impl GitStore {
 
         match event {
             WorktreeStoreEvent::WorktreeUpdatedEntries(worktree_id, updated_entries) => {
-                let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
-                for (relative_path, _, _) in updated_entries.iter() {
-                    let Some((repo, repo_path)) = self.repository_and_path_for_project_path(
-                        &(*worktree_id, relative_path.clone()).into(),
-                        cx,
-                    ) else {
-                        continue;
-                    };
-                    paths_by_git_repo.entry(repo).or_default().push(repo_path)
-                }
-
-                for (repo, paths) in paths_by_git_repo {
-                    repo.update(cx, |repo, cx| {
-                        repo.paths_changed(
-                            paths,
-                            downstream
-                                .as_ref()
-                                .map(|downstream| downstream.updates_tx.clone()),
-                            cx,
-                        );
-                    });
+                if let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)
+                {
+                    let paths_by_git_repo =
+                        self.process_updated_entries(&worktree, updated_entries, cx);
+                    let downstream = downstream
+                        .as_ref()
+                        .map(|downstream| downstream.updates_tx.clone());
+                    cx.spawn(async move |_, cx| {
+                        let paths_by_git_repo = paths_by_git_repo.await;
+                        for (repo, paths) in paths_by_git_repo {
+                            repo.update(cx, |repo, cx| {
+                                repo.paths_changed(paths, downstream.clone(), cx);
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
                 }
             }
             WorktreeStoreEvent::WorktreeUpdatedGitRepositories(worktree_id, changed_repos) => {
@@ -1696,6 +1698,48 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_stash(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::Stash>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let entries = envelope
+            .payload
+            .paths
+            .into_iter()
+            .map(PathBuf::from)
+            .map(RepoPath::new)
+            .collect();
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_entries(entries, cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash_pop(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StashPop>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_pop(cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_set_index_text(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::SetIndexText>,
@@ -1738,6 +1782,7 @@ impl GitStore {
                     name.zip(email),
                     CommitOptions {
                         amend: options.amend,
+                        signoff: options.signoff,
                     },
                     cx,
                 )
@@ -2189,6 +2234,80 @@ impl GitStore {
             .iter()
             .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
             .collect()
+    }
+
+    fn process_updated_entries(
+        &self,
+        worktree: &Entity<Worktree>,
+        updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        cx: &mut App,
+    ) -> Task<HashMap<Entity<Repository>, Vec<RepoPath>>> {
+        let mut repo_paths = self
+            .repositories
+            .values()
+            .map(|repo| (repo.read(cx).work_directory_abs_path.clone(), repo.clone()))
+            .collect::<Vec<_>>();
+        let mut entries: Vec<_> = updated_entries
+            .iter()
+            .map(|(path, _, _)| path.clone())
+            .collect();
+        entries.sort();
+        let worktree = worktree.read(cx);
+
+        let entries = entries
+            .into_iter()
+            .filter_map(|path| worktree.absolutize(&path).ok())
+            .collect::<Arc<[_]>>();
+
+        let executor = cx.background_executor().clone();
+        cx.background_executor().spawn(async move {
+            repo_paths.sort_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+            let mut paths_by_git_repo = HashMap::<_, Vec<_>>::default();
+            let mut tasks = FuturesOrdered::new();
+            for (repo_path, repo) in repo_paths.into_iter().rev() {
+                let entries = entries.clone();
+                let task = executor.spawn(async move {
+                    // Find all repository paths that belong to this repo
+                    let mut ix = entries.partition_point(|path| path < &*repo_path);
+                    if ix == entries.len() {
+                        return None;
+                    };
+
+                    let mut paths = vec![];
+                    // All paths prefixed by a given repo will constitute a continuous range.
+                    while let Some(path) = entries.get(ix)
+                        && let Some(repo_path) =
+                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, &path)
+                    {
+                        paths.push((repo_path, ix));
+                        ix += 1;
+                    }
+                    Some((repo, paths))
+                });
+                tasks.push_back(task);
+            }
+
+            // Now, let's filter out the "duplicate" entries that were processed by multiple distinct repos.
+            let mut path_was_used = vec![false; entries.len()];
+            let tasks = tasks.collect::<Vec<_>>().await;
+            // Process tasks from the back: iterating backwards allows us to see more-specific paths first.
+            // We always want to assign a path to it's innermost repository.
+            for t in tasks {
+                let Some((repo, paths)) = t else {
+                    continue;
+                };
+                let entry = paths_by_git_repo.entry(repo).or_default();
+                for (repo_path, ix) in paths {
+                    if path_was_used[ix] {
+                        continue;
+                    }
+                    path_was_used[ix] = true;
+                    entry.push(repo_path);
+                }
+            }
+
+            paths_by_git_repo
+        })
     }
 }
 
@@ -2659,8 +2778,16 @@ impl RepositorySnapshot {
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
+        Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path)
+    }
+
+    #[inline]
+    fn abs_path_to_repo_path_inner(
+        work_directory_abs_path: &Path,
+        abs_path: &Path,
+    ) -> Option<RepoPath> {
         abs_path
-            .strip_prefix(&self.work_directory_abs_path)
+            .strip_prefix(&work_directory_abs_path)
             .map(RepoPath::from)
             .ok()
     }
@@ -3457,6 +3584,82 @@ impl Repository {
         self.unstage_entries(to_unstage, cx)
     }
 
+    pub fn stash_all(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        let to_stash = self
+            .cached_status()
+            .map(|entry| entry.repo_path.clone())
+            .collect();
+
+        self.stash_entries(to_stash, cx)
+    }
+
+    pub fn stash_entries(
+        &mut self,
+        entries: Vec<RepoPath>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.stash_paths(entries, environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::Stash {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    paths: entries
+                                        .into_iter()
+                                        .map(|repo_path| repo_path.as_ref().to_proto())
+                                        .collect(),
+                                })
+                                .await
+                                .context("sending stash request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_pop(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.stash_pop(environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::StashPop {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                })
+                                .await
+                                .context("sending stash pop request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
     pub fn commit(
         &mut self,
         message: SharedString,
@@ -3488,6 +3691,7 @@ impl Repository {
                             email: email.map(String::from),
                             options: Some(proto::commit::CommitOptions {
                                 amend: options.amend,
+                                signoff: options.signoff,
                             }),
                         })
                         .await
@@ -4277,7 +4481,7 @@ impl Repository {
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
-                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left) {
                                 if cursor.item().is_some_and(|entry| entry.status == *status) {
                                     continue;
                                 }
@@ -4290,7 +4494,7 @@ impl Repository {
                         }
                         let mut cursor = prev_statuses.cursor::<PathProgress>(&());
                         for path in changed_paths.into_iter() {
-                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
                                 changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
                             }
                         }
@@ -4395,17 +4599,17 @@ fn serialize_blame_buffer_response(blame: Option<git::blame::Blame>) -> proto::B
             start_line: entry.range.start,
             end_line: entry.range.end,
             original_line_number: entry.original_line_number,
-            author: entry.author.clone(),
-            author_mail: entry.author_mail.clone(),
+            author: entry.author,
+            author_mail: entry.author_mail,
             author_time: entry.author_time,
-            author_tz: entry.author_tz.clone(),
-            committer: entry.committer_name.clone(),
-            committer_mail: entry.committer_email.clone(),
+            author_tz: entry.author_tz,
+            committer: entry.committer_name,
+            committer_mail: entry.committer_email,
             committer_time: entry.committer_time,
-            committer_tz: entry.committer_tz.clone(),
-            summary: entry.summary.clone(),
-            previous: entry.previous.clone(),
-            filename: entry.filename.clone(),
+            committer_tz: entry.committer_tz,
+            summary: entry.summary,
+            previous: entry.previous,
+            filename: entry.filename,
         })
         .collect::<Vec<_>>();
 

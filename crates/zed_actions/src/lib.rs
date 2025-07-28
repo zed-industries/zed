@@ -76,6 +76,9 @@ pub struct Extensions {
     /// Filters the extensions page down to extensions that are in the specified category.
     #[serde(default)]
     pub category_filter: Option<ExtensionCategoryFilter>,
+    /// Focuses just the extension with the specified ID.
+    #[serde(default)]
+    pub id: Option<String>,
 }
 
 /// Decreases the font size in the editor buffer.
@@ -268,7 +271,16 @@ pub mod agent {
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
             /// Resets the agent onboarding state.
-            ResetOnboarding
+            ResetOnboarding,
+            /// Starts a chat conversation with the agent.
+            Chat,
+            /// Displays the previous message in the history.
+            PreviousHistoryMessage,
+            /// Displays the next message in the history.
+            NextHistoryMessage,
+            /// Toggles the language model selector dropdown.
+            #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
+            ToggleModelSelector
         ]
     );
 }

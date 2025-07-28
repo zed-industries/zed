@@ -3,9 +3,7 @@ use std::{cmp::Reverse, sync::Arc};
 use collections::{HashSet, IndexMap};
 use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{
-    Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task, actions,
-};
+use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
     AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
     LanguageModelRegistry,
@@ -14,15 +12,6 @@ use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
 use ui::{ListItem, ListItemSpacing, prelude::*};
-
-actions!(
-    agent,
-    [
-        /// Toggles the language model selector dropdown.
-        #[action(deprecated_aliases = ["assistant::ToggleModelSelector", "assistant2::ToggleModelSelector"])]
-        ToggleModelSelector
-    ]
-);
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 

@@ -1,5 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ElementId, Hsla, IntoElement, Styled, Window, div, hsla, prelude::*,
+    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
+    prelude::*,
 };
 use std::sync::Arc;
 
@@ -44,7 +45,7 @@ pub struct Checkbox {
     toggle_state: ToggleState,
     disabled: bool,
     placeholder: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static>>,
     filled: bool,
     style: ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -83,6 +84,16 @@ impl Checkbox {
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Box::new(move |state, _, window, cx| {
+            handler(state, window, cx)
+        }));
+        self
+    }
+
+    pub fn on_click_ext(
+        mut self,
+        handler: impl Fn(&ToggleState, &ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(Box::new(handler));
         self
@@ -226,8 +237,8 @@ impl RenderOnce for Checkbox {
             .when_some(
                 self.on_click.filter(|_| !self.disabled),
                 |this, on_click| {
-                    this.on_click(move |_, window, cx| {
-                        on_click(&self.toggle_state.inverse(), window, cx)
+                    this.on_click(move |click, window, cx| {
+                        on_click(&self.toggle_state.inverse(), click, window, cx)
                     })
                 },
             )
@@ -532,69 +543,196 @@ impl RenderOnce for Switch {
     }
 }
 
-/// A [`Switch`] that has a [`Label`].
-#[derive(IntoElement)]
-pub struct SwitchWithLabel {
+/// # SwitchField
+///
+/// A field component that combines a label, description, and switch into one reusable component.
+///
+/// # Examples
+///
+/// ```
+/// use ui::prelude::*;
+///
+/// SwitchField::new(
+///     "feature-toggle",
+///     "Enable feature",
+///     "This feature adds new functionality to the app.",
+///     ToggleState::Unselected,
+///     |state, window, cx| {
+///         // Logic here
+///     }
+/// );
+/// ```
+#[derive(IntoElement, RegisterComponent)]
+pub struct SwitchField {
     id: ElementId,
-    label: Label,
+    label: SharedString,
+    description: SharedString,
     toggle_state: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
     color: SwitchColor,
 }
 
-impl SwitchWithLabel {
-    /// Creates a switch with an attached label.
+impl SwitchField {
     pub fn new(
         id: impl Into<ElementId>,
-        label: Label,
+        label: impl Into<SharedString>,
+        description: impl Into<SharedString>,
         toggle_state: impl Into<ToggleState>,
         on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
-            label,
+            label: label.into(),
+            description: description.into(),
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,
-            color: SwitchColor::default(),
+            color: SwitchColor::Accent,
         }
     }
 
-    /// Sets the disabled state of the [`SwitchWithLabel`].
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Sets the color of the switch using the specified [`SwitchColor`].
+    /// This changes the color scheme of the switch when it's in the "on" state.
     pub fn color(mut self, color: SwitchColor) -> Self {
         self.color = color;
         self
     }
 }
 
-impl RenderOnce for SwitchWithLabel {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl RenderOnce for SwitchField {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(SharedString::from(format!("{}-container", self.id)))
-            .gap(DynamicSpacing::Base08.rems(cx))
+            .w_full()
+            .gap_4()
+            .justify_between()
+            .flex_wrap()
             .child(
-                Switch::new(self.id.clone(), self.toggle_state)
-                    .disabled(self.disabled)
-                    .color(self.color)
-                    .on_click({
-                        let on_click = self.on_click.clone();
-                        move |checked, window, cx| {
-                            (on_click)(checked, window, cx);
-                        }
-                    }),
+                v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(Label::new(self.label))
+                    .child(Label::new(self.description).color(Color::Muted)),
             )
             .child(
-                div()
-                    .id(SharedString::from(format!("{}-label", self.id)))
-                    .child(self.label),
+                Switch::new(
+                    SharedString::from(format!("{}-switch", self.id)),
+                    self.toggle_state,
+                )
+                .color(self.color)
+                .disabled(self.disabled)
+                .on_click({
+                    let on_click = self.on_click.clone();
+                    move |state, window, cx| {
+                        (on_click)(state, window, cx);
+                    }
+                }),
             )
+            .when(!self.disabled, |this| {
+                this.on_click({
+                    let on_click = self.on_click.clone();
+                    let toggle_state = self.toggle_state;
+                    move |_click, window, cx| {
+                        (on_click)(&toggle_state.inverse(), window, cx);
+                    }
+                })
+            })
+    }
+}
+
+impl Component for SwitchField {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A field component that combines a label, description, and switch")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![
+                    example_group_with_title(
+                        "States",
+                        vec![
+                            single_example(
+                                "Unselected",
+                                SwitchField::new(
+                                    "switch_field_unselected",
+                                    "Enable notifications",
+                                    "Receive notifications when new messages arrive.",
+                                    ToggleState::Unselected,
+                                    |_, _, _| {},
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Selected",
+                                SwitchField::new(
+                                    "switch_field_selected",
+                                    "Enable notifications",
+                                    "Receive notifications when new messages arrive.",
+                                    ToggleState::Selected,
+                                    |_, _, _| {},
+                                )
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Colors",
+                        vec![
+                            single_example(
+                                "Default",
+                                SwitchField::new(
+                                    "switch_field_default",
+                                    "Default color",
+                                    "This uses the default switch color.",
+                                    ToggleState::Selected,
+                                    |_, _, _| {},
+                                )
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Accent",
+                                SwitchField::new(
+                                    "switch_field_accent",
+                                    "Accent color",
+                                    "This uses the accent color scheme.",
+                                    ToggleState::Selected,
+                                    |_, _, _| {},
+                                )
+                                .color(SwitchColor::Accent)
+                                .into_any_element(),
+                            ),
+                        ],
+                    ),
+                    example_group_with_title(
+                        "Disabled",
+                        vec![single_example(
+                            "Disabled",
+                            SwitchField::new(
+                                "switch_field_disabled",
+                                "Disabled field",
+                                "This field is disabled and cannot be toggled.",
+                                ToggleState::Selected,
+                                |_, _, _| {},
+                            )
+                            .disabled(true)
+                            .into_any_element(),
+                        )],
+                    ),
+                ])
+                .into_any_element(),
+        )
     }
 }
 

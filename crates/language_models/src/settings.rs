@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -15,12 +18,14 @@ use crate::provider::{
     mistral::MistralSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
+    open_ai_compatible::OpenAiCompatibleSettings,
     open_router::OpenRouterSettings,
     vercel::VercelSettings,
+    x_ai::XAiSettings,
 };
 
 /// Initializes the language model settings.
-pub fn init(cx: &mut App) {
+pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
@@ -28,33 +33,35 @@ pub fn init(cx: &mut App) {
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,
-    pub ollama: OllamaSettings,
-    pub openai: OpenAiSettings,
-    pub open_router: OpenRouterSettings,
-    pub zed_dot_dev: ZedDotDevSettings,
-    pub google: GoogleSettings,
-    pub vercel: VercelSettings,
-
-    pub lmstudio: LmStudioSettings,
     pub deepseek: DeepSeekSettings,
+    pub google: GoogleSettings,
+    pub lmstudio: LmStudioSettings,
     pub mistral: MistralSettings,
+    pub ollama: OllamaSettings,
+    pub open_router: OpenRouterSettings,
+    pub openai: OpenAiSettings,
+    pub openai_compatible: HashMap<Arc<str>, OpenAiCompatibleSettings>,
+    pub vercel: VercelSettings,
+    pub x_ai: XAiSettings,
+    pub zed_dot_dev: ZedDotDevSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
-    pub ollama: Option<OllamaSettingsContent>,
+    pub deepseek: Option<DeepseekSettingsContent>,
+    pub google: Option<GoogleSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
-    pub openai: Option<OpenAiSettingsContent>,
+    pub mistral: Option<MistralSettingsContent>,
+    pub ollama: Option<OllamaSettingsContent>,
     pub open_router: Option<OpenRouterSettingsContent>,
+    pub openai: Option<OpenAiSettingsContent>,
+    pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
+    pub vercel: Option<VercelSettingsContent>,
+    pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
-    pub google: Option<GoogleSettingsContent>,
-    pub deepseek: Option<DeepseekSettingsContent>,
-    pub vercel: Option<VercelSettingsContent>,
-
-    pub mistral: Option<MistralSettingsContent>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -102,6 +109,12 @@ pub struct OpenAiSettingsContent {
     pub available_models: Option<Vec<provider::open_ai::AvailableModel>>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct OpenAiCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<provider::open_ai_compatible::AvailableModel>,
+}
+
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct VercelSettingsContent {
     pub api_url: Option<String>,
@@ -112,6 +125,12 @@ pub struct VercelSettingsContent {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::google::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct XAiSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::x_ai::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -219,6 +238,19 @@ impl settings::Settings for AllLanguageModelSettings {
                 openai.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // OpenAI Compatible
+            if let Some(openai_compatible) = value.openai_compatible.clone() {
+                for (id, openai_compatible_settings) in openai_compatible {
+                    settings.openai_compatible.insert(
+                        id,
+                        OpenAiCompatibleSettings {
+                            api_url: openai_compatible_settings.api_url,
+                            available_models: openai_compatible_settings.available_models,
+                        },
+                    );
+                }
+            }
+
             // Vercel
             let vercel = value.vercel.clone();
             merge(
@@ -230,6 +262,18 @@ impl settings::Settings for AllLanguageModelSettings {
                 vercel.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // XAI
+            let x_ai = value.x_ai.clone();
+            merge(
+                &mut settings.x_ai.api_url,
+                x_ai.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.x_ai.available_models,
+                x_ai.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // ZedDotDev
             merge(
                 &mut settings.zed_dot_dev.available_models,
                 value

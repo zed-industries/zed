@@ -18,7 +18,7 @@
     Publisher="CN=Zed Industries Inc, O=Zed Industries Inc, L=Denver, S=Colorado, C=US"
     Version="1.0.0.0" />
   <Properties>
-    <DisplayName>Zed Editor Nightly</DisplayName>
+    <DisplayName>Zed Nightly</DisplayName>
     <PublisherDisplayName>Zed Industries</PublisherDisplayName>
     <!-- TODO: Use actual icon here. -->
     <Logo>resources\logo_150x150.png</Logo>
@@ -45,8 +45,8 @@
     <!-- TODO: Use actual icon here. -->
       <uap:VisualElements
         AppListEntry="none"
-        DisplayName="Zed Editor Nightly"
-        Description="Zed Editor Nightly explorer command injector"
+        DisplayName="Zed Nightly"
+        Description="Zed Nightly explorer command injector"
         BackgroundColor="transparent"
         Square150x150Logo="resources\logo_150x150.png"
         Square44x44Logo="resources\logo_70x70.png">
@@ -67,7 +67,7 @@
         </desktop4:Extension>
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="Zed Editor Nightly">
+            <com:SurrogateServer DisplayName="Zed Nightly">
               <com:Class Id="266f2cfe-1653-42af-b55c-fe3590c83871" Path="zed_explorer_command_injector.dll" ThreadingModel="STA"/>
             </com:SurrogateServer>
           </com:ComServer>

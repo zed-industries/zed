@@ -96,6 +96,7 @@ impl Upstream {
 #[derive(Clone, Copy, Default)]
 pub struct CommitOptions {
     pub amend: bool,
+    pub signoff: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -393,6 +394,14 @@ pub trait GitRepository: Send + Sync {
         options: CommitOptions,
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<Result<()>>;
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>>;
 
     fn push(
         &self,
@@ -1188,6 +1197,55 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "push", "--quiet"])
+                    .arg("--include-untracked");
+
+                cmd.args(paths.iter().map(|p| p.as_ref()));
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "pop"]);
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash pop:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
     fn commit(
         &self,
         message: SharedString,
@@ -1207,6 +1265,10 @@ impl GitRepository for RealGitRepository {
 
                 if options.amend {
                     cmd.arg("--amend");
+                }
+
+                if options.signoff {
+                    cmd.arg("--signoff");
                 }
 
                 if let Some((name, email)) = name_and_email {

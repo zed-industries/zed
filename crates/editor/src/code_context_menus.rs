@@ -844,7 +844,7 @@ impl CompletionsMenu {
         .with_sizing_behavior(ListSizingBehavior::Infer)
         .w(rems(34.));
 
-        Popover::new().child(list).into_any_element()
+        Popover::new().child(div().child(list)).into_any_element()
     }
 
     fn render_aside(
@@ -1074,6 +1074,20 @@ impl CompletionsMenu {
             .and_then(|q| q.chars().next())
             .and_then(|c| c.to_lowercase().next());
 
+        if snippet_sort_order == SnippetSortOrder::None {
+            matches.retain(|string_match| {
+                let completion = &completions[string_match.candidate_id];
+
+                let is_snippet = matches!(
+                    &completion.source,
+                    CompletionSource::Lsp { lsp_completion, .. }
+                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                );
+
+                !is_snippet
+            });
+        }
+
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
@@ -1112,6 +1126,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
+                    SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
@@ -1369,7 +1384,7 @@ impl CodeActionsMenu {
         }
     }
 
-    fn visible(&self) -> bool {
+    pub fn visible(&self) -> bool {
         !self.actions.is_empty()
     }
 
