@@ -438,7 +438,7 @@ impl ClaudeAgentSession {
                     }
                 }
             }
-            SdkMessage::System { .. } => {}
+            SdkMessage::System { .. } | SdkMessage::ControlResponse { .. } => {}
         }
     }
 
@@ -642,6 +642,8 @@ enum SdkMessage {
         request_id: String,
         request: ControlRequest,
     },
+    /// Response to a control request
+    ControlResponse { response: ControlResponse },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,6 +651,12 @@ enum SdkMessage {
 enum ControlRequest {
     /// Cancel the current conversation
     Interrupt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ControlResponse {
+    request_id: String,
+    subtype: ResultErrorType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,7 +715,7 @@ pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode);
+    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {

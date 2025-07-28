@@ -1,6 +1,6 @@
 use acp_thread::AcpThread;
 use agent_client_protocol as acp;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use context_server::listener::{McpServerTool, ToolResponse};
 use context_server::types::{
     Implementation, InitializeParams, InitializeResponse, ProtocolVersion, ServerCapabilities,
@@ -38,8 +38,14 @@ impl ZedMcpServer {
     }
 
     pub fn server_config(&self) -> Result<acp::McpServerConfig> {
-        let zed_path = std::env::current_exe()
-            .context("finding current executable path for use in mcp_server")?;
+        #[cfg(not(test))]
+        let zed_path = anyhow::Context::context(
+            std::env::current_exe(),
+            "finding current executable path for use in mcp_server",
+        )?;
+
+        #[cfg(test)]
+        let zed_path = crate::e2e_tests::get_zed_path();
 
         Ok(acp::McpServerConfig {
             command: zed_path,
