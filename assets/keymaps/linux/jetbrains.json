@@ -45,8 +45,8 @@
       "ctrl-alt-right": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
       "ctrl-alt-f7": "editor::FindAllReferences",
-      // "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
-      // "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleLeftDock
+      "ctrl-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
+      "ctrl-alt-b": "editor::GoToDefinitionSplit", // Conflicts with workspace::ToggleRightDock
       "ctrl-shift-b": "editor::GoToTypeDefinition",
       "ctrl-alt-shift-b": "editor::GoToTypeDefinitionSplit",
       "f2": "editor::GoToDiagnostic",
@@ -101,10 +101,25 @@
       "shift shift": "command_palette::Toggle",
       "ctrl-alt-shift-n": "project_symbols::Toggle",
       "alt-0": "git_panel::ToggleFocus",
-      "alt-1": "workspace::ToggleLeftDock",
+      "alt-1": "project_panel::ToggleFocus",
       "alt-5": "debug_panel::ToggleFocus",
       "alt-6": "diagnostics::Deploy",
       "alt-7": "outline_panel::ToggleFocus"
+    }
+  },
+  {
+    "context": "Pane", // this is to override the default Pane mappings to switch tabs
+    "bindings": {
+      "alt-1": "project_panel::ToggleFocus",
+      "alt-2": null, // Bookmarks (left dock)
+      "alt-3": null, // Find Panel (bottom dock)
+      "alt-4": null, // Run Panel (bottom dock)
+      "alt-5": "debug_panel::ToggleFocus",
+      "alt-6": "diagnostics::Deploy",
+      "alt-7": "outline_panel::ToggleFocus",
+      "alt-8": null, // Services (bottom dock)
+      "alt-9": null, // Git History (bottom dock)
+      "alt-0": "git_panel::ToggleFocus"
     }
   },
   {
