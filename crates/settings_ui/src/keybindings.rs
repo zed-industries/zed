@@ -3114,7 +3114,9 @@ impl KeystrokeInput {
     ) {
         let keystrokes_len = self.keystrokes.len();
 
-        if event.modifiers.is_subset_of(&self.previous_modifiers) {
+        if self.previous_modifiers.modified()
+            && event.modifiers.is_subset_of(&self.previous_modifiers)
+        {
             self.previous_modifiers &= event.modifiers;
             cx.stop_propagation();
             return;
