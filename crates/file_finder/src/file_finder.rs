@@ -1404,14 +1404,21 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(&raw_query);
 
+            #[cfg(windows)]
+            let raw_query = raw_query.trim().to_owned().replace("/", "\\");
+            #[cfg(not(windows))]
+            let raw_query = raw_query.trim().to_owned();
+
+            let file_query_end = if path_position.path.to_str().unwrap_or(&raw_query) == raw_query {
+                None
+            } else {
+                // Safe to unwrap as we won't get here when the unwrap in if fails
+                Some(path_position.path.to_str().unwrap().len())
+            };
+
             let query = FileSearchQuery {
-                raw_query: raw_query.trim().to_owned(),
-                file_query_end: if path_position.path.to_str().unwrap_or(raw_query) == raw_query {
-                    None
-                } else {
-                    // Safe to unwrap as we won't get here when the unwrap in if fails
-                    Some(path_position.path.to_str().unwrap().len())
-                },
+                raw_query,
+                file_query_end,
                 path_position,
             };
 
