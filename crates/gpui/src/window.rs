@@ -1012,7 +1012,6 @@ impl Window {
                         .log_err();
                 }
 
-                let invalidator_is_dirty = invalidator.is_dirty();
                 // Keep presenting the current scene for 1 extra second since the
                 // last input to prevent the display from underclocking the refresh rate.
                 let needs_present = request_frame_options.require_presentation
@@ -1020,7 +1019,7 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                if invalidator_is_dirty {
+                if invalidator.is_dirty() {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
@@ -1042,9 +1041,6 @@ impl Window {
                         window.complete_frame();
                     })
                     .log_err();
-
-                // Return true if app is idle
-                !(invalidator_is_dirty || needs_present)
             }
         }));
         platform_window.on_resize(Box::new({
