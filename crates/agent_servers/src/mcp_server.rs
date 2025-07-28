@@ -38,8 +38,12 @@ impl ZedMcpServer {
     }
 
     pub fn server_config(&self) -> Result<acp::McpServerConfig> {
+        #[cfg(not(test))]
         let zed_path = std::env::current_exe()
             .context("finding current executable path for use in mcp_server")?;
+
+        #[cfg(test)]
+        let zed_path = crate::e2e_tests::get_zed_path();
 
         Ok(acp::McpServerConfig {
             command: zed_path,

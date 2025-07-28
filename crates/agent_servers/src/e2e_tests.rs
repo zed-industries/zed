@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
@@ -411,4 +415,25 @@ pub async fn run_until_first_tool_call(
             ix.unwrap()
         }
     }
+}
+
+pub fn get_zed_path() -> PathBuf {
+    let mut zed_path = std::env::current_exe().unwrap();
+
+    while zed_path
+        .file_name()
+        .map_or(true, |name| name.to_string_lossy() != "debug")
+    {
+        if !zed_path.pop() {
+            panic!("Could not find target directory");
+        }
+    }
+
+    zed_path.push("zed");
+
+    if !zed_path.exists() {
+        panic!("\n🚨 Run `cargo build` at least once before running e2e tests\n\n");
+    }
+
+    zed_path
 }
