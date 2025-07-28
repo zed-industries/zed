@@ -32,8 +32,7 @@ const CONTENT: (Section<4>, Section<3>) = (
                 action: &Open,
             },
             SectionEntry {
-                // TODO: use proper icon
-                icon: IconName::Download,
+                icon: IconName::CloudDownload,
                 title: "Clone a Repo",
                 // TODO: use proper action
                 action: &NoAction,
