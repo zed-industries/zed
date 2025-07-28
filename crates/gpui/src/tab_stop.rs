@@ -11,7 +11,7 @@ pub(crate) struct TabHandles {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) struct TabGroupId(pub(crate) Arc<GlobalElementId>);
+pub(crate) struct FocusTrapId(pub(crate) Arc<GlobalElementId>);
 
 impl TabHandles {
     pub(crate) fn insert(&mut self, focus_handle: FocusHandle) {
@@ -35,13 +35,13 @@ impl TabHandles {
         self.handles.clear();
     }
 
-    pub(crate) fn with_group(&self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
+    pub(crate) fn with_focus_trap(&self, focused_id: Option<&FocusId>) -> Vec<FocusHandle> {
         if let Some(focused_id) = focused_id {
             if let Some(handle) = self.handles.iter().find(|h| &h.id == focused_id) {
                 return self
                     .handles
                     .iter()
-                    .filter(|h| h.tab_group == handle.tab_group)
+                    .filter(|h| h.focus_trap == handle.focus_trap)
                     .cloned()
                     .collect();
             }
@@ -49,13 +49,13 @@ impl TabHandles {
 
         self.handles
             .iter()
-            .filter(|h| h.tab_group.is_none())
+            .filter(|h| h.focus_trap.is_none())
             .cloned()
             .collect()
     }
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let group_handles = self.with_group(focused_id);
+        let group_handles = self.with_focus_trap(focused_id);
         let ix = group_handles
             .iter()
             .position(|h| Some(&h.id) == focused_id)
@@ -70,7 +70,7 @@ impl TabHandles {
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
-        let group_handles = self.with_group(focused_id);
+        let group_handles = self.with_focus_trap(focused_id);
         let ix = group_handles
             .iter()
             .position(|h| Some(&h.id) == focused_id)
@@ -88,7 +88,7 @@ impl TabHandles {
 
 #[cfg(test)]
 mod tests {
-    use crate::{FocusHandle, FocusMap, GlobalElementId, TabGroupId, TabHandles};
+    use crate::{FocusHandle, FocusMap, FocusTrapId, GlobalElementId, TabHandles};
     use std::sync::Arc;
 
     #[test]
@@ -96,8 +96,8 @@ mod tests {
         let focus_map = Arc::new(FocusMap::default());
         let mut tab = TabHandles::default();
 
-        let group_id = TabGroupId(Arc::new(GlobalElementId(smallvec::smallvec![
-            "group1".into()
+        let trap_id = FocusTrapId(Arc::new(GlobalElementId(smallvec::smallvec![
+            "trap1".into()
         ])));
 
         let focus_handles = vec![
@@ -109,15 +109,15 @@ mod tests {
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group(&group_id),
+                .focus_trap(&trap_id),
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group(&group_id),
+                .focus_trap(&trap_id),
             FocusHandle::new(&focus_map)
                 .tab_stop(true)
                 .tab_index(0)
-                .tab_group(&group_id),
+                .focus_trap(&trap_id),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
         ];

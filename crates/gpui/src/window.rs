@@ -5,18 +5,18 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
-    KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
-    LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabGroupId, TabHandles,
-    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
-    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
-    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
-    size, transparent_black,
+    FileDropEvent, FocusTrapId, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
+    MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
+    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels,
+    Scene, Shadow, SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription,
+    TabHandles, TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix,
+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point,
+    prelude::*, px, rems, size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -228,7 +228,7 @@ pub(crate) struct FocusRef {
     pub(crate) ref_count: AtomicUsize,
     pub(crate) tab_index: isize,
     pub(crate) tab_stop: bool,
-    pub(crate) tab_group: Option<TabGroupId>,
+    pub(crate) focus_trap: Option<FocusTrapId>,
 }
 
 impl FocusId {
@@ -270,15 +270,15 @@ pub struct FocusHandle {
     /// The group of this element in the tab order, if any the tab navigation should cycle within.
     /// Whether this element can be focused by tab navigation.
     pub tab_stop: bool,
-    pub(crate) tab_group: Option<TabGroupId>,
+    pub(crate) focus_trap: Option<FocusTrapId>,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.tab_group.is_some() {
+        if self.focus_trap.is_some() {
             f.write_fmt(format_args!(
                 "FocusHandle({:?}, {:?})",
-                self.tab_group, self.id
+                self.focus_trap, self.id
             ))
         } else {
             f.write_fmt(format_args!("FocusHandle({:?})", self.id))
@@ -292,12 +292,12 @@ impl FocusHandle {
             ref_count: AtomicUsize::new(1),
             tab_index: 0,
             tab_stop: false,
-            tab_group: None,
+            focus_trap: None,
         });
 
         Self {
             id,
-            tab_group: None,
+            focus_trap: None,
             tab_index: 0,
             tab_stop: false,
             handles: handles.clone(),
@@ -312,7 +312,7 @@ impl FocusHandle {
         }
         Some(Self {
             id,
-            tab_group: focus.tab_group.clone(),
+            focus_trap: focus.focus_trap.clone(),
             tab_index: focus.tab_index,
             tab_stop: focus.tab_stop,
             handles: handles.clone(),
@@ -339,13 +339,10 @@ impl FocusHandle {
         self
     }
 
-    /// Set the tab group of this focus handle.
-    ///
-    /// If set, the focus cycle will loop in same group.
-    pub(crate) fn tab_group(mut self, tab_group: &TabGroupId) -> Self {
-        self.tab_group = Some(tab_group.clone());
+    pub(crate) fn focus_trap(mut self, focus_trap: &FocusTrapId) -> Self {
+        self.focus_trap = Some(focus_trap.clone());
         if let Some(focus) = self.handles.write().get_mut(self.id) {
-            focus.tab_group = Some(tab_group.clone());
+            focus.focus_trap = Some(focus_trap.clone());
         }
         self
     }
@@ -895,7 +892,7 @@ pub struct Window {
     pub(crate) client_inset: Option<Pixels>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     inspector: Option<Entity<Inspector>>,
-    pub(crate) tab_group_stack: Vec<TabGroupId>,
+    pub(crate) focus_trap_stack: Vec<FocusTrapId>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1206,7 +1203,7 @@ impl Window {
             image_cache_stack: Vec::new(),
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector: None,
-            tab_group_stack: Vec::new(),
+            focus_trap_stack: Vec::new(),
         })
     }
 
@@ -4319,18 +4316,18 @@ impl Window {
         f(&mut None, self)
     }
 
-    /// Acquire a tab_group for the given ElementId.
+    /// Acquire a focus_trap.
     /// Only valid for the duration of the provided closure.
-    pub(crate) fn with_tab_group<R>(&mut self, group: bool, f: impl FnOnce(&mut Self) -> R) -> R {
-        if group {
-            self.tab_group_stack
-                .push(TabGroupId(Arc::new(GlobalElementId(
+    pub(crate) fn with_focus_trap<R>(&mut self, enable: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+        if enable {
+            self.focus_trap_stack
+                .push(FocusTrapId(Arc::new(GlobalElementId(
                     self.element_id_stack.clone(),
                 ))));
         }
         let result = f(self);
-        if group {
-            self.tab_group_stack.pop();
+        if enable {
+            self.focus_trap_stack.pop();
         }
         result
     }

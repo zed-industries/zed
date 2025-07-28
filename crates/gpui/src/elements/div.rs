@@ -629,11 +629,11 @@ pub trait InteractiveElement: Sized {
     /// Set child element into focus group limit.
     ///
     /// When this is enabled, the window focus cycle will be limited to the child elements.
-    fn tab_group(mut self) -> Self
+    fn focus_trap(mut self) -> Self
     where
         Self: Sized,
     {
-        self.interactivity().tab_group = true;
+        self.interactivity().focus_trap = true;
         self
     }
 
@@ -1405,7 +1405,7 @@ impl Element for Div {
             .map(|provider| provider.provide(window, cx));
 
         window.with_image_cache(image_cache, |window| {
-            window.with_tab_group(self.interactivity.tab_group, |window| {
+            window.with_focus_trap(self.interactivity.focus_trap, |window| {
                 self.interactivity.paint(
                     global_id,
                     inspector_id,
@@ -1448,7 +1448,7 @@ pub struct Interactivity {
     pub(crate) key_context: Option<KeyContext>,
     pub(crate) focusable: bool,
     pub(crate) tab_index: Option<isize>,
-    pub(crate) tab_group: bool,
+    pub(crate) focus_trap: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
@@ -1770,11 +1770,11 @@ impl Interactivity {
                 }
 
                 if let Some(focus_handle) = &self.tracked_focus_handle {
-                    if let Some(tab_group) = window.tab_group_stack.last() {
+                    if let Some(focus_trap) = window.focus_trap_stack.last() {
                         window
                             .next_frame
                             .tab_handles
-                            .insert(focus_handle.clone().tab_group(tab_group));
+                            .insert(focus_handle.clone().focus_trap(focus_trap));
                     } else {
                         window.next_frame.tab_handles.insert(focus_handle.clone());
                     }

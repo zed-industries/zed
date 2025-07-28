@@ -58,13 +58,14 @@ impl Example {
 fn button(id: impl Into<ElementId>) -> Stateful<Div> {
     div()
         .id(id)
-        .h_10()
+        .h_9()
         .flex_1()
         .flex()
         .justify_center()
         .items_center()
-        .border_1()
+        .border_2()
         .border_color(gpui::black())
+        .rounded_md()
         .bg(gpui::black())
         .text_color(gpui::white())
         .focus(|this| this.border_color(gpui::blue()))
@@ -110,7 +111,7 @@ where
 {
     div()
         .id(id)
-        .tab_group()
+        .focus_trap()
         .occlude()
         .absolute()
         .top_0()
@@ -175,8 +176,6 @@ impl Render for Example {
                     .flex_row()
                     .gap_3()
                     .items_center()
-                    // Apply the buttons as difference tab group
-                    .tab_group()
                     .child(button("el1").tab_index(4).child("Button 1"))
                     .child(button("el2").tab_index(5).child("Button 2"))
                     .child(button("open-modal1").child("Open Modal...").on_click({
