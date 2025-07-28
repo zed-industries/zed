@@ -38,129 +38,7 @@ fn main() -> Result<()> {
                 process::exit(1);
             }
         }
-        Some("postprocess") => {
-            let logger = zlog::scoped!("render");
-            let mut ctx = mdbook::renderer::RenderContext::from_json(io::stdin())?;
-            let output = ctx
-                .config
-                .get_mut("output")
-                .expect("has output")
-                .as_table_mut()
-                .expect("output is table");
-            let zed_html = output.remove("zed-html").expect("zed-html output defined");
-            let default_description = zed_html
-                .get("default-description")
-                .expect("Default description not found")
-                .as_str()
-                .expect("Default description not a string")
-                .to_string();
-            let default_title = zed_html
-                .get("default-title")
-                .expect("Default title not found")
-                .as_str()
-                .expect("Default title not a string")
-                .to_string();
-
-            let ignore_list = ["toc.html"];
-            output.insert("html".to_string(), zed_html);
-            mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
-
-            let root_dir = ctx.destination.clone();
-            let mut files = Vec::with_capacity(128);
-            let mut queue = Vec::with_capacity(64);
-            queue.push(root_dir.clone());
-            while let Some(dir) = queue.pop() {
-                for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
-                    let Ok(entry) = entry else {
-                        continue;
-                    };
-                    let file_type = entry.file_type()?;
-                    if file_type.is_dir() {
-                        queue.push(entry.path());
-                    }
-                    if file_type.is_file()
-                        && matches!(
-                            entry.path().extension().and_then(std::ffi::OsStr::to_str),
-                            Some("html")
-                        )
-                    {
-                        if ignore_list.contains(&&*entry.file_name().to_string_lossy()) {
-                            zlog::info!(logger => "Ignoring {}", entry.path().to_string_lossy());
-                        } else {
-                            files.push(entry.path());
-                        }
-                    }
-                }
-            }
-
-            zlog::info!(logger => "Processing {} `.html` files", files.len());
-            let meta_regex =
-                Regex::new(r"<p>\s*\{#zed-meta-(\w+) \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
-            for file in files {
-                let contents = std::fs::read_to_string(&file)?;
-                let mut meta_description = None;
-                let mut meta_title = None;
-                let contents = meta_regex.replace_all(&contents, |caps: &regex::Captures| {
-                    let kind = caps[1].trim();
-                    let content = caps[2].trim().to_string();
-                    match kind {
-                        "description" => {
-                            meta_description = Some(content);
-                        }
-                        "title" => {
-                            meta_title = Some(content);
-                        }
-                        _ => {
-                            zlog::error!(logger => "Failed to parse meta for {:?}: `{}` is not a valid meta format. Expected kind 'description' or 'title'", pretty_path(&file, &root_dir), kind);
-                        }
-                    }
-                    String::new()
-                });
-                let meta_description = meta_description.as_ref().unwrap_or_else(|| {
-                    if contents.find("#zed-meta-description").is_some() {
-                        zlog::error!(logger => "Failed to parse meta description for {:?}", pretty_path(&file, &root_dir));
-                    } else {
-                        zlog::warn!(logger => "No meta description found for {:?}", pretty_path(&file, &root_dir));
-                    }
-                    &default_description
-                });
-                let page_title = extract_title_from_page(&contents, pretty_path(&file, &root_dir));
-                let meta_title = meta_title.as_ref().unwrap_or_else(|| {
-                    if contents.find("#zed-meta-title").is_some() {
-                        zlog::error!(logger => "Failed to parse meta title for {:?}", pretty_path(&file, &root_dir));
-                    } else {
-                        zlog::debug!(logger => "No meta title found for {:?}", pretty_path(&file, &root_dir));
-                    }
-                    &default_title
-                });
-                let meta_title = format!("{} | {}", page_title, meta_title);
-                zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
-                let contents = contents.replace("#description#", meta_description);
-                let contents = contents.replace("#title#", &meta_title);
-                std::fs::write(file, contents)?;
-            }
-            fn pretty_path<'a>(
-                path: &'a std::path::PathBuf,
-                root: &'a std::path::PathBuf,
-            ) -> &'a std::path::Path {
-                &path.strip_prefix(&root).unwrap_or(&path)
-            }
-            fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
-                const TITLE_REGEX: std::cell::LazyCell<Regex> =
-                    std::cell::LazyCell::new(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap());
-                let title_tag_contents = &TITLE_REGEX
-                    .captures(&contents)
-                    .with_context(|| format!("Failed to find title in {:?}", pretty_path))
-                    .expect("Page has <title> element")[1];
-                let title = title_tag_contents
-                    .trim()
-                    .strip_suffix("- Zed")
-                    .unwrap_or(title_tag_contents)
-                    .trim()
-                    .to_string();
-                title
-            }
-        }
+        Some("postprocess") => handle_postprocessing()?,
         _ => handle_preprocessing()?,
     }
 
@@ -363,4 +241,130 @@ fn dump_all_gpui_actions() -> Vec<ActionDef> {
     actions.sort_by_key(|a| a.name);
 
     return actions;
+}
+
+fn handle_postprocessing() -> Result<()> {
+    let logger = zlog::scoped!("render");
+    let mut ctx = mdbook::renderer::RenderContext::from_json(io::stdin())?;
+    let output = ctx
+        .config
+        .get_mut("output")
+        .expect("has output")
+        .as_table_mut()
+        .expect("output is table");
+    let zed_html = output.remove("zed-html").expect("zed-html output defined");
+    let default_description = zed_html
+        .get("default-description")
+        .expect("Default description not found")
+        .as_str()
+        .expect("Default description not a string")
+        .to_string();
+    let default_title = zed_html
+        .get("default-title")
+        .expect("Default title not found")
+        .as_str()
+        .expect("Default title not a string")
+        .to_string();
+
+    let ignore_list = ["toc.html"];
+    output.insert("html".to_string(), zed_html);
+    mdbook::Renderer::render(&mdbook::renderer::HtmlHandlebars::new(), &ctx)?;
+
+    let root_dir = ctx.destination.clone();
+    let mut files = Vec::with_capacity(128);
+    let mut queue = Vec::with_capacity(64);
+    queue.push(root_dir.clone());
+    while let Some(dir) = queue.pop() {
+        for entry in std::fs::read_dir(&dir).context(dir.to_sanitized_string())? {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let file_type = entry.file_type().context("Failed to determine file type")?;
+            if file_type.is_dir() {
+                queue.push(entry.path());
+            }
+            if file_type.is_file()
+                && matches!(
+                    entry.path().extension().and_then(std::ffi::OsStr::to_str),
+                    Some("html")
+                )
+            {
+                if ignore_list.contains(&&*entry.file_name().to_string_lossy()) {
+                    zlog::info!(logger => "Ignoring {}", entry.path().to_string_lossy());
+                } else {
+                    files.push(entry.path());
+                }
+            }
+        }
+    }
+
+    zlog::info!(logger => "Processing {} `.html` files", files.len());
+    let meta_regex =
+        Regex::new(r"<p>\s*\{#zed-meta-(\w+) \s*\n?\s*(.*?)\s*\n?\s*\}\s*</p>").unwrap();
+    for file in files {
+        let contents = std::fs::read_to_string(&file)?;
+        let mut meta_description = None;
+        let mut meta_title = None;
+        let contents = meta_regex.replace_all(&contents, |caps: &regex::Captures| {
+                        let kind = caps[1].trim();
+                        let content = caps[2].trim().to_string();
+                        match kind {
+                            "description" => {
+                                meta_description = Some(content);
+                            }
+                            "title" => {
+                                meta_title = Some(content);
+                            }
+                            _ => {
+                                zlog::error!(logger => "Failed to parse meta for {:?}: `{}` is not a valid meta format. Expected kind 'description' or 'title'", pretty_path(&file, &root_dir), kind);
+                            }
+                        }
+                        String::new()
+                    });
+        let meta_description = meta_description.as_ref().unwrap_or_else(|| {
+                        if contents.find("#zed-meta-description").is_some() {
+                            zlog::error!(logger => "Failed to parse meta description for {:?}", pretty_path(&file, &root_dir));
+                        } else {
+                            zlog::warn!(logger => "No meta description found for {:?}", pretty_path(&file, &root_dir));
+                        }
+                        &default_description
+                    });
+        let page_title = extract_title_from_page(&contents, pretty_path(&file, &root_dir));
+        let meta_title = meta_title.as_ref().unwrap_or_else(|| {
+                        if contents.find("#zed-meta-title").is_some() {
+                            zlog::error!(logger => "Failed to parse meta title for {:?}", pretty_path(&file, &root_dir));
+                        } else {
+                            zlog::debug!(logger => "No meta title found for {:?}", pretty_path(&file, &root_dir));
+                        }
+                        &default_title
+                    });
+        let meta_title = format!("{} | {}", page_title, meta_title);
+        zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
+        let contents = contents.replace("#description#", meta_description);
+        let contents = contents.replace("#title#", &meta_title);
+        std::fs::write(file, contents)?;
+    }
+    return Ok(());
+
+    fn pretty_path<'a>(
+        path: &'a std::path::PathBuf,
+        root: &'a std::path::PathBuf,
+    ) -> &'a std::path::Path {
+        &path.strip_prefix(&root).unwrap_or(&path)
+    }
+    fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
+        const TITLE_REGEX: std::cell::LazyCell<Regex> =
+            std::cell::LazyCell::new(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap());
+        let title_tag_contents = &TITLE_REGEX
+            .captures(&contents)
+            .with_context(|| format!("Failed to find title in {:?}", pretty_path))
+            .expect("Page has <title> element")[1];
+        let title = title_tag_contents
+            .trim()
+            .strip_suffix("- Zed")
+            .unwrap_or(title_tag_contents)
+            .trim()
+            .to_string();
+        title
+    }
 }
