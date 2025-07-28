@@ -560,3 +560,329 @@ impl Render for KeystrokeInput {
             )
     }
 }
+
+#[cfg(test)]
+pub mod test_helpers {
+    use super::*;
+    use gpui::{Entity, VisualTestContext};
+
+    /// Test helper for KeystrokeInput component with fluent API and string-based event system
+    pub struct KeystrokeInputTestHelper {
+        input: Entity<KeystrokeInput>,
+        current_modifiers: Modifiers,
+        vcx: VisualTestContext,
+    }
+
+    impl KeystrokeInputTestHelper {
+        /// Creates a new test helper with default settings
+        pub fn new(mut vcx: VisualTestContext) -> Self {
+            let input = vcx.new_window_entity(|window, cx| KeystrokeInput::new(None, window, cx));
+
+            Self {
+                input,
+                current_modifiers: Modifiers::default(),
+                vcx,
+            }
+        }
+
+        /// Creates a new test helper with placeholder keystrokes
+        pub fn with_placeholders(placeholders: Vec<&str>, mut vcx: VisualTestContext) -> Self {
+            let placeholder_keystrokes: Result<Vec<Keystroke>, _> =
+                placeholders.into_iter().map(Keystroke::parse).collect();
+
+            let placeholder_keystrokes =
+                placeholder_keystrokes.expect("Invalid placeholder keystroke");
+
+            let input = vcx.new_window_entity(|window, cx| {
+                KeystrokeInput::new(Some(placeholder_keystrokes), window, cx)
+            });
+
+            Self {
+                input,
+                current_modifiers: Modifiers::default(),
+                vcx,
+            }
+        }
+
+        /// Sets search mode on the input
+        pub fn with_search_mode(mut self, search: bool) -> Self {
+            self.input.update(&mut self.vcx, |input, _| {
+                input.set_search(search);
+            });
+            self
+        }
+
+        /// Sends a keystroke event based on string description
+        /// Examples: "a", "ctrl-a", "cmd-shift-z", "escape"
+        pub fn send_keystroke(mut self, keystroke: &str) -> Self {
+            let keystroke = Keystroke::parse(keystroke)
+                .unwrap_or_else(|_| panic!("Invalid keystroke: {}", keystroke));
+
+            self.input.update_in(&mut self.vcx, |input, window, cx| {
+                input.handle_keystroke(&keystroke, window, cx);
+            });
+
+            self.current_modifiers = keystroke.modifiers;
+            self
+        }
+
+        /// Sends a modifier change event based on string description
+        /// Examples: "+ctrl", "-ctrl", "+cmd+shift", "-all"
+        pub fn send_modifiers(mut self, modifiers: &str) -> Self {
+            let new_modifiers = if modifiers == "-all" {
+                Modifiers::default()
+            } else {
+                self.parse_modifier_change(modifiers)
+            };
+
+            let event = ModifiersChangedEvent {
+                modifiers: new_modifiers,
+                capslock: gpui::Capslock::default(),
+            };
+
+            self.input.update_in(&mut self.vcx, |input, window, cx| {
+                input.on_modifiers_changed(&event, window, cx);
+            });
+
+            self.current_modifiers = new_modifiers;
+            self
+        }
+
+        /// Sends multiple events in sequence
+        /// Each event string is either a keystroke or modifier change
+        pub fn send_events(mut self, events: &[&str]) -> Self {
+            for event in events {
+                if event.starts_with('+') || event.starts_with('-') {
+                    self = self.send_modifiers(event);
+                } else {
+                    self = self.send_keystroke(event);
+                }
+            }
+            self
+        }
+
+        /// Verifies that the keystrokes match the expected strings
+        pub fn expect_keystrokes(mut self, expected: &[&str]) -> Self {
+            let expected_keystrokes: Result<Vec<Keystroke>, _> =
+                expected.iter().map(|s| Keystroke::parse(s)).collect();
+
+            let expected_keystrokes =
+                expected_keystrokes.unwrap_or_else(|_| panic!("Invalid expected keystroke"));
+
+            self.input.read_with(&mut self.vcx, |input, _| {
+                let actual = &input.keystrokes;
+                assert_eq!(
+                    actual.len(),
+                    expected_keystrokes.len(),
+                    "Keystroke count mismatch. Expected: {:?}, Actual: {:?}",
+                    expected_keystrokes
+                        .iter()
+                        .map(|k| k.to_string())
+                        .collect::<Vec<_>>(),
+                    actual.iter().map(|k| k.to_string()).collect::<Vec<_>>()
+                );
+
+                for (i, (actual, expected)) in
+                    actual.iter().zip(expected_keystrokes.iter()).enumerate()
+                {
+                    assert_eq!(
+                        actual.to_string(),
+                        expected.to_string(),
+                        "Keystroke {} mismatch. Expected: '{}', Actual: '{}'",
+                        i,
+                        expected,
+                        actual
+                    );
+                }
+            });
+
+            self
+        }
+
+        /// Verifies that the keystroke count matches expected
+        pub fn expect_keystroke_count(mut self, count: usize) -> Self {
+            self.input.read_with(&mut self.vcx, |input, _| {
+                let actual_count = input.keystrokes.len();
+                assert_eq!(
+                    actual_count, count,
+                    "Expected {} keystrokes, but found {}",
+                    count, actual_count
+                );
+            });
+            self
+        }
+
+        /// Verifies that there are no keystrokes
+        pub fn expect_empty(self) -> Self {
+            self.expect_keystroke_count(0)
+        }
+
+        /// Starts recording keystrokes
+        pub fn start_recording(mut self) -> Self {
+            self.input.update_in(&mut self.vcx, |input, window, cx| {
+                input.start_recording(&StartRecording, window, cx);
+            });
+            self
+        }
+
+        /// Stops recording keystrokes
+        pub fn stop_recording(mut self) -> Self {
+            self.input.update_in(&mut self.vcx, |input, window, cx| {
+                input.stop_recording(&StopRecording, window, cx);
+            });
+            self
+        }
+
+        /// Clears all keystrokes
+        pub fn clear_keystrokes(mut self) -> Self {
+            self.input.update_in(&mut self.vcx, |input, window, cx| {
+                input.clear_keystrokes(&ClearKeystrokes, window, cx);
+            });
+            self
+        }
+
+        /// Gets the current keystrokes (for advanced assertions)
+        pub fn keystrokes(&mut self) -> Vec<Keystroke> {
+            self.input
+                .read_with(&mut self.vcx, |input, _| input.keystrokes.clone())
+        }
+
+        /// Parses modifier change strings like "+ctrl", "-shift", "+cmd+alt"
+        fn parse_modifier_change(&self, modifiers_str: &str) -> Modifiers {
+            let mut modifiers = self.current_modifiers;
+
+            if modifiers_str.starts_with('+') {
+                // Add modifiers
+                let to_add = &modifiers_str[1..];
+                for modifier in to_add.split('+') {
+                    match modifier {
+                        "ctrl" | "control" => modifiers.control = true,
+                        "alt" | "option" => modifiers.alt = true,
+                        "shift" => modifiers.shift = true,
+                        "cmd" | "command" => modifiers.platform = true,
+                        "fn" | "function" => modifiers.function = true,
+                        _ => panic!("Unknown modifier: {}", modifier),
+                    }
+                }
+            } else if modifiers_str.starts_with('-') {
+                // Remove modifiers
+                let to_remove = &modifiers_str[1..];
+                for modifier in to_remove.split('+') {
+                    match modifier {
+                        "ctrl" | "control" => modifiers.control = false,
+                        "alt" | "option" => modifiers.alt = false,
+                        "shift" => modifiers.shift = false,
+                        "cmd" | "command" => modifiers.platform = false,
+                        "fn" | "function" => modifiers.function = false,
+                        _ => panic!("Unknown modifier: {}", modifier),
+                    }
+                }
+            }
+
+            modifiers
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::Project;
+    use settings::SettingsStore;
+    use workspace::Workspace;
+
+    async fn init_test(cx: &mut TestAppContext) -> VisualTestContext {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            language::init(cx);
+            project::Project::init_settings(cx);
+            workspace::init_settings(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        VisualTestContext::from_window(*workspace, cx)
+    }
+
+    #[gpui::test]
+    async fn test_basic_keystroke_input(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .send_keystroke("a")
+            .expect_keystroke_count(2) // 'a' key + empty modifier keystroke
+            .clear_keystrokes()
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_modifier_handling(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "a", "-ctrl"])
+            .expect_keystrokes(&["ctrl", "ctrl-a", ""]);
+    }
+
+    #[gpui::test]
+    async fn test_multiple_modifiers(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .send_keystroke("cmd-shift-z")
+            .expect_keystrokes(&["cmd-shift-z"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_mode_behavior(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .with_search_mode(true)
+            .send_events(&["+cmd", "shift-f", "-cmd"])
+            .expect_keystroke_count(3); // Should have cmd modifier, cmd-shift-f, and empty keystroke
+    }
+
+    #[gpui::test]
+    async fn test_keystroke_limit(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .send_keystroke("a")
+            .send_keystroke("b")
+            .send_keystroke("c")
+            .expect_keystroke_count(3) // At max limit
+            .send_keystroke("d")
+            .expect_empty(); // Should clear when exceeding limit
+    }
+
+    #[gpui::test]
+    async fn test_placeholder_keystrokes(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::with_placeholders(vec!["ctrl-a", "ctrl-b"], vcx)
+            .expect_keystrokes(&["ctrl-a", "ctrl-b"]); // Should show placeholders when empty
+    }
+
+    #[gpui::test]
+    async fn test_recording_state(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .start_recording()
+            .send_keystroke("a")
+            .expect_keystrokes(&["a"])
+            .stop_recording()
+            .send_keystroke("b") // Should still record after stopping
+            .expect_keystrokes(&["a", "b"]);
+    }
+
+    #[gpui::test]
+    async fn test_modifier_release_all(cx: &mut TestAppContext) {
+        let vcx = init_test(cx).await;
+        test_helpers::KeystrokeInputTestHelper::new(vcx)
+            .with_search_mode(true)
+            .send_events(&["+ctrl+shift", "a", "-all"])
+            .expect_keystroke_count(3); // Should have modifier combo, keystroke, and empty keystroke
+    }
+}
