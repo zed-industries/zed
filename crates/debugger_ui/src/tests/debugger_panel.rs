@@ -918,7 +918,7 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     .unwrap();
 
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
-    const THREAD_ID_NUM: u64 = 1;
+    const THREAD_ID_NUM: i64 = 1;
 
     client.on_request::<dap::requests::Threads, _>(move |_, _| {
         Ok(dap::ThreadsResponse {
