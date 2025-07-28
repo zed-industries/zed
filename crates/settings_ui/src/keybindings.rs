@@ -566,21 +566,36 @@ impl KeymapEditor {
                                                     && query.modifiers == keystroke.modifiers
                                             },
                                         )
+                                } else if keystroke_query.len() > keystrokes.len() {
+                                    return false;
                                 } else {
-                                    for cursor in 0..keystrokes.len() {
-                                        let matches = keystroke_query
-                                            .iter()
-                                            .zip(&keystrokes[cursor..])
-                                            .take_while(|(q, k)| {
-                                                q.modifiers.is_subset_of(&k.modifiers)
-                                                    && ((q.key.is_empty() || q.key == k.key)
-                                                        && q.key_char
+                                    for keystroke_offset in 0..keystrokes.len() {
+                                        let mut found_count = 0;
+                                        let mut query_cursor = 0;
+                                        let mut keystroke_cursor = keystroke_offset;
+                                        while query_cursor < keystroke_query.len()
+                                            && keystroke_cursor < keystrokes.len()
+                                        {
+                                            let query = &keystroke_query[query_cursor];
+                                            let keystroke = &keystrokes[keystroke_cursor];
+                                            let matches =
+                                                query.modifiers.is_subset_of(&keystroke.modifiers)
+                                                    && ((query.key.is_empty()
+                                                        || query.key == keystroke.key)
+                                                        && query
+                                                            .key_char
                                                             .as_ref()
-                                                            .map_or(true, |q_kc| q_kc == &k.key))
-                                            })
-                                            .count()
-                                            == keystroke_query.len();
-                                        if matches {
+                                                            .map_or(true, |q_kc| {
+                                                                q_kc == &keystroke.key
+                                                            }));
+                                            if matches {
+                                                found_count += 1;
+                                                query_cursor += 1;
+                                            }
+                                            keystroke_cursor += 1;
+                                        }
+
+                                        if found_count == keystroke_query.len() {
                                             return true;
                                         }
                                     }
