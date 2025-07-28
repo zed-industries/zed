@@ -295,7 +295,6 @@ If your system uses PipeWire:
 
 3. **Restart your system**
 
-
 ### Forcing X11 scale factor
 
 On X11 systems, Zed automatically detects the appropriate scale factor for high-DPI displays. The scale factor is determined using the following priority order:
@@ -333,6 +332,7 @@ Xft.dpi: 96
 ```
 
 Common DPI values:
+
 - `96` for standard 1x scaling
 - `144` for 1.5x scaling
 - `192` for 2x scaling
