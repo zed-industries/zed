@@ -194,18 +194,27 @@ fn find_number(
     start: Point,
 ) -> Option<(Range<Point>, String, u32)> {
     let mut offset = start.to_offset(snapshot);
-
     let ch0 = snapshot.chars_at(offset).next();
-    if ch0.as_ref().is_some_and(char::is_ascii_hexdigit) || matches!(ch0, Some('-' | 'b' | 'x')) {
+    let ch1 = snapshot.chars_at(offset + ch0.unwrap().len_utf8()).next();
+
+    let ch0_is_ascii_hexdigit = ch0.as_ref().is_some_and(char::is_ascii_hexdigit);
+    let ch0_is_special_char = matches!(ch0, Some('-' | 'b' | 'x'));
+    let ch1_is_ascii_hexdigit = ch1.as_ref().is_some_and(char::is_ascii_hexdigit);
+
+    if ch0_is_special_char && ch1_is_ascii_hexdigit {
+        // go backwards one char to the start of the number if the selection is
+        // at the first special character of a number
+        offset -= ch0.unwrap().len_utf8();
+    } else if ch0_is_ascii_hexdigit {
         // go backwards to the start of any number the selection is within
         for ch in snapshot.reversed_chars_at(offset) {
-            if ch.is_ascii_hexdigit() {
-                offset -= ch.len_utf8();
-                continue;
-            }
             if ch == '-' || ch == 'b' || ch == 'x' {
                 offset -= ch.len_utf8();
                 break;
+            }
+            if ch.is_ascii_hexdigit() {
+                offset -= ch.len_utf8();
+                continue;
             }
             break;
         }
@@ -711,15 +720,20 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_increment_multiple_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
+    async fn test_increment_negative_numbers_no_gaps(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
-        cx.set_shared_state(indoc! {
-            "2025-0ˇ5-10;"
-        })
-        .await;
-        cx.simulate_shared_keystrokes("ctrl-a").await;
-        cx.shared_state().await.assert_eq(indoc! {"
-        2025-0ˇ4-10;"});
+
+        cx.simulate("ctrl-a", "2025-0ˇ5-10").await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_increment_negative_numbers_on_hyphens(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.simulate("ctrl-a", "2025-05ˇ-").await.assert_matches();
+        cx.simulate("ctrl-a", "2025-05ˇ- 345")
+            .await
+            .assert_matches();
     }
 
     #[gpui::test]
