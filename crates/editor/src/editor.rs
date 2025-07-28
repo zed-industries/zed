@@ -11679,7 +11679,13 @@ impl Editor {
             /// A prefix for the line separate from any comment prefixes. (eg
             /// list markers and indents in Markdown)
             addl_prefix: Option<String>,
-            from_empty_selection: bool,
+
+            expansion: RewrapRangeExpansion,
+        }
+
+        enum RewrapRangeExpansion {
+            NeedsExpansion,
+            Expanded,
         }
 
         let indent_and_line_prefix = |comment_format: &Option<RewrapCommentFormat>,
@@ -11699,6 +11705,36 @@ impl Editor {
             (indent_prefix, line_prefix)
         };
 
+        let expand_rewrap_range = |range: Range<Point>, line_prefix: &str| -> Range<Point> {
+            let mut range = range;
+
+            'expand_upwards: while range.start.row > 0 {
+                let prev_row = range.start.row - 1;
+                if buffer.contains_str_at(Point::new(prev_row, 0), line_prefix)
+                    && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                    && !buffer.is_line_blank(MultiBufferRow(prev_row))
+                {
+                    range.start.row = prev_row;
+                } else {
+                    break 'expand_upwards;
+                }
+            }
+
+            'expand_downwards: while range.end.row < buffer.max_point().row {
+                let next_row = range.end.row + 1;
+                if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                    && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                    && !buffer.is_line_blank(MultiBufferRow(next_row))
+                {
+                    range.end.row = next_row;
+                } else {
+                    break 'expand_downwards;
+                }
+            }
+
+            range
+        };
+
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
             let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
@@ -11715,7 +11751,6 @@ impl Editor {
             let language_scope = buffer.language_scope_at(selection.head());
 
             let mut ranges = Vec::new();
-            let from_empty_selection = selection.is_empty();
 
             let mut current_range_start = first_row;
             let mut prev_row = first_row;
@@ -11752,7 +11787,11 @@ impl Editor {
                         indent_prefix,
                         line_prefix,
                         addl_prefix: current_range_rewrap_prefix.clone(),
-                        from_empty_selection,
+                        expansion: if selection.is_empty() {
+                            RewrapRangeExpansion::NeedsExpansion
+                        } else {
+                            RewrapRangeExpansion::Expanded
+                        },
                     });
 
                     current_range_start = row;
@@ -11776,7 +11815,11 @@ impl Editor {
                 indent_prefix,
                 line_prefix,
                 addl_prefix: current_range_rewrap_prefix.clone(),
-                from_empty_selection,
+                expansion: if selection.is_empty() {
+                    RewrapRangeExpansion::NeedsExpansion
+                } else {
+                    RewrapRangeExpansion::Expanded
+                },
             });
 
             ranges
@@ -11793,7 +11836,7 @@ impl Editor {
                 indent_prefix,
                 line_prefix,
                 addl_prefix,
-                from_empty_selection,
+                expansion,
             } = wrap_range;
 
             {
@@ -11812,43 +11855,23 @@ impl Editor {
                 }
             }
 
-            let mut start_row = wrap_range.start.row;
-            let mut end_row = wrap_range.end.row;
-
             // Skip selections that overlap with a range that has already been rewrapped.
-            let selection_range = start_row..end_row;
             if rewrapped_row_ranges
                 .iter()
-                .any(|range| range.overlaps(&selection_range))
+                .any(|range| range.overlaps(&(wrap_range.start.row..wrap_range.end.row)))
             {
                 continue;
             }
 
-            if from_empty_selection {
-                'expand_upwards: while start_row > 0 {
-                    let prev_row = start_row - 1;
-                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
-                        && !buffer.is_line_blank(MultiBufferRow(prev_row))
-                    {
-                        start_row = prev_row;
-                    } else {
-                        break 'expand_upwards;
-                    }
-                }
+            // perf: expand ranges after checking for overlap
+            let wrap_range = if let RewrapRangeExpansion::NeedsExpansion = expansion {
+                expand_rewrap_range(wrap_range, &line_prefix)
+            } else {
+                wrap_range
+            };
 
-                'expand_downwards: while end_row < buffer.max_point().row {
-                    let next_row = end_row + 1;
-                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
-                        && !buffer.is_line_blank(MultiBufferRow(next_row))
-                    {
-                        end_row = next_row;
-                    } else {
-                        break 'expand_downwards;
-                    }
-                }
-            }
+            let start_row = wrap_range.start.row;
+            let end_row = wrap_range.end.row;
 
             let start = Point::new(start_row, 0);
             let start_offset = start.to_offset(&buffer);
