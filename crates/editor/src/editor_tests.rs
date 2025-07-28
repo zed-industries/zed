@@ -10207,6 +10207,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         .next();
     cx.executor().start_waiting();
     save.await;
+    cx.run_until_parked();
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
