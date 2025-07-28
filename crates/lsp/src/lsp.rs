@@ -1557,7 +1557,7 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
-            workspace_folders.clone(),
+            Some(workspace_folders.clone()),
             cx,
             |_| {},
         );
@@ -1576,7 +1576,7 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
-                    workspace_folders,
+                    Some(workspace_folders),
                     cx,
                     move |msg| {
                         notifications_tx
