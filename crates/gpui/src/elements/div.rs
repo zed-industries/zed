@@ -626,7 +626,7 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Set child element into focus group limit.
+    /// Set child element into focus trap limit.
     ///
     /// When this is enabled, the window focus cycle will be limited to the child elements.
     fn focus_trap(mut self) -> Self
