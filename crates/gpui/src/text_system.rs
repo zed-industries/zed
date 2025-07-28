@@ -67,11 +67,11 @@ impl TextSystem {
                 // TODO: Remove this when Linux have implemented setting fallbacks.
                 font("Zed Plex Mono"),
                 font("Helvetica"),
-                font("Segoe UI"),  // Windows
-                font("Ubuntu"),    // Gnome (Ubuntu)
+                font("Segoe UI"),     // Windows
+                font("Ubuntu"),       // Gnome (Ubuntu)
                 font("Adwaita Sans"), // Gnome 47
-                font("Cantarell"), // Gnome
-                font("Noto Sans"), // KDE
+                font("Cantarell"),    // Gnome
+                font("Noto Sans"),    // KDE
                 font("DejaVu Sans"),
                 font("Arial"), // macOS, Windows
             ],
