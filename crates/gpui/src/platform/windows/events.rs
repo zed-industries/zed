@@ -37,6 +37,7 @@ pub(crate) fn handle_msg(
     let handled = match msg {
         WM_ACTIVATE => handle_activate_msg(wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
+        WM_DEVICECHANGE => handle_device_change_msg(handle, wparam, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
         WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
         WM_GETMINMAXINFO => handle_get_min_max_info_msg(lparam, state_ptr),
@@ -236,25 +237,7 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let is_idle = if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
-        drop(lock);
-        // request_frame(RequestFrameOptions {
-        //     require_presentation: true,
-        // });
-        let is_idle = request_frame(Default::default());
-        state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
-        is_idle
-    } else {
-        false
-    };
-    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
-    if is_idle {
-        unsafe {
-            MsgWaitForMultipleObjects(None, false, 100, QS_ALLINPUT);
-        }
-    }
-    Some(0)
+    draw_window(handle, false, state_ptr)
 }
 
 fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -1210,6 +1193,39 @@ fn handle_input_language_changed(
     unsafe {
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
+    Some(0)
+}
+
+fn handle_device_change_msg(
+    handle: HWND,
+    wparam: WPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if wparam.0 == DBT_DEVNODES_CHANGED as usize {
+        draw_window(handle, true, state_ptr)
+    } else {
+        // Other device change messages are not handled.
+        None
+    }
+}
+
+#[inline]
+fn draw_window(
+    handle: HWND,
+    force_draw: bool,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let mut request_frame = state_ptr
+        .state
+        .borrow_mut()
+        .callbacks
+        .request_frame
+        .take()?;
+    request_frame(RequestFrameOptions {
+        require_presentation: force_draw,
+    });
+    state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
+    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
 
