@@ -25,6 +25,7 @@ use language::{
 };
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
+use paths;
 use project::{
     Project, ProjectPath,
     lsp_store::{FormatTrigger, LspFormatTarget},
@@ -141,27 +142,32 @@ impl Tool for EditFileTool {
             return false;
         };
 
-        let path = Path::new(&input.path);
-
-        // If any path component is ".zed", then this could affect
+        // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
+        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let path = Path::new(&input.path);
         if path
             .components()
-            .any(|component| component.as_os_str() == ".zed")
+            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
         {
             return true;
         }
 
-        // If the path is outside the project, then prompt.
-        let is_outside_project = project
-            .read(cx)
-            .find_project_path(&input.path, cx)
-            .is_none();
-        if is_outside_project {
-            return true;
+        // It's also possible that the global config dir is configured to be inside the project,
+        // so check for that edge case too.
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
+            if canonical_path.starts_with(paths::config_dir()) {
+                return true;
+            }
         }
 
-        false
+        // Check if path is inside the global config directory
+        // First check if it's already inside project - if not, try to canonicalize
+        let project_path = project.read(cx).find_project_path(&input.path, cx);
+
+        // If the path is inside the project, and it's not one of the above edge cases,
+        // then no confirmation is necessary. Otherwise, confirmation is necessary.
+        project_path.is_none()
     }
 
     fn may_perform_edits(&self) -> bool {
@@ -187,8 +193,16 @@ impl Tool for EditFileTool {
                 let mut description = input.display_description.clone();
 
                 // Add context about why confirmation may be needed
-                if path.components().any(|c| c.as_os_str() == ".zed") {
-                    description.push_str(" (Zed settings)");
+                let local_settings_folder = paths::local_settings_folder_relative_path();
+                if path
+                    .components()
+                    .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
+                {
+                    description.push_str(" (local settings)");
+                } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
+                    if canonical_path.starts_with(paths::config_dir()) {
+                        description.push_str(" (global settings)");
+                    }
                 }
 
                 description
@@ -1219,19 +1233,20 @@ async fn build_buffer_diff(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::fs::Fs;
     use client::TelemetrySettings;
-    use fs::{FakeFs, Fs};
     use gpui::{TestAppContext, UpdateGlobal};
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
+    use std::fs;
     use util::path;
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
@@ -1321,7 +1336,7 @@ mod tests {
     ) -> anyhow::Result<ProjectPath> {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
@@ -1433,11 +1448,25 @@ mod tests {
         });
     }
 
+    fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
+        cx.update(|cx| {
+            // Set custom data directory (config will be under data_dir/config)
+            paths::set_custom_data_dir(data_dir.to_str().unwrap());
+
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            TelemetrySettings::register(cx);
+            agent_settings::AgentSettings::register(cx);
+            Project::init_settings(cx);
+        });
+    }
+
     #[gpui::test]
     async fn test_format_on_save(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({"src": {}})).await;
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
@@ -1636,7 +1665,7 @@ mod tests {
     async fn test_remove_trailing_whitespace(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({"src": {}})).await;
 
         // Create a simple file with trailing whitespace
@@ -1773,7 +1802,7 @@ mod tests {
     async fn test_needs_confirmation(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/root", json!({})).await;
 
         // Test 1: Path with .zed component should require confirmation
@@ -1847,44 +1876,66 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_ui_text_with_confirmation_context(cx: &mut TestAppContext) {
-        init_test(cx);
+    async fn test_ui_text_shows_correct_context(cx: &mut TestAppContext) {
+        // Set up a custom config directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
         let tool = Arc::new(EditFileTool);
 
-        // Test ui_text shows context for .zed paths
-        let input_zed = json!({
-            "display_description": "Update settings",
-            "path": ".zed/settings.json",
-            "mode": "edit"
-        });
-        cx.update(|_cx| {
-            let ui_text = tool.ui_text(&input_zed);
-            assert_eq!(
-                ui_text, "Update settings (Zed settings)",
-                "UI text should indicate Zed settings file"
-            );
-        });
+        // Test ui_text shows context for various paths
+        let test_cases = vec![
+            (
+                json!({
+                    "display_description": "Update config",
+                    "path": ".zed/settings.json",
+                    "mode": "edit"
+                }),
+                "Update config (local settings)",
+                ".zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Fix bug",
+                    "path": "src/.zed/local.json",
+                    "mode": "edit"
+                }),
+                "Fix bug (local settings)",
+                "Nested .zed path should show local settings context",
+            ),
+            (
+                json!({
+                    "display_description": "Update readme",
+                    "path": "README.md",
+                    "mode": "edit"
+                }),
+                "Update readme",
+                "Normal path should not show additional context",
+            ),
+            (
+                json!({
+                    "display_description": "Edit config",
+                    "path": "config.zed",
+                    "mode": "edit"
+                }),
+                "Edit config",
+                ".zed as extension should not show context",
+            ),
+        ];
 
-        // Test ui_text for normal paths
-        let input_normal = json!({
-            "display_description": "Edit source file",
-            "path": "src/main.rs",
-            "mode": "edit"
-        });
-        cx.update(|_cx| {
-            let ui_text = tool.ui_text(&input_normal);
-            assert_eq!(
-                ui_text, "Edit source file",
-                "UI text should not have additional context for normal paths"
-            );
-        });
+        for (input, expected_text, description) in test_cases {
+            cx.update(|_cx| {
+                let ui_text = tool.ui_text(&input);
+                assert_eq!(ui_text, expected_text, "Failed for case: {}", description);
+            });
+        }
     }
 
     #[gpui::test]
     async fn test_needs_confirmation_outside_project(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
 
         // Create a project in /project directory
         fs.insert_tree("/project", json!({})).await;
@@ -1918,33 +1969,58 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_needs_confirmation_zed_paths(cx: &mut TestAppContext) {
-        init_test(cx);
+    async fn test_needs_confirmation_config_paths(cx: &mut TestAppContext) {
+        // Set up a custom data directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/home/user/myproject", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/home/user/myproject").as_ref()], cx).await;
 
-        // Test various .zed path patterns
+        // Get the actual local settings folder name
+        let local_settings_folder = paths::local_settings_folder_relative_path();
+
+        // Test various config path patterns
         let test_cases = vec![
-            (".zed/settings.json", true, "Top-level .zed file"),
-            ("myproject/.zed/settings.json", true, ".zed in project path"),
-            ("src/.zed/config.toml", true, ".zed in subdirectory"),
             (
-                ".zed.backup/file.txt",
+                format!("{}/settings.json", local_settings_folder.display()),
                 true,
-                ".zed.backup is outside project (not a .zed component issue)",
+                "Top-level local settings file".to_string(),
             ),
             (
-                "my.zed/file.txt",
+                format!(
+                    "myproject/{}/settings.json",
+                    local_settings_folder.display()
+                ),
                 true,
-                "my.zed is outside project (not a .zed component issue)",
+                "Local settings in project path".to_string(),
             ),
-            ("myproject/src/file.zed", false, ".zed as file extension"),
             (
-                "myproject/normal/path/file.rs",
+                format!("src/{}/config.toml", local_settings_folder.display()),
+                true,
+                "Local settings in subdirectory".to_string(),
+            ),
+            (
+                ".zed.backup/file.txt".to_string(),
+                true,
+                ".zed.backup is outside project".to_string(),
+            ),
+            (
+                "my.zed/file.txt".to_string(),
+                true,
+                "my.zed is outside project".to_string(),
+            ),
+            (
+                "myproject/src/file.zed".to_string(),
                 false,
-                "Normal file without .zed",
+                ".zed as file extension".to_string(),
+            ),
+            (
+                "myproject/normal/path/file.rs".to_string(),
+                false,
+                "Normal file without config paths".to_string(),
             ),
         ];
 
@@ -1967,10 +2043,68 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_needs_confirmation_global_config(cx: &mut TestAppContext) {
+        // Set up a custom data directory for testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
+        let tool = Arc::new(EditFileTool);
+        let fs = project::FakeFs::new(cx.executor());
+
+        // Create test files in the global config directory
+        let global_config_dir = paths::config_dir();
+        fs::create_dir_all(&global_config_dir).unwrap();
+        let global_settings_path = global_config_dir.join("settings.json");
+        fs::write(&global_settings_path, "{}").unwrap();
+
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+
+        // Test global config paths
+        let test_cases = vec![
+            (
+                global_settings_path.to_str().unwrap().to_string(),
+                true,
+                "Global settings file should require confirmation",
+            ),
+            (
+                global_config_dir
+                    .join("keymap.json")
+                    .to_str()
+                    .unwrap()
+                    .to_string(),
+                true,
+                "Global keymap file should require confirmation",
+            ),
+            (
+                "project/normal_file.rs".to_string(),
+                false,
+                "Normal project file should not require confirmation",
+            ),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let input = json!({
+                "display_description": "Edit file",
+                "path": path,
+                "mode": "edit"
+            });
+            cx.update(|cx| {
+                assert_eq!(
+                    tool.needs_confirmation(&input, &project, cx),
+                    should_confirm,
+                    "Failed for case: {}",
+                    description
+                );
+            });
+        }
+    }
+
+    #[gpui::test]
     async fn test_needs_confirmation_with_multiple_worktrees(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
 
         // Create multiple worktree directories
         fs.insert_tree(
@@ -2052,7 +2186,7 @@ mod tests {
     async fn test_needs_confirmation_edge_cases(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
             "/project",
             json!({
@@ -2112,7 +2246,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_ui_text_shows_correct_context(cx: &mut TestAppContext) {
+    async fn test_ui_text_with_all_path_types(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
 
@@ -2124,8 +2258,8 @@ mod tests {
                     "path": ".zed/settings.json",
                     "mode": "edit"
                 }),
-                "Update config (Zed settings)",
-                ".zed path should show Zed settings context",
+                "Update config (local settings)",
+                ".zed path should show local settings context",
             ),
             (
                 json!({
@@ -2133,8 +2267,8 @@ mod tests {
                     "path": "src/.zed/local.json",
                     "mode": "edit"
                 }),
-                "Fix bug (Zed settings)",
-                "Nested .zed path should show Zed settings context",
+                "Fix bug (local settings)",
+                "Nested .zed path should show local settings context",
             ),
             (
                 json!({
@@ -2168,7 +2302,7 @@ mod tests {
     async fn test_needs_confirmation_with_different_modes(cx: &mut TestAppContext) {
         init_test(cx);
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree(
             "/project",
             json!({
@@ -2235,9 +2369,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_always_allow_tool_actions_bypasses_all_checks(cx: &mut TestAppContext) {
-        init_test(cx);
+        // Set up with custom directories for deterministic testing
+        let temp_dir = tempfile::tempdir().unwrap();
+        init_test_with_config(cx, temp_dir.path());
+
         let tool = Arc::new(EditFileTool);
-        let fs = FakeFs::new(cx.executor());
+        let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
 
@@ -2249,9 +2386,14 @@ mod tests {
         });
 
         // Test that all paths that normally require confirmation are bypassed
+        let global_settings_path = paths::config_dir().join("settings.json");
+        fs::create_dir_all(paths::config_dir()).unwrap();
+        fs::write(&global_settings_path, "{}").unwrap();
+
         let test_cases = vec![
             ".zed/settings.json",
             "project/.zed/config.toml",
+            global_settings_path.to_str().unwrap(),
             "/etc/hosts",
             "/absolute/path/file.txt",
             "../outside/project.txt",
