@@ -5320,22 +5320,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.languages.0.extend([
             (
-                "Markdown".into(),
-                LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
-                    preferred_line_length: Some(40),
-                    ..Default::default()
-                },
-            ),
-            (
-                "Plain Text".into(),
-                LanguageSettingsContent {
-                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
-                    preferred_line_length: Some(40),
-                    ..Default::default()
-                },
-            ),
-            (
                 "C++".into(),
                 LanguageSettingsContent {
                     allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
@@ -5380,17 +5364,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         },
         None,
     ));
-    let markdown_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Markdown".into(),
-            rewrap_prefixes: vec![
-                regex::Regex::new("\\d+\\.\\s+").unwrap(),
-                regex::Regex::new("[-*+]\\s+").unwrap(),
-            ],
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
     let rust_language = Arc::new(
         Language::new(
             LanguageConfig {
@@ -5403,14 +5376,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         .with_override_query("[(line_comment)(block_comment)] @comment.inclusive")
         .unwrap(),
     );
-
-    let plaintext_language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "Plain Text".into(),
-            ..LanguageConfig::default()
-        },
-        None,
-    ));
 
     // Test basic rewrapping of a long line with a cursor
     assert_rewrap(
@@ -5540,6 +5505,103 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // Test that non-commented code acts as a paragraph boundary within a selection
+    assert_rewrap(
+        indoc! {"
+               «// This is the first long comment block to be wrapped.
+               fn my_func(a: u32);
+               // This is the second long comment block to be wrapped.ˇ»
+           "},
+        indoc! {"
+               «// This is the first long comment block
+               // to be wrapped.
+               fn my_func(a: u32);
+               // This is the second long comment block
+               // to be wrapped.ˇ»
+           "},
+        rust_language.clone(),
+        &mut cx,
+    );
+
+    // Test that an empty comment line acts as a paragraph boundary
+    assert_rewrap(
+        indoc! {"
+            // ˇThis is a long comment that will be wrapped.
+            //
+            // And this is another long comment that will also be wrapped.ˇ
+         "},
+        indoc! {"
+            // ˇThis is a long comment that will be
+            // wrapped.
+            //
+            // And this is another long comment that
+            // will also be wrapped.ˇ
+         "},
+        cpp_language,
+        &mut cx,
+    );
+
+    #[track_caller]
+    fn assert_rewrap(
+        unwrapped_text: &str,
+        wrapped_text: &str,
+        language: Arc<Language>,
+        cx: &mut EditorTestContext,
+    ) {
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(unwrapped_text);
+        cx.update_editor(|e, window, cx| e.rewrap(&Rewrap, window, cx));
+        cx.assert_editor_state(wrapped_text);
+    }
+}
+
+#[gpui::test]
+async fn test_rewrap_in_text_documents(cx: &mut TestAppContext) {
+    // rewrap should work in text documents (eg Plain Text and Markdown) w/o
+    // comments
+
+    init_test(cx, |settings| {
+        settings.languages.0.extend([
+            (
+                "Markdown".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
+                    ..Default::default()
+                },
+            ),
+            (
+                "Plain Text".into(),
+                LanguageSettingsContent {
+                    allow_rewrap: Some(language_settings::RewrapBehavior::Anywhere),
+                    preferred_line_length: Some(40),
+                    ..Default::default()
+                },
+            ),
+        ])
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            rewrap_prefixes: vec![
+                regex::Regex::new("\\d+\\.\\s+").unwrap(),
+                regex::Regex::new("[-*+]\\s+").unwrap(),
+            ],
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+    let plaintext_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
     // Test that rewrapping works in Markdown documents where `allow_rewrap` is `Anywhere`
     assert_rewrap(
         indoc! {"
@@ -5645,24 +5707,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
-    // Test that non-commented code acts as a paragraph boundary within a selection
-    assert_rewrap(
-        indoc! {"
-               «// This is the first long comment block to be wrapped.
-               fn my_func(a: u32);
-               // This is the second long comment block to be wrapped.ˇ»
-           "},
-        indoc! {"
-               «// This is the first long comment block
-               // to be wrapped.
-               fn my_func(a: u32);
-               // This is the second long comment block
-               // to be wrapped.ˇ»
-           "},
-        rust_language.clone(),
-        &mut cx,
-    );
-
     // Test rewrapping multiple selections, including ones with blank lines or tabs
     assert_rewrap(
         indoc! {"
@@ -5683,24 +5727,6 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             \tthat will be wrapped.ˇ»
          "},
         plaintext_language.clone(),
-        &mut cx,
-    );
-
-    // Test that an empty comment line acts as a paragraph boundary
-    assert_rewrap(
-        indoc! {"
-            // ˇThis is a long comment that will be wrapped.
-            //
-            // And this is another long comment that will also be wrapped.ˇ
-         "},
-        indoc! {"
-            // ˇThis is a long comment that will be
-            // wrapped.
-            //
-            // And this is another long comment that
-            // will also be wrapped.ˇ
-         "},
-        cpp_language,
         &mut cx,
     );
 
@@ -5725,6 +5751,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
             "Rust".into(),
             LanguageSettingsContent {
                 allow_rewrap: Some(language_settings::RewrapBehavior::InComments),
+                preferred_line_length: Some(40),
                 ..Default::default()
             },
         )])
@@ -5762,18 +5789,18 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
-            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5791,13 +5818,16 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5812,8 +5842,10 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit. Vivamus
+             * mollis elit purus, a ornare lacus
+             * gravida vitae.
              */
         "},
         rust_lang.clone(),
@@ -5824,17 +5856,17 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              *
-             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         indoc! {"
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              *
-             * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             * Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5844,19 +5876,19 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     // documentation comments
     assert_rewrap(
         indoc! {"
-            /**ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
+            /**ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
         "},
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
@@ -5867,22 +5899,22 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
-            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. */
-            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+            /*ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
+            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
         "},
         indoc! {"
             /**
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             * purus, a ornare lacus gravida vitae.
+             *ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
-            //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-            // purus, a ornare lacus gravida vitae.
+            //ˇ Lorem ipsum dolor sit amet,
+            // consectetur adipiscing elit.
         "},
         rust_lang.clone(),
         &mut cx,
@@ -5892,7 +5924,7 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
     assert_rewrap(
         indoc! {"
             /*
-             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae.
+             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
              */
             /*
              //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. */
@@ -5900,14 +5932,16 @@ async fn test_rewrap_block_comments(cx: &mut TestAppContext) {
         "},
         indoc! {"
             /*
-             //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
-             // purus, a ornare lacus gravida vitae.
+             //ˇ Lorem ipsum dolor sit amet,
+             // consectetur adipiscing elit.
              */
             /*
-             * //ˇ Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+             * //ˇ Lorem ipsum dolor sit amet,
+             * consectetur adipiscing elit.
              */
             /*
-             *ˇ Lorem ipsum dolor sit amet */ /* consectetur adipiscing elit.
+             *ˇ Lorem ipsum dolor sit amet */ /*
+             * consectetur adipiscing elit.
              */
         "},
         rust_lang.clone(),
