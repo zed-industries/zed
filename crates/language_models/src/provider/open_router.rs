@@ -441,26 +441,42 @@ impl LanguageModel for OpenRouterLanguageModel {
         .boxed()
     }
 
-    async fn endpoints(&self) -> Vec<LanguageModelEndpoint> {
+    fn supports_different_endpoints(&self) -> bool {
+        true
+    }
+
+    fn endpoints(&self, cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
         let Ok(api_url) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).open_router;
             settings.api_url.clone()
         }) else {
-            error!("Failed to get api_url when getting openrouter endpoints");
-            return vec![];
+            return futures::future::ready(Err(anyhow!(
+                "App state dropped: Unable to read API key or API URL from the application state"
+            )))
+            .boxed();
         };
 
-        let openrouter_endpoints = get_model_endpoints(self, &self.http_client, &api_url);
+        let model = self.model.clone();
+        let http_client = self.http_client.clone();
 
-        openrouter_endpoints
-            .iter()
-            .map(|e| LanguageModelEndpoint {
-                name: e.provider_name,
-                context_length: Some(e.context_length),
-                quantization: e.quantization,
-                availability: e.uptime_last_30m,
-            })
-            .collect()
+        async move {
+            let openrouter_endpoints =
+                get_model_endpoints(&model, http_client.as_ref(), &api_url).await?;
+
+            let mut endpoints = Vec::with_capacity(openrouter_endpoints.len() + 1);
+            endpoints.push(LanguageModelEndpoint::Default);
+            endpoints.extend(openrouter_endpoints.iter().map(|e| {
+                LanguageModelEndpoint::Specified {
+                    name: e.provider_name.clone(),
+                    context_length: Some(e.context_length),
+                    quantization: e.quantization.clone(),
+                    availability: e.uptime_last_30m,
+                }
+            }));
+
+            Ok(endpoints)
+        }
+        .boxed()
     }
 }
 

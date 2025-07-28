@@ -53,11 +53,12 @@ use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::endpoint_selector::EndpointSelector;
 use crate::profile_selector::ProfileSelector;
 use crate::{
     ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
     ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
-    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    ToggleContextPicker, ToggleEndpointSelector, ToggleProfileSelector, register_agent_preview,
 };
 use agent::{
     MessageCrease, Thread, TokenUsageRatio,
@@ -81,6 +82,7 @@ pub struct MessageEditor {
     last_loaded_context: Option<ContextLoadResult>,
     load_context_task: Option<Shared<Task<()>>>,
     profile_selector: Entity<ProfileSelector>,
+    endpoint_selector: Entity<EndpointSelector>,
     edits_expanded: bool,
     editor_is_expanded: bool,
     last_estimated_token_count: Option<u64>,
@@ -219,8 +221,12 @@ impl MessageEditor {
             )
         });
 
-        let profile_selector =
-            cx.new(|cx| ProfileSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
+        let profile_selector = cx.new(|cx| {
+            ProfileSelector::new(fs.clone(), thread.clone(), editor.focus_handle(cx), cx)
+        });
+
+        let endpoint_selector =
+            cx.new(|cx| EndpointSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
 
         Self {
             editor: editor.clone(),
@@ -239,6 +245,7 @@ impl MessageEditor {
             edits_expanded: false,
             editor_is_expanded: false,
             profile_selector,
+            endpoint_selector,
             last_estimated_token_count: None,
             update_token_count_task: None,
             _subscriptions: subscriptions,
@@ -695,6 +702,12 @@ impl MessageEditor {
                     .menu_handle()
                     .toggle(window, cx);
             }))
+            .on_action(cx.listener(|this, _: &ToggleEndpointSelector, window, cx| {
+                this.endpoint_selector
+                    .read(cx)
+                    .menu_handle()
+                    .toggle(window, cx)
+            }))
             .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
                 this.model_selector
                     .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
@@ -820,6 +833,7 @@ impl MessageEditor {
                                     })
                                     .child(self.profile_selector.clone())
                                     .child(self.model_selector.clone())
+                                    .child(self.endpoint_selector.clone())
                                     .map({
                                         let focus_handle = focus_handle.clone();
                                         move |parent| {

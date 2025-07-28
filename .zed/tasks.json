@@ -12,5 +12,12 @@
     "args": ["run", "--profile", "release-fast"],
     "allow_concurrent_runs": true,
     "use_new_terminal": false
+  },
+  {
+    "label": "cargo build --profile release-fast",
+    "command": "cargo",
+    "args": ["build", "--profile", "release-fast"],
+    "allow_concurrent_runs": false,
+    "use_new_terminal": false
   }
 ]

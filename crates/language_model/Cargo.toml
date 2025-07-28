@@ -38,7 +38,7 @@ thiserror.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 zed_llm_client.workspace = true
-async_trait.workspace = true
+async-trait.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

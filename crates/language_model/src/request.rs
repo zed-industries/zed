@@ -402,14 +402,28 @@ pub struct LanguageModelResponseMessage {
 
 // https://openrouter.ai/docs/api-reference/list-endpoints-for-a-model
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-pub struct LanguageModelEndpoint {
-    pub name: String,
-    pub context_length: Option<u64>,
-    pub quantization: Option<String>,
-    /// Range: 0-100
-    ///
-    /// e.g. Uptime percentage in last 30mins.
-    pub availability: Option<f32>,
+pub enum LanguageModelEndpoint {
+    /// Don't specify an endpoint, use the default one
+    #[default]
+    Default,
+    Specified {
+        name: String,
+        context_length: Option<u64>,
+        quantization: Option<String>,
+        /// Range: 0-100
+        ///
+        /// e.g. Uptime percentage in last 30mins.
+        availability: Option<f32>,
+    },
+}
+
+impl LanguageModelEndpoint {
+    pub fn name(&self) -> &str {
+        match self {
+            LanguageModelEndpoint::Default => "Default",
+            LanguageModelEndpoint::Specified { name, .. } => name.as_str(),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -10,6 +10,7 @@ mod context_picker;
 mod context_server_configuration;
 mod context_strip;
 mod debug;
+mod endpoint_selector;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -68,6 +69,9 @@ actions!(
         DeleteRecentlyOpenThread,
         /// Toggles the profile selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Toggles the endpoint selector which allows choosing model provider (endpoint).
+        /// Currently only OpenRouter supports this.
+        ToggleEndpointSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.

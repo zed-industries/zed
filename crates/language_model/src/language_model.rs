@@ -10,7 +10,6 @@ pub mod fake_provider;
 
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
-use async_trait::async_trait;
 use client::Client;
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
@@ -459,7 +458,6 @@ impl Default for LanguageModelTextStream {
     }
 }
 
-#[async_trait]
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -595,12 +593,12 @@ pub trait LanguageModel: Send + Sync {
         unimplemented!()
     }
 
-    fn allow_configure_endpoint(&self) -> bool {
+    fn supports_different_endpoints(&self) -> bool {
         false
     }
 
-    async fn endpoints(&self) -> Vec<LanguageModelEndpoint> {
-        vec![]
+    fn endpoints(&self, _cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
+        async { Ok(vec![]) }.boxed()
     }
 }
 
