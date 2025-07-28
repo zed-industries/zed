@@ -1049,7 +1049,7 @@ fn get_device(
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
     #[cfg(not(debug_assertions))]
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
-    Ok(unsafe {
+    unsafe {
         D3D11CreateDevice(
             adapter,
             D3D_DRIVER_TYPE_UNKNOWN,
@@ -1062,8 +1062,9 @@ fn get_device(
             device,
             None,
             context,
-        )?
-    })
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(not(feature = "enable-renderdoc"))]
@@ -1560,11 +1561,9 @@ mod nvidia {
         unsafe {
             // Try to load the NVIDIA driver DLL
             #[cfg(target_pointer_width = "64")]
-            let nvidia_dll =
-                LoadLibraryA(s!("nvapi64.dll")).context(format!("Can't load nvapi64.dll"))?;
+            let nvidia_dll = LoadLibraryA(s!("nvapi64.dll")).context("Can't load nvapi64.dll")?;
             #[cfg(target_pointer_width = "32")]
-            let nvidia_dll =
-                LoadLibraryA(s!("nvapi.dll")).context(format!("Can't load nvapi.dll"))?;
+            let nvidia_dll = LoadLibraryA(s!("nvapi.dll")).context("Can't load nvapi.dll")?;
 
             let nvapi_query_addr = GetProcAddress(nvidia_dll, s!("nvapi_QueryInterface"))
                 .ok_or_else(|| anyhow::anyhow!("Failed to get nvapi_QueryInterface address"))?;
@@ -1614,7 +1613,7 @@ mod amd {
     };
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L145
-    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12) | 0;
+    const AGS_CURRENT_VERSION: i32 = (6 << 22) | (3 << 12);
 
     // https://github.com/GPUOpen-LibrariesAndSDKs/AGS_SDK/blob/5d8812d703d0335741b6f7ffc37838eeb8b967f7/ags_lib/inc/amd_ags.h#L204
     // This is an opaque type, using struct to represent it properly for FFI

@@ -13,7 +13,7 @@ mod mac;
         any(target_os = "linux", target_os = "freebsd"),
         any(feature = "x11", feature = "wayland")
     ),
-    feature = "macos-blade"
+    all(target_os = "macos", feature = "macos-blade")
 ))]
 mod blade;
 
