@@ -391,7 +391,7 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::ContentBlock(content) => Self::ContentBlock {
+            acp::ToolCallContent::Content { content } => Self::ContentBlock {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
@@ -682,14 +682,14 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         match update {
-            acp::SessionUpdate::UserMessage(content_block) => {
-                self.push_user_content_block(content_block, cx);
+            acp::SessionUpdate::UserMessageChunk { content } => {
+                self.push_user_content_block(content, cx);
             }
-            acp::SessionUpdate::AgentMessageChunk(content_block) => {
-                self.push_assistant_content_block(content_block, false, cx);
+            acp::SessionUpdate::AgentMessageChunk { content } => {
+                self.push_assistant_content_block(content, false, cx);
             }
-            acp::SessionUpdate::AgentThoughtChunk(content_block) => {
-                self.push_assistant_content_block(content_block, true, cx);
+            acp::SessionUpdate::AgentThoughtChunk { content } => {
+                self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
                 self.upsert_tool_call(tool_call, cx);

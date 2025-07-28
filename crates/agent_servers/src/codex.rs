@@ -73,7 +73,7 @@ impl AgentServer for Codex {
             client
                 .client()
                 .context("Failed to subscribe")?
-                .on_notification(acp::SESSION_UPDATE_METHOD_NAME, {
+                .on_notification(acp::AGENT_METHODS.session_update, {
                     move |notification, _cx| {
                         let notification_tx = notification_tx.clone();
                         log::trace!(
@@ -149,13 +149,9 @@ impl AgentConnection for CodexConnection {
 
             let response = client
                 .request::<requests::CallTool>(context_server::types::CallToolParams {
-                    name: acp::NEW_SESSION_TOOL_NAME.into(),
+                    name: acp::AGENT_METHODS.new_session.into(),
                     arguments: Some(serde_json::to_value(acp::NewSessionArguments {
-                        mcp_servers: [(
-                            mcp_server::SERVER_NAME.to_string(),
-                            mcp_server.server_config()?,
-                        )]
-                        .into(),
+                        mcp_servers: vec![mcp_server.server_config()?],
                         client_tools: acp::ClientTools {
                             request_permission: Some(acp::McpToolId {
                                 mcp_server: mcp_server::SERVER_NAME.into(),
@@ -227,7 +223,7 @@ impl AgentConnection for CodexConnection {
             let result = client
                 .request_with::<requests::CallTool>(
                     context_server::types::CallToolParams {
-                        name: acp::PROMPT_TOOL_NAME.into(),
+                        name: acp::AGENT_METHODS.prompt.into(),
                         arguments: Some(serde_json::to_value(params)?),
                         meta: None,
                     },

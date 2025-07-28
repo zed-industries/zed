@@ -37,7 +37,7 @@ impl ZedMcpServer {
         Ok(Self { server: mcp_server })
     }
 
-    pub fn server_config(&self) -> Result<acp::McpServerConfig> {
+    pub fn server_config(&self) -> Result<acp::McpServer> {
         #[cfg(not(test))]
         let zed_path = anyhow::Context::context(
             std::env::current_exe(),
@@ -47,13 +47,14 @@ impl ZedMcpServer {
         #[cfg(test)]
         let zed_path = crate::e2e_tests::get_zed_path();
 
-        Ok(acp::McpServerConfig {
+        Ok(acp::McpServer {
+            name: SERVER_NAME.into(),
             command: zed_path,
             args: vec![
                 "--nc".into(),
                 self.server.socket_path().display().to_string(),
             ],
-            env: None,
+            env: vec![],
         })
     }
 
