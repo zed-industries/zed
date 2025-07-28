@@ -155,7 +155,7 @@ pub async fn test_tool_call_with_confirmation(
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
     let full_turn = thread.update(cx, |thread, cx| {
         thread.send_raw(
-            r#"Run `touch hello.txt && echo "Hello, world!" | tee hello.txt`"#,
+            r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
             cx,
         )
     });
@@ -175,10 +175,10 @@ pub async fn test_tool_call_with_confirmation(
     )
     .await;
 
-    let tool_call_id = thread.read_with(cx, |thread, _cx| {
+    let tool_call_id = thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            content,
+            label,
             status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread
@@ -190,7 +190,8 @@ pub async fn test_tool_call_with_confirmation(
             panic!();
         };
 
-        assert!(content.iter().any(|c| c.to_markdown(_cx).contains("touch")));
+        let label = label.read(cx).source();
+        assert!(label.contains("touch"), "Got: {}", label);
 
         id.clone()
     });
@@ -242,7 +243,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
     let full_turn = thread.update(cx, |thread, cx| {
         thread.send_raw(
-            r#"Run `touch hello.txt && echo "Hello, world!" >> hello.txt`"#,
+            r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
             cx,
         )
     });
@@ -262,10 +263,10 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     )
     .await;
 
-    thread.read_with(cx, |thread, _cx| {
+    thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            content,
+            label,
             status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread.entries()[first_tool_call_ix]
@@ -273,7 +274,8 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
             panic!("{:?}", thread.entries()[1]);
         };
 
-        assert!(content.iter().any(|c| c.to_markdown(_cx).contains("touch")));
+        let label = label.read(cx).source();
+        assert!(label.contains("touch"), "Got: {}", label);
 
         id.clone()
     });
