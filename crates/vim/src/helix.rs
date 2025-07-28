@@ -192,68 +192,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // self.helix_new_selection(window, cx, |cursor, map| {
-        //     let start = cursor;
-        //     let mut last_boundary = start;
-        //     let mut last_tail = start;
-        //     let classifier = map
-        //         .buffer_snapshot
-        //         .char_classifier_at(start.to_offset(map, Bias::Left));
-        //     for _ in 0..times.unwrap_or(1) {
-        //         match motion {
-        //             Motion::NextWordStart { ignore_punctuation } => {
-        //                 let (trail, boundary ) = find_boundary_trail(
-        //                     map,
-        //                     movement::right(map, last_boundary),
-        //                     |left, right| {
-        //                         let left_kind = classifier.kind_with(left, ignore_punctuation);
-        //                         let right_kind = classifier.kind_with(right, ignore_punctuation);
-        //                         let at_newline = (left == '\n') ^ (right == '\n');
-
-        //                         let found = (left_kind != right_kind
-        //                             && right_kind != CharKind::Whitespace)
-        //                             || at_newline;
-
-        //                         found
-        //                     },
-        //                 );
-        //                 tail = trail.unwrap_or(last_boundary);
-        //                 last_boundary = boundary;
-        //             }
-        //         }
-        //     }
-        //     (last_boundary, last_trail)
-        // });
         match motion {
             Motion::NextWordStart { ignore_punctuation } => {
-                // self.helix_new_selection(window, cx, |cursor, map| {
-                //     let start = cursor;
-                //     let mut last_boundary = start;
-                //     let mut last_trail = start;
-                //     let classifier = map
-                //         .buffer_snapshot
-                //         .char_classifier_at(start.to_offset(map, Bias::Left));
-                //     for _ in 0..times.unwrap_or(1) {
-                //         let (trail, boundary) = find_boundary_trail(
-                //             map,
-                //             movement::right(map, last_boundary),
-                //             |left, right| {
-                //                 let left_kind = classifier.kind_with(left, ignore_punctuation);
-                //                 let right_kind = classifier.kind_with(right, ignore_punctuation);
-                //                 let at_newline = (left == '\n') ^ (right == '\n');
-
-                //                 let found = (left_kind != right_kind
-                //                     && right_kind != CharKind::Whitespace)
-                //                     || at_newline;
-
-                //                 found
-                //             },
-                //         );
-                //         last_trail = trail.unwrap_or(last_boundary);
-                //         last_boundary = boundary;
-                //     }
-                //     Some((last_boundary, movement::right(map, last_trail)))
-                // });
                 self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
                     let left_kind = classifier.kind_with(left, ignore_punctuation);
                     let right_kind = classifier.kind_with(right, ignore_punctuation);
