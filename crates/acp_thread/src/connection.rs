@@ -20,7 +20,7 @@ pub trait AgentConnection {
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>>;
+    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 }

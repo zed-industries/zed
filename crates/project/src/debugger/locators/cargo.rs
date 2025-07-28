@@ -128,7 +128,7 @@ impl DapLocator for CargoLocator {
                 .chain(Some("--message-format=json".to_owned()))
                 .collect(),
         );
-        let mut child = Command::new(program)
+        let mut child = util::command::new_smol_command(program)
             .args(args)
             .envs(build_config.env.iter().map(|(k, v)| (k.clone(), v.clone())))
             .current_dir(cwd)

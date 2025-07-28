@@ -942,7 +942,7 @@ impl Thread {
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id, cx)
+        self.tool_use.tool_uses_for_message(id, &self.project, cx)
     }
 
     pub fn tool_results_for_message(
@@ -2557,7 +2557,7 @@ impl Thread {
             return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
         }
 
-        if tool.needs_confirmation(&tool_use.input, cx)
+        if tool.needs_confirmation(&tool_use.input, &self.project, cx)
             && !AgentSettings::get_global(cx).always_allow_tool_actions
         {
             self.tool_use.confirm_tool_use(

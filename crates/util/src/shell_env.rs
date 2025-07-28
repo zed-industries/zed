@@ -30,6 +30,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
 
+    let mut command_prefix = String::new();
     match shell_name {
         Some("tcsh" | "csh") => {
             // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
@@ -40,13 +41,20 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
             command_string.push_str("emit fish_prompt;");
             command.arg("-l");
         }
+        Some("nu") => {
+            // nu needs special handling for -- options.
+            command_prefix = String::from("^");
+        }
         _ => {
             command.arg("-l");
         }
     }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd '{}';", directory.display()));
-    command_string.push_str(&format!("{} --printenv {}", zed_path, redir));
+    command_string.push_str(&format!(
+        "{}{} --printenv {}",
+        command_prefix, zed_path, redir
+    ));
     command.args(["-i", "-c", &command_string]);
 
     super::set_pre_exec_to_start_new_session(&mut command);
