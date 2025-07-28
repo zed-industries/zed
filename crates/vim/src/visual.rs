@@ -516,12 +516,12 @@ impl Vim {
 
     fn toggle_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == mode {
-            let normal = if HelixModeSetting::get_global(cx).0 {
-                Mode::HelixNormal
+            let (normal, leave_selections) = if HelixModeSetting::get_global(cx).0 {
+                (Mode::HelixNormal, true)
             } else {
-                Mode::Normal
+                (Mode::Normal, false)
             };
-            self.switch_mode(normal, false, window, cx);
+            self.switch_mode(normal, leave_selections, window, cx);
         } else {
             self.switch_mode(mode, false, window, cx);
         }

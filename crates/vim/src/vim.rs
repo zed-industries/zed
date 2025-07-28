@@ -503,7 +503,7 @@ impl Vim {
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
                 if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 } else {
                     vim.switch_mode(Mode::Normal, false, window, cx)
                 }
@@ -519,7 +519,7 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, _: &SwitchToVisualMode, window, cx| {
                 if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixSelect, false, window, cx)
+                    vim.switch_mode(Mode::HelixSelect, true, window, cx)
                 } else {
                     vim.switch_mode(Mode::Visual, false, window, cx)
                 }
@@ -541,14 +541,14 @@ impl Vim {
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixNormalMode, window, cx| {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
+                    vim.switch_mode(Mode::HelixNormal, true, window, cx)
                 },
             );
             Vim::action(
                 editor,
                 cx,
                 |vim, _: &SwitchToHelixSelectMode, window, cx| {
-                    vim.switch_mode(Mode::HelixSelect, false, window, cx)
+                    vim.switch_mode(Mode::HelixSelect, true, window, cx)
                 },
             );
             Vim::action(editor, cx, |_, _: &PushForcedMotion, _, cx| {
