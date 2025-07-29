@@ -651,6 +651,7 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::{Entity, TestAppContext, VisualTestContext};
+    use itertools::Itertools as _;
     use project::Project;
     use settings::SettingsStore;
     use workspace::Workspace;
@@ -706,7 +707,7 @@ mod tests {
             // Combine current modifiers with keystroke modifiers
             keystroke.modifiers |= self.current_modifiers;
 
-            self.input.update_in(&mut self.cx, |input, window, cx| {
+            self.update_input(|input, window, cx| {
                 input.handle_keystroke(&keystroke, window, cx);
             });
 
@@ -733,7 +734,7 @@ mod tests {
                 capslock: gpui::Capslock::default(),
             };
 
-            self.input.update_in(&mut self.cx, |input, window, cx| {
+            self.update_input(|input, window, cx| {
                 input.on_modifiers_changed(&event, window, cx);
             });
 
@@ -851,10 +852,13 @@ mod tests {
         }
 
         /// Clears all keystrokes
+        #[track_caller]
         pub fn clear_keystrokes(&mut self) -> &mut Self {
+            let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
             self.input.update_in(&mut self.cx, |input, window, cx| {
                 input.clear_keystrokes(&ClearKeystrokes, window, cx);
             });
+            KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
             self.current_modifiers = Default::default();
             self
         }
@@ -920,6 +924,68 @@ mod tests {
             }
 
             modifiers
+        }
+
+        #[track_caller]
+        fn update_input<R>(
+            &mut self,
+            cb: impl FnOnce(&mut KeystrokeInput, &mut Window, &mut Context<KeystrokeInput>) -> R,
+        ) -> R {
+            let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
+            let result = self.input.update_in(&mut self.cx, cb);
+            KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
+            return result;
+        }
+    }
+
+    struct KeystrokeUpdateTracker {
+        initial_keystrokes: Vec<Keystroke>,
+        subscriptions: Vec<Subscription>,
+        input: Entity<KeystrokeInput>,
+        received_keystrokes_updated: bool,
+    }
+
+    impl KeystrokeUpdateTracker {
+        fn new(input: Entity<KeystrokeInput>, cx: &mut VisualTestContext) -> Entity<Self> {
+            cx.new(|cx| Self {
+                initial_keystrokes: input.read_with(cx, |input, cx| input.keystrokes.clone()),
+                subscriptions: vec![cx.subscribe(&input, |this: &mut Self, input, _evt, cx| {
+                    this.received_keystrokes_updated = true;
+                })],
+                input,
+                received_keystrokes_updated: false,
+            })
+        }
+        #[track_caller]
+        fn finish(mut this: Entity<Self>, cx: &VisualTestContext) {
+            let (received_keystrokes_updated, initial_keystrokes_str, updated_keystrokes_str) =
+                this.read_with(cx, |this, cx| {
+                    let updated_keystrokes = this
+                        .input
+                        .read_with(cx, |input, cx| input.keystrokes.clone());
+                    let initial_keystrokes_str = keystrokes_str(&this.initial_keystrokes);
+                    let updated_keystrokes_str = keystrokes_str(&updated_keystrokes);
+                    (
+                        this.received_keystrokes_updated,
+                        initial_keystrokes_str,
+                        updated_keystrokes_str,
+                    )
+                });
+            if received_keystrokes_updated {
+                assert_ne!(
+                    initial_keystrokes_str, updated_keystrokes_str,
+                    "Received keystrokes_updated event, expected different keystrokes"
+                );
+            } else {
+                assert_eq!(
+                    initial_keystrokes_str, updated_keystrokes_str,
+                    "Received no keystrokes_updated event, expected same keystrokes"
+                );
+            }
+
+            fn keystrokes_str(ks: &[Keystroke]) -> String {
+                ks.iter().map(|ks| ks.unparse()).join(" ")
+            }
         }
     }
 
