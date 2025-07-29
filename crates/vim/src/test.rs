@@ -819,6 +819,13 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
 
         two"});
 }
+#[gpui::test]
+async fn test_change_word_issue_35269(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+    cx.set_state(indoc! {"ˇa-"}, Mode::Normal);
+    cx.simulate_keystrokes("c w");
+    cx.assert_state(indoc! {"ˇ-"}, Mode::Insert);
+}
 
 #[gpui::test]
 async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
