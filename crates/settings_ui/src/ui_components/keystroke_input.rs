@@ -879,7 +879,7 @@ mod tests {
         }
 
         pub async fn wait_for_close_keystroke_capture_end(&mut self) -> &mut Self {
-            let task = self.input.update_in(&mut self.cx, |input, window, cx| {
+            let task = self.input.update_in(&mut self.cx, |input, _, _| {
                 input.clear_close_keystrokes_timer.take()
             });
             let task = task.expect("No close keystroke capture end timer task");
