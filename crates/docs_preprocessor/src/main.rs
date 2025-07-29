@@ -388,7 +388,12 @@ fn handle_postprocessing() -> Result<()> {
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
         let contents = contents.replace("#description#", meta_description);
-        let contents = contents.replace("#title#", &meta_title);
+        let contents = TITLE_REGEX
+            .replace(&contents, |_: &regex::Captures| {
+                format!("<title>{}</title>", meta_title)
+            })
+            .to_string();
+        // let contents = contents.replace("#title#", &meta_title);
         std::fs::write(file, contents)?;
     }
     return Ok(());
@@ -399,9 +404,9 @@ fn handle_postprocessing() -> Result<()> {
     ) -> &'a std::path::Path {
         &path.strip_prefix(&root).unwrap_or(&path)
     }
+    const TITLE_REGEX: std::cell::LazyCell<Regex> =
+        std::cell::LazyCell::new(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap());
     fn extract_title_from_page(contents: &str, pretty_path: &std::path::Path) -> String {
-        const TITLE_REGEX: std::cell::LazyCell<Regex> =
-            std::cell::LazyCell::new(|| Regex::new(r"<title>\s*(.*?)\s*</title>").unwrap());
         let title_tag_contents = &TITLE_REGEX
             .captures(&contents)
             .with_context(|| format!("Failed to find title in {:?}", pretty_path))
