@@ -407,7 +407,7 @@ mod windows {
                     return;
                 }
                 eprintln!(
-                    "Pixel shader compilation failed for {}:\n{}",
+                    "Shader compilation failed for {}:\n{}",
                     entry_point,
                     String::from_utf8_lossy(&result.stderr)
                 );
