@@ -43,6 +43,7 @@ pub struct ProjectPanelSettings {
     pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+    pub auto_open: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
     pub hide_root: bool,
@@ -139,6 +140,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Whether the project panel should open automatically when opening a folder.
+    ///
+    /// Default: true
+    pub auto_open: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
     /// Which files containing diagnostic errors/warnings to mark in the project panel.
