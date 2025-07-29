@@ -20664,7 +20664,6 @@ dependencies = [
  "util",
  "watch",
  "workspace-hack",
- "zed_llm_client",
  "zeta",
 ]
 
