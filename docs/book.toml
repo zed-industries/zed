@@ -18,7 +18,7 @@ extra-watch-dirs = ["../crates/docs_preprocessor"]
 [output.zed-html]
 command = "cargo run -p docs_preprocessor -- postprocess"
 # Set here instead of above as we only use it replace the `#description#` we set in the template
-# when we can't find a `{#zed-meta ... }` value
+# when no front-matter is provided value
 default-description = "Learn how to use and customize Zed, the fast, collaborative code editor. Official docs on features, configuration, AI tools, and workflows."
 default-title = "Zed Code Editor Documentation"
 no-section-label = true
