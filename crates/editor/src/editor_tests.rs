@@ -10072,8 +10072,14 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_range_format_during_save(cx: &mut TestAppContext) {
+async fn setup_range_format_test(
+    cx: &mut TestAppContext,
+) -> (
+    Entity<Project>,
+    Entity<Editor>,
+    &mut gpui::VisualTestContext,
+    lsp::FakeLanguageServer,
+) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -10088,9 +10094,9 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
+                ..lsp::ServerCapabilities::default()
             },
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -10105,13 +10111,21 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     let (editor, cx) = cx.add_window_view(|window, cx| {
         build_editor_with_project(project.clone(), buffer, window, cx)
     });
+
+    cx.executor().start_waiting();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    (project, editor, cx, fake_server)
+}
+
+#[gpui::test]
+async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
-
-    cx.executor().start_waiting();
-    let fake_server = fake_servers.next().await.unwrap();
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -10147,13 +10161,18 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         "one, two\nthree\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
+
+#[gpui::test]
+async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
-    // Ensure we can still save even if formatting hangs.
+    // Test that save still works when formatting hangs
     fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
         move |params, _| async move {
             assert_eq!(
@@ -10185,8 +10204,13 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         "one\ntwo\nthree\n"
     );
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
+}
 
-    // For non-dirty buffer, no formatting request should be sent
+#[gpui::test]
+async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+
+    // Buffer starts clean, no formatting should be requested
     let save = editor
         .update_in(cx, |editor, window, cx| {
             editor.save(
@@ -10207,6 +10231,12 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
         .next();
     cx.executor().start_waiting();
     save.await;
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -10220,7 +10250,7 @@ async fn test_range_format_during_save(cx: &mut TestAppContext) {
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("somehting_new\n", window, cx)
+        editor.set_text("something_new\n", window, cx)
     });
     assert!(cx.read(|cx| editor.is_dirty(cx)));
     let save = editor
@@ -21310,15 +21340,31 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         },
     );
 
-    let (buffer, _handle) = project
-        .update(cx, |p, cx| {
-            p.open_local_buffer_with_lsp(path!("/dir/a.ts"), cx)
+    let editor = workspace
+        .update(cx, |workspace, window, cx| {
+            workspace.open_abs_path(
+                PathBuf::from(path!("/dir/a.ts")),
+                OpenOptions::default(),
+                window,
+                cx,
+            )
         })
+        .unwrap()
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
     cx.executor().run_until_parked();
 
     let fake_server = fake_language_servers.next().await.unwrap();
+
+    let buffer = editor.update(cx, |editor, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("have opened a single file by path")
+    });
 
     let buffer_snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
     let anchor = buffer_snapshot.anchor_at(0, text::Bias::Left);
@@ -21377,7 +21423,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
     assert_eq!(
         actions.len(),
         1,
-        "Should have only one valid action for the 0..0 range"
+        "Should have only one valid action for the 0..0 range, got: {actions:#?}"
     );
     let action = actions[0].clone();
     let apply = project.update(cx, |project, cx| {
@@ -21423,7 +21469,7 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
                                         .into_iter()
                                         .collect(),
                                     ),
-                                    ..Default::default()
+                                    ..lsp::WorkspaceEdit::default()
                                 },
                             },
                         )
@@ -21446,6 +21492,38 @@ async fn test_apply_code_lens_actions_with_commands(cx: &mut gpui::TestAppContex
         buffer.undo(cx);
         assert_eq!(buffer.text(), "a");
     });
+
+    let actions_after_edits = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        actions, actions_after_edits,
+        "For the same selection, same code lens actions should be returned"
+    );
+
+    let _responses =
+        fake_server.set_request_handler::<lsp::request::CodeLensRequest, _, _>(|_, _| async move {
+            panic!("No more code lens requests are expected");
+        });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_all(&SelectAll, window, cx);
+    });
+    cx.executor().run_until_parked();
+    let new_actions = cx
+        .update_window(*workspace, |_, window, cx| {
+            project.code_actions(&buffer, anchor..anchor, window, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        actions, new_actions,
+        "Code lens are queried for the same range and should get the same set back, but without additional LSP queries now"
+    );
 }
 
 #[gpui::test]
