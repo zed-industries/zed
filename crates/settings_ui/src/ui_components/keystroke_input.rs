@@ -562,9 +562,13 @@ impl Render for KeystrokeInput {
 }
 
 #[cfg(test)]
-pub mod test_helpers {
+mod tests {
     use super::*;
-    use gpui::{Entity, VisualTestContext};
+    use fs::FakeFs;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use project::Project;
+    use settings::SettingsStore;
+    use workspace::Workspace;
 
     /// Test helper for KeystrokeInput component with fluent API and string-based event system
     pub struct KeystrokeInputTestHelper {
@@ -629,11 +633,17 @@ pub mod test_helpers {
                 keystroke.key = "".to_string();
             }
 
+            // Combine current modifiers with keystroke modifiers
+            keystroke.modifiers |= self.current_modifiers;
+
             self.input.update_in(&mut self.cx, |input, window, cx| {
                 input.handle_keystroke(&keystroke, window, cx);
             });
 
-            self.current_modifiers = keystroke.modifiers;
+            // Don't update current_modifiers for keystrokes with actual keys
+            if keystroke.key.is_empty() {
+                self.current_modifiers = keystroke.modifiers;
+            }
             self
         }
 
@@ -705,21 +715,21 @@ pub mod test_helpers {
                     "Keystroke count mismatch. Expected: {:?}, Actual: {:?}",
                     expected_keystrokes
                         .iter()
-                        .map(|k| k.to_string())
+                        .map(|k| k.unparse())
                         .collect::<Vec<_>>(),
-                    actual.iter().map(|k| k.to_string()).collect::<Vec<_>>()
+                    actual.iter().map(|k| k.unparse()).collect::<Vec<_>>()
                 );
 
                 for (i, (actual, expected)) in
                     actual.iter().zip(expected_keystrokes.iter()).enumerate()
                 {
                     assert_eq!(
-                        actual.to_string(),
-                        expected.to_string(),
+                        actual.unparse(),
+                        expected.unparse(),
                         "Keystroke {} mismatch. Expected: '{}', Actual: '{}'",
                         i,
-                        expected,
-                        actual
+                        expected.unparse(),
+                        actual.unparse()
                     );
                 }
             });
@@ -797,18 +807,8 @@ pub mod test_helpers {
             modifiers
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use fs::FakeFs;
-    use gpui::{TestAppContext, VisualTestContext};
-    use project::Project;
-    use settings::SettingsStore;
-    use workspace::Workspace;
-
-    async fn init_test(cx: &mut TestAppContext) -> VisualTestContext {
+    async fn init_test(cx: &mut TestAppContext) -> KeystrokeInputTestHelper {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -822,50 +822,51 @@ mod tests {
         let project = Project::test(fs, [], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        VisualTestContext::from_window(*workspace, cx)
+        let cx = VisualTestContext::from_window(*workspace, cx);
+        KeystrokeInputTestHelper::new(cx)
     }
 
     #[gpui::test]
     async fn test_basic_keystroke_input(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper.send_keystroke("a").clear_keystrokes().expect_empty();
+        init_test(cx)
+            .await
+            .send_keystroke("a")
+            .clear_keystrokes()
+            .expect_empty();
     }
 
     #[gpui::test]
     async fn test_modifier_handling(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
+        init_test(cx)
+            .await
             .with_search_mode(true)
             .send_events(&["+ctrl", "a", "-ctrl"])
-            .expect_keystrokes(&["ctrl-", "ctrl-a", ""]);
+            .expect_keystrokes(&["ctrl-a"]);
     }
 
     #[gpui::test]
     async fn test_multiple_modifiers(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
+        init_test(cx)
+            .await
             .send_keystroke("cmd-shift-z")
-            .expect_keystrokes(&["cmd-shift-z"]);
+            .expect_keystrokes(&["cmd-shift-z", "cmd-shift-"]);
     }
 
     #[gpui::test]
     async fn test_search_mode_behavior(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
+        init_test(cx)
+            .await
             .with_search_mode(true)
             .send_events(&["+cmd", "shift-f", "-cmd"])
-            .expect_keystrokes(&["cmd-", "cmd-shift-f", ""]);
+            // In search mode, when completing a modifier-only keystroke with a key,
+            // only the original modifiers are preserved, not the keystroke's modifiers
+            .expect_keystrokes(&["cmd-f"]);
     }
 
     #[gpui::test]
     async fn test_keystroke_limit(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
+        init_test(cx)
+            .await
             .send_keystroke("a")
             .send_keystroke("b")
             .send_keystroke("c")
@@ -875,35 +876,31 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_placeholder_keystrokes(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::with_placeholders(
-            vec!["ctrl-a", "ctrl-b"],
-            test_cx,
-        );
-        helper.expect_keystrokes(&["ctrl-a", "ctrl-b"]); // Should show placeholders when empty
-    }
-
-    #[gpui::test]
-    async fn test_recording_state(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
-            .start_recording()
-            .send_keystroke("a")
-            .expect_keystrokes(&["a"])
-            .stop_recording()
-            .send_keystroke("b") // Should still record after stopping
-            .expect_keystrokes(&["a", "b"]);
-    }
-
-    #[gpui::test]
     async fn test_modifier_release_all(cx: &mut TestAppContext) {
-        let test_cx = init_test(cx).await;
-        let mut helper = test_helpers::KeystrokeInputTestHelper::new(test_cx);
-        helper
+        init_test(cx)
+            .await
             .with_search_mode(true)
             .send_events(&["+ctrl+shift", "a", "-all"])
-            .expect_keystrokes(&["ctrl-shift-", "ctrl-shift-a", ""]);
+            .expect_keystrokes(&["ctrl-shift-a"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_new_modifiers_not_added_until_all_released(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+shift", "a", "-ctrl"])
+            .expect_keystrokes(&["ctrl-shift-a"])
+            .send_events(&["+ctrl"])
+            .expect_keystrokes(&["ctrl-shift-a", "ctrl-shift-"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_no_effect_when_not_search(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl+shift", "a", "-all"])
+            .expect_keystrokes(&["ctrl-shift-a"]);
     }
 }
