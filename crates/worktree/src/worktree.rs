@@ -2777,12 +2777,7 @@ impl LocalSnapshot {
         inodes
     }
 
-    fn ignore_stack_for_abs_path(
-        &self,
-        abs_path: &Path,
-        is_dir: bool,
-        fs: &dyn Fs,
-    ) -> Arc<IgnoreStack> {
+    fn ignore_stack_for_abs_path(&self, abs_path: &Path, is_dir: bool, fs: &dyn Fs) -> IgnoreStack {
         let mut new_ignores = Vec::new();
         let mut repo_root = None;
         for (index, ancestor) in abs_path.ancestors().enumerate() {
@@ -2803,10 +2798,11 @@ impl LocalSnapshot {
         }
 
         let mut ignore_stack = if let Some(global_gitignore) = self.global_gitignore.clone() {
-            IgnoreStack::global(repo_root, global_gitignore)
+            IgnoreStack::global(global_gitignore)
         } else {
             IgnoreStack::none()
         };
+        ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
                 ignore_stack = IgnoreStack::all();
@@ -4369,12 +4365,14 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *GITIGNORE);
         swap_to_front(&mut child_paths, *DOT_GIT);
 
+        let mut repo_root = None;
         for child_abs_path in child_paths {
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
+                repo_root = Some(child_abs_path.clone());
                 let mut state = self.state.lock();
                 state.insert_git_repository(
                     child_path.clone(),
@@ -4386,6 +4384,9 @@ impl BackgroundScanner {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
                         ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
+                        if let Some(repo_root) = repo_root.clone() {
+                            ignore_stack.repo_root = Some(repo_root);
+                        }
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
@@ -4688,7 +4689,7 @@ impl BackgroundScanner {
         &self,
         scan_job_tx: Sender<ScanJob>,
         prev_snapshot: LocalSnapshot,
-        mut ignores_to_update: impl Iterator<Item = (Arc<Path>, Arc<IgnoreStack>)>,
+        mut ignores_to_update: impl Iterator<Item = (Arc<Path>, IgnoreStack)>,
     ) {
         let (ignore_queue_tx, ignore_queue_rx) = channel::unbounded();
         {
@@ -5147,7 +5148,7 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
 struct ScanJob {
     abs_path: Arc<Path>,
     path: Arc<Path>,
-    ignore_stack: Arc<IgnoreStack>,
+    ignore_stack: IgnoreStack,
     scan_queue: Sender<ScanJob>,
     ancestor_inodes: TreeSet<u64>,
     is_external: bool,
@@ -5155,7 +5156,7 @@ struct ScanJob {
 
 struct UpdateIgnoreStatusJob {
     abs_path: Arc<Path>,
-    ignore_stack: Arc<IgnoreStack>,
+    ignore_stack: IgnoreStack,
     ignore_queue: Sender<UpdateIgnoreStatusJob>,
     scan_queue: Sender<ScanJob>,
 }
