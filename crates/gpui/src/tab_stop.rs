@@ -108,6 +108,11 @@ mod tests {
 
         // Select first tab index if no handle is currently focused.
         assert_eq!(tab.next(None), Some(tab.handles[0].clone()));
+        // Select last tab index if no handle is currently focused.
+        assert_eq!(
+            tab.prev(None),
+            Some(tab.handles[tab.handles.len() - 1].clone())
+        );
 
         assert_eq!(
             tab.next(Some(&tab.handles[0].id)),
