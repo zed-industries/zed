@@ -21,6 +21,9 @@ actions!(
 
 const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
 
+const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(300);
+
 enum CloseKeystrokeResult {
     Partial,
     Close,
@@ -50,8 +53,15 @@ pub struct KeystrokeInput {
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
     previous_modifiers: Modifiers,
+    /// In order to support inputting keystrokes that end with a prefix of the
+    /// close keybind keystrokes, we clear the close keystroke capture info
+    /// on a timeout after a close keystroke is pressed
+    ///
+    /// e.g. if close binding is `esc esc esc` and user wants to search for
+    /// `ctrl-g esc`, after entering the `ctrl-g esc`, hitting `esc` twice would
+    /// stop recording because of the sequence of three escapes making it
+    /// impossible to search for anything ending in `esc`
     clear_close_keystrokes_timer: Option<Task<()>>,
-    /// Is the current input in recording mode
     #[cfg(test)]
     recording: bool,
 }
@@ -158,7 +168,7 @@ impl KeystrokeInput {
     fn update_clear_close_keystrokes_timer(&mut self, cx: &mut Context<Self>) {
         self.clear_close_keystrokes_timer = Some(cx.spawn(async |this, cx| {
             cx.background_executor()
-                .timer(std::time::Duration::from_millis(300))
+                .timer(CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT)
                 .await;
             this.update(cx, |this, _cx| {
                 this.end_close_keystrokes_capture();
@@ -682,6 +692,7 @@ mod tests {
 
         /// Sends a keystroke event based on string description
         /// Examples: "a", "ctrl-a", "cmd-shift-z", "escape"
+        #[track_caller]
         pub fn send_keystroke(&mut self, keystroke_input: &str) -> &mut Self {
             self.expect_is_recording(true);
             let keystroke_str = if keystroke_input.ends_with('-') {
@@ -714,6 +725,7 @@ mod tests {
 
         /// Sends a modifier change event based on string description
         /// Examples: "+ctrl", "-ctrl", "+cmd+shift", "-all"
+        #[track_caller]
         pub fn send_modifiers(&mut self, modifiers: &str) -> &mut Self {
             self.expect_is_recording(true);
             let new_modifiers = if modifiers == "-all" {
@@ -737,6 +749,7 @@ mod tests {
 
         /// Sends multiple events in sequence
         /// Each event string is either a keystroke or modifier change
+        #[track_caller]
         pub fn send_events(&mut self, events: &[&str]) -> &mut Self {
             self.expect_is_recording(true);
             for event in events {
@@ -749,9 +762,8 @@ mod tests {
             self
         }
 
-        /// Verifies that the keystrokes match the expected strings
         #[track_caller]
-        pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+        fn expect_keystrokes_equal(actual: &[Keystroke], expected: &[&str]) {
             let expected_keystrokes: Result<Vec<Keystroke>, _> = expected
                 .iter()
                 .map(|s| {
@@ -775,9 +787,6 @@ mod tests {
             let expected_keystrokes = expected_keystrokes
                 .unwrap_or_else(|e: anyhow::Error| panic!("Invalid expected keystroke: {}", e));
 
-            let actual = self
-                .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
             assert_eq!(
                 actual.len(),
                 expected_keystrokes.len(),
@@ -800,6 +809,25 @@ mod tests {
                     actual.unparse()
                 );
             }
+        }
+
+        /// Verifies that the keystrokes match the expected strings
+        #[track_caller]
+        pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+            let actual = self
+                .input
+                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+            Self::expect_keystrokes_equal(&actual, expected);
+            self
+        }
+
+        #[track_caller]
+        pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+            let actual = self
+                .input
+                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .unwrap_or_default();
+            Self::expect_keystrokes_equal(&actual, expected);
             self
         }
 
@@ -847,6 +875,18 @@ mod tests {
                 "Recording state mismatch. Expected: {}, Actual: {}",
                 expected, actual
             );
+            self
+        }
+
+        pub async fn wait_for_close_keystroke_capture_end(&mut self) -> &mut Self {
+            let task = self.input.update_in(&mut self.cx, |input, window, cx| {
+                input.clear_close_keystrokes_timer.take()
+            });
+            let task = task.expect("No close keystroke capture end timer task");
+            self.cx
+                .executor()
+                .advance_clock(CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT);
+            task.await;
             self
         }
 
@@ -1198,5 +1238,20 @@ mod tests {
             .with_search_mode(true)
             .send_events(&["escape", "escape", "escape"]) // Pure triple escape sequence
             .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_end_close_keystroke_capture(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .send_events(&["+ctrl", "g", "-ctrl", "escape"])
+            .expect_keystrokes(&["ctrl-g", "escape", ""])
+            .wait_for_close_keystroke_capture_end()
+            .await
+            .send_events(&["escape", "escape"])
+            .expect_keystrokes(&["ctrl-g", "escape", "escape"])
+            .expect_close_keystrokes(&["escape", "escape"])
+            .send_keystroke("escape")
+            .expect_keystrokes(&["ctrl-g", "escape"]);
     }
 }
