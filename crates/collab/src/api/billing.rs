@@ -87,6 +87,14 @@ async fn poll_stripe_events(
     stripe_client: &Arc<dyn StripeClient>,
     real_stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_events_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-events-polling" && flag.enabled_for_all);
+    if sync_events_using_cloud {
+        return Ok(());
+    }
+
     fn event_type_to_string(event_type: EventType) -> String {
         // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
         // so we need to unquote it.
@@ -569,6 +577,14 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_model_request_usage_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-usage-meters-sync" && flag.enabled_for_all);
+    if sync_model_request_usage_using_cloud {
+        return Ok(());
+    }
+
     log::info!("Stripe usage sync: Starting");
     let started_at = Utc::now();
 
