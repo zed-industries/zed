@@ -58,7 +58,8 @@ impl State {
     }
 
     fn is_authenticated(&self) -> bool {
-        matches!(self.status, ModelStatus::Loaded)
+        // Local models don't require authentication
+        true
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
@@ -150,8 +151,9 @@ impl LanguageModelProvider for LocalLanguageModelProvider {
         self.default_model(cx)
     }
 
-    fn is_authenticated(&self, cx: &App) -> bool {
-        self.state.read(cx).is_authenticated()
+    fn is_authenticated(&self, _cx: &App) -> bool {
+        // Local models don't require authentication
+        true
     }
 
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>> {
