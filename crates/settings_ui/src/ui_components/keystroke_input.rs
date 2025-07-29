@@ -239,46 +239,48 @@ impl KeystrokeInput {
     fn on_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.stop_propagation();
         let keystrokes_len = self.keystrokes.len();
 
         if self.previous_modifiers.modified()
             && event.modifiers.is_subset_of(&self.previous_modifiers)
         {
             self.previous_modifiers &= event.modifiers;
-            cx.stop_propagation();
             return;
         }
+        self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
+            if !self.search && !event.modifiers.modified() {
+                self.keystrokes.pop();
+                return;
+            }
             if self.search {
                 if self.previous_modifiers.modified() {
                     last.modifiers |= event.modifiers;
-                    self.previous_modifiers |= event.modifiers;
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
-                    self.previous_modifiers |= event.modifiers;
                 }
-            } else if !event.modifiers.modified() {
-                self.keystrokes.pop();
+                self.previous_modifiers |= event.modifiers;
             } else {
                 last.modifiers = event.modifiers;
+                return;
             }
-
-            self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
             if self.search {
                 self.previous_modifiers |= event.modifiers;
             }
-            self.keystrokes_changed(cx);
         }
-        cx.stop_propagation();
+        if keystrokes_len >= Self::KEYSTROKE_COUNT_MAX {
+            self.clear_keystrokes(&ClearKeystrokes, window, cx);
+        }
     }
 
     fn handle_keystroke(
@@ -287,56 +289,47 @@ impl KeystrokeInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.stop_propagation();
+
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
         if close_keystroke_result == CloseKeystrokeResult::Close {
             self.stop_recording(&StopRecording, window, cx);
             return;
         }
-        let key_len = self.keystrokes.len();
-        if let Some(last) = self.keystrokes.last_mut()
+
+        let mut keystroke = keystroke.clone();
+        if let Some(last) = self.keystrokes.last()
             && last.key.is_empty()
-            && key_len <= Self::KEYSTROKE_COUNT_MAX
+            && (!self.search || self.previous_modifiers.modified())
         {
-            if self.search {
-                last.key = keystroke.key.clone();
-                if close_keystroke_result == CloseKeystrokeResult::Partial
-                    && self.close_keystrokes_start.is_none()
-                {
-                    self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
-                }
-                if self.search {
-                    self.previous_modifiers = keystroke.modifiers;
-                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
-                    && keystroke.modifiers.modified()
-                {
-                    self.keystrokes.push(Self::dummy(keystroke.modifiers));
-                }
-                self.keystrokes_changed(cx);
-                cx.stop_propagation();
+            let key = keystroke.key.clone();
+            keystroke = last.clone();
+            keystroke.key = key;
+            self.keystrokes.pop();
+        }
+
+        if close_keystroke_result == CloseKeystrokeResult::Partial {
+            self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
+            if self.keystrokes.len() >= Self::KEYSTROKE_COUNT_MAX {
                 return;
-            } else {
-                self.keystrokes.pop();
             }
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-            if close_keystroke_result == CloseKeystrokeResult::Partial
-                && self.close_keystrokes_start.is_none()
-            {
-                self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
-            }
-            self.keystrokes.push(keystroke.clone());
-            if self.search {
-                self.previous_modifiers = keystroke.modifiers;
-            } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
-                && keystroke.modifiers.modified()
-            {
-                self.keystrokes.push(Self::dummy(keystroke.modifiers));
-            }
-        } else if close_keystroke_result != CloseKeystrokeResult::Partial {
+
+        if self.keystrokes.len() >= Self::KEYSTROKE_COUNT_MAX {
             self.clear_keystrokes(&ClearKeystrokes, window, cx);
+            return;
         }
+
+        self.keystrokes.push(keystroke.clone());
         self.keystrokes_changed(cx);
-        cx.stop_propagation();
+
+        if self.search {
+            self.previous_modifiers = keystroke.modifiers;
+            return;
+        }
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && keystroke.modifiers.modified() {
+            self.keystrokes.push(Self::dummy(keystroke.modifiers));
+        }
     }
 
     fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -429,6 +422,7 @@ impl KeystrokeInput {
     ) {
         self.keystrokes.clear();
         self.keystrokes_changed(cx);
+        self.end_close_keystrokes_capture();
     }
 
     fn is_recording(&self, window: &Window) -> bool {
@@ -657,6 +651,7 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::{Entity, TestAppContext, VisualTestContext};
+    use itertools::Itertools as _;
     use project::Project;
     use settings::SettingsStore;
     use workspace::Workspace;
@@ -712,7 +707,7 @@ mod tests {
             // Combine current modifiers with keystroke modifiers
             keystroke.modifiers |= self.current_modifiers;
 
-            self.input.update_in(&mut self.cx, |input, window, cx| {
+            self.update_input(|input, window, cx| {
                 input.handle_keystroke(&keystroke, window, cx);
             });
 
@@ -739,7 +734,7 @@ mod tests {
                 capslock: gpui::Capslock::default(),
             };
 
-            self.input.update_in(&mut self.cx, |input, window, cx| {
+            self.update_input(|input, window, cx| {
                 input.on_modifiers_changed(&event, window, cx);
             });
 
@@ -857,10 +852,14 @@ mod tests {
         }
 
         /// Clears all keystrokes
+        #[track_caller]
         pub fn clear_keystrokes(&mut self) -> &mut Self {
+            let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
             self.input.update_in(&mut self.cx, |input, window, cx| {
                 input.clear_keystrokes(&ClearKeystrokes, window, cx);
             });
+            KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
+            self.current_modifiers = Default::default();
             self
         }
 
@@ -891,36 +890,102 @@ mod tests {
         }
 
         /// Parses modifier change strings like "+ctrl", "-shift", "+cmd+alt"
+        #[track_caller]
         fn parse_modifier_change(&self, modifiers_str: &str) -> Modifiers {
             let mut modifiers = self.current_modifiers;
 
+            assert!(!modifiers_str.is_empty(), "Empty modifier string");
+
+            let value;
+            let split_char;
+            let remaining;
             if let Some(to_add) = modifiers_str.strip_prefix('+') {
-                // Add modifiers
-                for modifier in to_add.split('+') {
-                    match modifier {
-                        "ctrl" | "control" => modifiers.control = true,
-                        "alt" | "option" => modifiers.alt = true,
-                        "shift" => modifiers.shift = true,
-                        "cmd" | "command" => modifiers.platform = true,
-                        "fn" | "function" => modifiers.function = true,
-                        _ => panic!("Unknown modifier: {}", modifier),
-                    }
-                }
-            } else if let Some(to_remove) = modifiers_str.strip_prefix('-') {
-                // Remove modifiers
-                for modifier in to_remove.split('+') {
-                    match modifier {
-                        "ctrl" | "control" => modifiers.control = false,
-                        "alt" | "option" => modifiers.alt = false,
-                        "shift" => modifiers.shift = false,
-                        "cmd" | "command" => modifiers.platform = false,
-                        "fn" | "function" => modifiers.function = false,
-                        _ => panic!("Unknown modifier: {}", modifier),
-                    }
+                value = true;
+                split_char = '+';
+                remaining = to_add;
+            } else {
+                let to_remove = modifiers_str
+                    .strip_prefix('-')
+                    .expect("Modifier string must start with '+' or '-'");
+                value = false;
+                split_char = '-';
+                remaining = to_remove;
+            }
+
+            for modifier in remaining.split(split_char) {
+                match modifier {
+                    "ctrl" | "control" => modifiers.control = value,
+                    "alt" | "option" => modifiers.alt = value,
+                    "shift" => modifiers.shift = value,
+                    "cmd" | "command" | "platform" => modifiers.platform = value,
+                    "fn" | "function" => modifiers.function = value,
+                    _ => panic!("Unknown modifier: {}", modifier),
                 }
             }
 
             modifiers
+        }
+
+        #[track_caller]
+        fn update_input<R>(
+            &mut self,
+            cb: impl FnOnce(&mut KeystrokeInput, &mut Window, &mut Context<KeystrokeInput>) -> R,
+        ) -> R {
+            let change_tracker = KeystrokeUpdateTracker::new(self.input.clone(), &mut self.cx);
+            let result = self.input.update_in(&mut self.cx, cb);
+            KeystrokeUpdateTracker::finish(change_tracker, &self.cx);
+            return result;
+        }
+    }
+
+    struct KeystrokeUpdateTracker {
+        initial_keystrokes: Vec<Keystroke>,
+        _subscription: Subscription,
+        input: Entity<KeystrokeInput>,
+        received_keystrokes_updated: bool,
+    }
+
+    impl KeystrokeUpdateTracker {
+        fn new(input: Entity<KeystrokeInput>, cx: &mut VisualTestContext) -> Entity<Self> {
+            cx.new(|cx| Self {
+                initial_keystrokes: input.read_with(cx, |input, _| input.keystrokes.clone()),
+                _subscription: cx.subscribe(&input, |this: &mut Self, _, _, _| {
+                    this.received_keystrokes_updated = true;
+                }),
+                input,
+                received_keystrokes_updated: false,
+            })
+        }
+        #[track_caller]
+        fn finish(this: Entity<Self>, cx: &VisualTestContext) {
+            let (received_keystrokes_updated, initial_keystrokes_str, updated_keystrokes_str) =
+                this.read_with(cx, |this, cx| {
+                    let updated_keystrokes = this
+                        .input
+                        .read_with(cx, |input, _| input.keystrokes.clone());
+                    let initial_keystrokes_str = keystrokes_str(&this.initial_keystrokes);
+                    let updated_keystrokes_str = keystrokes_str(&updated_keystrokes);
+                    (
+                        this.received_keystrokes_updated,
+                        initial_keystrokes_str,
+                        updated_keystrokes_str,
+                    )
+                });
+            if received_keystrokes_updated {
+                assert_ne!(
+                    initial_keystrokes_str, updated_keystrokes_str,
+                    "Received keystrokes_updated event, expected different keystrokes"
+                );
+            } else {
+                assert_eq!(
+                    initial_keystrokes_str, updated_keystrokes_str,
+                    "Received no keystrokes_updated event, expected same keystrokes"
+                );
+            }
+
+            fn keystrokes_str(ks: &[Keystroke]) -> String {
+                ks.iter().map(|ks| ks.unparse()).join(" ")
+            }
         }
     }
 
@@ -1253,5 +1318,71 @@ mod tests {
             .expect_close_keystrokes(&["escape", "escape"])
             .send_keystroke("escape")
             .expect_keystrokes(&["ctrl-g", "escape"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_previous_modifiers_are_sticky(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "j"])
+            .expect_keystrokes(&["ctrl-alt-j"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_can_be_entered_separately(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "-ctrl"])
+            .expect_keystrokes(&["ctrl-"])
+            .send_events(&["+alt", "-alt"])
+            .expect_keystrokes(&["ctrl-", "alt-"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_reset_on_key(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
+            .expect_keystrokes(&["ctrl-shift-alt-"])
+            .send_keystroke("j")
+            .expect_keystrokes(&["ctrl-shift-alt-j"])
+            .send_keystroke("i")
+            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i"])
+            .send_events(&["-shift-alt", "+cmd"])
+            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i", "cmd-"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_reset_on_release_all(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
+            .expect_keystrokes(&["ctrl-shift-alt-"])
+            .send_events(&["-all", "j"])
+            .expect_keystrokes(&["ctrl-shift-alt-", "j"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_repeat_modifiers(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
+            .expect_keystrokes(&["ctrl-", "alt-", "shift-"])
+            .send_events(&["+cmd"])
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_not_search_repeat_modifiers(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
+            .expect_empty();
     }
 }
