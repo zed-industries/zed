@@ -589,25 +589,6 @@ mod tests {
             }
         }
 
-        /// Creates a new test helper with placeholder keystrokes
-        pub fn with_placeholders(placeholders: Vec<&str>, mut cx: VisualTestContext) -> Self {
-            let placeholder_keystrokes: Result<Vec<Keystroke>, _> =
-                placeholders.into_iter().map(Keystroke::parse).collect();
-
-            let placeholder_keystrokes =
-                placeholder_keystrokes.expect("Invalid placeholder keystroke");
-
-            let input = cx.new_window_entity(|window, cx| {
-                KeystrokeInput::new(Some(placeholder_keystrokes), window, cx)
-            });
-
-            Self {
-                input,
-                current_modifiers: Modifiers::default(),
-                cx,
-            }
-        }
-
         /// Sets search mode on the input
         pub fn with_search_mode(&mut self, search: bool) -> &mut Self {
             self.input.update(&mut self.cx, |input, _| {
@@ -766,12 +747,6 @@ mod tests {
             self
         }
 
-        /// Gets the current keystrokes (for advanced assertions)
-        pub fn keystrokes(&mut self) -> Vec<Keystroke> {
-            self.input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone())
-        }
-
         /// Parses modifier change strings like "+ctrl", "-shift", "+cmd+alt"
         fn parse_modifier_change(&self, modifiers_str: &str) -> Modifiers {
             let mut modifiers = self.current_modifiers;
@@ -901,6 +876,142 @@ mod tests {
             .await
             .with_search_mode(false)
             .send_events(&["+ctrl+shift", "a", "-all"])
+            .expect_keystrokes(&["ctrl-shift-a"]);
+    }
+
+    #[gpui::test]
+    async fn test_keystroke_limit_overflow_non_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["a", "b", "c", "d"]) // 4 keystrokes, exceeds limit of 3
+            .expect_empty(); // Should clear when exceeding limit
+    }
+
+    #[gpui::test]
+    async fn test_complex_modifier_sequences(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "+shift", "+alt", "a", "-ctrl", "-shift", "-alt"])
+            .expect_keystrokes(&["ctrl-shift-alt-a"]);
+    }
+
+    #[gpui::test]
+    async fn test_modifier_only_keystrokes_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "+shift", "-ctrl", "-shift"])
+            .expect_keystrokes(&["ctrl-shift-"]); // Modifier-only sequences create modifier-only keystrokes
+    }
+
+    #[gpui::test]
+    async fn test_modifier_only_keystrokes_non_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "+shift", "-ctrl", "-shift"])
+            .expect_empty(); // Modifier-only sequences get filtered in non-search mode
+    }
+
+    #[gpui::test]
+    async fn test_rapid_modifier_changes(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "-ctrl", "+shift", "-shift", "+alt", "a", "-alt"])
+            .expect_keystrokes(&["ctrl-", "shift-", "alt-a"]);
+    }
+
+    #[gpui::test]
+    async fn test_clear_keystrokes_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "a", "-ctrl", "b"])
+            .expect_keystrokes(&["ctrl-a", "b"])
+            .clear_keystrokes()
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_non_search_mode_modifier_key_sequence(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "a", "-ctrl"])
+            .expect_keystrokes(&["ctrl-a"]); // Non-search mode filters trailing empty keystrokes
+    }
+
+    #[gpui::test]
+    async fn test_all_modifiers_at_once(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+shift+alt+cmd", "a", "-all"])
+            .expect_keystrokes(&["ctrl-shift-alt-cmd-a"]);
+    }
+
+    #[gpui::test]
+    async fn test_keystrokes_at_exact_limit(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["a", "b", "c"]) // exactly 3 keystrokes (at limit)
+            .expect_keystrokes(&["a", "b", "c"])
+            .send_events(&["d"]) // should clear when exceeding
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_function_modifier_key(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+fn", "f1", "-fn"])
+            .expect_keystrokes(&["fn-f1"]);
+    }
+
+    #[gpui::test]
+    async fn test_start_stop_recording(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["a"])
+            .expect_keystrokes(&["a"])
+            .start_recording()
+            .send_events(&["b"])
+            .expect_keystrokes(&["b"]) // start_recording clears existing keystrokes
+            .stop_recording()
+            .send_events(&["c"])
+            .expect_keystrokes(&["b", "c"]);
+    }
+
+    #[gpui::test]
+    async fn test_modifier_sequence_with_interruption(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "+shift", "a", "-shift", "b", "-ctrl"])
+            .expect_keystrokes(&["ctrl-shift-a", "ctrl-b"]);
+    }
+
+    #[gpui::test]
+    async fn test_empty_key_sequence_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&[]) // No events at all
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_modifier_sequence_completion_search_mode(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "+shift", "-shift", "a", "-ctrl"])
             .expect_keystrokes(&["ctrl-shift-a"]);
     }
 }
