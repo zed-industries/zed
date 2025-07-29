@@ -53,7 +53,7 @@ impl std::fmt::Debug for ContextServerCommand {
 }
 
 enum ContextServerTransport {
-    Stdio(ContextServerCommand),
+    Stdio(ContextServerCommand, Option<PathBuf>),
     Custom(Arc<dyn crate::transport::Transport>),
 }
 
@@ -64,11 +64,18 @@ pub struct ContextServer {
 }
 
 impl ContextServer {
-    pub fn stdio(id: ContextServerId, command: ContextServerCommand) -> Self {
+    pub fn stdio(
+        id: ContextServerId,
+        command: ContextServerCommand,
+        working_directory: Option<Arc<Path>>,
+    ) -> Self {
         Self {
             id,
             client: RwLock::new(None),
-            configuration: ContextServerTransport::Stdio(command),
+            configuration: ContextServerTransport::Stdio(
+                command,
+                working_directory.map(|directory| directory.to_path_buf()),
+            ),
         }
     }
 
@@ -90,13 +97,14 @@ impl ContextServer {
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         let client = match &self.configuration {
-            ContextServerTransport::Stdio(command) => Client::stdio(
+            ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
                 client::ModelContextServerBinary {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
                 },
+                working_directory,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(

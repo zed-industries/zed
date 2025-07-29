@@ -158,6 +158,7 @@ impl Client {
     pub fn stdio(
         server_id: ContextServerId,
         binary: ModelContextServerBinary,
+        working_directory: &Option<PathBuf>,
         cx: AsyncApp,
     ) -> Result<Self> {
         log::info!(
@@ -172,7 +173,7 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
-        let transport = Arc::new(StdioTransport::new(binary, &cx)?);
+        let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, cx)
     }
 
