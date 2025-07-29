@@ -1483,25 +1483,28 @@ impl BufferSearchBar {
     }
 
     // Determines which pattern items are present in the search query and
-    // updates the search options accordingly.
+    // updates the search options accordingly, only if the regex search option
+    // is enabled.
     fn apply_pattern_items(&mut self, cx: &mut Context<Self>) {
-        // Start from the default search options to ensure that any search
-        // option that is not to be updated does not changed.
-        // For example, if `\c` was present in the query and the case
-        // sensitivity was initially enabled, removing `\c` from the query
-        // should re-enable case sensitivity.
-        let mut search_options = self.default_options;
-        let query = self.raw_query(cx);
+        if self.search_options.contains(SearchOptions::REGEX) {
+            // Start from the default search options to ensure that any search
+            // option that is not to be updated does not changed.
+            // For example, if `\c` was present in the query and the case
+            // sensitivity was initially enabled, removing `\c` from the query
+            // should re-enable case sensitivity.
+            let mut search_options = self.default_options;
+            let query = self.raw_query(cx);
 
-        for (pattern, search_option, value) in PATTERN_ITEMS {
-            match (query.contains(pattern), value) {
-                (true, true) => search_options.set(*search_option, value),
-                (true, false) => search_options.set(*search_option, value),
-                (false, _) => (),
+            for (pattern, search_option, value) in PATTERN_ITEMS {
+                match (query.contains(pattern), value) {
+                    (true, true) => search_options.set(*search_option, value),
+                    (true, false) => search_options.set(*search_option, value),
+                    (false, _) => (),
+                }
             }
-        }
 
-        self.set_search_options(search_options, cx);
+            self.set_search_options(search_options, cx);
+        }
     }
 
     fn adjust_query_regex_language(&self, cx: &mut App) {
@@ -2921,8 +2924,24 @@ mod tests {
         search_bar.update_in(cx, |search_bar, _, _| {
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::CASE_SENSITIVE,
-                "Should have case sensitivity enabled when \\C pattern item is present"
+                SearchOptions::NONE,
+                "Should not apply pattern items if regex not enabled"
+            );
+        });
+
+        cx.simulate_keystrokes("backspace backspace");
+
+        search_bar.update_in(cx, |search_bar, window, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+        });
+
+        cx.simulate_input("\\C");
+
+        search_bar.update_in(cx, |search_bar, _, _| {
+            assert_eq!(
+                search_bar.search_options,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
+                "Should have case sensitivity enabled when \\C pattern item is present and regex is enabled"
             );
         });
 
@@ -2933,14 +2952,14 @@ mod tests {
             assert_eq!(search_bar.raw_query(cx), "test");
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::NONE,
-                "Should have case sensitivity disable when \\C pattern item is removed"
+                SearchOptions::REGEX,
+                "Should have case sensitivity disabled when \\C pattern item is removed"
             );
 
             search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::CASE_SENSITIVE,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
                 "Should have case sensitivity enabled by default"
             );
         });
@@ -2952,7 +2971,7 @@ mod tests {
             assert_eq!(search_bar.raw_query(cx), "test\\c");
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::NONE,
+                SearchOptions::REGEX,
                 "Should have no case sensitivity enabled when \\c pattern item is present"
             );
         });
@@ -2963,7 +2982,7 @@ mod tests {
             assert_eq!(search_bar.raw_query(cx), "test");
             assert_eq!(
                 search_bar.search_options,
-                SearchOptions::CASE_SENSITIVE,
+                SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE,
                 "Should have case sensitivity enabled when \\c pattern item is removed"
             );
         });
