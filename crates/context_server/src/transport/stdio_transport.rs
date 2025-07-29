@@ -37,7 +37,6 @@ impl StdioTransport {
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
 
-        dbg!(&working_directory);
         if let Some(working_directory) = working_directory {
             command.current_dir(working_directory);
         }
