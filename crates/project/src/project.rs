@@ -113,7 +113,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, Point};
+use text::{Anchor, BufferId, OffsetRangeExt, Point};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -590,7 +590,7 @@ pub(crate) struct CoreCompletion {
 }
 
 /// A code action provided by a language server.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CodeAction {
     /// The id of the language server that produced this code action.
     pub server_id: LanguageServerId,
@@ -604,7 +604,7 @@ pub struct CodeAction {
 }
 
 /// An action sent back by a language server.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LspAction {
     /// An action with the full data, may have a command or may not.
     /// May require resolving.
@@ -3607,20 +3607,29 @@ impl Project {
         })
     }
 
-    pub fn code_lens<T: Clone + ToOffset>(
+    pub fn code_lens_actions<T: Clone + ToOffset>(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         range: Range<T>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        let snapshot = buffer_handle.read(cx).snapshot();
-        let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+        let snapshot = buffer.read(cx).snapshot();
+        let range = range.clone().to_owned().to_point(&snapshot);
+        let range_start = snapshot.anchor_before(range.start);
+        let range_end = if range.start == range.end {
+            range_start
+        } else {
+            snapshot.anchor_after(range.end)
+        };
+        let range = range_start..range_end;
         let code_lens_actions = self
             .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
+            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
 
         cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions.await?;
+            let mut code_lens_actions = code_lens_actions
+                .await
+                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
             code_lens_actions.retain(|code_lens_action| {
                 range
                     .start
