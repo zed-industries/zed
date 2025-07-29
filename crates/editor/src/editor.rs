@@ -11684,6 +11684,7 @@ impl Editor {
         let expand_rewrap_range = |range: Range<Point>, line_prefix: &str| -> Range<Point> {
             let mut range = range;
 
+            // TODO perf: limit expansion to start/end row of syntax node, if any (range_limit: Option<Range<_>>)
             'expand_upwards: while range.start.row > 0 {
                 let prev_row = range.start.row - 1;
                 if buffer.contains_str_at(Point::new(prev_row, 0), line_prefix)
@@ -11723,6 +11724,94 @@ impl Editor {
             let language_scope = buffer.language_scope_at(selection.head());
 
             let mut ranges = Vec::new();
+
+            // let mut initial_range = selection.range();
+            let initial_range = selection.range();
+
+            if selection.is_empty() {
+                // TODO layers is empty (no tree-sitter grammar)
+
+                'layers: for (node, node_text_range) in
+                    buffer.syntax_ancestor_all_layers(selection.range())
+                {
+                    let node_text_range = match node_text_range {
+                        MultiOrSingleBufferOffsetRange::Multi(range) => {
+                            buffer.offset_to_point(range.start)..buffer.offset_to_point(range.end)
+                        }
+                        // FIXME why is Single ignore-able?
+                        MultiOrSingleBufferOffsetRange::Single(_) => continue,
+                    };
+
+                    /*
+                     * Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id dignissim. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Praesent semper egestas tellus id dignissim.
+                     */
+                    // let node_range = node.range();
+                    let is_multiline_comment_node =
+                        node_text_range.start.row != node_text_range.end.row;
+                    // TODO consider overrides?
+                    // TODO !is_multiline_comment_node could be true for single line block comment: /*...*/
+                    // In Rust, both line and doc_comments are single line comments
+                    if ["line_comment", "doc_comment"].contains(&node.kind())
+                        || node.kind() == "comment" && !is_multiline_comment_node
+                    {
+                        // single line comment, expand up/down; initial_range is good enough
+                        // TODO detect prefix
+                        break 'layers;
+                    } else if node.kind() == "block_comment" || node.kind() == "comment" {
+                        // block comment
+
+                        // let comment_start_point = buffer.offset_to_point(range.start);
+                        if let Some((snapshot, line_range)) =
+                            buffer.buffer_line_for_row(MultiBufferRow(node_text_range.start.row))
+                        {
+                            dbg!(snapshot.text());
+                            dbg!(
+                                snapshot
+                                    .chars_for_range(line_range.clone())
+                                    .collect::<String>()
+                            );
+                            dbg!(
+                                snapshot
+                                    .chars_for_range(line_range.clone())
+                                    .take_while(|c| c.is_whitespace())
+                                    .collect::<String>()
+                            );
+
+                            let num_of_whitespaces = snapshot
+                                .chars_for_range(line_range.clone())
+                                .take_while(|c| c.is_whitespace())
+                                .count();
+
+                            // for more on this, look at:
+                            // https://github.com/zed-industries/zed/blob/69ba5e37387b67cdc9630b203ab205a5ee8ab3de/crates/editor/src/editor.rs#L4463
+
+                            // use all line_comment, block_comment and documentation_comment
+                            // to get max_len_of_delimiter
+                            let max_len_of_delimiter = 0;
+
+                            let _comment_candidate = snapshot
+                                .chars_for_range(node_text_range.clone())
+                                .skip(num_of_whitespaces)
+                                .take(max_len_of_delimiter)
+                                .collect::<String>();
+                        }
+
+                        // initial_range = node_text_range;
+
+                        // FIXME detect what starts the comment? any string of
+                        // non-whitespace/non-alpha chars?
+                        // FIXME always add " "?
+                        // FIXME find most common prefix? to account for adding a
+                        // line w/o a leading *
+                        // let comment_prefix =
+                        //     buffer.chars_at(indent_end).take(1).collect::<String>() + " ";
+                        // line_prefix.push_str(&comment_prefix);
+
+                        // comment_node_range = Some(excerpt.map_range_from_buffer(node.byte_range()));
+                        break 'layers;
+                    }
+                }
+            }
 
             let mut current_range_start = selection.start.row;
             let mut prev_row = selection.start.row;
@@ -21385,42 +21474,6 @@ fn rewrap_indent_and_prefix_for_row(
         let is_within_comment_override = buffer
             .language_scope_at(indent_end)
             .is_some_and(|scope| scope.override_name() == Some("comment"));
-
-        if selection.is_empty() {
-            if let Some((_, range)) = buffer.syntax_ancestor(selection.range()) {
-                let text_range = match range {
-                    MultiOrSingleBufferOffsetRange::Multi(r) => Some(r),
-                    MultiOrSingleBufferOffsetRange::Single(_) => None,
-                };
-                if let Some(range) = text_range {
-                    let comment_start_point = buffer.offset_to_point(range.start);
-                    if let Some((snapshot, line_range)) =
-                        buffer.buffer_line_for_row(MultiBufferRow(comment_start_point.row))
-                    {
-                        let num_of_whitespaces = snapshot
-                            .chars_for_range(line_range.clone())
-                            .take_while(|c| c.is_whitespace())
-                            .count();
-
-                        // for more on this, look at:
-                        // https://github.com/zed-industries/zed/blob/69ba5e37387b67cdc9630b203ab205a5ee8ab3de/crates/editor/src/editor.rs#L4463
-
-                        // use all line_comment, block_comment and documentation_comment
-                        // to get max_len_of_delimiter
-                        let max_len_of_delimiter = 0;
-
-                        let comment_candidate = snapshot
-                            .chars_for_range(range.clone())
-                            .skip(num_of_whitespaces)
-                            .take(max_len_of_delimiter)
-                            .collect::<String>();
-
-                        // comment_candidate can be //, /*, /**
-                        // add match statement, do your thing
-                    }
-                }
-            }
-        }
 
         let comment_delimiters = if is_within_comment_override {
             // we are within a comment syntax node, but we don't
