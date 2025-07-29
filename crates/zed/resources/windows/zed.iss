@@ -1245,16 +1245,6 @@ Root: HKCU; Subkey: "Software\Classes\zed\DefaultIcon"; ValueType: "string"; Val
 Root: HKCU; Subkey: "Software\Classes\zed\shell\open\command"; ValueType: "string"; ValueData: """{app}\Zed.exe"" ""%1"""
 
 [Code]
-function InitializeSetup(): Boolean;
-begin
-  Result := True;
-
-  if not WizardSilent() and IsAdmin() then begin
-    MsgBox('This User Installer is not meant to be run as an Administrator.', mbError, MB_OK);
-    Result := False;
-  end;
-end;
-
 function WizardNotSilent(): Boolean;
 begin
   Result := not WizardSilent();
