@@ -166,7 +166,6 @@ pub struct CachedLspAdapter {
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
     manifest_name: OnceLock<Option<ManifestName>>,
-    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -202,7 +201,6 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            attach_kind: Default::default(),
             manifest_name: Default::default(),
         })
     }
@@ -287,29 +285,6 @@ impl CachedLspAdapter {
         self.manifest_name
             .get_or_init(|| self.adapter.manifest_name())
             .clone()
-    }
-    pub fn attach_kind(&self) -> Attach {
-        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Attach {
-    /// Create a single language server instance per subproject root.
-    InstancePerRoot,
-    /// Use one shared language server instance for all subprojects within a project.
-    Shared,
-}
-
-impl Attach {
-    pub fn root_path(
-        &self,
-        root_subproject_path: (WorktreeId, Arc<Path>),
-    ) -> (WorktreeId, Arc<Path>) {
-        match self {
-            Attach::InstancePerRoot => root_subproject_path,
-            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
-        }
     }
 }
 
@@ -609,10 +584,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _: &App,
     ) -> Result<InitializeParams> {
         Ok(original)
-    }
-
-    fn attach_kind(&self) -> Attach {
-        Attach::Shared
     }
 
     /// Determines whether a language server supports workspace folders.

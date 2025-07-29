@@ -2425,36 +2425,12 @@ impl LocalLspStore {
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
-                         attach,
+
                          path,
                          settings,
                      }| {
-                        let server_id = match attach {
-                           language::Attach::InstancePerRoot => {
-                               // todo: handle instance per root proper.
-                               if let Some(server_ids) = self
-                                   .language_server_ids
-                                   .get(&(worktree_id, server_name.clone()))
-                               {
-                                   server_ids.iter().cloned().next().unwrap()
-                               } else {
-                                   let language_name = language.name();
-                                   let adapter = self.languages
-                                       .lsp_adapters(&language_name)
-                                       .into_iter()
-                                       .find(|adapter| &adapter.name() == server_name)
-                                       .expect("To find LSP adapter");
-                                   let server_id = self.start_language_server(
-                                       &worktree,
-                                       delegate.clone(),
-                                       adapter,
-                                       settings,
-                                       cx,
-                                   );
-                                   server_id
-                               }
-                           }
-                           language::Attach::Shared => {
+                        let server_id =
+                           {
                                let uri = Url::from_file_path(
                                    worktree.read(cx).abs_path().join(&path.path),
                                );
@@ -2489,7 +2465,7 @@ impl LocalLspStore {
                                } else {
                                    unreachable!("Language server ID should be available, as it's registered on demand")
                                }
-                           }
+
                         };
                         let lsp_store = self.weak.clone();
                         let server_name = server_node.name();
@@ -4705,35 +4681,11 @@ impl LspStore {
                                 let server_id = node.server_id_or_init(
                                     |LaunchDisposition {
                                          server_name,
-                                         attach,
+
                                          path,
                                          settings,
-                                     }| match attach {
-                                        language::Attach::InstancePerRoot => {
-                                            // todo: handle instance per root proper.
-                                            if let Some(server_ids) = local
-                                                .language_server_ids
-                                                .get(&(worktree_id, server_name.clone()))
-                                            {
-                                                server_ids.iter().cloned().next().unwrap()
-                                            } else {
-                                                let adapter = local
-                                                    .languages
-                                                    .lsp_adapters(&language)
-                                                    .into_iter()
-                                                    .find(|adapter| &adapter.name() == server_name)
-                                                    .expect("To find LSP adapter");
-                                                let server_id = local.start_language_server(
-                                                    &worktree,
-                                                    delegate.clone(),
-                                                    adapter,
-                                                    settings,
-                                                    cx,
-                                                );
-                                                server_id
-                                            }
-                                        }
-                                        language::Attach::Shared => {
+                                     }|
+                                         {
                                             let uri = Url::from_file_path(
                                                 worktree.read(cx).abs_path().join(&path.path),
                                             );
@@ -4762,7 +4714,6 @@ impl LspStore {
                                             }
                                             server_id
                                         }
-                                    },
                                 );
 
                                 if let Some(language_server_id) = server_id {
