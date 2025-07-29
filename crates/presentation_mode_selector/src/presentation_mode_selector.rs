@@ -56,7 +56,7 @@ impl Focusable for PresentationModeSelector {
 }
 
 impl Render for PresentationModeSelector {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
@@ -140,7 +140,7 @@ impl PresentationModeSelectorDelegate {
 impl PickerDelegate for PresentationModeSelectorDelegate {
     type ListItem = ListItem;
 
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> std::sync::Arc<str> {
+    fn placeholder_text(&self, _: &mut Window, _: &mut App) -> std::sync::Arc<str> {
         "Select a presentation mode...".into()
     }
 
@@ -250,8 +250,8 @@ impl PickerDelegate for PresentationModeSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
         let mode = &self.presentation_modes[mat.candidate_id];
