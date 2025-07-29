@@ -29,6 +29,7 @@ fn main() {
 }
 
 #[allow(dead_code)]
+#[cfg(not(target_os = "windows"))]
 fn check_wgsl_shaders() {
     use std::path::PathBuf;
     use std::process;
