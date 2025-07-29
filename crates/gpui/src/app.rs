@@ -2023,6 +2023,10 @@ impl HttpClient for NullHttpClient {
         .boxed()
     }
 
+    fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        None
+    }
+
     fn proxy(&self) -> Option<&Url> {
         None
     }
