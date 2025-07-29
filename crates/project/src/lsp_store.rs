@@ -46,6 +46,7 @@ use language::{
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -217,6 +218,7 @@ impl LocalLspStore {
 
         let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
@@ -242,14 +244,18 @@ impl LocalLspStore {
                     return Ok(server);
                 }
 
+                let code_action_kinds = adapter.code_action_kinds();
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
                     server_name,
                     binary,
                     &root_path,
-                    adapter.code_action_kinds(),
-                    pending_workspace_folders,
+                    code_action_kinds,
+                    Some(pending_workspace_folders).filter(|_| {
+                        adapter.adapter.workspace_folders_content()
+                            == WorkspaceFoldersContent::SubprojectRoots
+                    }),
                     cx,
                 )
             }
@@ -575,8 +581,7 @@ impl LocalLspStore {
                         };
                         let root = server.workspace_folders();
                         Ok(Some(
-                            root.iter()
-                                .cloned()
+                            root.into_iter()
                                 .map(|uri| WorkspaceFolder {
                                     uri,
                                     name: Default::default(),
