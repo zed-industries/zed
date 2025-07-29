@@ -21,8 +21,8 @@ use crate::{
 };
 
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
-// This configuration is used for MSAA rendering, and it's guaranteed to be supported by DirectX 11.
-const MULTISAMPLE_COUNT: u32 = 4;
+// This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
+const PATH_MULTISAMPLE_COUNT: u32 = 4;
 
 pub(crate) struct DirectXRenderer {
     hwnd: HWND,
@@ -51,8 +51,13 @@ struct DirectXResources {
     swap_chain: IDXGISwapChain1,
     render_target: ManuallyDrop<ID3D11Texture2D>,
     render_target_view: [Option<ID3D11RenderTargetView>; 1],
-    msaa_target: ID3D11Texture2D,
-    msaa_view: [Option<ID3D11RenderTargetView>; 1],
+
+    // Path intermediate textures (with MSAA)
+    path_intermediate_texture: ID3D11Texture2D,
+    path_intermediate_view: [Option<ID3D11RenderTargetView>; 1],
+    path_intermediate_msaa_texture: ID3D11Texture2D,
+    path_intermediate_msaa_view: [Option<ID3D11RenderTargetView>; 1],
+    path_intermediate_srv: Option<ID3D11ShaderResourceView>,
 
     // Cached window size and viewport
     width: u32,
@@ -63,7 +68,8 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    paths_pipeline: PathsPipelineState,
+    paths_rasterization_pipeline: PathsPipelineState,
+    paths_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
@@ -76,13 +82,6 @@ struct DirectXGlobalElements {
 }
 
 #[repr(C)]
-struct DrawInstancedIndirectArgs {
-    vertex_count_per_instance: u32,
-    instance_count: u32,
-    start_vertex_location: u32,
-    start_instance_location: u32,
-}
-
 #[cfg(not(feature = "enable-renderdoc"))]
 struct DirectComposition {
     comp_device: IDCompositionDevice,
@@ -161,12 +160,13 @@ impl DirectXRenderer {
             }],
         )?;
         unsafe {
+            self.devices.device_context.ClearRenderTargetView(
+                self.resources.render_target_view[0].as_ref().unwrap(),
+                &[0.0; 4],
+            );
             self.devices
                 .device_context
-                .ClearRenderTargetView(self.resources.msaa_view[0].as_ref().unwrap(), &[0.0; 4]);
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.msaa_view), None);
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
             self.devices
                 .device_context
                 .RSSetViewports(Some(&self.resources.viewport));
@@ -181,16 +181,6 @@ impl DirectXRenderer {
 
     fn present(&mut self) -> Result<()> {
         unsafe {
-            self.devices.device_context.ResolveSubresource(
-                &*self.resources.render_target,
-                0,
-                &self.resources.msaa_target,
-                0,
-                RENDER_TARGET_FORMAT,
-            );
-            self.devices
-                .device_context
-                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
             let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
@@ -263,7 +253,10 @@ impl DirectXRenderer {
             match batch {
                 PrimitiveBatch::Shadows(shadows) => self.draw_shadows(shadows),
                 PrimitiveBatch::Quads(quads) => self.draw_quads(quads),
-                PrimitiveBatch::Paths(paths) => self.draw_paths(paths),
+                PrimitiveBatch::Paths(paths) => {
+                    self.draw_paths_to_intermediate(paths)?;
+                    self.draw_paths_from_intermediate(paths)
+                }
                 PrimitiveBatch::Underlines(underlines) => self.draw_underlines(underlines),
                 PrimitiveBatch::MonochromeSprites {
                     texture_id,
@@ -369,47 +362,118 @@ impl DirectXRenderer {
         )
     }
 
-    fn draw_paths(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+    fn draw_paths_to_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
         if paths.is_empty() {
             return Ok(());
         }
-        let mut vertices = Vec::new();
-        let mut sprites = Vec::with_capacity(paths.len());
-        let mut draw_indirect_commands = Vec::with_capacity(paths.len());
-        let mut start_vertex_location = 0;
-        for (i, path) in paths.iter().enumerate() {
-            draw_indirect_commands.push(DrawInstancedIndirectArgs {
-                vertex_count_per_instance: path.vertices.len() as u32,
-                instance_count: 1,
-                start_vertex_location,
-                start_instance_location: i as u32,
-            });
-            start_vertex_location += path.vertices.len() as u32;
 
+        // Clear intermediate MSAA texture
+        unsafe {
+            self.devices.device_context.ClearRenderTargetView(
+                self.resources.path_intermediate_msaa_view[0]
+                    .as_ref()
+                    .unwrap(),
+                &[0.0; 4],
+            );
+            // Set intermediate MSAA texture as render target
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.path_intermediate_msaa_view), None);
+        }
+
+        // Collect all vertices and sprites for a single draw call
+        let mut vertices = Vec::new();
+        let mut sprites = Vec::new();
+
+        for (path_index, path) in paths.iter().enumerate() {
             vertices.extend(path.vertices.iter().map(|v| DirectXPathVertex {
                 xy_position: v.xy_position,
-                content_mask: path.content_mask.bounds,
-                sprite_index: i as u32,
+                st_position: v.st_position,
+                path_index: path_index as u32,
             }));
 
-            sprites.push(PathSprite {
-                bounds: path.bounds,
+            sprites.push(PathRasterizationSprite {
+                bounds: path.bounds.intersect(&path.content_mask.bounds),
                 color: path.color,
             });
         }
 
-        self.pipelines.paths_pipeline.update_buffer(
+        if !vertices.is_empty() {
+            self.pipelines.paths_rasterization_pipeline.update_buffer(
+                &self.devices.device,
+                &self.devices.device_context,
+                &sprites,
+                &vertices,
+            )?;
+            self.pipelines.paths_rasterization_pipeline.draw(
+                &self.devices.device_context,
+                vertices.len() as u32,
+                &self.resources.viewport,
+                &self.globals.global_params_buffer,
+            )?;
+        }
+
+        // Resolve MSAA to non-MSAA intermediate texture
+        unsafe {
+            self.devices.device_context.ResolveSubresource(
+                &self.resources.path_intermediate_texture,
+                0,
+                &self.resources.path_intermediate_msaa_texture,
+                0,
+                RENDER_TARGET_FORMAT,
+            );
+            // Flush to ensure the resolve operation is complete before using the texture
+            self.devices.device_context.Flush();
+            // Restore main render target
+            self.devices
+                .device_context
+                .OMSetRenderTargets(Some(&self.resources.render_target_view), None);
+        }
+
+        Ok(())
+    }
+
+    fn draw_paths_from_intermediate(&mut self, paths: &[Path<ScaledPixels>]) -> Result<()> {
+        let Some(first_path) = paths.first() else {
+            return Ok(());
+        };
+
+        // When copying paths from the intermediate texture to the drawable,
+        // each pixel must only be copied once, in case of transparent paths.
+        //
+        // If all paths have the same draw order, then their bounds are all
+        // disjoint, so we can copy each path's bounds individually. If this
+        // batch combines different draw orders, we perform a single copy
+        // for a minimal spanning rect.
+        let sprites = if paths.last().unwrap().order == first_path.order {
+            paths
+                .iter()
+                .map(|path| PathSprite {
+                    bounds: path.bounds,
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let mut bounds = first_path.bounds;
+            for path in paths.iter().skip(1) {
+                bounds = bounds.union(&path.bounds);
+            }
+            vec![PathSprite { bounds }]
+        };
+
+        self.pipelines.paths_sprite_pipeline.update_buffer(
             &self.devices.device,
             &self.devices.device_context,
             &sprites,
-            &vertices,
-            &draw_indirect_commands,
         )?;
-        self.pipelines.paths_pipeline.draw(
+
+        // Draw the sprites with the path texture
+        self.pipelines.paths_sprite_pipeline.draw_with_texture(
             &self.devices.device_context,
-            paths.len(),
+            &[self.resources.path_intermediate_srv.clone()],
             &self.resources.viewport,
             &self.globals.global_params_buffer,
+            &self.globals.sampler,
+            sprites.len() as u32,
         )
     }
 
@@ -528,19 +592,30 @@ impl DirectXResources {
         let swap_chain =
             create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?;
 
-        let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
-            create_resources(devices, &swap_chain, width, height)?;
+        let (
+            render_target,
+            render_target_view,
+            path_intermediate_texture,
+            path_intermediate_view,
+            path_intermediate_msaa_texture,
+            path_intermediate_msaa_view,
+            path_intermediate_srv,
+            viewport,
+        ) = create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
 
         Ok(ManuallyDrop::new(Self {
             swap_chain,
             render_target,
             render_target_view,
-            msaa_target,
-            msaa_view,
+            path_intermediate_texture,
+            path_intermediate_view,
+            path_intermediate_msaa_texture,
+            path_intermediate_msaa_view,
+            path_intermediate_srv,
+            viewport,
             width,
             height,
-            viewport,
         }))
     }
 
@@ -551,12 +626,23 @@ impl DirectXResources {
         width: u32,
         height: u32,
     ) -> Result<()> {
-        let (render_target, render_target_view, msaa_target, msaa_view, viewport) =
-            create_resources(devices, &self.swap_chain, width, height)?;
+        let (
+            render_target,
+            render_target_view,
+            path_intermediate_texture,
+            path_intermediate_view,
+            path_intermediate_msaa_texture,
+            path_intermediate_msaa_view,
+            path_intermediate_srv,
+            viewport,
+        ) = create_resources(devices, &self.swap_chain, width, height)?;
         self.render_target = render_target;
         self.render_target_view = render_target_view;
-        self.msaa_target = msaa_target;
-        self.msaa_view = msaa_view;
+        self.path_intermediate_texture = path_intermediate_texture;
+        self.path_intermediate_view = path_intermediate_view;
+        self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
+        self.path_intermediate_msaa_view = path_intermediate_msaa_view;
+        self.path_intermediate_srv = path_intermediate_srv;
         self.viewport = viewport;
         self.width = width;
         self.height = height;
@@ -569,7 +655,9 @@ impl DirectXRenderPipelines {
         let shadow_pipeline =
             PipelineState::new(device, "shadow_pipeline", ShaderModule::Shadow, 4)?;
         let quad_pipeline = PipelineState::new(device, "quad_pipeline", ShaderModule::Quad, 64)?;
-        let paths_pipeline = PathsPipelineState::new(device)?;
+        let paths_rasterization_pipeline = PathsPipelineState::new(device)?;
+        let paths_sprite_pipeline =
+            PipelineState::new(device, "paths_sprite_pipeline", ShaderModule::PathSprite, 1)?;
         let underline_pipeline =
             PipelineState::new(device, "underline_pipeline", ShaderModule::Underline, 4)?;
         let mono_sprites = PipelineState::new(
@@ -588,7 +676,8 @@ impl DirectXRenderPipelines {
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
-            paths_pipeline,
+            paths_rasterization_pipeline,
+            paths_sprite_pipeline,
             underline_pipeline,
             mono_sprites,
             poly_sprites,
@@ -685,12 +774,10 @@ struct PathsPipelineState {
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
     buffer_size: usize,
+    view: [Option<ID3D11ShaderResourceView>; 1],
     vertex_buffer: Option<ID3D11Buffer>,
     vertex_buffer_size: usize,
-    indirect_draw_buffer: ID3D11Buffer,
-    indirect_buffer_size: usize,
     input_layout: ID3D11InputLayout,
-    view: [Option<ID3D11ShaderResourceView>; 1],
 }
 
 impl<T> PipelineState<T> {
@@ -809,15 +896,14 @@ impl PathsPipelineState {
             let raw_shader = RawShaderBytes::new(ShaderModule::Paths, ShaderTarget::Fragment)?;
             create_fragment_shader(device, raw_shader.as_bytes())?
         };
-        let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), 32)?;
+        let buffer = create_buffer(device, std::mem::size_of::<PathRasterizationSprite>(), 32)?;
         let view = create_buffer_view(device, &buffer)?;
         let vertex_buffer = Some(create_buffer(
             device,
             std::mem::size_of::<DirectXPathVertex>(),
             32,
         )?);
-        let indirect_draw_buffer = create_indirect_draw_buffer(device, 32)?;
-        // Create input layout
+
         let input_layout = unsafe {
             let mut layout = None;
             device.CreateInputLayout(
@@ -843,18 +929,9 @@ impl PathsPipelineState {
                     D3D11_INPUT_ELEMENT_DESC {
                         SemanticName: windows::core::s!("TEXCOORD"),
                         SemanticIndex: 1,
-                        Format: DXGI_FORMAT_R32G32_FLOAT,
-                        InputSlot: 0,
-                        AlignedByteOffset: 16,
-                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                        InstanceDataStepRate: 0,
-                    },
-                    D3D11_INPUT_ELEMENT_DESC {
-                        SemanticName: windows::core::s!("GLOBALIDX"),
-                        SemanticIndex: 0,
                         Format: DXGI_FORMAT_R32_UINT,
                         InputSlot: 0,
-                        AlignedByteOffset: 24,
+                        AlignedByteOffset: 16,
                         InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
                         InstanceDataStepRate: 0,
                     },
@@ -870,12 +947,10 @@ impl PathsPipelineState {
             fragment,
             buffer,
             buffer_size: 32,
+            view,
             vertex_buffer,
             vertex_buffer_size: 32,
-            indirect_draw_buffer,
-            indirect_buffer_size: 32,
             input_layout,
-            view,
         })
     }
 
@@ -883,24 +958,28 @@ impl PathsPipelineState {
         &mut self,
         device: &ID3D11Device,
         device_context: &ID3D11DeviceContext,
-        buffer_data: &[PathSprite],
+        sprites: &[PathRasterizationSprite],
         vertices_data: &[DirectXPathVertex],
-        draw_commands: &[DrawInstancedIndirectArgs],
     ) -> Result<()> {
-        if self.buffer_size < buffer_data.len() {
-            let new_buffer_size = buffer_data.len().next_power_of_two();
+        if self.buffer_size < sprites.len() {
+            let new_buffer_size = sprites.len().next_power_of_two();
             log::info!(
                 "Updating Paths Pipeline buffer size from {} to {}",
                 self.buffer_size,
                 new_buffer_size
             );
-            let buffer = create_buffer(device, std::mem::size_of::<PathSprite>(), new_buffer_size)?;
+            let buffer = create_buffer(
+                device,
+                std::mem::size_of::<PathRasterizationSprite>(),
+                new_buffer_size,
+            )?;
             let view = create_buffer_view(device, &buffer)?;
             self.buffer = buffer;
             self.view = view;
             self.buffer_size = new_buffer_size;
         }
-        update_buffer(device_context, &self.buffer, buffer_data)?;
+        update_buffer(device_context, &self.buffer, sprites)?;
+
         if self.vertex_buffer_size < vertices_data.len() {
             let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
             log::info!(
@@ -921,26 +1000,14 @@ impl PathsPipelineState {
             self.vertex_buffer.as_ref().unwrap(),
             vertices_data,
         )?;
-        if self.indirect_buffer_size < draw_commands.len() {
-            let new_indirect_buffer_size = draw_commands.len().next_power_of_two();
-            log::info!(
-                "Updating Paths Pipeline indirect buffer size from {} to {}",
-                self.indirect_buffer_size,
-                new_indirect_buffer_size
-            );
-            let indirect_draw_buffer =
-                create_indirect_draw_buffer(device, new_indirect_buffer_size)?;
-            self.indirect_draw_buffer = indirect_draw_buffer;
-            self.indirect_buffer_size = new_indirect_buffer_size;
-        }
-        update_buffer(device_context, &self.indirect_draw_buffer, draw_commands)?;
+
         Ok(())
     }
 
     fn draw(
         &self,
         device_context: &ID3D11DeviceContext,
-        count: usize,
+        vertex_count: u32,
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
     ) -> Result<()> {
@@ -955,39 +1022,40 @@ impl PathsPipelineState {
         );
         unsafe {
             const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
+            const OFFSET: u32 = 0;
+            device_context.IASetInputLayout(&self.input_layout);
             device_context.IASetVertexBuffers(
                 0,
                 1,
                 Some(&self.vertex_buffer),
                 Some(&STRIDE),
-                Some(&0),
+                Some(&OFFSET),
             );
-            device_context.IASetInputLayout(&self.input_layout);
-        }
-        for i in 0..count {
-            unsafe {
-                device_context.DrawInstancedIndirect(
-                    &self.indirect_draw_buffer,
-                    (i * std::mem::size_of::<DrawInstancedIndirectArgs>()) as u32,
-                );
-            }
+            device_context.Draw(vertex_count, 0);
         }
         Ok(())
     }
 }
 
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct DirectXPathVertex {
     xy_position: Point<ScaledPixels>,
-    content_mask: Bounds<ScaledPixels>,
-    sprite_index: u32,
+    st_position: Point<f32>,
+    path_index: u32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct PathRasterizationSprite {
+    bounds: Bounds<ScaledPixels>,
+    color: Background,
+}
+
+#[derive(Clone, Copy)]
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
-    color: Background,
 }
 
 impl Drop for DirectXRenderer {
@@ -1142,17 +1210,26 @@ fn create_resources(
     [Option<ID3D11RenderTargetView>; 1],
     ID3D11Texture2D,
     [Option<ID3D11RenderTargetView>; 1],
+    ID3D11Texture2D,
+    [Option<ID3D11RenderTargetView>; 1],
+    Option<ID3D11ShaderResourceView>,
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
         create_render_target_and_its_view(&swap_chain, &devices.device)?;
-    let (msaa_target, msaa_view) = create_msaa_target_and_its_view(&devices.device, width, height)?;
+    let (path_intermediate_texture, path_intermediate_view, path_intermediate_srv) =
+        create_path_intermediate_texture_and_view(&devices.device, width, height)?;
+    let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
+        create_path_intermediate_msaa_texture_and_view(&devices.device, width, height)?;
     let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
     Ok((
         render_target,
         render_target_view,
-        msaa_target,
-        msaa_view,
+        path_intermediate_texture,
+        path_intermediate_view,
+        path_intermediate_msaa_texture,
+        path_intermediate_msaa_view,
+        path_intermediate_srv,
         viewport,
     ))
 }
@@ -1175,12 +1252,16 @@ fn create_render_target_and_its_view(
 }
 
 #[inline]
-fn create_msaa_target_and_its_view(
+fn create_path_intermediate_texture_and_view(
     device: &ID3D11Device,
     width: u32,
     height: u32,
-) -> Result<(ID3D11Texture2D, [Option<ID3D11RenderTargetView>; 1])> {
-    let msaa_target = unsafe {
+) -> Result<(
+    ID3D11Texture2D,
+    [Option<ID3D11RenderTargetView>; 1],
+    Option<ID3D11ShaderResourceView>,
+)> {
+    let texture = unsafe {
         let mut output = None;
         let desc = D3D11_TEXTURE2D_DESC {
             Width: width,
@@ -1189,7 +1270,47 @@ fn create_msaa_target_and_its_view(
             ArraySize: 1,
             Format: RENDER_TARGET_FORMAT,
             SampleDesc: DXGI_SAMPLE_DESC {
-                Count: MULTISAMPLE_COUNT,
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            CPUAccessFlags: 0,
+            MiscFlags: 0,
+        };
+        device.CreateTexture2D(&desc, None, Some(&mut output))?;
+        output.unwrap()
+    };
+
+    let mut render_target_view = None;
+    unsafe { device.CreateRenderTargetView(&texture, None, Some(&mut render_target_view))? };
+
+    let mut shader_resource_view = None;
+    unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut shader_resource_view))? };
+
+    Ok((
+        texture,
+        [Some(render_target_view.unwrap())],
+        shader_resource_view,
+    ))
+}
+
+#[inline]
+fn create_path_intermediate_msaa_texture_and_view(
+    device: &ID3D11Device,
+    width: u32,
+    height: u32,
+) -> Result<(ID3D11Texture2D, [Option<ID3D11RenderTargetView>; 1])> {
+    let msaa_texture = unsafe {
+        let mut output = None;
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: RENDER_TARGET_FORMAT,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: PATH_MULTISAMPLE_COUNT,
                 Quality: D3D11_STANDARD_MULTISAMPLE_PATTERN.0 as u32,
             },
             Usage: D3D11_USAGE_DEFAULT,
@@ -1200,12 +1321,9 @@ fn create_msaa_target_and_its_view(
         device.CreateTexture2D(&desc, None, Some(&mut output))?;
         output.unwrap()
     };
-    let msaa_view = unsafe {
-        let mut output = None;
-        device.CreateRenderTargetView(&msaa_target, None, Some(&mut output))?;
-        output.unwrap()
-    };
-    Ok((msaa_target, [Some(msaa_view)]))
+    let mut msaa_view = None;
+    unsafe { device.CreateRenderTargetView(&msaa_texture, None, Some(&mut msaa_view))? };
+    Ok((msaa_texture, [Some(msaa_view.unwrap())]))
 }
 
 #[inline]
@@ -1319,21 +1437,6 @@ fn create_buffer_view(
 }
 
 #[inline]
-fn create_indirect_draw_buffer(device: &ID3D11Device, buffer_size: usize) -> Result<ID3D11Buffer> {
-    let desc = D3D11_BUFFER_DESC {
-        ByteWidth: (std::mem::size_of::<DrawInstancedIndirectArgs>() * buffer_size) as u32,
-        Usage: D3D11_USAGE_DYNAMIC,
-        BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-        MiscFlags: D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS.0 as u32,
-        StructureByteStride: std::mem::size_of::<DrawInstancedIndirectArgs>() as u32,
-    };
-    let mut buffer = None;
-    unsafe { device.CreateBuffer(&desc, None, Some(&mut buffer)) }?;
-    Ok(buffer.unwrap())
-}
-
-#[inline]
 fn update_buffer<T>(
     device_context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
@@ -1390,6 +1493,7 @@ mod shader_resources {
         Shadow,
         Underline,
         Paths,
+        PathSprite,
         MonochromeSprite,
         PolychromeSprite,
     }
@@ -1524,6 +1628,7 @@ mod shader_resources {
                 ShaderModule::Shadow => "shadow",
                 ShaderModule::Underline => "underline",
                 ShaderModule::Paths => "paths",
+                ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
             }

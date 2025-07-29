@@ -256,7 +256,7 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
                                       TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
@@ -878,41 +878,58 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 struct PathVertex {
     float2 xy_position: POSITION;
-    Bounds content_mask: TEXCOORD;
-    uint idx: GLOBALIDX;
+    float2 st_position: TEXCOORD0;
+    uint path_index: TEXCOORD1;
 };
 
-struct PathSprite {
+struct PathRasterizationSprite {
     Bounds bounds;
     Background color;
 };
 
+struct PathSprite {
+    Bounds bounds;
+};
+
+StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t1);
+
 struct PathVertexOutput {
     float4 position: SV_Position;
-    nointerpolation uint sprite_id: TEXCOORD0;
+    float2 st_position: TEXCOORD0;
+    nointerpolation uint tag: TEXCOORD1;
+    nointerpolation uint color_space: TEXCOORD2;
+    nointerpolation float gradient_angle: TEXCOORD3;
     nointerpolation float4 solid_color: COLOR0;
     nointerpolation float4 color0: COLOR1;
     nointerpolation float4 color1: COLOR2;
-    float4 clip_distance: SV_ClipDistance;
+    nointerpolation float2 stop_percentages: COLOR3;
+    nointerpolation Bounds bounds: BOUNDS;
 };
 
 struct PathFragmentInput {
     float4 position: SV_Position;
-    nointerpolation uint sprite_id: TEXCOORD0;
+    float2 st_position: TEXCOORD0;
+    nointerpolation uint tag: TEXCOORD1;
+    nointerpolation uint color_space: TEXCOORD2;
+    nointerpolation float gradient_angle: TEXCOORD3;
     nointerpolation float4 solid_color: COLOR0;
     nointerpolation float4 color0: COLOR1;
     nointerpolation float4 color1: COLOR2;
+    nointerpolation float2 stop_percentages: COLOR3;
+    nointerpolation Bounds bounds: BOUNDS;
 };
 
-StructuredBuffer<PathSprite> path_sprites: register(t1);
-
 PathVertexOutput paths_vertex(PathVertex input) {
-    PathSprite sprite = path_sprites[input.idx];
+    PathRasterizationSprite sprite = path_rasterization_sprites[input.path_index];
 
     PathVertexOutput output;
     output.position = to_device_position_impl(input.xy_position);
-    output.clip_distance = distance_from_clip_rect_impl(input.xy_position, input.content_mask);
-    output.sprite_id = input.idx;
+    output.st_position = input.st_position;
+    output.bounds = sprite.bounds;
+    output.tag = sprite.color.tag;
+    output.color_space = sprite.color.color_space;
+    output.gradient_angle = sprite.color.gradient_angle_or_pattern_height;
+    output.stop_percentages = float2(sprite.color.colors[0].percentage, sprite.color.colors[1].percentage);
 
     GradientColor gradient = prepare_gradient_color(
         sprite.color.tag,
@@ -920,19 +937,56 @@ PathVertexOutput paths_vertex(PathVertex input) {
         sprite.color.solid,
         sprite.color.colors
     );
-
     output.solid_color = gradient.solid;
     output.color0 = gradient.color0;
     output.color1 = gradient.color1;
+
     return output;
 }
 
 float4 paths_fragment(PathFragmentInput input): SV_Target {
-    PathSprite sprite = path_sprites[input.sprite_id];
-    Background background = sprite.color;
-    float4 color = gradient_color(background, input.position.xy, sprite.bounds,
+    Background background;
+    background.tag = input.tag;
+    background.color_space = input.color_space;
+    background.solid = (Hsla)0; // Not used when tag != 0
+    background.gradient_angle_or_pattern_height = input.gradient_angle;
+    background.colors[0].color = (Hsla)0; // Not used when colors are pre-computed
+    background.colors[0].percentage = input.stop_percentages.x;
+    background.colors[1].color = (Hsla)0; // Not used when colors are pre-computed
+    background.colors[1].percentage = input.stop_percentages.y;
+
+    float4 color = gradient_color(background, input.position.xy, input.bounds,
         input.solid_color, input.color0, input.color1);
     return color;
+}
+
+// --- path sprite --- //
+
+struct PathSpriteVertexOutput {
+    float4 position: SV_Position;
+    float2 texture_coords: TEXCOORD0;
+};
+
+StructuredBuffer<PathSprite> path_sprites: register(t1);
+
+PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PathSprite sprite = path_sprites[sprite_id];
+
+    // Don't apply content mask because it was already accounted for when rasterizing the path
+    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
+
+    float2 screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+    float2 texture_coords = screen_position / global_viewport_size;
+
+    PathSpriteVertexOutput output;
+    output.position = device_position;
+    output.texture_coords = texture_coords;
+    return output;
+}
+
+float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
+    return t_sprite.Sample(s_sprite, input.texture_coords);
 }
 
 /*
@@ -970,7 +1024,7 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Underline underline = underlines[underline_id];
     float4 device_position = to_device_position(unit_vertex, underline.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds, 
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                     underline.content_mask);
     float4 color = hsla_to_rgba(underline.color);
 
