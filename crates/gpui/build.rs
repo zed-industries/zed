@@ -322,7 +322,11 @@ mod windows {
         }
 
         // Try to find in PATH
-        if let Ok(output) = std::process::Command::new("where").arg("fxc.exe").output() {
+        // NOTE: This has to be `where.exe` on Windows, not `which`
+        if let Ok(output) = std::process::Command::new("where.exe")
+            .arg("fxc.exe")
+            .output()
+        {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout);
                 return path.trim().to_string();
