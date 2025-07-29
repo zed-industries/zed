@@ -280,7 +280,9 @@ impl KeystrokeInput {
                 self.keystrokes.push(keystroke.clone());
                 if self.search {
                     self.previous_modifiers = keystroke.modifiers;
-                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
+                    && keystroke.modifiers.modified()
+                {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
             } else if close_keystroke_result != CloseKeystrokeResult::Partial {
@@ -1004,7 +1006,9 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(false)
-            .send_events(&["+ctrl", "a", "-ctrl"])
+            .send_events(&["+ctrl", "a"])
+            .expect_keystrokes(&["ctrl-a", "ctrl-"])
+            .send_events(&["-ctrl"])
             .expect_keystrokes(&["ctrl-a"]); // Non-search mode filters trailing empty keystrokes
     }
 
@@ -1042,12 +1046,12 @@ mod tests {
         init_test(cx)
             .await
             .send_events(&["a", "b"])
-            .expect_keystrokes(&["a", "b", ""]) // start_recording clears existing keystrokes
+            .expect_keystrokes(&["a", "b"]) // start_recording clears existing keystrokes
             .stop_recording()
             .expect_is_recording(false)
             .start_recording()
             .send_events(&["c"])
-            .expect_keystrokes(&["c", ""]);
+            .expect_keystrokes(&["c"]);
     }
 
     #[gpui::test]
