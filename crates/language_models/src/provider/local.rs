@@ -98,9 +98,9 @@ impl State {
 }
 
 async fn load_mistral_model() -> Result<Arc<MistralModel>> {
+    println!("\n\n\n\nLoading mistral model...\n\n\n");
     let model = TextModelBuilder::new(DEFAULT_MODEL)
         .with_isq(IsqType::Q4_0)
-        .with_logging()
         .build()
         .await?;
 
