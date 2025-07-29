@@ -319,10 +319,11 @@ To use Ollama as your edit prediction provider, set this within `settings.json`:
 ### Setup
 
 1. Download and install Ollama from [ollama.com/download](https://ollama.com/download)
-2. Pull a completion-capable model, for example:
+2. Pull completion-capable models, for example:
 
    ```sh
    ollama pull qwen2.5-coder:3b
+   ollama pull codellama:7b
    ```
 
 3. Ensure Ollama is running:
@@ -333,7 +334,9 @@ To use Ollama as your edit prediction provider, set this within `settings.json`:
 
 4. Configure the model in your language model settings
 
-Ollama edit predictions use the first available model from your language model configuration in your `settings.json`:
+The Edit Prediction menu will automatically detect available models. When one is newly selected in the menu, it will be added to your `settings.json`, and put at the top of the list. You can then manually configure it in the settings file if you need more control.
+
+
 
 ```json
 {
@@ -345,6 +348,11 @@ Ollama edit predictions use the first available model from your language model c
           "name": "qwen2.5-coder:3b",
           "display_name": "Qwen 2.5 Coder 3B",
           "max_tokens": 8192
+        },
+        {
+          "name": "codellama:7b",
+          "display_name": "CodeLlama 7B",
+          "max_tokens": 8192
         }
       ]
     }
@@ -352,9 +360,9 @@ Ollama edit predictions use the first available model from your language model c
 }
 ```
 
-Language models configured here will be listed in the Edit Prediction UI menu, which allows you to switch between them. It changes the order of the models in the settings file behind the scenes.
+You can also switch between them in the menu, and the order of the models in the settings file will be updated behind the scenes.
 
-The setting allows for configuring Ollama's API url too, so one can use it either locally or remotely. The Edit Prediction menu includes a shortcut for it that will open the settings file where the url is set.
+The settings allows for configuring Ollama's API url too, so one can use Ollama either locally or hosted. The Edit Prediction menu includes a shortcut for it that will open the settings file where the url is set.
 
 ### Authentication
 
