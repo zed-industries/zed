@@ -1245,7 +1245,7 @@ mod tests {
         init_test(cx)
             .await
             .send_events(&["+ctrl", "g", "-ctrl", "escape"])
-            .expect_keystrokes(&["ctrl-g", "escape", ""])
+            .expect_keystrokes(&["ctrl-g", "escape"])
             .wait_for_close_keystroke_capture_end()
             .await
             .send_events(&["escape", "escape"])
