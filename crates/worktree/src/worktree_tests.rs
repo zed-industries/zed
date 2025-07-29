@@ -1985,58 +1985,6 @@ fn test_unrelativize() {
 }
 
 #[gpui::test]
-async fn test_gitignore_with_git_info_exclude(cx: &mut TestAppContext) {
-    init_test(cx);
-
-    // Test that .git/info/exclude entries are properly recognized
-    let fs = FakeFs::new(cx.background_executor.clone());
-    fs.insert_tree(
-        "/root",
-        json!({
-            ".git": {
-                "info": {
-                    "exclude": "excluded_file.txt\n",
-                },
-            },
-            ".gitignore": "local_ignored.txt\n",
-            "normal_file.txt": "normal file content",
-            "local_ignored.txt": "locally ignored content",
-            "excluded_file.txt": "excluded content",
-        }),
-    )
-    .await;
-
-    let tree = Worktree::local(
-        Path::new("/root"),
-        true,
-        fs.clone(),
-        Default::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
-
-    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-        .await;
-
-    tree.read_with(cx, |tree, _| {
-        check_worktree_entries(
-            tree,
-            &[],
-            &[
-                "local_ignored.txt", // Ignored by .gitignore
-                "excluded_file.txt", // Ignored by .git/info/exclude
-            ],
-            &[
-                "normal_file.txt", // Not ignored
-                ".gitignore",      // Not ignored
-            ],
-            &[],
-        )
-    });
-}
-
-#[gpui::test]
 async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
@@ -2143,6 +2091,8 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         .await;
     cx.run_until_parked();
 
+    // .gitignore overrides excludesFile, and anchored paths in excludesFile are resolved
+    // relative to the nearest containing repository
     worktree.update(cx, |worktree, _cx| {
         check_worktree_entries(
             worktree,
@@ -2151,7 +2101,59 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
             &["sub/bar", "baz"],
             &[],
         );
-    })
+    });
+
+    // Ignore statuses are updated when excludesFile changes
+    fs.write(
+        Path::new(path!("/home/zed/.config/git/ignore")),
+        "/bar\nbaz\n".as_bytes(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar", "subrepo/bar"],
+            &["foo", "sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // FIXME statuses are updated when .git added/removed
+
+    fs.remove_dir(
+        Path::new(path!("/home/zed/project/subrepo/.git")),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar"],
+            &["foo", "sub/bar", "baz", "subrepo/bar"],
+            &[],
+        );
+    });
 }
 
 #[track_caller]

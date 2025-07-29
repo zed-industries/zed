@@ -65,7 +65,7 @@ use std::{
 use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
-    ResultExt,
+    ResultExt, debug_panic,
     paths::{PathMatcher, SanitizedPath, home_dir},
 };
 pub use worktree_settings::WorktreeSettings;
@@ -2795,11 +2795,9 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
-        dbg!(&abs_path, &repo_root);
         ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
-                dbg!("ALL");
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -2808,7 +2806,6 @@ impl LocalSnapshot {
         }
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
-            dbg!("ALL");
             ignore_stack = IgnoreStack::all();
         }
 
@@ -4149,11 +4146,20 @@ impl BackgroundScanner {
         )
         .await;
 
-        self.update_ignore_statuses(scan_job_tx).await;
-        self.scan_dirs(false, scan_job_rx).await;
+        let affected_repo_roots = if !dot_git_abs_paths.is_empty() {
+            self.update_git_repositories(dot_git_abs_paths)
+        } else {
+            Vec::new()
+        };
 
-        if !dot_git_abs_paths.is_empty() {
-            self.update_git_repositories(dot_git_abs_paths);
+        {
+            let mut ignores_to_update = self.ignores_needing_update();
+            ignores_to_update.extend(affected_repo_roots);
+            let ignores_to_update = self.order_ignores(ignores_to_update);
+            let snapshot = self.state.lock().snapshot.clone();
+            self.update_ignore_statuses_for_paths(scan_job_tx, snapshot, ignores_to_update)
+                .await;
+            self.scan_dirs(false, scan_job_rx).await;
         }
 
         {
@@ -4362,17 +4368,12 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *DOT_GIT);
 
         if let Some(path) = child_paths.first()
-            && path == *DOT_GIT
+            && path.ends_with(*DOT_GIT)
         {
             ignore_stack.repo_root = Some(job.abs_path.clone());
         }
 
-        // Since we check for the presence of .git first, we can register this
-        // directory as a repo root on the ignore stack before we call is_abs_path_ignored below.
-        let mut repo_root = None;
-        dbg!("------");
         for child_abs_path in child_paths {
-            dbg!(&child_abs_path);
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
@@ -4471,7 +4472,6 @@ impl BackgroundScanner {
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
-                            dbg!("ALL");
                             IgnoreStack::all()
                         } else {
                             ignore_stack.clone()
@@ -4737,9 +4737,10 @@ impl BackgroundScanner {
             .await;
     }
 
-    async fn update_ignore_statuses(&self, scan_job_tx: Sender<ScanJob>) {
+    fn ignores_needing_update(&self) -> Vec<Arc<Path>> {
         let mut ignores_to_update = Vec::new();
-        let prev_snapshot = {
+
+        {
             let snapshot = &mut self.state.lock().snapshot;
             let abs_path = snapshot.abs_path.clone();
             snapshot
@@ -4760,33 +4761,31 @@ impl BackgroundScanner {
                     }
                     true
                 });
+        }
 
-            snapshot.clone()
-        };
+        ignores_to_update
+    }
 
-        ignores_to_update.sort_unstable();
-        let mut ignores_to_update = ignores_to_update.into_iter().peekable();
-        let ignores_to_update = std::iter::from_fn({
-            let prev_snapshot = prev_snapshot.clone();
-            move || {
-                let parent_abs_path = ignores_to_update.next()?;
-                while ignores_to_update
-                    .peek()
-                    .map_or(false, |p| p.starts_with(&parent_abs_path))
-                {
-                    ignores_to_update.next().unwrap();
-                }
-                let ignore_stack = prev_snapshot.ignore_stack_for_abs_path(
-                    &parent_abs_path,
-                    true,
-                    self.fs.as_ref(),
-                );
-                Some((parent_abs_path, ignore_stack))
+    fn order_ignores(
+        &self,
+        mut ignores: Vec<Arc<Path>>,
+    ) -> impl use<> + Iterator<Item = (Arc<Path>, IgnoreStack)> {
+        let fs = self.fs.clone();
+        let snapshot = self.state.lock().snapshot.clone();
+        ignores.sort_unstable();
+        let mut ignores_to_update = ignores.into_iter().peekable();
+        std::iter::from_fn(move || {
+            let parent_abs_path = ignores_to_update.next()?;
+            while ignores_to_update
+                .peek()
+                .map_or(false, |p| p.starts_with(&parent_abs_path))
+            {
+                ignores_to_update.next().unwrap();
             }
-        });
-
-        self.update_ignore_statuses_for_paths(scan_job_tx, prev_snapshot, ignores_to_update)
-            .await;
+            let ignore_stack =
+                snapshot.ignore_stack_for_abs_path(&parent_abs_path, true, fs.as_ref());
+            Some((parent_abs_path, ignore_stack))
+        })
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
@@ -4804,20 +4803,20 @@ impl BackgroundScanner {
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
 
-        if snapshot.entry_for_path(path.join(*DOT_GIT)).is_some() {
-            dbg!("HERE");
-            ignore_stack.repo_root = Some(job.abs_path.join(*DOT_GIT).into());
+        // FIXME understand the bug that causes .git to not have a snapshot entry here in the test
+        if let Ok(Some(metadata)) = smol::block_on(self.fs.metadata(&job.abs_path.join(*DOT_GIT)))
+            && metadata.is_dir
+        {
+            ignore_stack.repo_root = Some(job.abs_path.clone());
         }
 
         for mut entry in snapshot.child_entries(path).cloned() {
-            dbg!(&path);
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
 
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
-                    dbg!("ALL");
                     IgnoreStack::all()
                 } else {
                     ignore_stack.clone()
@@ -4872,10 +4871,11 @@ impl BackgroundScanner {
         state.snapshot.entries_by_id.edit(entries_by_id_edits, &());
     }
 
-    fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) {
+    fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Vec<Arc<Path>> {
         log::trace!("reloading repositories: {dot_git_paths:?}");
         let mut state = self.state.lock();
         let scan_id = state.snapshot.scan_id;
+        let mut affected_repo_roots = Vec::new();
         for dot_git_dir in dot_git_paths {
             let existing_repository_entry =
                 state
@@ -4895,8 +4895,12 @@ impl BackgroundScanner {
             match existing_repository_entry {
                 None => {
                     let Ok(relative) = dot_git_dir.strip_prefix(state.snapshot.abs_path()) else {
-                        return;
+                        debug_panic!(
+                            "update_git_repositories called with .git directory outside the worktree root"
+                        );
+                        return Vec::new();
                     };
+                    affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state.insert_git_repository(
                         relative.into(),
                         self.fs.as_ref(),
@@ -4936,7 +4940,15 @@ impl BackgroundScanner {
 
         snapshot
             .git_repositories
-            .retain(|work_directory_id, _| ids_to_preserve.contains(work_directory_id));
+            .retain(|work_directory_id, entry| {
+                let preserve = ids_to_preserve.contains(work_directory_id);
+                if !preserve {
+                    affected_repo_roots.push(entry.dot_git_abs_path.parent().unwrap().into());
+                }
+                preserve
+            });
+
+        affected_repo_roots
     }
 
     async fn progress_timer(&self, running: bool) {
