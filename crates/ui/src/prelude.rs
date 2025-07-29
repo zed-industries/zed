@@ -25,7 +25,7 @@ pub use crate::{Button, ButtonSize, ButtonStyle, IconButton, SelectableButton};
 pub use crate::{ButtonCommon, Color};
 pub use crate::{Headline, HeadlineSize};
 pub use crate::{Icon, IconName, IconPosition, IconSize};
-pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle};
+pub use crate::{Label, LabelCommon, LabelSize, LineHeightStyle, LoadingLabel};
 pub use crate::{h_container, h_flex, v_container, v_flex};
 pub use crate::{
     h_group, h_group_lg, h_group_sm, h_group_xl, v_group, v_group_lg, v_group_sm, v_group_xl,

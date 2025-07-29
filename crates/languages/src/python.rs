@@ -4,13 +4,13 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
+use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -268,10 +268,15 @@ impl LspAdapter for PythonLspAdapter {
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..label.len());
         Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
-            filter_range: 0..label.len(),
+            filter_range,
         })
     }
 
@@ -394,6 +399,9 @@ impl LspAdapter for PythonLspAdapter {
     }
     fn manifest_name(&self) -> Option<ManifestName> {
         Some(SharedString::new_static("pyproject.toml").into())
+    }
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::WorktreeRoot
     }
 }
 
@@ -1152,10 +1160,15 @@ impl LspAdapter for PyLspAdapter {
             lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
             _ => return None,
         };
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..label.len());
         Some(language::CodeLabel {
             text: label.clone(),
             runs: vec![(0..label.len(), highlight_id)],
-            filter_range: 0..label.len(),
+            filter_range,
         })
     }
 
@@ -1272,6 +1285,350 @@ impl LspAdapter for PyLspAdapter {
     fn manifest_name(&self) -> Option<ManifestName> {
         Some(SharedString::new_static("pyproject.toml").into())
     }
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::WorktreeRoot
+    }
+}
+
+pub(crate) struct BasedPyrightLspAdapter {
+    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+}
+
+impl BasedPyrightLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("basedpyright");
+    const BINARY_NAME: &'static str = "basedpyright-langserver";
+
+    pub(crate) fn new() -> Self {
+        Self {
+            python_venv_base: OnceCell::new(),
+        }
+    }
+
+    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
+        let python_path = Self::find_base_python(delegate)
+            .await
+            .context("Could not find Python installation for basedpyright")?;
+        let work_dir = delegate
+            .language_server_download_dir(&Self::SERVER_NAME)
+            .await
+            .context("Could not get working directory for basedpyright")?;
+        let mut path = PathBuf::from(work_dir.as_ref());
+        path.push("basedpyright-venv");
+        if !path.exists() {
+            util::command::new_smol_command(python_path)
+                .arg("-m")
+                .arg("venv")
+                .arg("basedpyright-venv")
+                .current_dir(work_dir)
+                .spawn()?
+                .output()
+                .await?;
+        }
+
+        Ok(path.into())
+    }
+
+    // Find "baseline", user python version from which we'll create our own venv.
+    async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
+        for path in ["python3", "python"] {
+            if let Some(path) = delegate.which(path.as_ref()).await {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+        self.python_venv_base
+            .get_or_init(move || async move {
+                Self::ensure_venv(delegate)
+                    .await
+                    .map_err(|e| format!("{e}"))
+            })
+            .await
+            .clone()
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for BasedPyrightLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<Value>> {
+        // Provide minimal initialization options
+        // Virtual environment configuration will be handled through workspace configuration
+        Ok(Some(json!({
+            "python": {
+                "analysis": {
+                    "autoSearchPaths": true,
+                    "useLibraryCodeForTypes": true,
+                    "autoImportCompletions": true
+                }
+            }
+        })))
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let venv = toolchains
+                .active_toolchain(
+                    delegate.worktree_id(),
+                    Arc::from("".as_ref()),
+                    LanguageName::new("Python"),
+                    &mut cx.clone(),
+                )
+                .await?;
+            let path = Path::new(venv.path.as_ref())
+                .parent()?
+                .join(Self::BINARY_NAME);
+            path.exists().then(|| LanguageServerBinary {
+                path,
+                arguments: vec!["--stdio".into()],
+                env: None,
+            })
+        }
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Any + Send>> {
+        Ok(Box::new(()) as Box<_>)
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _latest_version: Box<dyn 'static + Send + Any>,
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("basedpyright")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "basedpyright installation failed"
+        );
+        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Ok(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Some(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
+    async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
+        // Pyright assigns each completion item a `sortText` of the form `XX.YYYY.name`.
+        // Where `XX` is the sorting category, `YYYY` is based on most recent usage,
+        // and `name` is the symbol name itself.
+        //
+        // Because the symbol name is included, there generally are not ties when
+        // sorting by the `sortText`, so the symbol's fuzzy match score is not taken
+        // into account. Here, we remove the symbol name from the sortText in order
+        // to allow our own fuzzy score to be used to break ties.
+        //
+        // see https://github.com/microsoft/pyright/blob/95ef4e103b9b2f129c9320427e51b73ea7cf78bd/packages/pyright-internal/src/languageService/completionProvider.ts#LL2873
+        for item in items {
+            let Some(sort_text) = &mut item.sort_text else {
+                continue;
+            };
+            let mut parts = sort_text.split('.');
+            let Some(first) = parts.next() else { continue };
+            let Some(second) = parts.next() else { continue };
+            let Some(_) = parts.next() else { continue };
+            sort_text.replace_range(first.len() + second.len() + 1.., "");
+        }
+    }
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
+            _ => return None,
+        };
+        let filter_range = item
+            .filter_text
+            .as_deref()
+            .and_then(|filter| label.find(filter).map(|ix| ix..ix + filter.len()))
+            .unwrap_or(0..label.len());
+        Some(language::CodeLabel {
+            text: label.clone(),
+            runs: vec![(0..label.len(), highlight_id)],
+            filter_range,
+        })
+    }
+
+    async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("def {}():\n", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CLASS => {
+                let text = format!("class {}:", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("{} = 0", name);
+                let filter_range = 0..name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(language::CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let toolchain = toolchains
+            .active_toolchain(
+                adapter.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                cx,
+            )
+            .await;
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If we have a detected toolchain, configure Pyright to use it
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+
+                let interpreter_path = toolchain.path.to_string();
+
+                // Detect if this is a virtual environment
+                if let Some(interpreter_dir) = Path::new(&interpreter_path).parent() {
+                    if let Some(venv_dir) = interpreter_dir.parent() {
+                        // Check if this looks like a virtual environment
+                        if venv_dir.join("pyvenv.cfg").exists()
+                            || venv_dir.join("bin/activate").exists()
+                            || venv_dir.join("Scripts/activate.bat").exists()
+                        {
+                            // Set venvPath and venv at the root level
+                            // This matches the format of a pyrightconfig.json file
+                            if let Some(parent) = venv_dir.parent() {
+                                // Use relative path if the venv is inside the workspace
+                                let venv_path = if parent == adapter.worktree_root_path() {
+                                    ".".to_string()
+                                } else {
+                                    parent.to_string_lossy().into_owned()
+                                };
+                                object.insert("venvPath".to_string(), Value::String(venv_path));
+                            }
+
+                            if let Some(venv_name) = venv_dir.file_name() {
+                                object.insert(
+                                    "venv".to_owned(),
+                                    Value::String(venv_name.to_string_lossy().into_owned()),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Always set the python interpreter path
+                // Get or create the python section
+                let python = object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                    .unwrap();
+
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                python.insert(
+                    "pythonPath".to_owned(),
+                    Value::String(interpreter_path.clone()),
+                );
+                python.insert(
+                    "defaultInterpreterPath".to_owned(),
+                    Value::String(interpreter_path),
+                );
+            }
+
+            user_settings
+        })
+    }
+
+    fn manifest_name(&self) -> Option<ManifestName> {
+        Some(SharedString::new_static("pyproject.toml").into())
+    }
+
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::WorktreeRoot
+    }
 }
 
 #[cfg(test)]
@@ -1385,7 +1742,7 @@ mod tests {
 
             // dedent "else" on the line after a closing paren
             append(&mut buffer, "\n  else:\n", cx);
-            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n");
+            assert_eq!(buffer.text(), "if a:\n  b(\n  )\nelse:\n  ");
 
             buffer
         });

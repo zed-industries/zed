@@ -13,10 +13,10 @@ use std::{
     sync::{Arc, Weak},
 };
 
-use collections::{HashMap, IndexMap};
+use collections::IndexMap;
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    Attach, CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
+    CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
@@ -38,7 +38,6 @@ pub(crate) struct ServersForWorktree {
 pub struct LanguageServerTree {
     manifest_tree: Entity<ManifestTree>,
     pub(crate) instances: BTreeMap<WorktreeId, ServersForWorktree>,
-    attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
 }
@@ -53,7 +52,6 @@ pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 #[derive(Debug)]
 pub(crate) struct LaunchDisposition<'a> {
     pub(crate) server_name: &'a LanguageServerName,
-    pub(crate) attach: Attach,
     pub(crate) path: ProjectPath,
     pub(crate) settings: Arc<LspSettings>,
 }
@@ -62,7 +60,6 @@ impl<'a> From<&'a InnerTreeNode> for LaunchDisposition<'a> {
     fn from(value: &'a InnerTreeNode) -> Self {
         LaunchDisposition {
             server_name: &value.name,
-            attach: value.attach,
             path: value.path.clone(),
             settings: value.settings.clone(),
         }
@@ -74,6 +71,7 @@ impl LanguageServerTreeNode {
     pub(crate) fn server_id(&self) -> Option<LanguageServerId> {
         self.0.upgrade()?.id.get().copied()
     }
+
     /// Returns a language server ID for this node if it has already been initialized; otherwise runs the provided closure to initialize the language server node in a tree.
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
@@ -87,6 +85,11 @@ impl LanguageServerTreeNode {
                 .get_or_init(|| init(LaunchDisposition::from(&*this))),
         )
     }
+
+    /// Returns a language server name as the language server adapter would return.
+    pub fn name(&self) -> Option<LanguageServerName> {
+        self.0.upgrade().map(|node| node.name.clone())
+    }
 }
 
 impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
@@ -99,7 +102,6 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
     name: LanguageServerName,
-    attach: Attach,
     path: ProjectPath,
     settings: Arc<LspSettings>,
 }
@@ -107,14 +109,12 @@ pub struct InnerTreeNode {
 impl InnerTreeNode {
     fn new(
         name: LanguageServerName,
-        attach: Attach,
         path: ProjectPath,
         settings: impl Into<Arc<LspSettings>>,
     ) -> Self {
         InnerTreeNode {
             id: Default::default(),
             name,
-            attach,
             path,
             settings: settings.into(),
         }
@@ -124,8 +124,11 @@ impl InnerTreeNode {
 /// Determines how the list of adapters to query should be constructed.
 pub(crate) enum AdapterQuery<'a> {
     /// Search for roots of all adapters associated with a given language name.
+    /// Layman: Look for all project roots along the queried path that have any
+    /// language server associated with this language running.
     Language(&'a LanguageName),
     /// Search for roots of adapter with a given name.
+    /// Layman: Look for all project roots along the queried path that have this server running.
     Adapter(&'a LanguageServerName),
 }
 
@@ -141,7 +144,7 @@ impl LanguageServerTree {
             }),
             manifest_tree,
             instances: Default::default(),
-            attach_kind_cache: Default::default(),
+
             languages,
         })
     }
@@ -217,7 +220,6 @@ impl LanguageServerTree {
                     .and_then(|name| roots.get(&name))
                     .cloned()
                     .unwrap_or_else(|| root_path.clone());
-                let attach = adapter.attach_kind();
 
                 let inner_node = self
                     .instances
@@ -231,7 +233,6 @@ impl LanguageServerTree {
                     (
                         Arc::new(InnerTreeNode::new(
                             adapter.name(),
-                            attach,
                             root_path.clone(),
                             settings.clone(),
                         )),
@@ -373,7 +374,6 @@ pub(crate) struct ServerTreeRebase<'a> {
 impl<'tree> ServerTreeRebase<'tree> {
     fn new(new_tree: &'tree mut LanguageServerTree) -> Self {
         let old_contents = std::mem::take(&mut new_tree.instances);
-        new_tree.attach_kind_cache.clear();
         let all_server_ids = old_contents
             .values()
             .flat_map(|nodes| {
@@ -440,10 +440,7 @@ impl<'tree> ServerTreeRebase<'tree> {
                     .get(&disposition.path.worktree_id)
                     .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
                     .and_then(|roots| roots.get(&disposition.name))
-                    .filter(|(old_node, _)| {
-                        disposition.attach == old_node.attach
-                            && disposition.settings == old_node.settings
-                    })
+                    .filter(|(old_node, _)| disposition.settings == old_node.settings)
                 else {
                     return Some(node);
                 };

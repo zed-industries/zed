@@ -1,0 +1,30 @@
+# Configuration related to self-hosted runner.
+self-hosted-runner:
+  # Labels of self-hosted runner in array of strings.
+  labels:
+    # GitHub-hosted Runners
+    - github-8vcpu-ubuntu-2404
+    - github-16vcpu-ubuntu-2404
+    - windows-2025-16
+    - windows-2025-32
+    - windows-2025-64
+    # Buildjet Ubuntu 20.04 - AMD x86_64
+    - buildjet-2vcpu-ubuntu-2004
+    - buildjet-4vcpu-ubuntu-2004
+    - buildjet-8vcpu-ubuntu-2004
+    - buildjet-16vcpu-ubuntu-2004
+    - buildjet-32vcpu-ubuntu-2004
+    # Buildjet Ubuntu 22.04 - AMD x86_64
+    - buildjet-2vcpu-ubuntu-2204
+    - buildjet-4vcpu-ubuntu-2204
+    - buildjet-8vcpu-ubuntu-2204
+    - buildjet-16vcpu-ubuntu-2204
+    - buildjet-32vcpu-ubuntu-2204
+    # Buildjet Ubuntu 22.04 - Graviton aarch64
+    - buildjet-8vcpu-ubuntu-2204-arm
+    - buildjet-16vcpu-ubuntu-2204-arm
+    - buildjet-32vcpu-ubuntu-2204-arm
+    - buildjet-64vcpu-ubuntu-2204-arm
+    # Self Hosted Runners
+    - self-mini-macos
+    - self-32vcpu-windows-2022

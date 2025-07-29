@@ -19,7 +19,13 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(language_selector, [Toggle]);
+actions!(
+    language_selector,
+    [
+        /// Toggles the language selector modal.
+        Toggle
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(LanguageSelector::register).detach();
@@ -247,6 +253,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,

@@ -6,8 +6,9 @@ use anyhow::{Context as _, anyhow};
 use core::fmt::Debug;
 use derive_more::{Add, AddAssign, Div, DivAssign, Mul, Neg, Sub, SubAssign};
 use refineable::Refineable;
-use schemars::{JsonSchema, SchemaGenerator, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use std::borrow::Cow;
 use std::{
     cmp::{self, PartialOrd},
     fmt::{self, Display},
@@ -1590,11 +1591,11 @@ impl Size<DevicePixels> {
 }
 
 impl Size<Pixels> {
-    /// Converts the size from physical to logical pixels.
+    /// Converts the size from logical to physical pixels.
     pub(crate) fn to_device_pixels(self, scale_factor: f32) -> Size<DevicePixels> {
         size(
-            DevicePixels((self.width.0 * scale_factor) as i32),
-            DevicePixels((self.height.0 * scale_factor) as i32),
+            DevicePixels((self.width.0 * scale_factor).round() as i32),
+            DevicePixels((self.height.0 * scale_factor).round() as i32),
         )
     }
 }
@@ -1641,8 +1642,8 @@ impl Bounds<Pixels> {
     pub fn to_device_pixels(&self, factor: f32) -> Bounds<DevicePixels> {
         Bounds {
             origin: point(
-                DevicePixels((self.origin.x.0 * factor) as i32),
-                DevicePixels((self.origin.y.0 * factor) as i32),
+                DevicePixels((self.origin.x.0 * factor).round() as i32),
+                DevicePixels((self.origin.y.0 * factor).round() as i32),
             ),
             size: self.size.to_device_pixels(factor),
         }
@@ -3229,20 +3230,14 @@ impl TryFrom<&'_ str> for AbsoluteLength {
 }
 
 impl JsonSchema for AbsoluteLength {
-    fn schema_name() -> String {
-        "AbsoluteLength".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        "AbsoluteLength".into()
     }
 
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(r"^-?\d+(\.\d+)?(px|rem)$".to_string()),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": r"^-?\d+(\.\d+)?(px|rem)$"
         })
     }
 }
@@ -3366,20 +3361,14 @@ impl TryFrom<&'_ str> for DefiniteLength {
 }
 
 impl JsonSchema for DefiniteLength {
-    fn schema_name() -> String {
-        "DefiniteLength".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        "DefiniteLength".into()
     }
 
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(r"^-?\d+(\.\d+)?(px|rem|%)$".to_string()),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": r"^-?\d+(\.\d+)?(px|rem|%)$"
         })
     }
 }
@@ -3480,20 +3469,14 @@ impl TryFrom<&'_ str> for Length {
 }
 
 impl JsonSchema for Length {
-    fn schema_name() -> String {
-        "Length".to_string()
+    fn schema_name() -> Cow<'static, str> {
+        "Length".into()
     }
 
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        use schemars::schema::{InstanceType, SchemaObject, StringValidation};
-
-        Schema::Object(SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            string: Some(Box::new(StringValidation {
-                pattern: Some(r"^(auto|-?\d+(\.\d+)?(px|rem|%))$".to_string()),
-                ..Default::default()
-            })),
-            ..Default::default()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "type": "string",
+            "pattern": r"^(auto|-?\d+(\.\d+)?(px|rem|%))$"
         })
     }
 }

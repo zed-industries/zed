@@ -12,7 +12,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
 use fs::Fs;
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
@@ -31,11 +31,18 @@ use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
+#[derive(Clone, Debug, Default)]
+pub struct DebugScenarioContext {
+    pub task_context: TaskContext,
+    pub worktree_id: Option<WorktreeId>,
+    pub active_buffer: Option<WeakEntity<Buffer>>,
+}
+
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     fs: Arc<dyn Fs>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    last_scheduled_scenarios: VecDeque<DebugScenario>,
+    last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
@@ -245,16 +252,29 @@ impl Inventory {
         })
     }
 
-    pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
+    pub fn scenario_scheduled(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        worktree_id: Option<WorktreeId>,
+        active_buffer: Option<WeakEntity<Buffer>>,
+    ) {
         self.last_scheduled_scenarios
-            .retain(|s| s.label != scenario.label);
-        self.last_scheduled_scenarios.push_back(scenario);
+            .retain(|(s, _)| s.label != scenario.label);
+        self.last_scheduled_scenarios.push_back((
+            scenario,
+            DebugScenarioContext {
+                task_context,
+                worktree_id,
+                active_buffer,
+            },
+        ));
         if self.last_scheduled_scenarios.len() > 5_000 {
             self.last_scheduled_scenarios.pop_front();
         }
     }
 
-    pub fn last_scheduled_scenario(&self) -> Option<&DebugScenario> {
+    pub fn last_scheduled_scenario(&self) -> Option<&(DebugScenario, DebugScenarioContext)> {
         self.last_scheduled_scenarios.back()
     }
 
@@ -265,7 +285,10 @@ impl Inventory {
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
         cx: &mut App,
-    ) -> (Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>) {
+    ) -> Task<(
+        Vec<(DebugScenario, DebugScenarioContext)>,
+        Vec<(TaskSourceKind, DebugScenario)>,
+    )> {
         let mut scenarios = Vec::new();
 
         if let Some(worktree_id) = task_contexts
@@ -279,9 +302,13 @@ impl Inventory {
         }
         scenarios.extend(self.global_debug_scenarios_from_settings());
 
-        if let Some(location) = task_contexts.location() {
-            let file = location.buffer.read(cx).file();
-            let language = location.buffer.read(cx).language();
+        let last_scheduled_scenarios = self.last_scheduled_scenarios.iter().cloned().collect();
+
+        let adapter = task_contexts.location().and_then(|location| {
+            let (file, language) = {
+                let buffer = location.buffer.read(cx);
+                (buffer.file(), buffer.language())
+            };
             let language_name = language.as_ref().map(|l| l.name());
             let adapter = language_settings(language_name, file, cx)
                 .debuggers
@@ -290,7 +317,10 @@ impl Inventory {
                 .or_else(|| {
                     language.and_then(|l| l.config().debuggers.first().map(SharedString::from))
                 });
-            if let Some(adapter) = adapter {
+            adapter.map(|adapter| (adapter, DapRegistry::global(cx).locators()))
+        });
+        cx.background_spawn(async move {
+            if let Some((adapter, locators)) = adapter {
                 for (kind, task) in
                     lsp_tasks
                         .into_iter()
@@ -299,28 +329,21 @@ impl Inventory {
                                 || !matches!(kind, TaskSourceKind::Language { .. })
                         }))
                 {
-                    if let Some(scenario) =
-                        DapRegistry::global(cx)
-                            .locators()
-                            .values()
-                            .find_map(|locator| {
-                                locator.create_scenario(
-                                    &task.original_task().clone(),
-                                    &task.display_label(),
-                                    adapter.clone().into(),
-                                )
-                            })
-                    {
-                        scenarios.push((kind, scenario));
+                    let adapter = adapter.clone().into();
+
+                    for locator in locators.values() {
+                        if let Some(scenario) = locator
+                            .create_scenario(&task.original_task(), &task.display_label(), &adapter)
+                            .await
+                        {
+                            scenarios.push((kind, scenario));
+                            break;
+                        }
                     }
                 }
             }
-        }
-
-        (
-            self.last_scheduled_scenarios.iter().cloned().collect(),
-            scenarios,
-        )
+            (last_scheduled_scenarios, scenarios)
+        })
     }
 
     pub fn task_template_by_label(
@@ -765,7 +788,7 @@ impl Inventory {
                 }
             }
         }
-        self.last_scheduled_scenarios.retain_mut(|scenario| {
+        self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
             if !previously_existing_scenarios.contains(&scenario.label) {
                 return true;
             }
@@ -1275,7 +1298,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let inventory = cx.update(|cx| Inventory::new(fs, cx));
-        inventory.update(cx, |inventory, cx| {
+        inventory.update(cx, |inventory, _| {
             inventory
                 .update_file_based_scenarios(
                     TaskSettingsLocation::Global(Path::new("")),
@@ -1291,31 +1314,41 @@ mod tests {
                     ),
                 )
                 .unwrap();
+        });
 
-            let (_, scenario) = inventory
-                .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                .1
+        let (_, scenario) = inventory
+            .update(cx, |this, cx| {
+                this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+            })
+            .await
+            .1
+            .first()
+            .unwrap()
+            .clone();
+
+        inventory.update(cx, |this, _| {
+            this.scenario_scheduled(scenario.clone(), TaskContext::default(), None, None);
+        });
+
+        assert_eq!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
                 .first()
                 .unwrap()
-                .clone();
+                .clone()
+                .0,
+            scenario
+        );
 
-            inventory.scenario_scheduled(scenario.clone());
-
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first()
-                    .unwrap()
-                    .clone(),
-                scenario
-            );
-
-            inventory
-                .update_file_based_scenarios(
-                    TaskSettingsLocation::Global(Path::new("")),
-                    Some(
-                        r#"
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
                         [{
                             "label": "test scenario",
                             "adapter": "Delve",
@@ -1323,25 +1356,30 @@ mod tests {
                             "program": "wowzer",
                         }]
                         "#,
-                    ),
-                )
-                .unwrap();
+                ),
+            )
+            .unwrap();
+        });
 
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first()
-                    .unwrap()
-                    .adapter,
-                "Delve",
-            );
-
+        assert_eq!(
             inventory
-                .update_file_based_scenarios(
-                    TaskSettingsLocation::Global(Path::new("")),
-                    Some(
-                        r#"
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .first()
+                .unwrap()
+                .0
+                .adapter,
+            "Delve",
+        );
+
+        inventory.update(cx, |this, _| {
+            this.update_file_based_scenarios(
+                TaskSettingsLocation::Global(Path::new("")),
+                Some(
+                    r#"
                         [{
                             "label": "testing scenario",
                             "adapter": "Delve",
@@ -1349,18 +1387,20 @@ mod tests {
                             "program": "wowzer",
                         }]
                         "#,
-                    ),
-                )
-                .unwrap();
-
-            assert_eq!(
-                inventory
-                    .list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
-                    .0
-                    .first(),
-                None
-            );
+                ),
+            )
+            .unwrap();
         });
+
+        assert!(
+            inventory
+                .update(cx, |this, cx| {
+                    this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
+                })
+                .await
+                .0
+                .is_empty(),
+        );
     }
 
     #[gpui::test]

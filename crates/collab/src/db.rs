@@ -4,20 +4,19 @@ mod tables;
 #[cfg(test)]
 pub mod tests;
 
-use crate::{Error, Result, executor::Executor};
+use crate::{Error, Result};
 use anyhow::{Context as _, anyhow};
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use dashmap::DashMap;
 use futures::StreamExt;
 use project_repository_statuses::StatusKind;
-use rand::{Rng, SeedableRng, prelude::StdRng};
 use rpc::ExtensionProvides;
 use rpc::{
     ConnectionId, ExtensionMetadata,
     proto::{self},
 };
 use sea_orm::{
-    ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbErr,
+    ActiveValue, Condition, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     FromQueryResult, IntoActiveModel, IsolationLevel, JoinType, QueryOrder, QuerySelect, Statement,
     TransactionTrait,
     entity::prelude::*,
@@ -33,7 +32,6 @@ use std::{
     ops::{Deref, DerefMut},
     rc::Rc,
     sync::Arc,
-    time::Duration,
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -44,9 +42,6 @@ pub use tests::TestDb;
 
 pub use ids::*;
 pub use queries::billing_customers::{CreateBillingCustomerParams, UpdateBillingCustomerParams};
-pub use queries::billing_preferences::{
-    CreateBillingPreferencesParams, UpdateBillingPreferencesParams,
-};
 pub use queries::billing_subscriptions::{
     CreateBillingSubscriptionParams, UpdateBillingSubscriptionParams,
 };
@@ -58,6 +53,7 @@ pub use tables::*;
 
 #[cfg(test)]
 pub struct DatabaseTestOptions {
+    pub executor: gpui::BackgroundExecutor,
     pub runtime: tokio::runtime::Runtime,
     pub query_failure_probability: parking_lot::Mutex<f64>,
 }
@@ -69,8 +65,6 @@ pub struct Database {
     pool: DatabaseConnection,
     rooms: DashMap<RoomId, Arc<Mutex<()>>>,
     projects: DashMap<ProjectId, Arc<Mutex<()>>>,
-    rng: Mutex<StdRng>,
-    executor: Executor,
     notification_kinds_by_id: HashMap<NotificationKindId, &'static str>,
     notification_kinds_by_name: HashMap<String, NotificationKindId>,
     #[cfg(test)]
@@ -81,17 +75,15 @@ pub struct Database {
 // separate files in the `queries` folder.
 impl Database {
     /// Connects to the database with the given options
-    pub async fn new(options: ConnectOptions, executor: Executor) -> Result<Self> {
+    pub async fn new(options: ConnectOptions) -> Result<Self> {
         sqlx::any::install_default_drivers();
         Ok(Self {
             options: options.clone(),
             pool: sea_orm::Database::connect(options).await?,
             rooms: DashMap::with_capacity(16384),
             projects: DashMap::with_capacity(16384),
-            rng: Mutex::new(StdRng::seed_from_u64(0)),
             notification_kinds_by_id: HashMap::default(),
             notification_kinds_by_name: HashMap::default(),
-            executor,
             #[cfg(test)]
             test_options: None,
         })
@@ -107,48 +99,13 @@ impl Database {
         self.projects.clear();
     }
 
-    /// Transaction runs things in a transaction. If you want to call other methods
-    /// and pass the transaction around you need to reborrow the transaction at each
-    /// call site with: `&*tx`.
     pub async fn transaction<F, Fut, T>(&self, f: F) -> Result<T>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
     {
         let body = async {
-            let mut i = 0;
-            loop {
-                let (tx, result) = self.with_transaction(&f).await?;
-                match result {
-                    Ok(result) => match tx.commit().await.map_err(Into::into) {
-                        Ok(()) => return Ok(result),
-                        Err(error) => {
-                            if !self.retry_on_serialization_error(&error, i).await {
-                                return Err(error);
-                            }
-                        }
-                    },
-                    Err(error) => {
-                        tx.rollback().await?;
-                        if !self.retry_on_serialization_error(&error, i).await {
-                            return Err(error);
-                        }
-                    }
-                }
-                i += 1;
-            }
-        };
-
-        self.run(body).await
-    }
-
-    pub async fn weak_transaction<F, Fut, T>(&self, f: F) -> Result<T>
-    where
-        F: Send + Fn(TransactionHandle) -> Fut,
-        Fut: Send + Future<Output = Result<T>>,
-    {
-        let body = async {
-            let (tx, result) = self.with_weak_transaction(&f).await?;
+            let (tx, result) = self.with_transaction(&f).await?;
             match result {
                 Ok(result) => match tx.commit().await.map_err(Into::into) {
                     Ok(()) => Ok(result),
@@ -174,44 +131,28 @@ impl Database {
         Fut: Send + Future<Output = Result<Option<(RoomId, T)>>>,
     {
         let body = async {
-            let mut i = 0;
-            loop {
-                let (tx, result) = self.with_transaction(&f).await?;
-                match result {
-                    Ok(Some((room_id, data))) => {
-                        let lock = self.rooms.entry(room_id).or_default().clone();
-                        let _guard = lock.lock_owned().await;
-                        match tx.commit().await.map_err(Into::into) {
-                            Ok(()) => {
-                                return Ok(Some(TransactionGuard {
-                                    data,
-                                    _guard,
-                                    _not_send: PhantomData,
-                                }));
-                            }
-                            Err(error) => {
-                                if !self.retry_on_serialization_error(&error, i).await {
-                                    return Err(error);
-                                }
-                            }
-                        }
-                    }
-                    Ok(None) => match tx.commit().await.map_err(Into::into) {
-                        Ok(()) => return Ok(None),
-                        Err(error) => {
-                            if !self.retry_on_serialization_error(&error, i).await {
-                                return Err(error);
-                            }
-                        }
-                    },
-                    Err(error) => {
-                        tx.rollback().await?;
-                        if !self.retry_on_serialization_error(&error, i).await {
-                            return Err(error);
-                        }
+            let (tx, result) = self.with_transaction(&f).await?;
+            match result {
+                Ok(Some((room_id, data))) => {
+                    let lock = self.rooms.entry(room_id).or_default().clone();
+                    let _guard = lock.lock_owned().await;
+                    match tx.commit().await.map_err(Into::into) {
+                        Ok(()) => Ok(Some(TransactionGuard {
+                            data,
+                            _guard,
+                            _not_send: PhantomData,
+                        })),
+                        Err(error) => Err(error),
                     }
                 }
-                i += 1;
+                Ok(None) => match tx.commit().await.map_err(Into::into) {
+                    Ok(()) => Ok(None),
+                    Err(error) => Err(error),
+                },
+                Err(error) => {
+                    tx.rollback().await?;
+                    Err(error)
+                }
             }
         };
 
@@ -229,38 +170,26 @@ impl Database {
     {
         let room_id = Database::room_id_for_project(self, project_id).await?;
         let body = async {
-            let mut i = 0;
-            loop {
-                let lock = if let Some(room_id) = room_id {
-                    self.rooms.entry(room_id).or_default().clone()
-                } else {
-                    self.projects.entry(project_id).or_default().clone()
-                };
-                let _guard = lock.lock_owned().await;
-                let (tx, result) = self.with_transaction(&f).await?;
-                match result {
-                    Ok(data) => match tx.commit().await.map_err(Into::into) {
-                        Ok(()) => {
-                            return Ok(TransactionGuard {
-                                data,
-                                _guard,
-                                _not_send: PhantomData,
-                            });
-                        }
-                        Err(error) => {
-                            if !self.retry_on_serialization_error(&error, i).await {
-                                return Err(error);
-                            }
-                        }
-                    },
-                    Err(error) => {
-                        tx.rollback().await?;
-                        if !self.retry_on_serialization_error(&error, i).await {
-                            return Err(error);
-                        }
-                    }
+            let lock = if let Some(room_id) = room_id {
+                self.rooms.entry(room_id).or_default().clone()
+            } else {
+                self.projects.entry(project_id).or_default().clone()
+            };
+            let _guard = lock.lock_owned().await;
+            let (tx, result) = self.with_transaction(&f).await?;
+            match result {
+                Ok(data) => match tx.commit().await.map_err(Into::into) {
+                    Ok(()) => Ok(TransactionGuard {
+                        data,
+                        _guard,
+                        _not_send: PhantomData,
+                    }),
+                    Err(error) => Err(error),
+                },
+                Err(error) => {
+                    tx.rollback().await?;
+                    Err(error)
                 }
-                i += 1;
             }
         };
 
@@ -280,34 +209,22 @@ impl Database {
         Fut: Send + Future<Output = Result<T>>,
     {
         let body = async {
-            let mut i = 0;
-            loop {
-                let lock = self.rooms.entry(room_id).or_default().clone();
-                let _guard = lock.lock_owned().await;
-                let (tx, result) = self.with_transaction(&f).await?;
-                match result {
-                    Ok(data) => match tx.commit().await.map_err(Into::into) {
-                        Ok(()) => {
-                            return Ok(TransactionGuard {
-                                data,
-                                _guard,
-                                _not_send: PhantomData,
-                            });
-                        }
-                        Err(error) => {
-                            if !self.retry_on_serialization_error(&error, i).await {
-                                return Err(error);
-                            }
-                        }
-                    },
-                    Err(error) => {
-                        tx.rollback().await?;
-                        if !self.retry_on_serialization_error(&error, i).await {
-                            return Err(error);
-                        }
-                    }
+            let lock = self.rooms.entry(room_id).or_default().clone();
+            let _guard = lock.lock_owned().await;
+            let (tx, result) = self.with_transaction(&f).await?;
+            match result {
+                Ok(data) => match tx.commit().await.map_err(Into::into) {
+                    Ok(()) => Ok(TransactionGuard {
+                        data,
+                        _guard,
+                        _not_send: PhantomData,
+                    }),
+                    Err(error) => Err(error),
+                },
+                Err(error) => {
+                    tx.rollback().await?;
+                    Err(error)
                 }
-                i += 1;
             }
         };
 
@@ -315,28 +232,6 @@ impl Database {
     }
 
     async fn with_transaction<F, Fut, T>(&self, f: &F) -> Result<(DatabaseTransaction, Result<T>)>
-    where
-        F: Send + Fn(TransactionHandle) -> Fut,
-        Fut: Send + Future<Output = Result<T>>,
-    {
-        let tx = self
-            .pool
-            .begin_with_config(Some(IsolationLevel::Serializable), None)
-            .await?;
-
-        let mut tx = Arc::new(Some(tx));
-        let result = f(TransactionHandle(tx.clone())).await;
-        let tx = Arc::get_mut(&mut tx)
-            .and_then(|tx| tx.take())
-            .context("couldn't complete transaction because it's still in use")?;
-
-        Ok((tx, result))
-    }
-
-    async fn with_weak_transaction<F, Fut, T>(
-        &self,
-        f: &F,
-    ) -> Result<(DatabaseTransaction, Result<T>)>
     where
         F: Send + Fn(TransactionHandle) -> Fut,
         Fut: Send + Future<Output = Result<T>>,
@@ -361,13 +256,13 @@ impl Database {
     {
         #[cfg(test)]
         {
+            use rand::prelude::*;
+
             let test_options = self.test_options.as_ref().unwrap();
-            if let Executor::Deterministic(executor) = &self.executor {
-                executor.simulate_random_delay().await;
-                let fail_probability = *test_options.query_failure_probability.lock();
-                if executor.rng().gen_bool(fail_probability) {
-                    return Err(anyhow!("simulated query failure"))?;
-                }
+            test_options.executor.simulate_random_delay().await;
+            let fail_probability = *test_options.query_failure_probability.lock();
+            if test_options.executor.rng().gen_bool(fail_probability) {
+                return Err(anyhow!("simulated query failure"))?;
             }
 
             test_options.runtime.block_on(future)
@@ -377,46 +272,6 @@ impl Database {
         {
             future.await
         }
-    }
-
-    async fn retry_on_serialization_error(&self, error: &Error, prev_attempt_count: usize) -> bool {
-        // If the error is due to a failure to serialize concurrent transactions, then retry
-        // this transaction after a delay. With each subsequent retry, double the delay duration.
-        // Also vary the delay randomly in order to ensure different database connections retry
-        // at different times.
-        const SLEEPS: [f32; 10] = [10., 20., 40., 80., 160., 320., 640., 1280., 2560., 5120.];
-        if is_serialization_error(error) && prev_attempt_count < SLEEPS.len() {
-            let base_delay = SLEEPS[prev_attempt_count];
-            let randomized_delay = base_delay * self.rng.lock().await.gen_range(0.5..=2.0);
-            log::warn!(
-                "retrying transaction after serialization error. delay: {} ms.",
-                randomized_delay
-            );
-            self.executor
-                .sleep(Duration::from_millis(randomized_delay as u64))
-                .await;
-            true
-        } else {
-            false
-        }
-    }
-}
-
-fn is_serialization_error(error: &Error) -> bool {
-    const SERIALIZATION_FAILURE_CODE: &str = "40001";
-    match error {
-        Error::Database(
-            DbErr::Exec(sea_orm::RuntimeErr::SqlxError(error))
-            | DbErr::Query(sea_orm::RuntimeErr::SqlxError(error)),
-        ) if error
-            .as_database_error()
-            .and_then(|error| error.code())
-            .as_deref()
-            == Some(SERIALIZATION_FAILURE_CODE) =>
-        {
-            true
-        }
-        _ => false,
     }
 }
 

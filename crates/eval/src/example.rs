@@ -100,7 +100,7 @@ impl ExampleContext {
     pub fn new(
         meta: ExampleMetadata,
         log_prefix: String,
-        agent_thread: Entity<agent::Thread>,
+        agent_thread: Entity<Thread>,
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
@@ -420,6 +420,13 @@ impl AppContext for ExampleContext {
         T: 'static,
     {
         self.app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.app.as_mut(handle)
     }
 
     fn read_entity<T, R>(

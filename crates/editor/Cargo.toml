@@ -40,7 +40,6 @@ dap.workspace = true
 db.workspace = true
 buffer_diff.workspace = true
 emojis.workspace = true
-feature_flags.workspace = true
 file_icons.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -62,6 +61,7 @@ parking_lot.workspace = true
 pretty_assertions.workspace = true
 project.workspace = true
 rand.workspace = true
+regex.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -109,6 +109,8 @@ theme = { workspace = true, features = ["test-support"] }
 tree-sitter-html.workspace = true
 tree-sitter-rust.workspace = true
 tree-sitter-typescript.workspace = true
+tree-sitter-yaml.workspace = true
+tree-sitter-bash.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

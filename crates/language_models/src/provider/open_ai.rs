@@ -1,20 +1,19 @@
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
-use editor::{Editor, EditorElement, EditorStyle};
+
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
-};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason,
+    RateLimiter, Role, StopReason, TokenUsage,
 };
+use menu;
 use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -23,29 +22,29 @@ use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
-use theme::ThemeSettings;
-use ui::{Icon, IconName, List, Tooltip, prelude::*};
+
+use ui::{ElevationIndex, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
 use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: &str = "openai";
-const PROVIDER_NAME: &str = "OpenAI";
+const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-    pub needs_setting_migration: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     pub name: String,
     pub display_name: Option<String>,
-    pub max_tokens: usize,
-    pub max_output_tokens: Option<u32>,
-    pub max_completion_tokens: Option<u32>,
+    pub max_tokens: u64,
+    pub max_output_tokens: Option<u64>,
+    pub max_completion_tokens: Option<u64>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -62,6 +61,7 @@ pub struct State {
 const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
+    //
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -171,11 +171,11 @@ impl LanguageModelProviderState for OpenAiLanguageModelProvider {
 
 impl LanguageModelProvider for OpenAiLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -265,7 +265,11 @@ impl OpenAiLanguageModel {
         };
 
         let future = self.request_limiter.stream(async move {
-            let api_key = api_key.context("Missing OpenAI API Key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             let response = request.await?;
             Ok(response)
@@ -285,11 +289,11 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -312,11 +316,11 @@ impl LanguageModel for OpenAiLanguageModel {
         format!("openai/{}", self.model.id())
     }
 
-    fn max_token_count(&self) -> usize {
+    fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
 
-    fn max_output_tokens(&self) -> Option<u32> {
+    fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
     }
 
@@ -324,7 +328,7 @@ impl LanguageModel for OpenAiLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &App,
-    ) -> BoxFuture<'static, Result<usize>> {
+    ) -> BoxFuture<'static, Result<u64>> {
         count_open_ai_tokens(request, self.model.clone(), cx)
     }
 
@@ -342,7 +346,12 @@ impl LanguageModel for OpenAiLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            self.model.id(),
+            self.model.supports_parallel_tool_calls(),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -354,10 +363,11 @@ impl LanguageModel for OpenAiLanguageModel {
 
 pub fn into_open_ai(
     request: LanguageModelRequest,
-    model: &Model,
-    max_output_tokens: Option<u32>,
+    model_id: &str,
+    supports_parallel_tool_calls: bool,
+    max_output_tokens: Option<u64>,
 ) -> open_ai::Request {
-    let stream = !model.id().starts_with("o1-");
+    let stream = !model_id.starts_with("o1-");
 
     let mut messages = Vec::new();
     for message in request.messages {
@@ -433,13 +443,13 @@ pub fn into_open_ai(
     }
 
     open_ai::Request {
-        model: model.id().into(),
+        model: model_id.into(),
         messages,
         stream,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(1.0),
         max_completion_tokens: max_output_tokens,
-        parallel_tool_calls: if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             // Disable parallel tool calls, as the Agent currently expects a maximum of one per turn.
             Some(false)
         } else {
@@ -517,7 +527,7 @@ impl OpenAiEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
             })
         })
     }
@@ -526,13 +536,20 @@ impl OpenAiEventMapper {
         &mut self,
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                "Response contained no choices"
-            )))];
+            return events;
         };
 
-        let mut events = Vec::new();
         if let Some(content) = choice.delta.content.clone() {
             events.push(Ok(LanguageModelCompletionEvent::Text(content)));
         }
@@ -573,10 +590,10 @@ impl OpenAiEventMapper {
                                 raw_input: tool_call.arguments.clone(),
                             },
                         )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                             id: tool_call.id.into(),
-                            tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.clone().into(),
                             json_parse_error: error.to_string(),
                         }),
                     }
@@ -602,26 +619,32 @@ struct RawToolCall {
     arguments: String,
 }
 
+pub(crate) fn collect_tiktoken_messages(
+    request: LanguageModelRequest,
+) -> Vec<tiktoken_rs::ChatCompletionRequestMessage> {
+    request
+        .messages
+        .into_iter()
+        .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
+            role: match message.role {
+                Role::User => "user".into(),
+                Role::Assistant => "assistant".into(),
+                Role::System => "system".into(),
+            },
+            content: Some(message.string_contents()),
+            name: None,
+            function_call: None,
+        })
+        .collect::<Vec<_>>()
+}
+
 pub fn count_open_ai_tokens(
     request: LanguageModelRequest,
     model: Model,
     cx: &App,
-) -> BoxFuture<'static, Result<usize>> {
+) -> BoxFuture<'static, Result<u64>> {
     cx.background_spawn(async move {
-        let messages = request
-            .messages
-            .into_iter()
-            .map(|message| tiktoken_rs::ChatCompletionRequestMessage {
-                role: match message.role {
-                    Role::User => "user".into(),
-                    Role::Assistant => "assistant".into(),
-                    Role::System => "system".into(),
-                },
-                content: Some(message.string_contents()),
-                name: None,
-                function_call: None,
-            })
-            .collect::<Vec<_>>();
+        let messages = collect_tiktoken_messages(request);
 
         match model {
             Model::Custom { max_tokens, .. } => {
@@ -652,12 +675,13 @@ pub fn count_open_ai_tokens(
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
+        .map(|tokens| tokens as u64)
     })
     .boxed()
 }
 
 struct ConfigurationView {
-    api_key_editor: Entity<Editor>,
+    api_key_editor: Entity<SingleLineInput>,
     state: gpui::Entity<State>,
     load_credentials_task: Option<Task<()>>,
 }
@@ -665,9 +689,11 @@ struct ConfigurationView {
 impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
-            editor
+            SingleLineInput::new(
+                window,
+                cx,
+                "sk-000000000000000000000000000000000000000000000000",
+            )
         });
 
         cx.observe(&state, |_, _, cx| {
@@ -685,7 +711,6 @@ impl ConfigurationView {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
-
                 this.update(cx, |this, cx| {
                     this.load_credentials_task = None;
                     cx.notify();
@@ -702,8 +727,17 @@ impl ConfigurationView {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx);
-        if api_key.is_empty() {
+        let api_key = self
+            .api_key_editor
+            .read(cx)
+            .editor()
+            .read(cx)
+            .text(cx)
+            .trim()
+            .to_string();
+
+        // Don't proceed if no API key is provided and we're not authenticated
+        if api_key.is_empty() && !self.state.read(cx).is_authenticated() {
             return;
         }
 
@@ -719,8 +753,11 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor
-            .update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.api_key_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
@@ -729,31 +766,6 @@ impl ConfigurationView {
         .detach_and_log_err(cx);
 
         cx.notify();
-    }
-
-    fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = ThemeSettings::get_global(cx);
-        let text_style = TextStyle {
-            color: cx.theme().colors().text,
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            font_style: FontStyle::Normal,
-            line_height: relative(1.3),
-            white_space: WhiteSpace::Normal,
-            ..Default::default()
-        };
-        EditorElement::new(
-            &self.api_key_editor,
-            EditorStyle {
-                background: cx.theme().colors().editor_background,
-                local_player: cx.theme().players().local(),
-                text: text_style,
-                ..Default::default()
-            },
-        )
     }
 
     fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
@@ -765,11 +777,8 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let env_var_set = self.state.read(cx).api_key_from_env;
 
-        if self.load_credentials_task.is_some() {
-            div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(cx) {
+        let api_key_section = if self.should_render_editor(cx) {
             v_flex()
-                .size_full()
                 .on_action(cx.listener(Self::save_api_key))
                 .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
@@ -786,18 +795,7 @@ impl Render for ConfigurationView {
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .my_2()
-                        .px_2()
-                        .py_1()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .rounded_sm()
-                        .child(self.render_api_key_editor(cx)),
-                )
+                .child(self.api_key_editor.clone())
                 .child(
                     Label::new(
                         format!("You can also assign the {OPENAI_API_KEY_VAR} environment variable and restart Zed."),
@@ -806,7 +804,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        "Note that having a subscription for another service like GitHub Copilot won't work.".to_string(),
+                        "Note that having a subscription for another service like GitHub Copilot won't work.",
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -831,17 +829,56 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-api-key", "Reset API Key")
                         .label_size(LabelSize::Small)
-                        .icon(Some(IconName::Trash))
+                        .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
-                        .disabled(env_var_set)
+                        .layer(ElevationIndex::ModalSurface)
                         .when(env_var_set, |this| {
                             this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OPENAI_API_KEY_VAR} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
+                .into_any()
+        };
+
+        let compatible_api_section = h_flex()
+            .mt_1p5()
+            .gap_0p5()
+            .flex_wrap()
+            .when(self.should_render_editor(cx), |this| {
+                this.pt_1p5()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+            })
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Icon::new(IconName::Info)
+                            .size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new("Zed also supports OpenAI-compatible models.")),
+            )
+            .child(
+                Button::new("docs", "Learn More")
+                    .icon(IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .on_click(move |_, _window, cx| {
+                        cx.open_url("https://zed.dev/docs/ai/configuration#openai-api-compatible")
+                    }),
+            );
+
+        if self.load_credentials_task.is_some() {
+            div().child(Label::new("Loading credentials…")).into_any()
+        } else {
+            v_flex()
+                .size_full()
+                .child(api_key_section)
+                .child(compatible_api_section)
                 .into_any()
         }
     }
@@ -870,6 +907,7 @@ mod tests {
             tool_choice: None,
             stop: vec![],
             temperature: None,
+            thinking_allowed: true,
         };
 
         // Validate that all models are supported by tiktoken-rs

@@ -89,11 +89,11 @@ impl DapLocator for GoLocator {
         SharedString::new_static("go-debug-locator")
     }
 
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
         if build_config.command != "go" {
             return None;
@@ -117,7 +117,20 @@ impl DapLocator for GoLocator {
                         // HACK: tasks assume that they are run in a shell context,
                         // so the -run regex has escaped specials. Delve correctly
                         // handles escaping, so we undo that here.
-                        if arg.starts_with("\\^") && arg.ends_with("\\$") {
+                        if let Some((left, right)) = arg.split_once("/")
+                            && left.starts_with("\\^")
+                            && left.ends_with("\\$")
+                            && right.starts_with("\\^")
+                            && right.ends_with("\\$")
+                        {
+                            let mut left = left[1..left.len() - 2].to_string();
+                            left.push('$');
+
+                            let mut right = right[1..right.len() - 2].to_string();
+                            right.push('$');
+
+                            args.push(format!("{left}/{right}"));
+                        } else if arg.starts_with("\\^") && arg.ends_with("\\$") {
                             let mut arg = arg[1..arg.len() - 2].to_string();
                             arg.push('$');
                             args.push(arg);
@@ -170,7 +183,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter: adapter.0,
+                    adapter: adapter.0.clone(),
                     build: None,
                     config: config,
                     tcp_connection: None,
@@ -214,7 +227,7 @@ impl DapLocator for GoLocator {
 
                 Some(DebugScenario {
                     label: resolved_label.to_string().into(),
-                    adapter: adapter.0,
+                    adapter: adapter.0.clone(),
                     build: None,
                     config,
                     tcp_connection: None,
@@ -232,10 +245,11 @@ impl DapLocator for GoLocator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
     use task::{HideStrategy, RevealStrategy, RevealTarget, Shell, TaskTemplate};
 
-    #[test]
-    fn test_create_scenario_for_go_build() {
+    #[gpui::test]
+    async fn test_create_scenario_for_go_build(_: &mut TestAppContext) {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "go build".into(),
@@ -254,14 +268,15 @@ mod tests {
             show_command: true,
         };
 
-        let scenario =
-            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
+        let scenario = locator
+            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
+            .await;
 
         assert!(scenario.is_none());
     }
 
-    #[test]
-    fn test_skip_non_go_commands_with_non_delve_adapter() {
+    #[gpui::test]
+    async fn test_skip_non_go_commands_with_non_delve_adapter(_: &mut TestAppContext) {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "cargo build".into(),
@@ -280,19 +295,22 @@ mod tests {
             show_command: true,
         };
 
-        let scenario = locator.create_scenario(
-            &task,
-            "test label",
-            DebugAdapterName("SomeOtherAdapter".into()),
-        );
+        let scenario = locator
+            .create_scenario(
+                &task,
+                "test label",
+                &DebugAdapterName("SomeOtherAdapter".into()),
+            )
+            .await;
         assert!(scenario.is_none());
 
-        let scenario =
-            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
+        let scenario = locator
+            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
+            .await;
         assert!(scenario.is_none());
     }
-    #[test]
-    fn test_go_locator_run() {
+    #[gpui::test]
+    async fn test_go_locator_run(_: &mut TestAppContext) {
         let locator = GoLocator;
         let delve = DebugAdapterName("Delve".into());
 
@@ -319,7 +337,8 @@ mod tests {
         };
 
         let scenario = locator
-            .create_scenario(&task, "test run label", delve)
+            .create_scenario(&task, "test run label", &delve)
+            .await
             .unwrap();
 
         let config: DelveLaunchRequest = serde_json::from_value(scenario.config).unwrap();
@@ -350,8 +369,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_go_locator_test() {
+    #[gpui::test]
+    async fn test_go_locator_test(_: &mut TestAppContext) {
         let locator = GoLocator;
         let delve = DebugAdapterName("Delve".into());
 
@@ -370,7 +389,8 @@ mod tests {
             ..Default::default()
         };
         let result = locator
-            .create_scenario(&task_with_tags, "", delve.clone())
+            .create_scenario(&task_with_tags, "", &delve)
+            .await
             .unwrap();
 
         let config: DelveLaunchRequest = serde_json::from_value(result.config).unwrap();
@@ -393,8 +413,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_skip_unsupported_go_commands() {
+    #[gpui::test]
+    async fn test_skip_unsupported_go_commands(_: &mut TestAppContext) {
         let locator = GoLocator;
         let task = TaskTemplate {
             label: "go clean".into(),
@@ -413,8 +433,9 @@ mod tests {
             show_command: true,
         };
 
-        let scenario =
-            locator.create_scenario(&task, "test label", DebugAdapterName("Delve".into()));
+        let scenario = locator
+            .create_scenario(&task, "test label", &DebugAdapterName("Delve".into()))
+            .await;
         assert!(scenario.is_none());
     }
 }

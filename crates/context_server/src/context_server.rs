@@ -1,13 +1,14 @@
 pub mod client;
+pub mod listener;
 pub mod protocol;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod transport;
 pub mod types;
 
-use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
@@ -16,6 +17,7 @@ use gpui::AsyncApp;
 use parking_lot::RwLock;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use util::redact::should_redact;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -26,15 +28,32 @@ impl Display for ContextServerId {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
-    pub path: String,
+    #[serde(rename = "command")]
+    pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
 }
 
+impl std::fmt::Debug for ContextServerCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let filtered_env = self.env.as_ref().map(|env| {
+            env.iter()
+                .map(|(k, v)| (k, if should_redact(k) { "[REDACTED]" } else { v }))
+                .collect::<Vec<_>>()
+        });
+
+        f.debug_struct("ContextServerCommand")
+            .field("path", &self.path)
+            .field("args", &self.args)
+            .field("env", &filtered_env)
+            .finish()
+    }
+}
+
 enum ContextServerTransport {
-    Stdio(ContextServerCommand),
+    Stdio(ContextServerCommand, Option<PathBuf>),
     Custom(Arc<dyn crate::transport::Transport>),
 }
 
@@ -45,11 +64,18 @@ pub struct ContextServer {
 }
 
 impl ContextServer {
-    pub fn stdio(id: ContextServerId, command: ContextServerCommand) -> Self {
+    pub fn stdio(
+        id: ContextServerId,
+        command: ContextServerCommand,
+        working_directory: Option<Arc<Path>>,
+    ) -> Self {
         Self {
             id,
             client: RwLock::new(None),
-            configuration: ContextServerTransport::Stdio(command),
+            configuration: ContextServerTransport::Stdio(
+                command,
+                working_directory.map(|directory| directory.to_path_buf()),
+            ),
         }
     }
 
@@ -71,13 +97,14 @@ impl ContextServer {
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         let client = match &self.configuration {
-            ContextServerTransport::Stdio(command) => Client::stdio(
+            ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
                 client::ModelContextServerBinary {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
                 },
+                working_directory,
                 cx.clone(),
             )?,
             ContextServerTransport::Custom(transport) => Client::new(

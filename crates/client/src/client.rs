@@ -21,7 +21,7 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, http};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -81,7 +81,17 @@ pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
 pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
-actions!(client, [SignIn, SignOut, Reconnect]);
+actions!(
+    client,
+    [
+        /// Signs in to Zed account.
+        SignIn,
+        /// Signs out of Zed account.
+        SignOut,
+        /// Reconnects to the collaboration server.
+        Reconnect
+    ]
+);
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ClientSettingsContent {
@@ -141,6 +151,7 @@ impl Settings for ProxySettings {
 
 pub fn init_settings(cx: &mut App) {
     TelemetrySettings::register(cx);
+    DisableAiSettings::register(cx);
     ClientSettings::register(cx);
     ProxySettings::register(cx);
 }
@@ -289,6 +300,13 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn is_signing_in(&self) -> bool {
+        matches!(
+            self,
+            Self::Authenticating | Self::Reauthenticating | Self::Connecting | Self::Reconnecting
+        )
     }
 
     pub fn is_signed_out(&self) -> bool {
@@ -529,6 +547,33 @@ impl settings::Settings for TelemetrySettings {
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
     }
+}
+
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 impl Client {
@@ -1093,7 +1138,7 @@ impl Client {
                 .to_str()
                 .map_err(EstablishConnectionError::other)?
                 .to_string();
-            Url::parse(&collab_url).with_context(|| format!("parsing colab rpc url {collab_url}"))
+            Url::parse(&collab_url).with_context(|| format!("parsing collab rpc url {collab_url}"))
         }
     }
 
@@ -1113,6 +1158,7 @@ impl Client {
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
+        let user_agent = http.user_agent().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         let system_id = self.telemetry.system_id();
@@ -1164,7 +1210,7 @@ impl Client {
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
             request_headers.insert(
-                "Authorization",
+                http::header::AUTHORIZATION,
                 HeaderValue::from_str(&credentials.authorization_header())?,
             );
             request_headers.insert(
@@ -1176,6 +1222,9 @@ impl Client {
                 "x-zed-release-channel",
                 HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
+            if let Some(user_agent) = user_agent {
+                request_headers.insert(http::header::USER_AGENT, user_agent);
+            }
             if let Some(system_id) = system_id {
                 request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
             }

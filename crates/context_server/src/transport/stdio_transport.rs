@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::pin::Pin;
 
 use anyhow::{Context as _, Result};
@@ -22,7 +23,11 @@ pub struct StdioTransport {
 }
 
 impl StdioTransport {
-    pub fn new(binary: ModelContextServerBinary, cx: &AsyncApp) -> Result<Self> {
+    pub fn new(
+        binary: ModelContextServerBinary,
+        working_directory: &Option<PathBuf>,
+        cx: &AsyncApp,
+    ) -> Result<Self> {
         let mut command = util::command::new_smol_command(&binary.executable);
         command
             .args(&binary.args)
@@ -31,6 +36,10 @@ impl StdioTransport {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
+
+        if let Some(working_directory) = working_directory {
+            command.current_dir(working_directory);
+        }
 
         let mut server = command.spawn().with_context(|| {
             format!(

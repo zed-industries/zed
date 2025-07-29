@@ -4,9 +4,9 @@ use anyhow::{Result, anyhow, bail};
 use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
+use icons::IconName;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::{Project, context_server_store::ContextServerStore};
-use ui::IconName;
 
 pub struct ContextServerTool {
     store: Entity<ContextServerStore>,
@@ -38,7 +38,7 @@ impl Tool for ContextServerTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Cog
+        IconName::ToolHammer
     }
 
     fn source(&self) -> ToolSource {
@@ -47,7 +47,7 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 

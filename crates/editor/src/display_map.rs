@@ -37,7 +37,9 @@ pub use block_map::{
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
-pub use fold_map::{ChunkRenderer, ChunkRendererContext, Fold, FoldId, FoldPlaceholder, FoldPoint};
+pub use fold_map::{
+    ChunkRenderer, ChunkRendererContext, ChunkRendererId, Fold, FoldId, FoldPlaceholder, FoldPoint,
+};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{App, Context, Entity, Font, HighlightStyle, LineLayout, Pixels, UnderlineStyle};
 pub use inlay_map::Inlay;
@@ -76,11 +78,17 @@ pub enum FoldStatus {
     Foldable,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum HighlightKey {
+    Type(TypeId),
+    TypePlus(TypeId, usize),
+}
+
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
-type TextHighlights = TreeMap<TypeId, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
+type TextHighlights = TreeMap<HighlightKey, Arc<(HighlightStyle, Vec<Range<Anchor>>)>>;
 type InlayHighlights = TreeMap<TypeId, TreeMap<InlayId, (HighlightStyle, InlayHighlight)>>;
 
 /// Decides how text in a [`MultiBuffer`] should be displayed in a buffer, handling inlay hints,
@@ -263,7 +271,6 @@ impl DisplayMap {
                         height: Some(height),
                         style,
                         priority,
-                        render_in_minimap: true,
                     }
                 }),
         );
@@ -473,12 +480,11 @@ impl DisplayMap {
 
     pub fn highlight_text(
         &mut self,
-        type_id: TypeId,
+        key: HighlightKey,
         ranges: Vec<Range<Anchor>>,
         style: HighlightStyle,
     ) {
-        self.text_highlights
-            .insert(type_id, Arc::new((style, ranges)));
+        self.text_highlights.insert(key, Arc::new((style, ranges)));
     }
 
     pub(crate) fn highlight_inlays(
@@ -501,11 +507,22 @@ impl DisplayMap {
     }
 
     pub fn text_highlights(&self, type_id: TypeId) -> Option<(HighlightStyle, &[Range<Anchor>])> {
-        let highlights = self.text_highlights.get(&type_id)?;
+        let highlights = self.text_highlights.get(&HighlightKey::Type(type_id))?;
         Some((highlights.0, &highlights.1))
     }
+
+    #[cfg(feature = "test-support")]
+    pub fn all_text_highlights(
+        &self,
+    ) -> impl Iterator<Item = &Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
+        self.text_highlights.values()
+    }
+
     pub fn clear_highlights(&mut self, type_id: TypeId) -> bool {
-        let mut cleared = self.text_highlights.remove(&type_id).is_some();
+        let mut cleared = self
+            .text_highlights
+            .remove(&HighlightKey::Type(type_id))
+            .is_some();
         cleared |= self.inlay_highlights.remove(&type_id).is_some();
         cleared
     }
@@ -522,7 +539,7 @@ impl DisplayMap {
 
     pub fn update_fold_widths(
         &mut self,
-        widths: impl IntoIterator<Item = (FoldId, Pixels)>,
+        widths: impl IntoIterator<Item = (ChunkRendererId, Pixels)>,
         cx: &mut Context<Self>,
     ) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -950,10 +967,22 @@ impl DisplaySnapshot {
                 .and_then(|id| id.style(&editor_style.syntax));
 
             if let Some(chunk_highlight) = chunk.highlight_style {
+                // For color inlays, blend the color with the editor background
+                let mut processed_highlight = chunk_highlight;
+                if chunk.is_inlay {
+                    if let Some(inlay_color) = chunk_highlight.color {
+                        // Only blend if the color has transparency (alpha < 1.0)
+                        if inlay_color.a < 1.0 {
+                            let blended_color = editor_style.background.blend(inlay_color);
+                            processed_highlight.color = Some(blended_color);
+                        }
+                    }
+                }
+
                 if let Some(highlight_style) = highlight_style.as_mut() {
-                    highlight_style.highlight(chunk_highlight);
+                    highlight_style.highlight(processed_highlight);
                 } else {
-                    highlight_style = Some(chunk_highlight);
+                    highlight_style = Some(processed_highlight);
                 }
             }
 
@@ -1036,7 +1065,7 @@ impl DisplaySnapshot {
         }
 
         let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system.layout_line(&line, font_size, &runs)
+        text_system.layout_line(&line, font_size, &runs, None)
     }
 
     pub fn x_for_display_point(
@@ -1333,7 +1362,9 @@ impl DisplaySnapshot {
         &self,
     ) -> Option<Arc<(HighlightStyle, Vec<Range<Anchor>>)>> {
         let type_id = TypeId::of::<Tag>();
-        self.text_highlights.get(&type_id).cloned()
+        self.text_highlights
+            .get(&HighlightKey::Type(type_id))
+            .cloned()
     }
 
     #[allow(unused)]
@@ -1631,7 +1662,6 @@ pub mod tests {
                                         height: Some(height),
                                         render: Arc::new(|_| div().into_any()),
                                         priority,
-                                        render_in_minimap: true,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1997,7 +2027,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2007,11 +2036,11 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay {
-                    id: InlayId::InlineCompletion(0),
-                    position: buffer_snapshot.anchor_after(0),
-                    text: "\n".into(),
-                }],
+                vec![Inlay::inline_completion(
+                    0,
+                    buffer_snapshot.anchor_after(0),
+                    "\n",
+                )],
                 cx,
             );
         });
@@ -2195,7 +2224,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                     BlockProperties {
                         placement: BlockPlacement::Below(
@@ -2205,7 +2233,6 @@ pub mod tests {
                         style: BlockStyle::Sticky,
                         render: Arc::new(|_| div().into_any()),
                         priority: 0,
-                        render_in_minimap: true,
                     },
                 ],
                 cx,
@@ -2294,7 +2321,7 @@ pub mod tests {
         // Insert a block in the middle of a multi-line diagnostic.
         map.update(cx, |map, cx| {
             map.highlight_text(
-                TypeId::of::<usize>(),
+                HighlightKey::Type(TypeId::of::<usize>()),
                 vec![
                     buffer_snapshot.anchor_before(Point::new(3, 9))
                         ..buffer_snapshot.anchor_after(Point::new(3, 14)),
@@ -2312,7 +2339,6 @@ pub mod tests {
                     style: BlockStyle::Sticky,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             )
@@ -2388,7 +2414,6 @@ pub mod tests {
                     style: BlockStyle::Fixed,
                     render: Arc::new(|_| div().into_any()),
                     priority: 0,
-                    render_in_minimap: true,
                 }],
                 cx,
             );
@@ -2616,7 +2641,7 @@ pub mod tests {
 
         map.update(cx, |map, _cx| {
             map.highlight_text(
-                TypeId::of::<MyType>(),
+                HighlightKey::Type(TypeId::of::<MyType>()),
                 highlighted_ranges
                     .into_iter()
                     .map(|range| {

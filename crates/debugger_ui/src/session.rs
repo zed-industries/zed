@@ -5,13 +5,13 @@ use dap::client::SessionId;
 use gpui::{
     App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
 };
-use project::Project;
 use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
+use project::{Project, debugger::session::SessionQuirks};
 use rpc::proto;
 use running::RunningState;
-use std::{cell::OnceCell, sync::OnceLock};
-use ui::{Indicator, prelude::*};
+use std::cell::OnceCell;
+use ui::prelude::*;
 use workspace::{
     CollaboratorId, FollowableItem, ViewId, Workspace,
     item::{self, Item},
@@ -19,8 +19,8 @@ use workspace::{
 
 pub struct DebugSession {
     remote_id: Option<workspace::ViewId>,
-    running_state: Entity<RunningState>,
-    label: OnceLock<SharedString>,
+    pub(crate) running_state: Entity<RunningState>,
+    pub(crate) quirks: SessionQuirks,
     stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
@@ -56,6 +56,7 @@ impl DebugSession {
                 cx,
             )
         });
+        let quirks = session.read(cx).quirks();
 
         cx.new(|cx| Self {
             _subscriptions: [cx.subscribe(&running_state, |_, _, _, cx| {
@@ -63,7 +64,7 @@ impl DebugSession {
             })],
             remote_id: None,
             running_state,
-            label: OnceLock::new(),
+            quirks,
             stack_trace_view: OnceCell::new(),
             _worktree_store: project.read(cx).worktree_store().downgrade(),
             workspace,
@@ -109,59 +110,28 @@ impl DebugSession {
             .update(cx, |state, cx| state.shutdown(cx));
     }
 
-    pub(crate) fn label(&self, cx: &App) -> SharedString {
-        if let Some(label) = self.label.get() {
-            return label.clone();
-        }
-
-        let session = self.running_state.read(cx).session();
-
-        self.label
-            .get_or_init(|| session.read(cx).label())
-            .to_owned()
-    }
-
-    pub(crate) fn running_state(&self) -> &Entity<RunningState> {
-        &self.running_state
-    }
-
-    pub(crate) fn label_element(&self, cx: &App) -> AnyElement {
-        let label = self.label(cx);
-
-        let is_terminated = self
-            .running_state
-            .read(cx)
-            .session()
-            .read(cx)
-            .is_terminated();
-        let icon = {
-            if is_terminated {
-                Some(Indicator::dot().color(Color::Error))
-            } else {
-                match self
-                    .running_state
-                    .read(cx)
-                    .thread_status(cx)
-                    .unwrap_or_default()
-                {
-                    project::debugger::session::ThreadStatus::Stopped => {
-                        Some(Indicator::dot().color(Color::Conflict))
-                    }
-                    _ => Some(Indicator::dot().color(Color::Success)),
+    pub(crate) fn label(&self, cx: &mut App) -> Option<SharedString> {
+        let session = self.running_state.read(cx).session().clone();
+        session.update(cx, |session, cx| {
+            let session_label = session.label();
+            let quirks = session.quirks();
+            let mut single_thread_name = || {
+                let threads = session.threads(cx);
+                match threads.as_slice() {
+                    [(thread, _)] => Some(SharedString::from(&thread.name)),
+                    _ => None,
                 }
+            };
+            if quirks.prefer_thread_name {
+                single_thread_name().or(session_label)
+            } else {
+                session_label.or_else(single_thread_name)
             }
-        };
+        })
+    }
 
-        h_flex()
-            .gap_2()
-            .when_some(icon, |this, indicator| this.child(indicator))
-            .justify_between()
-            .child(
-                Label::new(label)
-                    .size(LabelSize::Small)
-                    .when(is_terminated, |this| this.strikethrough()),
-            )
-            .into_any_element()
+    pub fn running_state(&self) -> &Entity<RunningState> {
+        &self.running_state
     }
 }
 

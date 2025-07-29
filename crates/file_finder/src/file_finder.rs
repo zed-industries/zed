@@ -47,7 +47,14 @@ use workspace::{
 
 actions!(
     file_finder,
-    [SelectPrevious, ToggleFilterMenu, ToggleSplitMenu]
+    [
+        /// Selects the previous item in the file finder.
+        SelectPrevious,
+        /// Toggles the file filter menu.
+        ToggleFilterMenu,
+        /// Toggles the split direction menu.
+        ToggleSplitMenu
+    ]
 );
 
 impl ModalView for FileFinder {
@@ -939,20 +946,47 @@ impl FileFinderDelegate {
                 matches.into_iter(),
                 extend_old_matches,
             );
-            let worktree = self.project.read(cx).visible_worktrees(cx).next();
-            let filename = query.raw_query.to_string();
-            let path = Path::new(&filename);
 
+            let filename = &query.raw_query;
+            let mut query_path = Path::new(filename);
             // add option of creating new file only if path is relative
-            if let Some(worktree) = worktree {
+            let available_worktree = self
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .filter(|worktree| !worktree.read(cx).is_single_file())
+                .collect::<Vec<_>>();
+            let worktree_count = available_worktree.len();
+            let mut expect_worktree = available_worktree.first().cloned();
+            for worktree in available_worktree {
+                let worktree_root = worktree
+                    .read(cx)
+                    .abs_path()
+                    .file_name()
+                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
+                if worktree_count > 1 && query_path.starts_with(&worktree_root) {
+                    query_path = query_path
+                        .strip_prefix(&worktree_root)
+                        .unwrap_or(query_path);
+                    expect_worktree = Some(worktree);
+                    break;
+                }
+            }
+
+            if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
+                let worktree_id = project.worktree_id;
+                expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+            }
+
+            if let Some(worktree) = expect_worktree {
                 let worktree = worktree.read(cx);
-                if path.is_relative()
-                    && worktree.entry_for_path(&path).is_none()
+                if query_path.is_relative()
+                    && worktree.entry_for_path(&query_path).is_none()
                     && !filename.ends_with("/")
                 {
                     self.matches.matches.push(Match::CreateNew(ProjectPath {
                         worktree_id: worktree.id(),
-                        path: Arc::from(path),
+                        path: Arc::from(query_path),
                     }));
                 }
             }
@@ -1370,14 +1404,21 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(&raw_query);
 
+            #[cfg(windows)]
+            let raw_query = raw_query.trim().to_owned().replace("/", "\\");
+            #[cfg(not(windows))]
+            let raw_query = raw_query.trim().to_owned();
+
+            let file_query_end = if path_position.path.to_str().unwrap_or(&raw_query) == raw_query {
+                None
+            } else {
+                // Safe to unwrap as we won't get here when the unwrap in if fails
+                Some(path_position.path.to_str().unwrap().len())
+            };
+
             let query = FileSearchQuery {
-                raw_query: raw_query.trim().to_owned(),
-                file_query_end: if path_position.path.to_str().unwrap_or(raw_query) == raw_query {
-                    None
-                } else {
-                    // Safe to unwrap as we won't get here when the unwrap in if fails
-                    Some(path_position.path.to_str().unwrap().len())
-                },
+                raw_query,
+                file_query_end,
                 path_position,
             };
 

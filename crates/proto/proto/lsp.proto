@@ -222,11 +222,13 @@ message Completion {
     optional Anchor buffer_word_end = 10;
     Anchor old_insert_start = 11;
     Anchor old_insert_end = 12;
+    optional string sort_text = 13;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
         BufferWord = 2;
+        Dap = 3;
     }
 }
 
@@ -534,12 +536,15 @@ message DiagnosticSummary {
 message UpdateLanguageServer {
     uint64 project_id = 1;
     uint64 language_server_id = 2;
+    optional string server_name = 8;
     oneof variant {
         LspWorkStart work_start = 3;
         LspWorkProgress work_progress = 4;
         LspWorkEnd work_end = 5;
         LspDiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 6;
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
+        StatusUpdate status_update = 9;
+        RegisteredForBuffer registered_for_buffer = 10;
     }
 }
 
@@ -565,6 +570,34 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message StatusUpdate {
+    optional string message = 1;
+    oneof status {
+        ServerBinaryStatus binary = 2;
+        ServerHealth health = 3;
+    }
+}
+
+enum ServerHealth {
+    OK = 0;
+    WARNING = 1;
+    ERROR = 2;
+}
+
+enum ServerBinaryStatus {
+    NONE = 0;
+    CHECKING_FOR_UPDATE = 1;
+    DOWNLOADING = 2;
+    STARTING = 3;
+    STOPPING = 4;
+    STOPPED = 5;
+    FAILED = 6;
+}
+
+message RegisteredForBuffer {
+    string buffer_abs_path = 1;
+}
 
 message LanguageServerLog {
     uint64 project_id = 1;
@@ -593,6 +626,7 @@ message ApplyCodeActionKindResponse {
 message RegisterBufferWithLanguageServers {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+    repeated LanguageServerSelector only_servers = 3;
 }
 
 enum FormatTrigger {
@@ -666,6 +700,51 @@ message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
 }
 
+message GetDocumentColor {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+
+}
+
+message GetDocumentColorResponse {
+    repeated ColorInformation colors = 1;
+    repeated VectorClockEntry version = 2;
+
+}
+
+message ColorInformation {
+    PointUtf16 lsp_range_start = 1;
+    PointUtf16 lsp_range_end = 2;
+    float red = 3;
+    float green = 4;
+    float blue = 5;
+    float alpha = 6;
+}
+
+message GetColorPresentation {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    ColorInformation color = 3;
+    uint64 server_id = 4;
+}
+
+message GetColorPresentationResponse {
+    repeated ColorPresentation presentations = 1;
+}
+
+message ColorPresentation {
+    string label = 1;
+    optional TextEdit text_edit = 2;
+    repeated TextEdit additional_text_edits = 3;
+}
+
+message TextEdit {
+    string new_text = 1;
+    PointUtf16 lsp_range_start = 2;
+    PointUtf16 lsp_range_end = 3;
+}
+
 message MultiLspQuery {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -679,19 +758,36 @@ message MultiLspQuery {
         GetSignatureHelp get_signature_help = 7;
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
+        GetDocumentColor get_document_color = 10;
+        GetDefinition get_definition = 11;
+        GetDeclaration get_declaration = 12;
+        GetTypeDefinition get_type_definition = 13;
+        GetImplementation get_implementation = 14;
+        GetReferences get_references = 15;
     }
 }
 
 message AllLanguageServers {}
 
+message LanguageServerSelector {
+    oneof selector {
+        uint64 server_id = 1;
+        string name = 2;
+    }
+}
+
 message RestartLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector only_servers = 3;
+    bool all = 4;
 }
 
 message StopLanguageServers {
     uint64 project_id = 1;
     repeated uint64 buffer_ids = 2;
+    repeated LanguageServerSelector also_servers = 3;
+    bool all = 4;
 }
 
 message MultiLspQueryResponse {
@@ -705,7 +801,14 @@ message LspResponse {
         GetSignatureHelpResponse get_signature_help_response = 3;
         GetCodeLensResponse get_code_lens_response = 4;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
+        GetDocumentColorResponse get_document_color_response = 6;
+        GetDefinitionResponse get_definition_response = 8;
+        GetDeclarationResponse get_declaration_response = 9;
+        GetTypeDefinitionResponse get_type_definition_response = 10;
+        GetImplementationResponse get_implementation_response = 11;
+        GetReferencesResponse get_references_response = 12;
     }
+    uint64 server_id = 7;
 }
 
 message LanguageServerIdForName {

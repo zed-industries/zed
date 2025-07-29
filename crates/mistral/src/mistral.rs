@@ -48,18 +48,29 @@ pub enum Model {
     #[serde(rename = "codestral-latest", alias = "codestral-latest")]
     #[default]
     CodestralLatest,
+
     #[serde(rename = "mistral-large-latest", alias = "mistral-large-latest")]
     MistralLargeLatest,
     #[serde(rename = "mistral-medium-latest", alias = "mistral-medium-latest")]
     MistralMediumLatest,
     #[serde(rename = "mistral-small-latest", alias = "mistral-small-latest")]
     MistralSmallLatest,
+
+    #[serde(rename = "magistral-medium-latest", alias = "magistral-medium-latest")]
+    MagistralMediumLatest,
+    #[serde(rename = "magistral-small-latest", alias = "magistral-small-latest")]
+    MagistralSmallLatest,
+
     #[serde(rename = "open-mistral-nemo", alias = "open-mistral-nemo")]
     OpenMistralNemo,
     #[serde(rename = "open-codestral-mamba", alias = "open-codestral-mamba")]
     OpenCodestralMamba,
+
+    #[serde(rename = "devstral-medium-latest", alias = "devstral-medium-latest")]
+    DevstralMediumLatest,
     #[serde(rename = "devstral-small-latest", alias = "devstral-small-latest")]
     DevstralSmallLatest,
+
     #[serde(rename = "pixtral-12b-latest", alias = "pixtral-12b-latest")]
     Pixtral12BLatest,
     #[serde(rename = "pixtral-large-latest", alias = "pixtral-large-latest")]
@@ -70,9 +81,9 @@ pub enum Model {
         name: String,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        max_tokens: usize,
-        max_output_tokens: Option<u32>,
-        max_completion_tokens: Option<u32>,
+        max_tokens: u64,
+        max_output_tokens: Option<u64>,
+        max_completion_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
     },
@@ -89,8 +100,11 @@ impl Model {
             "mistral-large-latest" => Ok(Self::MistralLargeLatest),
             "mistral-medium-latest" => Ok(Self::MistralMediumLatest),
             "mistral-small-latest" => Ok(Self::MistralSmallLatest),
+            "magistral-medium-latest" => Ok(Self::MagistralMediumLatest),
+            "magistral-small-latest" => Ok(Self::MagistralSmallLatest),
             "open-mistral-nemo" => Ok(Self::OpenMistralNemo),
             "open-codestral-mamba" => Ok(Self::OpenCodestralMamba),
+            "devstral-medium-latest" => Ok(Self::DevstralMediumLatest),
             "devstral-small-latest" => Ok(Self::DevstralSmallLatest),
             "pixtral-12b-latest" => Ok(Self::Pixtral12BLatest),
             "pixtral-large-latest" => Ok(Self::PixtralLargeLatest),
@@ -104,8 +118,11 @@ impl Model {
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
+            Self::MagistralMediumLatest => "magistral-medium-latest",
+            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
@@ -119,8 +136,11 @@ impl Model {
             Self::MistralLargeLatest => "mistral-large-latest",
             Self::MistralMediumLatest => "mistral-medium-latest",
             Self::MistralSmallLatest => "mistral-small-latest",
+            Self::MagistralMediumLatest => "magistral-medium-latest",
+            Self::MagistralSmallLatest => "magistral-small-latest",
             Self::OpenMistralNemo => "open-mistral-nemo",
             Self::OpenCodestralMamba => "open-codestral-mamba",
+            Self::DevstralMediumLatest => "devstral-medium-latest",
             Self::DevstralSmallLatest => "devstral-small-latest",
             Self::Pixtral12BLatest => "pixtral-12b-latest",
             Self::PixtralLargeLatest => "pixtral-large-latest",
@@ -130,14 +150,17 @@ impl Model {
         }
     }
 
-    pub fn max_token_count(&self) -> usize {
+    pub fn max_token_count(&self) -> u64 {
         match self {
             Self::CodestralLatest => 256000,
             Self::MistralLargeLatest => 131000,
             Self::MistralMediumLatest => 128000,
             Self::MistralSmallLatest => 32000,
+            Self::MagistralMediumLatest => 40000,
+            Self::MagistralSmallLatest => 40000,
             Self::OpenMistralNemo => 131000,
             Self::OpenCodestralMamba => 256000,
+            Self::DevstralMediumLatest => 128000,
             Self::DevstralSmallLatest => 262144,
             Self::Pixtral12BLatest => 128000,
             Self::PixtralLargeLatest => 128000,
@@ -145,7 +168,7 @@ impl Model {
         }
     }
 
-    pub fn max_output_tokens(&self) -> Option<u32> {
+    pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Custom {
                 max_output_tokens, ..
@@ -160,8 +183,11 @@ impl Model {
             | Self::MistralLargeLatest
             | Self::MistralMediumLatest
             | Self::MistralSmallLatest
+            | Self::MagistralMediumLatest
+            | Self::MagistralSmallLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
+            | Self::DevstralMediumLatest
             | Self::DevstralSmallLatest
             | Self::Pixtral12BLatest
             | Self::PixtralLargeLatest => true,
@@ -177,8 +203,11 @@ impl Model {
             | Self::MistralSmallLatest => true,
             Self::CodestralLatest
             | Self::MistralLargeLatest
+            | Self::MagistralMediumLatest
+            | Self::MagistralSmallLatest
             | Self::OpenMistralNemo
             | Self::OpenCodestralMamba
+            | Self::DevstralMediumLatest
             | Self::DevstralSmallLatest => false,
             Self::Custom {
                 supports_images, ..
@@ -193,7 +222,7 @@ pub struct Request {
     pub messages: Vec<RequestMessage>,
     pub stream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub temperature: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -360,9 +389,9 @@ pub struct Response {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -379,6 +408,7 @@ pub struct StreamResponse {
     pub created: u64,
     pub model: String,
     pub choices: Vec<StreamChoice>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -8,6 +8,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
+use editor::SelectionEffects;
 use editor::{
     Anchor, AnchorRangeExt as _, Editor, MultiBuffer, ToPoint,
     display_map::{
@@ -89,7 +90,6 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
-                render_in_minimap: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];
@@ -477,7 +477,7 @@ impl Session {
         if move_down {
             editor.update(cx, move |editor, cx| {
                 editor.change_selections(
-                    Some(Autoscroll::top_relative(8)),
+                    SelectionEffects::scroll(Autoscroll::top_relative(8)),
                     window,
                     cx,
                     |selections| {

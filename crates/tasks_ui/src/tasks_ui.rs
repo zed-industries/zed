@@ -393,14 +393,14 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, separator};
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::task_contexts;
@@ -524,7 +524,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
@@ -538,7 +538,7 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([14..18])
             })
         });
@@ -556,7 +556,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),

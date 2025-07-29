@@ -96,6 +96,7 @@ impl Upstream {
 #[derive(Clone, Copy, Default)]
 pub struct CommitOptions {
     pub amend: bool,
+    pub signoff: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -303,25 +304,25 @@ pub trait GitRepository: Send + Sync {
     /// Returns the contents of an entry in the repository's index, or None if there is no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<Option<String>>;
+    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
 
     /// Returns the contents of an entry in the repository's HEAD, or None if HEAD does not exist or has no entry for the given path.
     ///
     /// Also returns `None` for symlinks.
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<Option<String>>;
+    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>>;
 
     fn set_index_text(
         &self,
         path: RepoPath,
         content: Option<String>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<anyhow::Result<()>>;
+    ) -> BoxFuture<'_, anyhow::Result<()>>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
 
     /// Resolve a list of refs to SHAs.
-    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<Result<Vec<Option<String>>>>;
+    fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
 
     fn head_sha(&self) -> BoxFuture<'_, Option<String>> {
         async move {
@@ -335,33 +336,33 @@ pub trait GitRepository: Send + Sync {
         .boxed()
     }
 
-    fn merge_message(&self) -> BoxFuture<Option<String>>;
+    fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<Result<GitStatus>>;
+    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>>;
 
-    fn branches(&self) -> BoxFuture<Result<Vec<Branch>>>;
+    fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
-    fn change_branch(&self, name: String) -> BoxFuture<Result<()>>;
-    fn create_branch(&self, name: String) -> BoxFuture<Result<()>>;
+    fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
         commit: String,
         mode: ResetMode,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn checkout_files(
         &self,
         commit: String,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
-    fn show(&self, commit: String) -> BoxFuture<Result<CommitDetails>>;
+    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
-    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<Result<CommitDiff>>;
-    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<Result<crate::blame::Blame>>;
+    fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
+    fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
@@ -376,7 +377,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
     /// Updates the index to match HEAD at the given paths.
     ///
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
@@ -384,7 +385,7 @@ pub trait GitRepository: Send + Sync {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn commit(
         &self,
@@ -392,7 +393,15 @@ pub trait GitRepository: Send + Sync {
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
         env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<Result<()>>;
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>>;
 
     fn push(
         &self,
@@ -404,7 +413,7 @@ pub trait GitRepository: Send + Sync {
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>>;
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
     fn pull(
         &self,
@@ -415,7 +424,7 @@ pub trait GitRepository: Send + Sync {
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>>;
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
     fn fetch(
         &self,
@@ -425,35 +434,35 @@ pub trait GitRepository: Send + Sync {
         // This method takes an AsyncApp to ensure it's invoked on the main thread,
         // otherwise git-credentials-manager won't work.
         cx: AsyncApp,
-    ) -> BoxFuture<Result<RemoteCommandOutput>>;
+    ) -> BoxFuture<'_, Result<RemoteCommandOutput>>;
 
-    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<Result<Vec<Remote>>>;
+    fn get_remotes(&self, branch_name: Option<String>) -> BoxFuture<'_, Result<Vec<Remote>>>;
 
     /// returns a list of remote branches that contain HEAD
-    fn check_for_pushed_commit(&self) -> BoxFuture<Result<Vec<SharedString>>>;
+    fn check_for_pushed_commit(&self) -> BoxFuture<'_, Result<Vec<SharedString>>>;
 
     /// Run git diff
-    fn diff(&self, diff: DiffType) -> BoxFuture<Result<String>>;
+    fn diff(&self, diff: DiffType) -> BoxFuture<'_, Result<String>>;
 
     /// Creates a checkpoint for the repository.
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>>;
 
     /// Resets to a previously-created checkpoint.
-    fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<Result<()>>;
+    fn restore_checkpoint(&self, checkpoint: GitRepositoryCheckpoint) -> BoxFuture<'_, Result<()>>;
 
     /// Compares two checkpoints, returning true if they are equal
     fn compare_checkpoints(
         &self,
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<bool>>;
+    ) -> BoxFuture<'_, Result<bool>>;
 
     /// Computes a diff between two checkpoints.
     fn diff_checkpoints(
         &self,
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
-    ) -> BoxFuture<Result<String>>;
+    ) -> BoxFuture<'_, Result<String>>;
 }
 
 pub enum DiffType {
@@ -1032,32 +1041,39 @@ impl GitRepository for RealGitRepository {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         let repo = self.repository.clone();
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+        let executor = self.executor.clone();
+        let branch = self.executor.spawn(async move {
+            let repo = repo.lock();
+            let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
+                branch
+            } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
+                let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+                let revision = revision.get();
+                let branch_commit = revision.peel_to_commit()?;
+                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
+                branch.set_upstream(Some(&name))?;
+                branch
+            } else {
+                anyhow::bail!("Branch not found");
+            };
+
+            Ok(branch
+                .name()?
+                .context("cannot checkout anonymous branch")?
+                .to_string())
+        });
+
         self.executor
             .spawn(async move {
-                let repo = repo.lock();
-                let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
-                    branch
-                } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
-                    let (_, branch_name) =
-                        name.split_once("/").context("Unexpected branch format")?;
-                    let revision = revision.get();
-                    let branch_commit = revision.peel_to_commit()?;
-                    let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
-                    branch.set_upstream(Some(&name))?;
-                    branch
-                } else {
-                    anyhow::bail!("Branch not found");
-                };
+                let branch = branch.await?;
 
-                let revision = branch.get();
-                let as_tree = revision.peel_to_tree()?;
-                repo.checkout_tree(as_tree.as_object(), None)?;
-                repo.set_head(
-                    revision
-                        .name()
-                        .context("Branch name could not be retrieved")?,
-                )?;
-                Ok(())
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["checkout", &branch])
+                    .await?;
+
+                anyhow::Ok(())
             })
             .boxed()
     }
@@ -1181,6 +1197,55 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "push", "--quiet"])
+                    .arg("--include-untracked");
+
+                cmd.args(paths.iter().map(|p| p.as_ref()));
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "pop"]);
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash pop:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
     fn commit(
         &self,
         message: SharedString,
@@ -1200,6 +1265,10 @@ impl GitRepository for RealGitRepository {
 
                 if options.amend {
                     cmd.arg("--amend");
+                }
+
+                if options.signoff {
+                    cmd.arg("--signoff");
                 }
 
                 if let Some((name, email)) = name_and_email {
@@ -2268,7 +2337,7 @@ mod tests {
 
     impl RealGitRepository {
         /// Force a Git garbage collection on the repository.
-        fn gc(&self) -> BoxFuture<Result<()>> {
+        fn gc(&self) -> BoxFuture<'_, Result<()>> {
             let working_directory = self.working_directory();
             let git_binary_path = self.git_binary_path.clone();
             let executor = self.executor.clone();

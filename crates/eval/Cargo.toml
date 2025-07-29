@@ -19,6 +19,7 @@ path = "src/explorer.rs"
 
 [dependencies]
 agent.workspace = true
+agent_ui.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
@@ -31,7 +32,7 @@ client.workspace = true
 collections.workspace = true
 debug_adapter_extension.workspace = true
 dirs.workspace = true
-dotenv.workspace = true
+dotenvy.workspace = true
 env_logger.workspace = true
 extension.workspace = true
 fs.workspace = true

@@ -48,7 +48,7 @@ pub(crate) fn handle_msg(
         WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
-        WM_CLOSE => handle_close_msg(state_ptr),
+        WM_CLOSE => handle_close_msg(handle, state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
@@ -92,8 +92,8 @@ pub(crate) fn handle_msg(
         WM_DEADCHAR => handle_dead_char_msg(wparam, state_ptr),
         WM_IME_STARTCOMPOSITION => handle_ime_position(handle, state_ptr),
         WM_IME_COMPOSITION => handle_ime_composition(handle, lparam, state_ptr),
-        WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
-        WM_SETTINGCHANGE => handle_system_settings_changed(handle, lparam, state_ptr),
+        WM_SETCURSOR => handle_set_cursor(handle, lparam, state_ptr),
+        WM_SETTINGCHANGE => handle_system_settings_changed(handle, wparam, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
@@ -148,22 +148,18 @@ fn handle_get_min_max_info_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let lock = state_ptr.state.borrow();
-    if let Some(min_size) = lock.min_size {
-        let scale_factor = lock.scale_factor;
-        let boarder_offset = lock.border_offset;
-        drop(lock);
-
-        unsafe {
-            let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
-            minmax_info.ptMinTrackSize.x =
-                min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
-            minmax_info.ptMinTrackSize.y =
-                min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
-        }
-        Some(0)
-    } else {
-        None
+    let min_size = lock.min_size?;
+    let scale_factor = lock.scale_factor;
+    let boarder_offset = lock.border_offset;
+    drop(lock);
+    unsafe {
+        let minmax_info = &mut *(lparam.0 as *mut MINMAXINFO);
+        minmax_info.ptMinTrackSize.x =
+            min_size.width.scale(scale_factor).0 as i32 + boarder_offset.width_offset;
+        minmax_info.ptMinTrackSize.y =
+            min_size.height.scale(scale_factor).0 as i32 + boarder_offset.height_offset;
     }
+    Some(0)
 }
 
 fn handle_size_msg(
@@ -252,16 +248,30 @@ fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Optio
     Some(0)
 }
 
-fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_close_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut callback) = lock.callbacks.should_close.take() {
+    let output = if let Some(mut callback) = lock.callbacks.should_close.take() {
         drop(lock);
         let should_close = callback();
         state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
         if should_close { None } else { Some(0) }
     } else {
         None
+    };
+
+    // Workaround as window close animation is not played with `WS_EX_LAYERED` enabled.
+    if output.is_none() {
+        unsafe {
+            let current_style = get_window_long(handle, GWL_EXSTYLE);
+            set_window_long(
+                handle,
+                GWL_EXSTYLE,
+                current_style & !WS_EX_LAYERED.0 as isize,
+            );
+        }
     }
+
+    output
 }
 
 fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -456,12 +466,7 @@ fn handle_keyup_msg(
 }
 
 fn handle_char_msg(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let Some(input) = char::from_u32(wparam.0 as u32)
-        .filter(|c| !c.is_control())
-        .map(String::from)
-    else {
-        return Some(1);
-    };
+    let input = parse_char_message(wparam, &state_ptr)?;
     with_input_handler(&state_ptr, |input_handler| {
         input_handler.replace_text_in_range(None, &input);
     });
@@ -884,7 +889,7 @@ fn handle_hit_test_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    if !state_ptr.is_movable {
+    if !state_ptr.is_movable || state_ptr.state.borrow().is_fullscreen() {
         return None;
     }
 
@@ -1064,8 +1069,10 @@ fn handle_nc_mouse_up_msg(
     }
 
     let last_pressed = state_ptr.state.borrow_mut().nc_button_pressed.take();
-    if button == MouseButton::Left && last_pressed.is_some() {
-        let handled = match (wparam.0 as u32, last_pressed.unwrap()) {
+    if button == MouseButton::Left
+        && let Some(last_pressed) = last_pressed
+    {
+        let handled = match (wparam.0 as u32, last_pressed) {
             (HTMINBUTTON, HTMINBUTTON) => {
                 unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
                 true
@@ -1112,11 +1119,24 @@ fn handle_cursor_changed(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
     Some(0)
 }
 
-fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    if matches!(
-        lparam.loword() as u32,
-        HTLEFT | HTRIGHT | HTTOP | HTTOPLEFT | HTTOPRIGHT | HTBOTTOM | HTBOTTOMLEFT | HTBOTTOMRIGHT
-    ) {
+fn handle_set_cursor(
+    handle: HWND,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if unsafe { !IsWindowEnabled(handle).as_bool() }
+        || matches!(
+            lparam.loword() as u32,
+            HTLEFT
+                | HTRIGHT
+                | HTTOP
+                | HTTOPLEFT
+                | HTTOPRIGHT
+                | HTBOTTOM
+                | HTBOTTOMLEFT
+                | HTBOTTOMRIGHT
+        )
+    {
         return None;
     }
     unsafe {
@@ -1127,37 +1147,23 @@ fn handle_set_cursor(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Op
 
 fn handle_system_settings_changed(
     handle: HWND,
+    wparam: WPARAM,
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let display = lock.display;
-    // system settings
-    lock.system_settings.update(display);
-    // mouse double click
-    lock.click_state.system_update();
-    // window border offset
-    lock.border_offset.update(handle).log_err();
-    drop(lock);
-
-    // lParam is a pointer to a string that indicates the area containing the system parameter
-    // that was changed.
-    let parameter = PCWSTR::from_raw(lparam.0 as _);
-    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
-        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
-            log::info!("System settings changed: {}", parameter_string);
-            match parameter_string.as_str() {
-                "ImmersiveColorSet" => {
-                    handle_system_theme_changed(handle, state_ptr);
-                }
-                _ => {}
-            }
-        }
-    }
-
+    if wparam.0 != 0 {
+        let mut lock = state_ptr.state.borrow_mut();
+        let display = lock.display;
+        lock.system_settings.update(display, wparam.0);
+        lock.click_state.system_update(wparam.0);
+        lock.border_offset.update(handle).log_err();
+    } else {
+        handle_system_theme_changed(handle, lparam, state_ptr)?;
+    };
     // Force to trigger WM_NCCALCSIZE event to ensure that we handle auto hide
     // taskbar correctly.
     notify_frame_changed(handle);
+
     Some(0)
 }
 
@@ -1174,17 +1180,34 @@ fn handle_system_command(wparam: WPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -
 
 fn handle_system_theme_changed(
     handle: HWND,
+    lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
-    let mut callback = state_ptr
-        .state
-        .borrow_mut()
-        .callbacks
-        .appearance_changed
-        .take()?;
-    callback();
-    state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
-    configure_dwm_dark_mode(handle);
+    // lParam is a pointer to a string that indicates the area containing the system parameter
+    // that was changed.
+    let parameter = PCWSTR::from_raw(lparam.0 as _);
+    if unsafe { !parameter.is_null() && !parameter.is_empty() } {
+        if let Some(parameter_string) = unsafe { parameter.to_string() }.log_err() {
+            log::info!("System settings changed: {}", parameter_string);
+            match parameter_string.as_str() {
+                "ImmersiveColorSet" => {
+                    let new_appearance = system_appearance()
+                        .context("unable to get system appearance when handling ImmersiveColorSet")
+                        .log_err()?;
+                    let mut lock = state_ptr.state.borrow_mut();
+                    if new_appearance != lock.appearance {
+                        lock.appearance = new_appearance;
+                        let mut callback = lock.callbacks.appearance_changed.take()?;
+                        drop(lock);
+                        callback();
+                        state_ptr.state.borrow_mut().callbacks.appearance_changed = Some(callback);
+                        configure_dwm_dark_mode(handle, new_appearance);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     Some(0)
 }
 
@@ -1198,6 +1221,38 @@ fn handle_input_language_changed(
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
     Some(0)
+}
+
+#[inline]
+fn parse_char_message(wparam: WPARAM, state_ptr: &Rc<WindowsWindowStatePtr>) -> Option<String> {
+    let code_point = wparam.loword();
+    let mut lock = state_ptr.state.borrow_mut();
+    // https://www.unicode.org/versions/Unicode16.0.0/core-spec/chapter-3/#G2630
+    match code_point {
+        0xD800..=0xDBFF => {
+            // High surrogate, wait for low surrogate
+            lock.pending_surrogate = Some(code_point);
+            None
+        }
+        0xDC00..=0xDFFF => {
+            if let Some(high_surrogate) = lock.pending_surrogate.take() {
+                // Low surrogate, combine with pending high surrogate
+                String::from_utf16(&[high_surrogate, code_point]).ok()
+            } else {
+                // Invalid low surrogate without a preceding high surrogate
+                log::warn!(
+                    "Received low surrogate without a preceding high surrogate: {code_point:x}"
+                );
+                None
+            }
+        }
+        _ => {
+            lock.pending_surrogate = None;
+            char::from_u32(code_point as u32)
+                .filter(|c| !c.is_control())
+                .map(|c| c.to_string())
+        }
+    }
 }
 
 #[inline]
@@ -1239,6 +1294,25 @@ where
             state.last_reported_modifiers = Some(modifiers);
             Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                 modifiers,
+                capslock: current_capslock(),
+            }))
+        }
+        VK_PACKET => {
+            translate_message(handle, wparam, lparam);
+            None
+        }
+        VK_CAPITAL => {
+            let capslock = current_capslock();
+            if state
+                .last_reported_capslock
+                .is_some_and(|prev_capslock| prev_capslock == capslock)
+            {
+                return None;
+            }
+            state.last_reported_capslock = Some(capslock);
+            Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
             }))
         }
         vkey => {
@@ -1369,6 +1443,12 @@ pub(crate) fn current_modifiers() -> Modifiers {
         platform: is_virtual_key_pressed(VK_LWIN) || is_virtual_key_pressed(VK_RWIN),
         function: false,
     }
+}
+
+#[inline]
+pub(crate) fn current_capslock() -> Capslock {
+    let on = unsafe { GetKeyState(VK_CAPITAL.0 as i32) & 1 } > 0;
+    Capslock { on: on }
 }
 
 fn get_client_area_insets(

@@ -244,6 +244,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                     &candidates,
                     &query,
                     false,
+                    true,
                     100,
                     &Default::default(),
                     background,
@@ -326,6 +327,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                    id: None,
                                 }),
                                 cx,
                             );

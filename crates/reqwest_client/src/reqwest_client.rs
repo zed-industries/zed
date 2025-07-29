@@ -20,6 +20,7 @@ static REDACT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"key=[^&]+")
 pub struct ReqwestClient {
     client: reqwest::Client,
     proxy: Option<Url>,
+    user_agent: Option<HeaderValue>,
     handle: tokio::runtime::Handle,
 }
 
@@ -44,9 +45,11 @@ impl ReqwestClient {
         Ok(client.into())
     }
 
-    pub fn proxy_and_user_agent(proxy: Option<Url>, agent: &str) -> anyhow::Result<Self> {
+    pub fn proxy_and_user_agent(proxy: Option<Url>, user_agent: &str) -> anyhow::Result<Self> {
+        let user_agent = HeaderValue::from_str(user_agent)?;
+
         let mut map = HeaderMap::new();
-        map.insert(http::header::USER_AGENT, HeaderValue::from_str(agent)?);
+        map.insert(http::header::USER_AGENT, user_agent.clone());
         let mut client = Self::builder().default_headers(map);
         let client_has_proxy;
 
@@ -61,7 +64,8 @@ impl ReqwestClient {
                 })
                 .ok()
         }) {
-            client = client.proxy(proxy);
+            // Respect NO_PROXY env var
+            client = client.proxy(proxy.no_proxy(reqwest::NoProxy::from_env()));
             client_has_proxy = true;
         } else {
             client_has_proxy = false;
@@ -72,6 +76,7 @@ impl ReqwestClient {
             .build()?;
         let mut client: ReqwestClient = client.into();
         client.proxy = client_has_proxy.then_some(proxy).flatten();
+        client.user_agent = Some(user_agent);
         Ok(client)
     }
 }
@@ -95,6 +100,7 @@ impl From<reqwest::Client> for ReqwestClient {
             client,
             handle,
             proxy: None,
+            user_agent: None,
         }
     }
 }
@@ -213,6 +219,10 @@ impl http_client::HttpClient for ReqwestClient {
 
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
+    }
+
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.user_agent.as_ref()
     }
 
     fn send(

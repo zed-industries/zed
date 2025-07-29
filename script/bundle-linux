@@ -10,17 +10,36 @@ Usage: ${0##*/} [options]
 Build a release .tar.gz for Linux.
 
 Options:
-  -h    Display this help and exit.
+  -h, --help     Display this help and exit.
+  --flatpak      Set ZED_BUNDLE_TYPE=flatpak so that this can be included in system info
   "
 }
 
-while getopts 'h' flag
-do
-    case "${flag}" in
-        h)
-           help_info
-           exit 0
-           ;;
+# Parse all arguments manually
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            help_info
+            exit 0
+            ;;
+        --flatpak)
+            export ZED_BUNDLE_TYPE=flatpak
+            shift
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            help_info
+            exit 1
+            ;;
+        *)
+            echo "Error: Unexpected argument: $1" >&2
+            help_info
+            exit 1
+            ;;
     esac
 done
 
@@ -63,6 +82,23 @@ if [[ "$remote_server_triple" == "$musl_triple" ]]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=+crt-static"
 fi
 cargo build --release --target "${remote_server_triple}" --package remote_server
+
+# Upload debug info to sentry.io
+if ! command -v sentry-cli >/dev/null 2>&1; then
+    echo "sentry-cli not found. skipping sentry upload."
+    echo "install with: 'curl -sL https://sentry.io/get-cli | bash'"
+else
+    if [[ -n "${SENTRY_AUTH_TOKEN:-}" ]]; then
+        echo "Uploading zed debug symbols to sentry..."
+        # note: this uploads the unstripped binary which is needed because it contains
+        # .eh_frame data for stack unwinindg. see https://github.com/getsentry/symbolic/issues/783
+        sentry-cli debug-files upload --include-sources --wait -p zed -o zed-dev \
+            "${target_dir}/${target_triple}"/release/zed \
+            "${target_dir}/${remote_server_triple}"/release/remote_server
+    else
+        echo "missing SENTRY_AUTH_TOKEN. skipping sentry upload."
+    fi
+fi
 
 # Strip debug symbols and save them for upload to DigitalOcean
 objcopy --only-keep-debug "${target_dir}/${target_triple}/release/zed" "${target_dir}/${target_triple}/release/zed.dbg"

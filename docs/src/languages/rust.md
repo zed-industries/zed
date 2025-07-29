@@ -4,6 +4,7 @@ Rust support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter/tree-sitter-rust](https://github.com/tree-sitter/tree-sitter-rust)
 - Language Server: [rust-lang/rust-analyzer](https://github.com/rust-lang/rust-analyzer)
+- Debug Adapter: [CodeLLDB](https://github.com/vadimcn/codelldb) (primary), [GDB](https://sourceware.org/gdb/) (secondary, not available on Apple silicon)
 
 <!--
 TBD: Polish Rust Docs. Zed is a good rust editor, good Rust docs make it look like we care about Rust (we do!)
@@ -78,7 +79,7 @@ If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ig
 }
 ```
 
-If you want to use a binary in a custom location, you can specify a `path` and optional `args`:
+If you want to use a binary in a custom location, you can specify a `path` and optional `arguments`:
 
 ```json
 {
@@ -86,7 +87,7 @@ If you want to use a binary in a custom location, you can specify a `path` and o
     "rust-analyzer": {
       "binary": {
         "path": "/Users/example/bin/rust-analyzer",
-        "args": []
+        "arguments": []
       }
     }
   }
@@ -290,4 +291,48 @@ There's a way get custom completion items from rust-analyzer, that will transfor
     }
   }
 }
+```
+
+## Debugging
+
+Zed supports debugging Rust binaries and tests out of the box. Run {#action debugger::Start} ({#kb debugger::Start}) to launch one of these preconfigured debug tasks.
+
+For more control, you can add debug configurations to `.zed/debug.json`. See the examples below.
+
+### Build binary then debug
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    "program": "$ZED_WORKTREE_ROOT/target/debug/binary",
+    // sourceLanguages is required for CodeLLDB (not GDB) when using Rust
+    "sourceLanguages": ["rust"],
+    "request": "launch",
+    "adapter": "CodeLLDB"
+  }
+]
+```
+
+### Automatically locate a debug target based on build command
+
+When you use `cargo build` or `cargo test` as the build command, Zed can infer the path to the output binary.
+
+```json
+[
+  {
+    "label": "Build & Debug native binary",
+    "adapter": "CodeLLDB"
+    "build": {
+      "command": "cargo",
+      "args": ["build"]
+    },
+    // sourceLanguages is required for CodeLLDB (not GDB) when using Rust
+    "sourceLanguages": ["rust"]
+  }
+]
 ```

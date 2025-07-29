@@ -1,19 +1,21 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
-    AnyWindowHandle, Bounds, DisplayLink, ExternalPaths, FileDropEvent, ForegroundExecutor,
-    KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions, ScaledPixels, Size,
-    Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
+    AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
     appkit::{
-        NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
-        NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
-        NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSAppKitVersionNumber, NSAppKitVersionNumber12_0, NSApplication, NSBackingStoreBuffered,
+        NSColor, NSEvent, NSEventModifierFlags, NSFilenamesPboardType, NSPasteboard, NSScreen,
+        NSView, NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowButton,
+        NSWindowCollectionBehavior, NSWindowOcclusionState, NSWindowOrderingMode,
+        NSWindowStyleMask, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -53,6 +55,7 @@ const WINDOW_STATE_IVAR: &str = "windowState";
 static mut WINDOW_CLASS: *const Class = ptr::null();
 static mut PANEL_CLASS: *const Class = ptr::null();
 static mut VIEW_CLASS: *const Class = ptr::null();
+static mut BLURRED_VIEW_CLASS: *const Class = ptr::null();
 
 #[allow(non_upper_case_globals)]
 const NSWindowStyleMaskNonactivatingPanel: NSWindowStyleMask =
@@ -241,6 +244,20 @@ unsafe fn build_classes() {
             }
             decl.register()
         };
+        BLURRED_VIEW_CLASS = {
+            let mut decl = ClassDecl::new("BlurredView", class!(NSVisualEffectView)).unwrap();
+            unsafe {
+                decl.add_method(
+                    sel!(initWithFrame:),
+                    blurred_view_init_with_frame as extern "C" fn(&Object, Sel, NSRect) -> id,
+                );
+                decl.add_method(
+                    sel!(updateLayer),
+                    blurred_view_update_layer as extern "C" fn(&Object, Sel),
+                );
+                decl.register()
+            }
+        };
     }
 }
 
@@ -335,6 +352,7 @@ struct MacWindowState {
     executor: ForegroundExecutor,
     native_window: id,
     native_view: NonNull<Object>,
+    blurred_view: Option<id>,
     display_link: Option<DisplayLink>,
     renderer: renderer::Renderer,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
@@ -600,8 +618,9 @@ impl MacWindow {
                 setReleasedWhenClosed: NO
             ];
 
+            let content_view = native_window.contentView();
             let native_view: id = msg_send![VIEW_CLASS, alloc];
-            let native_view = NSView::init(native_view);
+            let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
 
             let mut window = Self(Arc::new(Mutex::new(MacWindowState {
@@ -609,6 +628,7 @@ impl MacWindow {
                 executor,
                 native_window,
                 native_view: NonNull::new_unchecked(native_view),
+                blurred_view: None,
                 display_link: None,
                 renderer: renderer::new_renderer(
                     renderer_context,
@@ -683,11 +703,11 @@ impl MacWindow {
             // itself and break the association with its context.
             native_view.setWantsLayer(YES);
             let _: () = msg_send![
-                native_view,
-                setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
+            native_view,
+            setLayerContentsRedrawPolicy: NSViewLayerContentsRedrawDuringViewResize
             ];
 
-            native_window.setContentView_(native_view.autorelease());
+            content_view.addSubview_(native_view.autorelease());
             native_window.makeFirstResponder_(native_view);
 
             match kind {
@@ -890,6 +910,16 @@ impl PlatformWindow for MacWindow {
         }
     }
 
+    fn capslock(&self) -> Capslock {
+        unsafe {
+            let modifiers: NSEventModifierFlags = msg_send![class!(NSEvent), modifierFlags];
+
+            Capslock {
+                on: modifiers.contains(NSEventModifierFlags::NSAlphaShiftKeyMask),
+            }
+        }
+    }
+
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.0.as_ref().lock().input_handler = Some(input_handler);
     }
@@ -1025,28 +1055,57 @@ impl PlatformWindow for MacWindow {
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         let mut this = self.0.as_ref().lock();
-        this.renderer
-            .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
 
-        let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
-            80
-        } else {
-            0
-        };
-        let opaque = (background_appearance == WindowBackgroundAppearance::Opaque).to_objc();
+        let opaque = background_appearance == WindowBackgroundAppearance::Opaque;
+        this.renderer.update_transparency(!opaque);
 
         unsafe {
-            this.native_window.setOpaque_(opaque);
-            // Shadows for transparent windows cause artifacts and performance issues
-            this.native_window.setHasShadow_(opaque);
-            let clear_color = if opaque == YES {
+            this.native_window.setOpaque_(opaque as BOOL);
+            let background_color = if opaque {
                 NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 1f64)
             } else {
-                NSColor::clearColor(nil)
+                // Not using `+[NSColor clearColor]` to avoid broken shadow.
+                NSColor::colorWithSRGBRed_green_blue_alpha_(nil, 0f64, 0f64, 0f64, 0.0001)
             };
-            this.native_window.setBackgroundColor_(clear_color);
-            let window_number = this.native_window.windowNumber();
-            CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+            this.native_window.setBackgroundColor_(background_color);
+
+            if NSAppKitVersionNumber < NSAppKitVersionNumber12_0 {
+                // Whether `-[NSVisualEffectView respondsToSelector:@selector(_updateProxyLayer)]`.
+                // On macOS Catalina/Big Sur `NSVisualEffectView` doesn’t own concrete sublayers
+                // but uses a `CAProxyLayer`. Use the legacy WindowServer API.
+                let blur_radius = if background_appearance == WindowBackgroundAppearance::Blurred {
+                    80
+                } else {
+                    0
+                };
+
+                let window_number = this.native_window.windowNumber();
+                CGSSetWindowBackgroundBlurRadius(CGSMainConnectionID(), window_number, blur_radius);
+            } else {
+                // On newer macOS `NSVisualEffectView` manages the effect layer directly. Using it
+                // could have a better performance (it downsamples the backdrop) and more control
+                // over the effect layer.
+                if background_appearance != WindowBackgroundAppearance::Blurred {
+                    if let Some(blur_view) = this.blurred_view {
+                        NSView::removeFromSuperview(blur_view);
+                        this.blurred_view = None;
+                    }
+                } else if this.blurred_view == None {
+                    let content_view = this.native_window.contentView();
+                    let frame = NSView::bounds(content_view);
+                    let mut blur_view: id = msg_send![BLURRED_VIEW_CLASS, alloc];
+                    blur_view = NSView::initWithFrame_(blur_view, frame);
+                    blur_view.setAutoresizingMask_(NSViewWidthSizable | NSViewHeightSizable);
+
+                    let _: () = msg_send![
+                        content_view,
+                        addSubview: blur_view
+                        positioned: NSWindowOrderingMode::NSWindowBelow
+                        relativeTo: nil
+                    ];
+                    this.blurred_view = Some(blur_view.autorelease());
+                }
+            }
         }
     }
 
@@ -1556,13 +1615,17 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
                 lock.synthetic_drag_counter += 1;
             }
 
-            PlatformInput::ModifiersChanged(ModifiersChangedEvent { modifiers }) => {
+            PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                modifiers,
+                capslock,
+            }) => {
                 // Only raise modifiers changed event when they have actually changed
                 if let Some(PlatformInput::ModifiersChanged(ModifiersChangedEvent {
                     modifiers: prev_modifiers,
+                    capslock: prev_capslock,
                 })) = &lock.previous_modifiers_changed_event
                 {
-                    if prev_modifiers == modifiers {
+                    if prev_modifiers == modifiers && prev_capslock == capslock {
                         return;
                     }
                 }
@@ -1749,7 +1812,12 @@ extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
     let mut lock = window_state.as_ref().lock();
 
     let new_size = Size::<Pixels>::from(size);
-    if lock.content_size() == new_size {
+    let old_size = unsafe {
+        let old_frame: NSRect = msg_send![this, frame];
+        Size::<Pixels>::from(old_frame.size)
+    };
+
+    if old_size == new_size {
         return;
     }
 
@@ -2132,5 +2200,77 @@ unsafe fn display_id_for_screen(screen: id) -> CGDirectDisplayID {
         let screen_number = device_description.objectForKey_(screen_number_key);
         let screen_number: NSUInteger = msg_send![screen_number, unsignedIntegerValue];
         screen_number as CGDirectDisplayID
+    }
+}
+
+extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect) -> id {
+    unsafe {
+        let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
+        // Use a colorless semantic material. The default value `AppearanceBased`, though not
+        // manually set, is deprecated.
+        NSVisualEffectView::setMaterial_(view, NSVisualEffectMaterial::Selection);
+        NSVisualEffectView::setState_(view, NSVisualEffectState::Active);
+        view
+    }
+}
+
+extern "C" fn blurred_view_update_layer(this: &Object, _: Sel) {
+    unsafe {
+        let _: () = msg_send![super(this, class!(NSVisualEffectView)), updateLayer];
+        let layer: id = msg_send![this, layer];
+        if !layer.is_null() {
+            remove_layer_background(layer);
+        }
+    }
+}
+
+unsafe fn remove_layer_background(layer: id) {
+    unsafe {
+        let _: () = msg_send![layer, setBackgroundColor:nil];
+
+        let class_name: id = msg_send![layer, className];
+        if class_name.isEqualToString("CAChameleonLayer") {
+            // Remove the desktop tinting effect.
+            let _: () = msg_send![layer, setHidden: YES];
+            return;
+        }
+
+        let filters: id = msg_send![layer, filters];
+        if !filters.is_null() {
+            // Remove the increased saturation.
+            // The effect of a `CAFilter` or `CIFilter` is determined by its name, and the
+            // `description` reflects its name and some parameters. Currently `NSVisualEffectView`
+            // uses a `CAFilter` named "colorSaturate". If one day they switch to `CIFilter`, the
+            // `description` will still contain "Saturat" ("... inputSaturation = ...").
+            let test_string: id = NSString::alloc(nil).init_str("Saturat").autorelease();
+            let count = NSArray::count(filters);
+            for i in 0..count {
+                let description: id = msg_send![filters.objectAtIndex(i), description];
+                let hit: BOOL = msg_send![description, containsString: test_string];
+                if hit == NO {
+                    continue;
+                }
+
+                let all_indices = NSRange {
+                    location: 0,
+                    length: count,
+                };
+                let indices: id = msg_send![class!(NSMutableIndexSet), indexSet];
+                let _: () = msg_send![indices, addIndexesInRange: all_indices];
+                let _: () = msg_send![indices, removeIndex:i];
+                let filtered: id = msg_send![filters, objectsAtIndexes: indices];
+                let _: () = msg_send![layer, setFilters: filtered];
+                break;
+            }
+        }
+
+        let sublayers: id = msg_send![layer, sublayers];
+        if !sublayers.is_null() {
+            let count = NSArray::count(sublayers);
+            for i in 0..count {
+                let sublayer = sublayers.objectAtIndex(i);
+                remove_layer_background(sublayer);
+            }
+        }
     }
 }
