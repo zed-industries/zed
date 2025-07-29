@@ -11737,30 +11737,30 @@ impl Editor {
 
         // Split selections to respect paragraph, indent, and comment prefix boundaries.
         let wrap_ranges = selections.into_iter().flat_map(|selection| {
-            let mut non_blank_rows_iter = (selection.start.row..=selection.end.row)
-                .filter(|row| !buffer.is_line_blank(MultiBufferRow(*row)))
-                .peekable();
-
-            let first_row = if let Some(&row) = non_blank_rows_iter.peek() {
-                row
-            } else {
+            if selection.start.row == selection.end.row
+                && buffer.is_line_blank(MultiBufferRow(selection.start.row))
+            {
                 return Vec::new();
-            };
+            }
 
             let language_settings = buffer.language_settings_at(selection.head(), cx);
             let language_scope = buffer.language_scope_at(selection.head());
 
             let mut ranges = Vec::new();
 
-            let mut current_range_start = first_row;
-            let mut prev_row = first_row;
+            let mut current_range_start = selection.start.row;
+            let mut prev_row = selection.start.row;
             let (
                 mut current_range_indent,
                 mut current_range_comment_delimiters,
                 mut current_range_rewrap_prefix,
-            ) = rewrap_indent_and_prefix_for_row(&buffer, &language_scope, first_row);
+            ) = rewrap_indent_and_prefix_for_row(&buffer, &language_scope, current_range_start);
 
-            for row in non_blank_rows_iter.skip(1) {
+            for row in (selection.start.row + 1)..=selection.end.row {
+                if buffer.is_line_blank(MultiBufferRow(row)) {
+                    continue;
+                }
+
                 let has_paragraph_break = row > prev_row + 1;
 
                 let (row_indent, row_comment_delimiters, row_rewrap_prefix) =
