@@ -1,3 +1,4 @@
+mod color_contrast;
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
@@ -8,10 +9,10 @@ pub mod terminal_tab_tooltip;
 use assistant_slash_command::SlashCommandRegistry;
 use editor::{Editor, EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
 use gpui::{
-    AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render, ScrollWheelEvent,
-    Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
-    impl_actions,
+    Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
+    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
+    deferred, div,
 };
 use itertools::Itertools;
 use persistence::TERMINAL_DB;
@@ -24,11 +25,11 @@ use terminal::{
     TaskStatus, Terminal, TerminalBounds, ToggleViMode,
     alacritty_terminal::{
         index::Point,
-        term::{TermMode, search::RegexSearch},
+        term::{TermMode, point_to_viewport, search::RegexSearch},
     },
     terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
 };
-use terminal_element::{TerminalElement, is_blank};
+use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
 use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
@@ -70,15 +71,23 @@ const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+/// Sends the specified text directly to the terminal.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendText(String);
 
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
+/// Sends a keystroke sequence to the terminal.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = terminal)]
 pub struct SendKeystroke(String);
 
-actions!(terminal, [RerunTask]);
-
-impl_actions!(terminal, [SendText, SendKeystroke]);
+actions!(
+    terminal,
+    [
+        /// Reruns the last executed task in the terminal.
+        RerunTask
+    ]
+);
 
 pub fn init(cx: &mut App) {
     assistant_slash_command::init(cx);
@@ -140,10 +149,35 @@ pub struct TerminalView {
 #[derive(Default, Clone)]
 pub enum TerminalMode {
     #[default]
-    Scrollable,
+    Standalone,
     Embedded {
-        max_lines: Option<usize>,
+        max_lines_when_unfocused: Option<usize>,
     },
+}
+
+#[derive(Clone)]
+pub enum ContentMode {
+    Scrollable,
+    Inline {
+        displayed_lines: usize,
+        total_lines: usize,
+    },
+}
+
+impl ContentMode {
+    pub fn is_limited(&self) -> bool {
+        match self {
+            ContentMode::Scrollable => false,
+            ContentMode::Inline {
+                displayed_lines,
+                total_lines,
+            } => displayed_lines < total_lines,
+        }
+    }
+
+    pub fn is_scrollable(&self) -> bool {
+        matches!(self, ContentMode::Scrollable)
+    }
 }
 
 #[derive(Debug)]
@@ -223,7 +257,7 @@ impl TerminalView {
             blink_epoch: 0,
             hover: None,
             hover_tooltip_update: Task::ready(()),
-            mode: TerminalMode::Scrollable,
+            mode: TerminalMode::Standalone,
             workspace_id,
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
@@ -245,16 +279,46 @@ impl TerminalView {
     }
 
     /// Enable 'embedded' mode where the terminal displays the full content with an optional limit of lines.
-    pub fn set_embedded_mode(&mut self, max_lines: Option<usize>, cx: &mut Context<Self>) {
-        self.mode = TerminalMode::Embedded { max_lines };
+    pub fn set_embedded_mode(
+        &mut self,
+        max_lines_when_unfocused: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        self.mode = TerminalMode::Embedded {
+            max_lines_when_unfocused,
+        };
         cx.notify();
     }
 
-    pub fn is_content_limited(&self, window: &Window) -> bool {
+    const MAX_EMBEDDED_LINES: usize = 1_000;
+
+    /// Returns the current `ContentMode` depending on the set `TerminalMode` and the current number of lines
+    ///
+    /// Note: Even in embedded mode, the terminal will fallback to scrollable when its content exceeds `MAX_EMBEDDED_LINES`
+    pub fn content_mode(&self, window: &Window, cx: &App) -> ContentMode {
         match &self.mode {
-            TerminalMode::Scrollable => false,
-            TerminalMode::Embedded { max_lines } => {
-                !self.focus_handle.is_focused(window) && max_lines.is_some()
+            TerminalMode::Standalone => ContentMode::Scrollable,
+            TerminalMode::Embedded {
+                max_lines_when_unfocused,
+            } => {
+                let total_lines = self.terminal.read(cx).total_lines();
+
+                if total_lines > Self::MAX_EMBEDDED_LINES {
+                    ContentMode::Scrollable
+                } else {
+                    let mut displayed_lines = total_lines;
+
+                    if !self.focus_handle.is_focused(window) {
+                        if let Some(max_lines) = max_lines_when_unfocused {
+                            displayed_lines = displayed_lines.min(*max_lines)
+                        }
+                    }
+
+                    ContentMode::Inline {
+                        displayed_lines,
+                        total_lines,
+                    }
+                }
             }
         }
     }
@@ -366,6 +430,7 @@ impl TerminalView {
 
     fn settings_changed(&mut self, cx: &mut Context<Self>) {
         let settings = TerminalSettings::get_global(cx);
+        let breadcrumb_visibility_changed = self.show_breadcrumbs != settings.toolbar.breadcrumbs;
         self.show_breadcrumbs = settings.toolbar.breadcrumbs;
 
         let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
@@ -377,6 +442,9 @@ impl TerminalView {
             });
         }
 
+        if breadcrumb_visibility_changed {
+            cx.emit(ItemEvent::UpdateBreadcrumbs);
+        }
         cx.notify();
     }
 
@@ -433,25 +501,14 @@ impl TerminalView {
         };
 
         let line_height = terminal.last_content().terminal_bounds.line_height;
-        let mut terminal_lines = terminal.total_lines();
         let viewport_lines = terminal.viewport_lines();
-        if terminal.total_lines() == terminal.viewport_lines() {
-            let mut last_line = None;
-            for cell in terminal.last_content.cells.iter().rev() {
-                if !is_blank(cell) {
-                    break;
-                }
-
-                let last_line = last_line.get_or_insert(cell.point.line);
-                if *last_line != cell.point.line {
-                    terminal_lines -= 1;
-                }
-                *last_line = cell.point.line;
-            }
-        }
-
+        let cursor = point_to_viewport(
+            terminal.last_content.display_offset,
+            terminal.last_content.cursor.point,
+        )
+        .unwrap_or_default();
         let max_scroll_top_in_lines =
-            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(terminal_lines));
+            (block.height as usize).saturating_sub(viewport_lines.saturating_sub(cursor.line + 1));
 
         max_scroll_top_in_lines as f32 * line_height
     }
@@ -651,7 +708,7 @@ impl TerminalView {
 
     ///Attempt to paste the clipboard into the terminal
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |term, _| term.copy());
+        self.terminal.update(cx, |term, _| term.copy(None));
         cx.notify();
     }
 
@@ -760,6 +817,11 @@ impl TerminalView {
             };
             dispatch_context.set("mouse_format", format);
         };
+
+        if self.terminal.read(cx).last_content.selection.is_some() {
+            dispatch_context.add("selection");
+        }
+
         dispatch_context
     }
 
@@ -840,10 +902,10 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
-            || matches!(self.mode, TerminalMode::Embedded { .. })
+            || !self.content_mode(window, cx).is_scrollable()
         {
             return None;
         }
@@ -1493,7 +1555,7 @@ impl Render for TerminalView {
                         self.block_below_cursor.clone(),
                         self.mode.clone(),
                     ))
-                    .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
                         div.child(scrollbar)
                     }),
             )

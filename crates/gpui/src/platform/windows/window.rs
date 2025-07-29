@@ -37,12 +37,15 @@ pub struct WindowsWindowState {
     pub min_size: Option<Size<Pixels>>,
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
+    pub appearance: WindowAppearance,
     pub scale_factor: f32,
     pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
+    pub pending_surrogate: Option<u16>,
     pub last_reported_modifiers: Option<Modifiers>,
+    pub last_reported_capslock: Option<Capslock>,
     pub system_key_handled: bool,
     pub hovered: bool,
 
@@ -62,6 +65,7 @@ pub struct WindowsWindowState {
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
     this: Weak<Self>,
+    drop_target_helper: IDropTargetHelper,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -82,6 +86,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         gpu_context: &BladeContext,
         min_size: Option<Size<Pixels>>,
+        appearance: WindowAppearance,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -101,7 +106,9 @@ impl WindowsWindowState {
         let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
+        let pending_surrogate = None;
         let last_reported_modifiers = None;
+        let last_reported_capslock = None;
         let system_key_handled = false;
         let hovered = false;
         let click_state = ClickState::new();
@@ -115,12 +122,15 @@ impl WindowsWindowState {
             logical_size,
             fullscreen_restore_bounds,
             border_offset,
+            appearance,
             scale_factor,
             restore_from_minimized,
             min_size,
             callbacks,
             input_handler,
+            pending_surrogate,
             last_reported_modifiers,
+            last_reported_capslock,
             system_key_handled,
             hovered,
             renderer,
@@ -190,40 +200,6 @@ impl WindowsWindowState {
     fn content_size(&self) -> Size<Pixels> {
         self.logical_size
     }
-
-    fn title_bar_padding(&self) -> Pixels {
-        // using USER_DEFAULT_SCREEN_DPI because GPUI handles the scale with the scale factor
-        let padding = unsafe { GetSystemMetricsForDpi(SM_CXPADDEDBORDER, USER_DEFAULT_SCREEN_DPI) };
-        px(padding as f32)
-    }
-
-    fn title_bar_top_offset(&self) -> Pixels {
-        if self.is_maximized() {
-            self.title_bar_padding() * 2
-        } else {
-            px(0.)
-        }
-    }
-
-    fn title_bar_height(&self) -> Pixels {
-        // todo(windows) this is hardcoded to match the ui title bar
-        //               in the future the ui title bar component will report the size
-        px(32.) + self.title_bar_top_offset()
-    }
-
-    pub(crate) fn caption_button_width(&self) -> Pixels {
-        // todo(windows) this is hardcoded to match the ui title bar
-        //               in the future the ui title bar component will report the size
-        px(36.)
-    }
-
-    pub(crate) fn get_titlebar_rect(&self) -> anyhow::Result<RECT> {
-        let height = self.title_bar_height();
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut rect) }?;
-        rect.bottom = rect.top + ((height.0 * self.scale_factor).round() as i32);
-        Ok(rect)
-    }
 }
 
 impl WindowsWindowStatePtr {
@@ -236,11 +212,13 @@ impl WindowsWindowStatePtr {
             context.display,
             context.gpu_context,
             context.min_size,
+            context.appearance,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
             hwnd,
             this: this.clone(),
+            drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
@@ -347,6 +325,7 @@ pub(crate) struct Callbacks {
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
     pub(crate) close: Option<Box<dyn FnOnce()>>,
+    pub(crate) hit_test_window_control: Option<Box<dyn FnMut() -> Option<WindowControlArea>>>,
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
@@ -361,10 +340,12 @@ struct WindowCreateContext<'a> {
     executor: ForegroundExecutor,
     current_cursor: Option<HCURSOR>,
     windows_version: WindowsVersion,
+    drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
     gpu_context: &'a BladeContext,
     main_thread_id_win32: u32,
+    appearance: WindowAppearance,
 }
 
 impl WindowsWindow {
@@ -379,6 +360,7 @@ impl WindowsWindow {
             executor,
             current_cursor,
             windows_version,
+            drop_target_helper,
             validation_number,
             main_receiver,
             main_thread_id_win32,
@@ -413,6 +395,7 @@ impl WindowsWindow {
         } else {
             WindowsDisplay::primary_monitor().unwrap()
         };
+        let appearance = system_appearance().unwrap_or_default();
         let mut context = WindowCreateContext {
             inner: None,
             handle,
@@ -424,10 +407,12 @@ impl WindowsWindow {
             executor,
             current_cursor,
             windows_version,
+            drop_target_helper,
             validation_number,
             main_receiver,
             gpu_context,
             main_thread_id_win32,
+            appearance,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -451,7 +436,7 @@ impl WindowsWindow {
         let state_ptr = context.inner.take().unwrap()?;
         let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
-        configure_dwm_dark_mode(hwnd);
+        configure_dwm_dark_mode(hwnd, appearance);
         state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
         let placement = retrieve_window_placement(
             hwnd,
@@ -568,7 +553,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn appearance(&self) -> WindowAppearance {
-        system_appearance().log_err().unwrap_or_default()
+        self.0.state.borrow().appearance
     }
 
     fn display(&self) -> Option<Rc<dyn PlatformDisplay>> {
@@ -590,6 +575,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn modifiers(&self) -> Modifiers {
         current_modifiers()
+    }
+
+    fn capslock(&self) -> Capslock {
+        current_capslock()
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -796,6 +785,10 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.close = Some(callback);
     }
 
+    fn on_hit_test_window_control(&self, callback: Box<dyn FnMut() -> Option<WindowControlArea>>) {
+        self.0.state.borrow_mut().callbacks.hit_test_window_control = Some(callback);
+    }
+
     fn on_appearance_changed(&self, callback: Box<dyn FnMut()>) {
         self.0.state.borrow_mut().callbacks.appearance_changed = Some(callback);
     }
@@ -853,8 +846,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 lindex: -1,
                 tymed: TYMED_HGLOBAL.0 as _,
             };
+            let cursor_position = POINT { x: pt.x, y: pt.y };
             if idata_obj.QueryGetData(&config as _) == S_OK {
-                *pdweffect = DROPEFFECT_LINK;
+                *pdweffect = DROPEFFECT_COPY;
                 let Some(mut idata) = idata_obj.GetData(&config as _).log_err() else {
                     return Ok(());
                 };
@@ -869,7 +863,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                     }
                 });
                 ReleaseStgMedium(&mut idata);
-                let mut cursor_position = POINT { x: pt.x, y: pt.y };
+                let mut cursor_position = cursor_position;
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
                     .ok()
                     .log_err();
@@ -886,6 +880,10 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
             } else {
                 *pdweffect = DROPEFFECT_NONE;
             }
+            self.0
+                .drop_target_helper
+                .DragEnter(self.0.hwnd, idata_obj, &cursor_position, *pdweffect)
+                .log_err();
         }
         Ok(())
     }
@@ -894,10 +892,15 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
         &self,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        _pdweffect: *mut DROPEFFECT,
+        pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
+            *pdweffect = DROPEFFECT_COPY;
+            self.0
+                .drop_target_helper
+                .DragOver(&cursor_position, *pdweffect)
+                .log_err();
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();
@@ -916,6 +919,9 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     }
 
     fn DragLeave(&self) -> windows::core::Result<()> {
+        unsafe {
+            self.0.drop_target_helper.DragLeave().log_err();
+        }
         let input = PlatformInput::FileDrop(FileDropEvent::Exited);
         self.handle_drag_drop(input);
 
@@ -924,13 +930,19 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
 
     fn Drop(
         &self,
-        _pdataobj: windows::core::Ref<IDataObject>,
+        pdataobj: windows::core::Ref<IDataObject>,
         _grfkeystate: MODIFIERKEYS_FLAGS,
         pt: &POINTL,
-        _pdweffect: *mut DROPEFFECT,
+        pdweffect: *mut DROPEFFECT,
     ) -> windows::core::Result<()> {
+        let idata_obj = pdataobj.ok()?;
         let mut cursor_position = POINT { x: pt.x, y: pt.y };
         unsafe {
+            *pdweffect = DROPEFFECT_COPY;
+            self.0
+                .drop_target_helper
+                .Drop(idata_obj, &cursor_position, *pdweffect)
+                .log_err();
             ScreenToClient(self.0.hwnd, &mut cursor_position)
                 .ok()
                 .log_err();
@@ -949,7 +961,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct ClickState {
     button: MouseButton,
     last_click: Instant,
@@ -991,10 +1003,25 @@ impl ClickState {
         self.current_count
     }
 
-    pub fn system_update(&mut self) {
-        self.double_click_spatial_tolerance_width = unsafe { GetSystemMetrics(SM_CXDOUBLECLK) };
-        self.double_click_spatial_tolerance_height = unsafe { GetSystemMetrics(SM_CYDOUBLECLK) };
-        self.double_click_interval = Duration::from_millis(unsafe { GetDoubleClickTime() } as u64);
+    pub fn system_update(&mut self, wparam: usize) {
+        match wparam {
+            // SPI_SETDOUBLECLKWIDTH
+            29 => {
+                self.double_click_spatial_tolerance_width =
+                    unsafe { GetSystemMetrics(SM_CXDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLKHEIGHT
+            30 => {
+                self.double_click_spatial_tolerance_height =
+                    unsafe { GetSystemMetrics(SM_CYDOUBLECLK) }
+            }
+            // SPI_SETDOUBLECLICKTIME
+            32 => {
+                self.double_click_interval =
+                    Duration::from_millis(unsafe { GetDoubleClickTime() } as u64)
+            }
+            _ => {}
+        }
     }
 
     #[inline]
@@ -1248,11 +1275,13 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
         type SetWindowCompositionAttributeType =
             unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
         let module_name = PCSTR::from_raw(c"user32.dll".as_ptr() as *const u8);
-        let user32 = GetModuleHandleA(module_name);
-        if user32.is_ok() {
+        if let Some(user32) = GetModuleHandleA(module_name)
+            .context("Unable to get user32.dll handle")
+            .log_err()
+        {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+                std::mem::transmute(GetProcAddress(user32, func_name));
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {
@@ -1273,10 +1302,6 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
                 cb_data: std::mem::size_of::<AccentPolicy>(),
             };
             let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
-        } else {
-            let _ = user32
-                .inspect_err(|e| log::error!("Error getting module: {e}"))
-                .ok();
         }
     }
 }
@@ -1287,7 +1312,7 @@ mod windows_renderer {
     use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::get_window_long;
+    use crate::{get_window_long, show_error};
 
     pub(super) fn init(
         context: &BladeContext,
@@ -1300,6 +1325,7 @@ mod windows_renderer {
             transparent,
         };
         BladeRenderer::new(context, &raw, config)
+            .inspect_err(|err| show_error("Failed to initialize BladeRenderer", err.to_string()))
     }
 
     struct RawWindow {

@@ -5,10 +5,11 @@
 Extensions can add the following capabilities to Zed:
 
 - [Languages](./languages.md)
+- [Debuggers](./debugger-extensions.md)
 - [Themes](./themes.md)
 - [Icon Themes](./icon-themes.md)
 - [Slash Commands](./slash-commands.md)
-- [Context Servers](./context-servers.md)
+- [MCP Servers](./mcp-extensions.md)
 
 ## Developing an Extension Locally
 
@@ -88,11 +89,27 @@ impl zed::Extension for MyExtension {
 zed::register_extension!(MyExtension);
 ```
 
+> `stdout`/`stderr` is forwarded directly to the Zed process. In order to see `println!`/`dbg!` output from your extension, you can start Zed in your terminal with a `--foreground` flag.
+
+## Forking and cloning the repo
+
+1. Fork the repo
+
+> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
+
+2. Clone the repo to your local machine
+
+```sh
+# Substitute the url of your fork here:
+# git clone https://github.com/zed-industries/extensions
+cd extensions
+git submodule init
+git submodule update
+```
+
 ## Publishing your extension
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
-
-> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
 In your PR, do the following:
 
@@ -102,6 +119,8 @@ In your PR, do the following:
 git submodule add https://github.com/your-username/foobar-zed.git extensions/foobar
 git add extensions/foobar
 ```
+
+> All extension submodules must use HTTPS URLs and not SSH URLS (`git@github.com`).
 
 2. Add a new entry to the top-level `extensions.toml` file containing your extension:
 

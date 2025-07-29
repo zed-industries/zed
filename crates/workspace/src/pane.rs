@@ -4,8 +4,8 @@ use crate::{
     WorkspaceItemBuilder,
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ProjectItemKind, ShowCloseButton, ShowDiagnostics, TabContentParams, TabTooltipContent,
-        WeakItemHandle,
+        ProjectItemKind, SaveOptions, ShowCloseButton, ShowDiagnostics, TabContentParams,
+        TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -18,9 +18,9 @@ use futures::{StreamExt, stream::FuturesUnordered};
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, ClickEvent, ClipboardItem, Context, Corner, Div,
     DragMoveEvent, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent,
-    Focusable, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
+    Focusable, IsZero, KeyContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point,
     PromptLevel, Render, ScrollHandle, Subscription, Task, WeakEntity, WeakFocusHandle, Window,
-    actions, anchored, deferred, impl_actions, prelude::*,
+    actions, anchored, deferred, prelude::*,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -32,6 +32,7 @@ use settings::{Settings, SettingsStore};
 use std::{
     any::Any,
     cmp, fmt, mem,
+    num::NonZeroUsize,
     ops::ControlFlow,
     path::PathBuf,
     rc::Rc,
@@ -39,13 +40,14 @@ use std::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     },
+    time::Duration,
 };
 use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
     IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, ScrollableHandle, Tab, TabBar, TabPosition, Tooltip,
-    prelude::*, right_click_menu,
+    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
+    right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
@@ -94,62 +96,84 @@ pub enum SaveIntent {
     Skip,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Activates a specific item in the pane by its index.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 pub struct ActivateItem(pub usize);
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes the currently active item in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseActiveItem {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all inactive items in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
-pub struct CloseInactiveItems {
+#[action(deprecated_aliases = ["pane::CloseInactiveItems"])]
+pub struct CloseOtherItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items in the pane.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseAllItems {
+    #[serde(default)]
     pub save_intent: Option<SaveIntent>,
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items that have no unsaved changes.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items to the right of the current item.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Closes all items to the left of the current item.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Reveals the current item in the project panel.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct RevealInProjectPanel {
     #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
+/// Opens the search interface with the specified configuration.
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default, Action)]
+#[action(namespace = pane)]
 #[serde(deny_unknown_fields)]
 pub struct DeploySearch {
     #[serde(default)]
@@ -160,43 +184,49 @@ pub struct DeploySearch {
     pub excluded_files: Option<String>,
 }
 
-impl_actions!(
-    pane,
-    [
-        CloseAllItems,
-        CloseActiveItem,
-        CloseCleanItems,
-        CloseItemsToTheLeft,
-        CloseItemsToTheRight,
-        CloseInactiveItems,
-        ActivateItem,
-        RevealInProjectPanel,
-        DeploySearch,
-    ]
-);
-
 actions!(
     pane,
     [
+        /// Activates the previous item in the pane.
         ActivatePreviousItem,
+        /// Activates the next item in the pane.
         ActivateNextItem,
+        /// Activates the last item in the pane.
         ActivateLastItem,
+        /// Switches to the alternate file.
         AlternateFile,
+        /// Navigates back in history.
         GoBack,
+        /// Navigates forward in history.
         GoForward,
+        /// Joins this pane into the next pane.
         JoinIntoNext,
+        /// Joins all panes into one.
         JoinAll,
+        /// Reopens the most recently closed item.
         ReopenClosedItem,
+        /// Splits the pane to the left.
         SplitLeft,
+        /// Splits the pane upward.
         SplitUp,
+        /// Splits the pane to the right.
         SplitRight,
+        /// Splits the pane downward.
         SplitDown,
+        /// Splits the pane horizontally.
         SplitHorizontal,
+        /// Splits the pane vertically.
         SplitVertical,
+        /// Swaps the current item with the one to the left.
         SwapItemLeft,
+        /// Swaps the current item with the one to the right.
         SwapItemRight,
+        /// Toggles preview mode for the current tab.
         TogglePreviewTab,
+        /// Toggles pin status for the current tab.
         TogglePinTab,
+        /// Unpins all tabs in the pane.
+        UnpinAllTabs,
     ]
 );
 
@@ -322,6 +352,7 @@ pub struct Pane {
     >,
     render_tab_bar: Rc<dyn Fn(&mut Pane, &mut Window, &mut Context<Pane>) -> AnyElement>,
     show_tab_bar_buttons: bool,
+    max_tabs: Option<NonZeroUsize>,
     _subscriptions: Vec<Subscription>,
     tab_bar_scroll_handle: ScrollHandle,
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
@@ -335,6 +366,7 @@ pub struct Pane {
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
+    diagnostic_summary_update: Task<()>,
     /// If a certain project item wants to get recreated with specific data, it can persist its data before the recreation here.
     pub project_item_restoration_data: HashMap<ProjectItemKind, Box<dyn Any + Send>>,
 }
@@ -424,11 +456,12 @@ impl Pane {
             cx.on_focus(&focus_handle, window, Pane::focus_in),
             cx.on_focus_in(&focus_handle, window, Pane::focus_in),
             cx.on_focus_out(&focus_handle, window, Pane::focus_out),
-            cx.observe_global::<SettingsStore>(Self::settings_changed),
+            cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
             cx.subscribe(&project, Self::project_events),
         ];
 
         let handle = cx.entity().downgrade();
+
         Self {
             alternate_file_items: (None, None),
             focus_handle,
@@ -439,6 +472,7 @@ impl Pane {
             zoomed: false,
             active_item_index: 0,
             preview_item_id: None,
+            max_tabs: WorkspaceSettings::get_global(cx).max_tabs,
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
@@ -474,6 +508,7 @@ impl Pane {
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
+            diagnostic_summary_update: Task::ready(()),
             project_item_restoration_data: HashMap::default(),
         }
     }
@@ -585,8 +620,16 @@ impl Pane {
             project::Event::DiskBasedDiagnosticsFinished { .. }
             | project::Event::DiagnosticsUpdated { .. } => {
                 if ItemSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off {
-                    self.update_diagnostics(cx);
-                    cx.notify();
+                    self.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.update_diagnostics(cx);
+                            cx.notify();
+                        })
+                        .log_err();
+                    });
                 }
             }
             _ => {}
@@ -619,17 +662,25 @@ impl Pane {
         }
     }
 
-    fn settings_changed(&mut self, cx: &mut Context<Self>) {
+    fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
+        let new_max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
 
         if let Some(display_nav_history_buttons) = self.display_nav_history_buttons.as_mut() {
             *display_nav_history_buttons = tab_bar_settings.show_nav_history_buttons;
         }
+
         self.show_tab_bar_buttons = tab_bar_settings.show_tab_bar_buttons;
 
         if !PreviewTabsSettings::get_global(cx).enabled {
             self.preview_item_id = None;
         }
+
+        if new_max_tabs != self.max_tabs {
+            self.max_tabs = new_max_tabs;
+            self.close_items_on_settings_change(window, cx);
+        }
+
         self.update_diagnostics(cx);
         cx.notify();
     }
@@ -923,7 +974,7 @@ impl Pane {
             .any(|existing_item| existing_item.item_id() == item.item_id());
 
         if !item_already_exists {
-            self.close_items_over_max_tabs(window, cx);
+            self.close_items_on_item_open(window, cx);
         }
 
         if item.is_singleton(cx) {
@@ -931,6 +982,7 @@ impl Pane {
                 let Some(project) = self.project.upgrade() else {
                     return;
                 };
+
                 let project = project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
@@ -1303,9 +1355,10 @@ impl Pane {
         })
     }
 
-    pub fn close_inactive_items(
+    pub fn close_other_items(
         &mut self,
-        action: &CloseInactiveItems,
+        action: &CloseOtherItems,
+        target_item_id: Option<EntityId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -1313,7 +1366,11 @@ impl Pane {
             return Task::ready(Ok(()));
         }
 
-        let active_item_id = self.active_item_id();
+        let active_item_id = match target_item_id {
+            Some(result) => result,
+            None => self.active_item_id(),
+        };
+
         let pinned_item_ids = self.pinned_item_ids();
 
         self.close_items(
@@ -1408,29 +1465,59 @@ impl Pane {
         )
     }
 
-    pub fn close_items_over_max_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(max_tabs) = WorkspaceSettings::get_global(cx).max_tabs.map(|i| i.get()) else {
+    fn close_items_on_item_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.max_tabs.map(|m| m.get());
+        let protect_active_item = false;
+        self.close_items_to_target_count(target, protect_active_item, window, cx);
+    }
+
+    fn close_items_on_settings_change(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let target = self.max_tabs.map(|m| m.get() + 1);
+        // The active item in this case is the settings.json file, which should be protected from being closed
+        let protect_active_item = true;
+        self.close_items_to_target_count(target, protect_active_item, window, cx);
+    }
+
+    fn close_items_to_target_count(
+        &mut self,
+        target_count: Option<usize>,
+        protect_active_item: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(target_count) = target_count else {
             return;
         };
 
-        // Reduce over the activation history to get every dirty items up to max_tabs
-        // count.
         let mut index_list = Vec::new();
         let mut items_len = self.items_len();
         let mut indexes: HashMap<EntityId, usize> = HashMap::default();
+        let active_ix = self.active_item_index();
+
         for (index, item) in self.items.iter().enumerate() {
             indexes.insert(item.item_id(), index);
         }
+
+        // Close least recently used items to reach target count.
+        // The target count is allowed to be exceeded, as we protect pinned
+        // items, dirty items, and sometimes, the active item.
         for entry in self.activation_history.iter() {
-            if items_len < max_tabs {
+            if items_len < target_count {
                 break;
             }
+
             let Some(&index) = indexes.get(&entry.entity_id) else {
                 continue;
             };
+
+            if protect_active_item && index == active_ix {
+                continue;
+            }
+
             if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
                 continue;
             }
+
             if self.is_tab_pinned(index) {
                 continue;
             }
@@ -1826,7 +1913,15 @@ impl Pane {
                 match answer.await {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
-                            item.save(should_format, project, window, cx)
+                            item.save(
+                                SaveOptions {
+                                    format: should_format,
+                                    autosave: false,
+                                },
+                                project,
+                                window,
+                                cx,
+                            )
                         })?
                         .await?
                     }
@@ -1852,7 +1947,15 @@ impl Pane {
                 match answer.await {
                     Ok(0) => {
                         pane.update_in(cx, |_, window, cx| {
-                            item.save(should_format, project, window, cx)
+                            item.save(
+                                SaveOptions {
+                                    format: should_format,
+                                    autosave: false,
+                                },
+                                project,
+                                window,
+                                cx,
+                            )
                         })?
                         .await?
                     }
@@ -1923,7 +2026,15 @@ impl Pane {
                     if pane.is_active_preview_item(item.item_id()) {
                         pane.set_preview_item_id(None, cx);
                     }
-                    item.save(should_format, project, window, cx)
+                    item.save(
+                        SaveOptions {
+                            format: should_format,
+                            autosave: false,
+                        },
+                        project,
+                        window,
+                        cx,
+                    )
                 })?
                 .await?;
             } else if can_save_as && is_singleton {
@@ -2000,7 +2111,15 @@ impl Pane {
             AutosaveSetting::AfterDelay { .. }
         );
         if item.can_autosave(cx) {
-            item.save(format, project, window, cx)
+            item.save(
+                SaveOptions {
+                    format,
+                    autosave: true,
+                },
+                project,
+                window,
+                cx,
+            )
         } else {
             Task::ready(Ok(()))
         }
@@ -2101,6 +2220,20 @@ impl Pane {
             self.unpin_tab_at(active_tab_ix, window, cx);
         } else {
             self.pin_tab_at(active_tab_ix, window, cx);
+        }
+    }
+
+    fn unpin_all_tabs(&mut self, _: &UnpinAllTabs, window: &mut Window, cx: &mut Context<Self>) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        let pinned_item_ids = self.pinned_item_ids().into_iter().rev();
+
+        for pinned_item_id in pinned_item_ids {
+            if let Some(ix) = self.index_for_item_id(pinned_item_id) {
+                self.unpin_tab_at(ix, window, cx);
+            }
         }
     }
 
@@ -2437,7 +2570,7 @@ impl Pane {
         let pane = cx.entity().downgrade();
         let menu_context = item.item_focus_handle(cx);
         right_click_menu(ix)
-            .trigger(|_| tab)
+            .trigger(|_, _, _| tab)
             .menu(move |window, cx| {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
@@ -2446,7 +2579,7 @@ impl Pane {
                         save_intent: None,
                         close_pinned: true,
                     };
-                    let close_inactive_items_action = CloseInactiveItems {
+                    let close_inactive_items_action = CloseOtherItems {
                         save_intent: None,
                         close_pinned: false,
                     };
@@ -2478,8 +2611,9 @@ impl Pane {
                                     .action(Box::new(close_inactive_items_action.clone()))
                                     .disabled(total_items == 1)
                                     .handler(window.handler_for(&pane, move |pane, window, cx| {
-                                        pane.close_inactive_items(
+                                        pane.close_other_items(
                                             &close_inactive_items_action,
+                                            Some(item_id),
                                             window,
                                             cx,
                                         )
@@ -2619,9 +2753,7 @@ impl Pane {
                                 .when(visible_in_project_panel, |menu| {
                                     menu.entry(
                                         "Reveal In Project Panel",
-                                        Some(Box::new(RevealInProjectPanel {
-                                            entry_id: Some(entry_id),
-                                        })),
+                                        Some(Box::new(RevealInProjectPanel::default())),
                                         window.handler_for(&pane, move |pane, _, cx| {
                                             pane.project
                                                 .update(cx, |_, cx| {
@@ -2700,6 +2832,16 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
+        if self.pinned_tab_count > tab_count {
+            log::warn!(
+                "Pinned tab count ({}) exceeds actual tab count ({}). \
+                This should not happen. If possible, add reproduction steps, \
+                in a comment, to https://github.com/zed-industries/zed/issues/33342",
+                self.pinned_tab_count,
+                tab_count
+            );
+            self.pinned_tab_count = tab_count;
+        }
         let unpinned_tabs = tab_items.split_off(self.pinned_tab_count);
         let pinned_tabs = tab_items;
         TabBar::new("tab_bar")
@@ -2723,10 +2865,9 @@ impl Pane {
                 }
             })
             .children(pinned_tabs.len().ne(&0).then(|| {
-                let content_width = self.tab_bar_scroll_handle.content_size().width;
-                let viewport_width = self.tab_bar_scroll_handle.viewport().size.width;
+                let max_scroll = self.tab_bar_scroll_handle.max_offset().width;
                 // We need to check both because offset returns delta values even when the scroll handle is not scrollable
-                let is_scrollable = content_width > viewport_width;
+                let is_scrollable = !max_scroll.is_zero();
                 let is_scrolled = self.tab_bar_scroll_handle.offset().x < px(0.);
                 let has_active_unpinned_tab = self.active_item_index >= self.pinned_tab_count;
                 h_flex()
@@ -2924,18 +3065,10 @@ impl Pane {
                             let moved_right = ix > from_ix;
                             let ix = if moved_right { ix - 1 } else { ix };
                             let is_pinned_in_to_pane = this.is_tab_pinned(ix);
-                            let is_at_same_position = ix == from_ix;
 
-                            if is_at_same_position
-                                || (moved_right && is_pinned_in_to_pane)
-                                || (!moved_right && !is_pinned_in_to_pane)
-                            {
-                                return;
-                            }
-
-                            if is_pinned_in_to_pane {
+                            if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
-                            } else {
+                            } else if was_pinned_in_from_pane && !is_pinned_in_to_pane {
                                 this.pinned_tab_count -= 1;
                             }
                         } else if this.items.len() >= to_pane_old_length {
@@ -3106,27 +3239,36 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
-                        if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
-                        }
-                        workspace.open_paths(
-                            paths,
-                            OpenOptions {
-                                visible: Some(OpenVisible::OnlyDirectories),
-                                ..Default::default()
-                            },
-                            Some(to_pane.downgrade()),
-                            window,
-                            cx,
-                        )
-                    }) {
+                    if let Ok((open_task, to_pane)) =
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            if let Some(split_direction) = split_direction {
+                                to_pane =
+                                    workspace.split_pane(to_pane, split_direction, window, cx);
+                            }
+                            (
+                                workspace.open_paths(
+                                    paths,
+                                    OpenOptions {
+                                        visible: Some(OpenVisible::OnlyDirectories),
+                                        ..Default::default()
+                                    },
+                                    Some(to_pane.downgrade()),
+                                    window,
+                                    cx,
+                                ),
+                                to_pane,
+                            )
+                        })
+                    {
                         let opened_items: Vec<_> = open_task.await;
-                        _ = workspace.update(cx, |workspace, cx| {
+                        _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(&e, cx);
                                 }
+                            }
+                            if to_pane.read(cx).items_len() == 0 {
+                                workspace.remove_pane(to_pane, None, window, cx);
                             }
                         });
                     }
@@ -3140,7 +3282,7 @@ impl Pane {
         self.display_nav_history_buttons = display;
     }
 
-    fn pinned_item_ids(&self) -> HashSet<EntityId> {
+    fn pinned_item_ids(&self) -> Vec<EntityId> {
         self.items
             .iter()
             .enumerate()
@@ -3154,7 +3296,7 @@ impl Pane {
             .collect()
     }
 
-    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> HashSet<EntityId> {
+    fn clean_item_ids(&self, cx: &mut Context<Pane>) -> Vec<EntityId> {
         self.items()
             .filter_map(|item| {
                 if !item.is_dirty(cx) {
@@ -3166,7 +3308,7 @@ impl Pane {
             .collect()
     }
 
-    fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> HashSet<EntityId> {
+    fn to_the_side_item_ids(&self, item_id: EntityId, side: Side) -> Vec<EntityId> {
         match side {
             Side::Left => self
                 .items()
@@ -3367,6 +3509,9 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, action, window, cx| {
                 pane.toggle_pin_tab(action, window, cx);
             }))
+            .on_action(cx.listener(|pane, action, window, cx| {
+                pane.unpin_all_tabs(action, window, cx);
+            }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
                 this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
                     if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
@@ -3385,8 +3530,8 @@ impl Render for Pane {
                 }),
             )
             .on_action(
-                cx.listener(|pane: &mut Self, action: &CloseInactiveItems, window, cx| {
-                    pane.close_inactive_items(action, window, cx)
+                cx.listener(|pane: &mut Self, action: &CloseOtherItems, window, cx| {
+                    pane.close_other_items(action, None, window, cx)
                         .detach_and_log_err(cx);
                 }),
             )
@@ -3838,6 +3983,7 @@ mod tests {
         for i in 0..7 {
             add_labeled_item(&pane, format!("{}", i).as_str(), false, cx);
         }
+
         set_max_tabs(cx, Some(5));
         add_labeled_item(&pane, "7", false, cx);
         // Remove items to respect the max tab cap.
@@ -3872,6 +4018,43 @@ mod tests {
             ],
             cx,
         );
+    }
+
+    #[gpui::test]
+    async fn test_reduce_max_tabs_closes_existing_items(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        let item_d = add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        add_labeled_item(&pane, "Settings", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E", "Settings*"], cx);
+
+        set_max_tabs(cx, Some(5));
+        assert_item_labels(&pane, ["B", "C", "D", "E", "Settings*"], cx);
+
+        set_max_tabs(cx, Some(4));
+        assert_item_labels(&pane, ["C", "D", "E", "Settings*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_d.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["C!", "D!", "E", "Settings*"], cx);
+
+        set_max_tabs(cx, Some(2));
+        assert_item_labels(&pane, ["C!", "D!", "Settings*"], cx);
     }
 
     #[gpui::test]
@@ -4178,6 +4361,78 @@ mod tests {
             pane.toggle_pin_tab(&TogglePinTab, window, cx);
         });
         assert_item_labels(&pane, ["B*", "A", "C"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_unpin_all_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Unpin all, in an empty pane
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, [], cx);
+
+        let item_a = add_labeled_item(&pane, "A", false, cx);
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        let item_c = add_labeled_item(&pane, "C", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Unpin all, when no tabs are pinned
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Pin inactive tabs only
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        assert_item_labels(&pane, ["A", "B", "C*"], cx);
+
+        // Pin all tabs
+        pane.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B!", "C*!"], cx);
+
+        // Activate middle tab
+        pane.update_in(cx, |pane, window, cx| {
+            pane.activate_item(1, false, false, window, cx);
+        });
+        assert_item_labels(&pane, ["A!", "B*!", "C!"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.unpin_all_tabs(&UnpinAllTabs, window, cx);
+        });
+
+        // Order has not changed
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
     }
 
     #[gpui::test]
@@ -4890,6 +5145,161 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_drag_pinned_tab_throughout_entire_range_of_pinned_tabs_both_directions(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B, C and pin all
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        let item_b = add_labeled_item(&pane_a, "B", false, cx);
+        let item_c = add_labeled_item(&pane_a, "C", false, cx);
+        assert_item_labels(&pane_a, ["A", "B", "C*"], cx);
+
+        pane_a.update_in(cx, |pane, window, cx| {
+            let ix = pane.index_for_item_id(item_a.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_b.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+
+            let ix = pane.index_for_item_id(item_c.item_id()).unwrap();
+            pane.pin_tab_at(ix, window, cx);
+        });
+        assert_item_labels(&pane_a, ["A!", "B!", "C*!"], cx);
+
+        // Move A to right of B
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 1, window, cx);
+        });
+
+        // A should be after B and all are pinned
+        assert_item_labels(&pane_a, ["B!", "A*!", "C!"], cx);
+
+        // Move A to right of C
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 1,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 2, window, cx);
+        });
+
+        // A should be after C and all are pinned
+        assert_item_labels(&pane_a, ["B!", "C!", "A*!"], cx);
+
+        // Move A to left of C
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 2,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 1, window, cx);
+        });
+
+        // A should be before C and all are pinned
+        assert_item_labels(&pane_a, ["B!", "A*!", "C!"], cx);
+
+        // Move A to left of B
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 1,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 0, window, cx);
+        });
+
+        // A should be before B and all are pinned
+        assert_item_labels(&pane_a, ["A*!", "B!", "C!"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_first_tab_to_last_position(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B, C
+        let item_a = add_labeled_item(&pane_a, "A", false, cx);
+        add_labeled_item(&pane_a, "B", false, cx);
+        add_labeled_item(&pane_a, "C", false, cx);
+        assert_item_labels(&pane_a, ["A", "B", "C*"], cx);
+
+        // Move A to the end
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_a.boxed_clone(),
+                ix: 0,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 2, window, cx);
+        });
+
+        // A should be at the end
+        assert_item_labels(&pane_a, ["B", "C", "A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_drag_last_tab_to_first_position(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane_a = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        // Add A, B, C
+        add_labeled_item(&pane_a, "A", false, cx);
+        add_labeled_item(&pane_a, "B", false, cx);
+        let item_c = add_labeled_item(&pane_a, "C", false, cx);
+        assert_item_labels(&pane_a, ["A", "B", "C*"], cx);
+
+        // Move C to the beginning
+        pane_a.update_in(cx, |pane, window, cx| {
+            let dragged_tab = DraggedTab {
+                pane: pane_a.clone(),
+                item: item_c.boxed_clone(),
+                ix: 2,
+                detail: 0,
+                is_active: true,
+            };
+            pane.handle_tab_drop(&dragged_tab, 0, window, cx);
+        });
+
+        // C should be at the beginning
+        assert_item_labels(&pane_a, ["C*", "A", "B"], cx);
+    }
+
+    #[gpui::test]
     async fn test_add_item_with_new_item(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
@@ -5452,11 +5862,12 @@ mod tests {
         assert_item_labels(&pane, ["A!", "B!", "C", "D", "E*"], cx);
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )
@@ -5464,6 +5875,43 @@ mod tests {
         .await
         .unwrap();
         assert_item_labels(&pane, ["A!", "B!", "E*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_running_close_inactive_items_via_an_inactive_item(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        assert_item_labels(&pane, ["A*"], cx);
+
+        let item_b = add_labeled_item(&pane, "B", false, cx);
+        assert_item_labels(&pane, ["A", "B*"], cx);
+
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        add_labeled_item(&pane, "E", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D", "E*"], cx);
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_other_items(
+                &CloseOtherItems {
+                    save_intent: None,
+                    close_pinned: false,
+                },
+                Some(item_b.item_id()),
+                window,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["B*"], cx);
     }
 
     #[gpui::test]
@@ -5817,11 +6265,12 @@ mod tests {
         .unwrap();
 
         pane.update_in(cx, |pane, window, cx| {
-            pane.close_inactive_items(
-                &CloseInactiveItems {
+            pane.close_other_items(
+                &CloseOtherItems {
                     save_intent: None,
                     close_pinned: false,
                 },
+                None,
                 window,
                 cx,
             )

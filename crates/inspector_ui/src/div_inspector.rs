@@ -1,5 +1,8 @@
 use anyhow::{Result, anyhow};
-use editor::{Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MultiBuffer};
+use editor::{
+    Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
+    MultiBuffer,
+};
 use fuzzy::StringMatch;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
@@ -499,6 +502,7 @@ impl DivInspector {
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_runnables(false, cx);
             editor.set_show_edit_predictions(Some(false), window, cx);
+            editor.set_minimap_visibility(MinimapVisibility::Disabled, window, cx);
             editor
         })
     }
@@ -715,7 +719,7 @@ fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Optio
 
     if end_in_line > start_in_line {
         let replace_start = snapshot.anchor_before(line_start + start_in_line);
-        let replace_end = snapshot.anchor_before(line_start + end_in_line);
+        let replace_end = snapshot.anchor_after(line_start + end_in_line);
         Some(replace_start..replace_end)
     } else {
         None

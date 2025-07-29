@@ -4,9 +4,7 @@ use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::{Schema, SchemaObject};
+use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -219,6 +217,10 @@ pub struct ThemeColorsContent {
     #[serde(rename = "element.disabled")]
     pub element_disabled: Option<String>,
 
+    /// Background Color. Used for the background of selections in a UI element.
+    #[serde(rename = "element.selection_background")]
+    pub element_selection_background: Option<String>,
+
     /// Background Color. Used for the area that shows where a dragged element will be dropped.
     #[serde(rename = "drop_target.background")]
     pub drop_target_background: Option<String>,
@@ -348,6 +350,12 @@ pub struct ThemeColorsContent {
 
     #[serde(rename = "panel.indent_guide_active")]
     pub panel_indent_guide_active: Option<String>,
+
+    #[serde(rename = "panel.overlay_background")]
+    pub panel_overlay_background: Option<String>,
+
+    #[serde(rename = "panel.overlay_hover")]
+    pub panel_overlay_hover: Option<String>,
 
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
@@ -620,24 +628,20 @@ pub struct ThemeColorsContent {
     pub version_control_ignored: Option<String>,
 
     /// Background color for row highlights of "ours" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_background")]
-    pub version_control_conflict_ours_background: Option<String>,
+    #[serde(rename = "version_control.conflict_marker.ours")]
+    pub version_control_conflict_marker_ours: Option<String>,
 
     /// Background color for row highlights of "theirs" regions in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_background")]
+    #[serde(rename = "version_control.conflict_marker.theirs")]
+    pub version_control_conflict_marker_theirs: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_ours`.
+    #[deprecated]
+    pub version_control_conflict_ours_background: Option<String>,
+
+    /// Deprecated in favor of `version_control_conflict_marker_theirs`.
+    #[deprecated]
     pub version_control_conflict_theirs_background: Option<String>,
-
-    /// Background color for row highlights of "ours" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.ours_marker_background")]
-    pub version_control_conflict_ours_marker_background: Option<String>,
-
-    /// Background color for row highlights of "theirs" conflict markers in merge conflicts.
-    #[serde(rename = "version_control.conflict.theirs_marker_background")]
-    pub version_control_conflict_theirs_marker_background: Option<String>,
-
-    /// Background color for row highlights of the "ours"/"theirs" divider in merge conflicts.
-    #[serde(rename = "version_control.conflict.divider_background")]
-    pub version_control_conflict_divider_background: Option<String>,
 }
 
 impl ThemeColorsContent {
@@ -674,6 +678,14 @@ impl ThemeColorsContent {
             .or(scrollbar_thumb_background);
         let scrollbar_thumb_border = self
             .scrollbar_thumb_border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let element_hover = self
+            .element_hover
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let panel_background = self
+            .panel_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
@@ -714,10 +726,7 @@ impl ThemeColorsContent {
                 .element_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            element_hover: self
-                .element_hover
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            element_hover,
             element_active: self
                 .element_active
                 .as_ref()
@@ -728,6 +737,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             element_disabled: self
                 .element_disabled
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            element_selection_background: self
+                .element_selection_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             drop_target_background: self
@@ -830,10 +843,7 @@ impl ThemeColorsContent {
                 .search_match_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            panel_background: self
-                .panel_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            panel_background,
             panel_focused_border: self
                 .panel_focused_border
                 .as_ref()
@@ -850,6 +860,16 @@ impl ThemeColorsContent {
                 .panel_indent_guide_active
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            panel_overlay_background: self
+                .panel_overlay_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(panel_background),
+            panel_overlay_hover: self
+                .panel_overlay_hover
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                .or(element_hover),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()
@@ -1118,25 +1138,17 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok())
                 // Fall back to `conflict`, for backwards compatibility.
                 .or(status_colors.ignored),
-            version_control_conflict_ours_background: self
-                .version_control_conflict_ours_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_ours: self
+                .version_control_conflict_marker_ours
                 .as_ref()
+                .or(self.version_control_conflict_ours_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_background: self
-                .version_control_conflict_theirs_background
+            #[allow(deprecated)]
+            version_control_conflict_marker_theirs: self
+                .version_control_conflict_marker_theirs
                 .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_ours_marker_background: self
-                .version_control_conflict_ours_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_theirs_marker_background: self
-                .version_control_conflict_theirs_marker_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            version_control_conflict_divider_background: self
-                .version_control_conflict_divider_background
-                .as_ref()
+                .or(self.version_control_conflict_theirs_background.as_ref())
                 .and_then(|color| try_parse_color(color).ok()),
         }
     }
@@ -1491,7 +1503,7 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,
@@ -1503,34 +1515,6 @@ pub enum FontWeightContent {
     Bold = 700,
     ExtraBold = 800,
     Black = 900,
-}
-
-impl JsonSchema for FontWeightContent {
-    fn schema_name() -> String {
-        "FontWeightContent".to_owned()
-    }
-
-    fn is_referenceable() -> bool {
-        false
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            enum_values: Some(vec![
-                100.into(),
-                200.into(),
-                300.into(),
-                400.into(),
-                500.into(),
-                600.into(),
-                700.into(),
-                800.into(),
-                900.into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
-    }
 }
 
 impl From<FontWeightContent> for FontWeight {

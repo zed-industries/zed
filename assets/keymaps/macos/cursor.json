@@ -8,7 +8,6 @@
       "cmd-shift-i": "agent::ToggleFocus",
       "cmd-l": "agent::ToggleFocus",
       "cmd-shift-l": "agent::ToggleFocus",
-      "cmd-alt-b": "agent::ToggleFocus",
       "cmd-shift-j": "agent::OpenConfiguration"
     }
   },
@@ -28,7 +27,8 @@
     "context": "InlineAssistEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-shift-backspace": "editor::Cancel"
+      "cmd-shift-backspace": "editor::Cancel",
+      "cmd-enter": "menu::Confirm"
       // "alt-enter": // Quick Question
       // "cmd-shift-enter": // Full File Context
       // "cmd-shift-k": // Toggle input focus (editor <> inline assist)
@@ -42,7 +42,6 @@
       "cmd-shift-i": "workspace::ToggleRightDock",
       "cmd-l": "workspace::ToggleRightDock",
       "cmd-shift-l": "workspace::ToggleRightDock",
-      "cmd-alt-b": "workspace::ToggleRightDock",
       "cmd-w": "workspace::ToggleRightDock", // technically should close chat
       "cmd-.": "agent::ToggleProfileSelector",
       "cmd-/": "agent::ToggleModelSelector",

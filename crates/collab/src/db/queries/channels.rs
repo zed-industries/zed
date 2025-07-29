@@ -732,12 +732,11 @@ impl Database {
                     users.push(proto::User {
                         id: user.id.to_proto(),
                         avatar_url: format!(
-                            "https://github.com/{}.png?size=128",
-                            user.github_login
+                            "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
+                            user.github_user_id
                         ),
                         github_login: user.github_login,
                         name: user.name,
-                        email: user.email_address,
                     })
                 }
                 proto::ChannelMember {

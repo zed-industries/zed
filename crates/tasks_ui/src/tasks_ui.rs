@@ -192,31 +192,33 @@ where
             task_contexts(workspace, window, cx)
         })?;
         let task_contexts = task_contexts.await;
-        let mut tasks = workspace.update(cx, |workspace, cx| {
-            let Some(task_inventory) = workspace
-                .project()
-                .read(cx)
-                .task_store()
-                .read(cx)
-                .task_inventory()
-                .cloned()
-            else {
-                return Vec::new();
-            };
-            let (file, language) = task_contexts
-                .location()
-                .map(|location| {
-                    let buffer = location.buffer.read(cx);
-                    (
-                        buffer.file().cloned(),
-                        buffer.language_at(location.range.start),
-                    )
-                })
-                .unwrap_or_default();
-            task_inventory
-                .read(cx)
-                .list_tasks(file, language, task_contexts.worktree(), cx)
-        })?;
+        let mut tasks = workspace
+            .update(cx, |workspace, cx| {
+                let Some(task_inventory) = workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .cloned()
+                else {
+                    return Task::ready(Vec::new());
+                };
+                let (file, language) = task_contexts
+                    .location()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        (
+                            buffer.file().cloned(),
+                            buffer.language_at(location.range.start),
+                        )
+                    })
+                    .unwrap_or_default();
+                task_inventory
+                    .read(cx)
+                    .list_tasks(file, language, task_contexts.worktree(), cx)
+            })?
+            .await;
 
         let did_spawn = workspace
             .update_in(cx, |workspace, window, cx| {
@@ -283,10 +285,12 @@ pub fn task_contexts(
                 .worktree_for_id(*worktree_id, cx)
                 .map_or(false, |worktree| is_visible_directory(&worktree, cx))
         })
-        .or(workspace
-            .visible_worktrees(cx)
-            .next()
-            .map(|tree| tree.read(cx).id()));
+        .or_else(|| {
+            workspace
+                .visible_worktrees(cx)
+                .next()
+                .map(|tree| tree.read(cx).id())
+        });
 
     let active_editor = active_item.and_then(|item| item.act_as::<Editor>(cx));
 
@@ -389,14 +393,14 @@ fn worktree_context(worktree_abs_path: &Path) -> TaskContext {
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use editor::Editor;
+    use editor::{Editor, SelectionEffects};
     use gpui::TestAppContext;
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, separator};
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::task_contexts;
@@ -520,7 +524,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),
@@ -534,7 +538,7 @@ mod tests {
 
         // And now, let's select an identifier.
         editor2.update_in(cx, |editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([14..18])
             })
         });
@@ -552,7 +556,7 @@ mod tests {
                 task_variables: TaskVariables::from_iter([
                     (VariableName::File, path!("/dir/rust/b.rs").into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::RelativeFile, path!("rust/b.rs").into()),
                     (VariableName::RelativeDir, "rust".into()),
                     (VariableName::Dirname, path!("/dir/rust").into()),
                     (VariableName::Stem, "b".into()),

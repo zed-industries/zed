@@ -56,7 +56,7 @@ pub fn to_esc_str(
         ("tab", AlacModifiers::None) => Some("\x09"),
         ("escape", AlacModifiers::None) => Some("\x1b"),
         ("enter", AlacModifiers::None) => Some("\x0d"),
-        ("enter", AlacModifiers::Shift) => Some("\x0d"),
+        ("enter", AlacModifiers::Shift) => Some("\x0a"),
         ("enter", AlacModifiers::Alt) => Some("\x1b\x0d"),
         ("backspace", AlacModifiers::None) => Some("\x7f"),
         //Interesting escape codes
@@ -404,6 +404,22 @@ mod test {
                 format!("\x1b{}", key)
             );
         }
+    }
+
+    #[test]
+    fn test_shift_enter_newline() {
+        let shift_enter = Keystroke::parse("shift-enter").unwrap();
+        let regular_enter = Keystroke::parse("enter").unwrap();
+        let mode = TermMode::NONE;
+
+        // Shift-enter should send line feed (newline)
+        assert_eq!(to_esc_str(&shift_enter, &mode, false), Some("\x0a".into()));
+
+        // Regular enter should still send carriage return
+        assert_eq!(
+            to_esc_str(&regular_enter, &mode, false),
+            Some("\x0d".into())
+        );
     }
 
     #[test]

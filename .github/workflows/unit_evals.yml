@@ -19,13 +19,14 @@ env:
 
 jobs:
   unit_evals:
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
     name: Run unit evals
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -62,7 +63,7 @@ jobs:
 
       - name: Run unit evals
         shell: bash -euxo pipefail {0}
-        run: cargo nextest run --workspace --no-fail-fast --features eval --no-capture -E 'test(::eval_)' --test-threads 1
+        run: cargo nextest run --workspace --no-fail-fast --features eval --no-capture -E 'test(::eval_)'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 

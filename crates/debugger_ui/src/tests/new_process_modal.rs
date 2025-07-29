@@ -1,13 +1,15 @@
 use dap::DapRegistry;
+use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{FakeFs, Project};
+use project::{FakeFs, Fs as _, Project};
 use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use task::{DebugRequest, DebugScenario, LaunchRequest, TaskContext, VariableName, ZedDebugConfig};
+use text::Point;
 use util::path;
 
-// use crate::new_process_modal::NewProcessMode;
+use crate::NewProcessMode;
 use crate::tests::{init_test, init_test_workspace};
 
 #[gpui::test]
@@ -141,7 +143,14 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
 
         workspace
             .update(cx, |workspace, window, cx| {
-                workspace.start_debug_session(scenario, task_context.clone(), None, window, cx)
+                workspace.start_debug_session(
+                    scenario,
+                    task_context.clone(),
+                    None,
+                    None,
+                    window,
+                    cx,
+                )
             })
             .unwrap();
 
@@ -152,111 +161,127 @@ async fn test_debug_session_substitutes_variables_and_relativizes_paths(
     }
 }
 
-// #[gpui::test]
-// async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut TestAppContext) {
-//     init_test(cx);
+#[gpui::test]
+async fn test_save_debug_scenario_to_file(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
 
-//     let fs = FakeFs::new(executor.clone());
-//     fs.insert_tree(
-//         path!("/project"),
-//         json!({
-//             "main.rs": "fn main() {}"
-//         }),
-//     )
-//     .await;
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            "main.rs": "fn main() {}"
+        }),
+    )
+    .await;
 
-//     let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-//     let workspace = init_test_workspace(&project, cx).await;
-//     let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-//     workspace
-//         .update(cx, |workspace, window, cx| {
-//             crate::new_process_modal::NewProcessModal::show(
-//                 workspace,
-//                 window,
-//                 NewProcessMode::Debug,
-//                 None,
-//                 cx,
-//             );
-//         })
-//         .unwrap();
+    workspace
+        .update(cx, |workspace, window, cx| {
+            crate::new_process_modal::NewProcessModal::show(
+                workspace,
+                window,
+                NewProcessMode::Debug,
+                None,
+                cx,
+            );
+        })
+        .unwrap();
 
-//     cx.run_until_parked();
+    cx.run_until_parked();
 
-//     let modal = workspace
-//         .update(cx, |workspace, _, cx| {
-//             workspace.active_modal::<crate::new_process_modal::NewProcessModal>(cx)
-//         })
-//         .unwrap()
-//         .expect("Modal should be active");
+    let modal = workspace
+        .update(cx, |workspace, _, cx| {
+            workspace.active_modal::<crate::new_process_modal::NewProcessModal>(cx)
+        })
+        .unwrap()
+        .expect("Modal should be active");
 
-//     modal.update_in(cx, |modal, window, cx| {
-//         modal.set_configure("/project/main", "/project", false, window, cx);
-//         modal.save_scenario(window, cx);
-//     });
+    modal.update_in(cx, |modal, window, cx| {
+        modal.set_configure("/project/main", "/project", false, window, cx);
+        modal.save_debug_scenario(window, cx);
+    });
 
-//     cx.executor().run_until_parked();
+    cx.executor().run_until_parked();
 
-//     let debug_json_content = fs
-//         .load(path!("/project/.zed/debug.json").as_ref())
-//         .await
-//         .expect("debug.json should exist");
+    let editor = workspace
+        .update(cx, |workspace, _window, cx| {
+            workspace.active_item_as::<Editor>(cx).unwrap()
+        })
+        .unwrap();
 
-//     let expected_content = vec![
-//         "[",
-//         "  {",
-//         r#"    "adapter": "fake-adapter","#,
-//         r#"    "label": "main (fake-adapter)","#,
-//         r#"    "request": "launch","#,
-//         r#"    "program": "/project/main","#,
-//         r#"    "cwd": "/project","#,
-//         r#"    "args": [],"#,
-//         r#"    "env": {}"#,
-//         "  }",
-//         "]",
-//     ];
+    let debug_json_content = fs
+        .load(path!("/project/.zed/debug.json").as_ref())
+        .await
+        .expect("debug.json should exist")
+        .lines()
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
 
-//     let actual_lines: Vec<&str> = debug_json_content.lines().collect();
-//     pretty_assertions::assert_eq!(expected_content, actual_lines);
+    let expected_content = indoc::indoc! {r#"
+        [
+          {
+            "adapter": "fake-adapter",
+            "label": "main (fake-adapter)",
+            "request": "launch",
+            "program": "/project/main",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          }
+        ]"#};
 
-//     modal.update_in(cx, |modal, window, cx| {
-//         modal.set_configure("/project/other", "/project", true, window, cx);
-//         modal.save_scenario(window, cx);
-//     });
+    pretty_assertions::assert_eq!(expected_content, debug_json_content);
 
-//     cx.executor().run_until_parked();
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.selections.newest::<Point>(cx).head(),
+            Point::new(5, 2)
+        )
+    });
 
-//     let debug_json_content = fs
-//         .load(path!("/project/.zed/debug.json").as_ref())
-//         .await
-//         .expect("debug.json should exist after second save");
+    modal.update_in(cx, |modal, window, cx| {
+        modal.set_configure("/project/other", "/project", true, window, cx);
+        modal.save_debug_scenario(window, cx);
+    });
 
-//     let expected_content = vec![
-//         "[",
-//         "  {",
-//         r#"    "adapter": "fake-adapter","#,
-//         r#"    "label": "main (fake-adapter)","#,
-//         r#"    "request": "launch","#,
-//         r#"    "program": "/project/main","#,
-//         r#"    "cwd": "/project","#,
-//         r#"    "args": [],"#,
-//         r#"    "env": {}"#,
-//         "  },",
-//         "  {",
-//         r#"    "adapter": "fake-adapter","#,
-//         r#"    "label": "other (fake-adapter)","#,
-//         r#"    "request": "launch","#,
-//         r#"    "program": "/project/other","#,
-//         r#"    "cwd": "/project","#,
-//         r#"    "args": [],"#,
-//         r#"    "env": {}"#,
-//         "  }",
-//         "]",
-//     ];
+    cx.executor().run_until_parked();
 
-//     let actual_lines: Vec<&str> = debug_json_content.lines().collect();
-//     pretty_assertions::assert_eq!(expected_content, actual_lines);
-// }
+    let expected_content = indoc::indoc! {r#"
+        [
+          {
+            "adapter": "fake-adapter",
+            "label": "main (fake-adapter)",
+            "request": "launch",
+            "program": "/project/main",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          },
+          {
+            "adapter": "fake-adapter",
+            "label": "other (fake-adapter)",
+            "request": "launch",
+            "program": "/project/other",
+            "cwd": "/project",
+            "args": [],
+            "env": {}
+          }
+        ]"#};
+
+    let debug_json_content = fs
+        .load(path!("/project/.zed/debug.json").as_ref())
+        .await
+        .expect("debug.json should exist")
+        .lines()
+        .filter(|line| !line.starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    pretty_assertions::assert_eq!(expected_content, debug_json_content);
+}
 
 #[gpui::test]
 async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppContext) {
@@ -265,9 +290,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
     let mut expected_adapters = vec![
         "CodeLLDB",
         "Debugpy",
-        "PHP",
         "JavaScript",
-        "Ruby",
         "Delve",
         "GDB",
         "fake-adapter",
@@ -308,6 +331,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
 
         let debug_scenario = adapter
             .config_from_zed_format(adapter_specific_config)
+            .await
             .unwrap_or_else(|_| {
                 panic!(
                     "Adapter {} should successfully convert from Zed format",
@@ -323,6 +347,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
 
         let request_type = adapter
             .request_kind(&debug_scenario.config)
+            .await
             .unwrap_or_else(|_| {
                 panic!(
                     "Adapter {} should validate the config successfully",

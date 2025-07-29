@@ -16,7 +16,7 @@ use language::{
     Buffer, point_to_lsp,
     proto::{deserialize_anchor, serialize_anchor},
 };
-use lsp::{LanguageServer, LanguageServerId};
+use lsp::{AdapterServerCapabilities, LanguageServer, LanguageServerId};
 use rpc::proto::{self, PeerId};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -66,6 +66,10 @@ impl LspCommand for ExpandMacro {
 
     fn display_name(&self) -> &str {
         "Expand macro"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
@@ -194,6 +198,10 @@ impl LspCommand for OpenDocs {
 
     fn display_name(&self) -> &str {
         "Open docs"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
@@ -326,6 +334,10 @@ impl LspCommand for SwitchSourceHeader {
         "Switch source header"
     }
 
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -402,6 +414,10 @@ impl LspCommand for GoToParentModule {
 
     fn display_name(&self) -> &str {
         "Go to parent module"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
@@ -576,6 +592,10 @@ impl LspCommand for GetLspRunnables {
 
     fn display_name(&self) -> &str {
         "LSP Runnables"
+    }
+
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(

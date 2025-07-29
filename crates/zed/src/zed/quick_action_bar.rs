@@ -1,6 +1,8 @@
-mod markdown_preview;
+mod preview;
 mod repl_menu;
+
 use agent_settings::AgentSettings;
+use client::DisableAiSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -31,6 +33,7 @@ const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    _ai_settings_subscription: Subscription,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
@@ -45,8 +48,28 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
+        let mut was_agent_button = AgentSettings::get_global(cx).button;
+
+        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
+            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let agent_settings = AgentSettings::get_global(cx);
+
+            if was_ai_disabled != is_ai_disabled
+                || was_agent_enabled != agent_settings.enabled
+                || was_agent_button != agent_settings.button
+            {
+                was_ai_disabled = is_ai_disabled;
+                was_agent_enabled = agent_settings.enabled;
+                was_agent_button = agent_settings.button;
+                cx.notify();
+            }
+        });
+
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
+            _ai_settings_subscription: ai_settings_subscription,
             active_item: None,
             buffer_search_bar,
             show: true,
@@ -133,46 +156,6 @@ impl Render for QuickActionBar {
             )
         });
 
-        let last_run_debug = self
-            .workspace
-            .read_with(cx, |workspace, cx| {
-                workspace
-                    .debugger_provider()
-                    .map(|provider| provider.debug_scenario_scheduled_last(cx))
-                    .unwrap_or_default()
-            })
-            .ok()
-            .unwrap_or_default();
-
-        let run_button = if last_run_debug {
-            QuickActionBarButton::new(
-                "debug",
-                IconName::PlayBug,
-                false,
-                Box::new(debugger_ui::Start),
-                focus_handle.clone(),
-                "Debug",
-                move |_, window, cx| {
-                    window.dispatch_action(Box::new(debugger_ui::Start), cx);
-                },
-            )
-        } else {
-            let action = Box::new(tasks_ui::Spawn::ViaModal {
-                reveal_target: None,
-            });
-            QuickActionBarButton::new(
-                "run",
-                IconName::PlayAlt,
-                false,
-                action.boxed_clone(),
-                focus_handle.clone(),
-                "Spawn Task",
-                move |_, window, cx| {
-                    window.dispatch_action(action.boxed_clone(), cx);
-                },
-            )
-        };
-
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
             IconName::ZedAssistant,
@@ -257,6 +240,12 @@ impl Render for QuickActionBar {
         });
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
+            let has_diff_hunks = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .snapshot(cx)
+                .has_diff_hunks();
             let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
@@ -288,11 +277,18 @@ impl Render for QuickActionBar {
                             .action("Go to Symbol", Box::new(ToggleOutline))
                             .action("Go to Line/Column", Box::new(ToggleGoToLine))
                             .separator()
-                            .action("Next Problem", Box::new(GoToDiagnostic))
-                            .action("Previous Problem", Box::new(GoToPreviousDiagnostic))
+                            .action("Next Problem", Box::new(GoToDiagnostic::default()))
+                            .action(
+                                "Previous Problem",
+                                Box::new(GoToPreviousDiagnostic::default()),
+                            )
                             .separator()
-                            .action("Next Hunk", Box::new(GoToHunk))
-                            .action("Previous Hunk", Box::new(GoToPreviousHunk))
+                            .action_disabled_when(!has_diff_hunks, "Next Hunk", Box::new(GoToHunk))
+                            .action_disabled_when(
+                                !has_diff_hunks,
+                                "Previous Hunk",
+                                Box::new(GoToPreviousHunk),
+                            )
                             .separator()
                             .action("Move Line Up", Box::new(MoveLineUp))
                             .action("Move Line Down", Box::new(MoveLineDown))
@@ -367,52 +363,6 @@ impl Render for QuickActionBar {
                                 );
                             }
 
-                            if supports_diagnostics {
-                                menu = menu.toggleable_entry(
-                                    "Diagnostics",
-                                    diagnostics_enabled,
-                                    IconPosition::Start,
-                                    Some(ToggleDiagnostics.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |window, cx| {
-                                            editor
-                                                .update(cx, |editor, cx| {
-                                                    editor.toggle_diagnostics(
-                                                        &ToggleDiagnostics,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                })
-                                                .ok();
-                                        }
-                                    },
-                                );
-
-                                if supports_inline_diagnostics {
-                                    menu = menu.toggleable_entry(
-                                        "Inline Diagnostics",
-                                        inline_diagnostics_enabled,
-                                        IconPosition::Start,
-                                        Some(ToggleInlineDiagnostics.boxed_clone()),
-                                        {
-                                            let editor = editor.clone();
-                                            move |window, cx| {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.toggle_inline_diagnostics(
-                                                            &ToggleInlineDiagnostics,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    );
-                                }
-                            }
-
                             if supports_minimap {
                                 menu = menu.toggleable_entry("Minimap", minimap_enabled, IconPosition::Start, Some(editor::actions::ToggleMinimap.boxed_clone()), {
                                     let editor = editor.clone();
@@ -460,6 +410,55 @@ impl Render for QuickActionBar {
                             }
 
                             menu = menu.separator();
+
+                            if supports_diagnostics {
+                                menu = menu.toggleable_entry(
+                                    "Diagnostics",
+                                    diagnostics_enabled,
+                                    IconPosition::Start,
+                                    Some(ToggleDiagnostics.boxed_clone()),
+                                    {
+                                        let editor = editor.clone();
+                                        move |window, cx| {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.toggle_diagnostics(
+                                                        &ToggleDiagnostics,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                        }
+                                    },
+                                );
+
+                                if supports_inline_diagnostics {
+                                    let mut inline_diagnostics_item = ContextMenuEntry::new("Inline Diagnostics")
+                                        .toggleable(IconPosition::Start, diagnostics_enabled && inline_diagnostics_enabled)
+                                        .action(ToggleInlineDiagnostics.boxed_clone())
+                                        .handler({
+                                            let editor = editor.clone();
+                                            move |window, cx| {
+                                                editor
+                                                    .update(cx, |editor, cx| {
+                                                        editor.toggle_inline_diagnostics(
+                                                            &ToggleInlineDiagnostics,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    })
+                                                    .ok();
+                                            }
+                                        });
+                                    if !diagnostics_enabled {
+                                        inline_diagnostics_item = inline_diagnostics_item.disabled(true).documentation_aside(DocumentationSide::Left, |_|  Label::new("Inline diagnostics are not available until regular diagnostics are enabled.").into_any_element());
+                                    }
+                                    menu = menu.item(inline_diagnostics_item)
+                                }
+
+                                menu = menu.separator();
+                            }
 
                             menu = menu.toggleable_entry(
                                 "Line Numbers",
@@ -595,13 +594,14 @@ impl Render for QuickActionBar {
             .id("quick action bar")
             .gap(DynamicSpacing::Base01.rems(cx))
             .children(self.render_repl_menu(cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
+            .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
+                AgentSettings::get_global(cx).enabled
+                    && AgentSettings::get_global(cx).button
+                    && !DisableAiSettings::get_global(cx).disable_ai,
                 |bar| bar.child(assistant_button),
             )
-            .child(run_button)
             .children(code_actions_dropdown)
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)

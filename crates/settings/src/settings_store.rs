@@ -6,9 +6,9 @@ use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
-use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -16,17 +16,19 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     str::{self, FromStr},
-    sync::{Arc, LazyLock},
+    sync::Arc,
 };
-use streaming_iterator::StreamingIterator;
-use tree_sitter::Query;
-use util::RangeExt;
-
-use util::{ResultExt as _, merge_non_null_json_value_into};
+use util::{
+    ResultExt as _, merge_non_null_json_value_into,
+    schemars::{DefaultDenyUnknownFields, add_new_subschema},
+};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
-use crate::{SettingsJsonSchemaParams, VsCodeSettings, WorktreeId};
+use crate::{
+    ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings, WorktreeId,
+    parse_json_with_comments, update_value_in_json_text,
+};
 
 /// A value that can be defined as a user setting.
 ///
@@ -56,14 +58,6 @@ pub trait Settings: 'static + Send + Sync {
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
         Self: Sized;
-
-    fn json_schema(
-        generator: &mut SchemaGenerator,
-        _: &SettingsJsonSchemaParams,
-        _: &App,
-    ) -> RootSchema {
-        generator.root_schema_for::<Self::FileContent>()
-    }
 
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default")
@@ -253,12 +247,7 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
-    fn json_schema(
-        &self,
-        generator: &mut SchemaGenerator,
-        _: &SettingsJsonSchemaParams,
-        cx: &App,
-    ) -> RootSchema;
+    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema;
     fn edits_for_update(
         &self,
         raw_settings: &serde_json::Value,
@@ -276,11 +265,11 @@ impl SettingsStore {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         Self {
             setting_values: Default::default(),
-            raw_default_settings: serde_json::json!({}),
+            raw_default_settings: json!({}),
             raw_global_settings: None,
-            raw_user_settings: serde_json::json!({}),
+            raw_user_settings: json!({}),
             raw_server_settings: None,
-            raw_extension_settings: serde_json::json!({}),
+            raw_extension_settings: json!({}),
             raw_local_settings: Default::default(),
             raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
@@ -631,7 +620,7 @@ impl SettingsStore {
         ));
     }
 
-    fn json_tab_size(&self) -> usize {
+    pub fn json_tab_size(&self) -> usize {
         const DEFAULT_JSON_TAB_SIZE: usize = 2;
 
         if let Some((setting_type_id, callback)) = &self.tab_size_callback {
@@ -877,106 +866,186 @@ impl SettingsStore {
     }
 
     pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
-        use schemars::{
-            r#gen::SchemaSettings,
-            schema::{Schema, SchemaObject},
-        };
-
-        let settings = SchemaSettings::draft07().with(|settings| {
-            settings.option_add_null_type = true;
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .into_generator();
+        let mut combined_schema = json!({
+            "type": "object",
+            "properties": {}
         });
-        let mut generator = SchemaGenerator::new(settings);
-        let mut combined_schema = RootSchema::default();
 
+        // Merge together settings schemas, similarly to json schema's "allOf". This merging is
+        // recursive, though at time of writing this recursive nature isn't used very much. An
+        // example of it is the schema for `jupyter` having contribution from both `EditorSettings`
+        // and `JupyterSettings`.
+        //
+        // This logic could be removed in favor of "allOf", but then there isn't the opportunity to
+        // validate and fully control the merge.
         for setting_value in self.setting_values.values() {
-            let setting_schema = setting_value.json_schema(&mut generator, schema_params, cx);
-            combined_schema
-                .definitions
-                .extend(setting_schema.definitions);
+            let mut setting_schema = setting_value.json_schema(&mut generator);
 
-            let target_schema = if let Some(key) = setting_value.key() {
-                let key_schema = combined_schema
-                    .schema
-                    .object()
-                    .properties
-                    .entry(key.to_string())
-                    .or_insert_with(|| Schema::Object(SchemaObject::default()));
-                if let Schema::Object(key_schema) = key_schema {
-                    key_schema
-                } else {
-                    continue;
-                }
-            } else {
-                &mut combined_schema.schema
-            };
-
-            merge_schema(target_schema, setting_schema.schema);
-        }
-
-        fn merge_schema(target: &mut SchemaObject, mut source: SchemaObject) {
-            let source_subschemas = source.subschemas();
-            let target_subschemas = target.subschemas();
-            if let Some(all_of) = source_subschemas.all_of.take() {
-                target_subschemas
-                    .all_of
-                    .get_or_insert(Vec::new())
-                    .extend(all_of);
-            }
-            if let Some(any_of) = source_subschemas.any_of.take() {
-                target_subschemas
-                    .any_of
-                    .get_or_insert(Vec::new())
-                    .extend(any_of);
-            }
-            if let Some(one_of) = source_subschemas.one_of.take() {
-                target_subschemas
-                    .one_of
-                    .get_or_insert(Vec::new())
-                    .extend(one_of);
-            }
-
-            if let Some(source) = source.object {
-                let target_properties = &mut target.object().properties;
-                for (key, value) in source.properties {
-                    match target_properties.entry(key) {
-                        btree_map::Entry::Vacant(e) => {
-                            e.insert(value);
-                        }
-                        btree_map::Entry::Occupied(e) => {
-                            if let (Schema::Object(target), Schema::Object(src)) =
-                                (e.into_mut(), value)
-                            {
-                                merge_schema(target, src);
-                            }
+            if let Some(key) = setting_value.key() {
+                if let Some(properties) = combined_schema.get_mut("properties") {
+                    if let Some(properties_obj) = properties.as_object_mut() {
+                        if let Some(target) = properties_obj.get_mut(key) {
+                            merge_schema(target, setting_schema.to_value());
+                        } else {
+                            properties_obj.insert(key.to_string(), setting_schema.to_value());
                         }
                     }
                 }
+            } else {
+                setting_schema.remove("description");
+                setting_schema.remove("additionalProperties");
+                merge_schema(&mut combined_schema, setting_schema.to_value());
             }
+        }
 
-            overwrite(&mut target.instance_type, source.instance_type);
-            overwrite(&mut target.string, source.string);
-            overwrite(&mut target.number, source.number);
-            overwrite(&mut target.reference, source.reference);
-            overwrite(&mut target.array, source.array);
-            overwrite(&mut target.enum_values, source.enum_values);
+        fn merge_schema(target: &mut serde_json::Value, source: serde_json::Value) {
+            let (Some(target_obj), serde_json::Value::Object(source_obj)) =
+                (target.as_object_mut(), source)
+            else {
+                return;
+            };
 
-            fn overwrite<T>(target: &mut Option<T>, source: Option<T>) {
-                if let Some(source) = source {
-                    *target = Some(source);
+            for (source_key, source_value) in source_obj {
+                match source_key.as_str() {
+                    "properties" => {
+                        let serde_json::Value::Object(source_properties) = source_value else {
+                            log::error!(
+                                "bug: expected object for `{}` json schema field, but got: {}",
+                                source_key,
+                                source_value
+                            );
+                            continue;
+                        };
+                        let target_properties =
+                            target_obj.entry(source_key.clone()).or_insert(json!({}));
+                        let Some(target_properties) = target_properties.as_object_mut() else {
+                            log::error!(
+                                "bug: expected object for `{}` json schema field, but got: {}",
+                                source_key,
+                                target_properties
+                            );
+                            continue;
+                        };
+                        for (key, value) in source_properties {
+                            if let Some(existing) = target_properties.get_mut(&key) {
+                                merge_schema(existing, value);
+                            } else {
+                                target_properties.insert(key, value);
+                            }
+                        }
+                    }
+                    "allOf" | "anyOf" | "oneOf" => {
+                        let serde_json::Value::Array(source_array) = source_value else {
+                            log::error!(
+                                "bug: expected array for `{}` json schema field, but got: {}",
+                                source_key,
+                                source_value,
+                            );
+                            continue;
+                        };
+                        let target_array =
+                            target_obj.entry(source_key.clone()).or_insert(json!([]));
+                        let Some(target_array) = target_array.as_array_mut() else {
+                            log::error!(
+                                "bug: expected array for `{}` json schema field, but got: {}",
+                                source_key,
+                                target_array,
+                            );
+                            continue;
+                        };
+                        target_array.extend(source_array);
+                    }
+                    "type"
+                    | "$ref"
+                    | "enum"
+                    | "minimum"
+                    | "maximum"
+                    | "pattern"
+                    | "description"
+                    | "additionalProperties" => {
+                        if let Some(old_value) =
+                            target_obj.insert(source_key.clone(), source_value.clone())
+                        {
+                            if old_value != source_value {
+                                log::error!(
+                                    "bug: while merging JSON schemas, \
+                                    mismatch `\"{}\": {}` (before was `{}`)",
+                                    source_key,
+                                    old_value,
+                                    source_value
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        log::error!(
+                            "bug: while merging settings JSON schemas, \
+                            encountered unexpected `\"{}\": {}`",
+                            source_key,
+                            source_value
+                        );
+                    }
                 }
             }
         }
 
-        for release_stage in ["dev", "nightly", "stable", "preview"] {
-            let schema = combined_schema.schema.clone();
-            combined_schema
-                .schema
-                .object()
-                .properties
-                .insert(release_stage.to_string(), schema.into());
+        // add schemas which are determined at runtime
+        for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
+            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
         }
 
-        serde_json::to_value(&combined_schema).unwrap()
+        // add merged settings schema to the definitions
+        const ZED_SETTINGS: &str = "ZedSettings";
+        let zed_settings_ref = add_new_subschema(&mut generator, ZED_SETTINGS, combined_schema);
+
+        // add `ZedReleaseStageSettings` which is the same as `ZedSettings` except that unknown
+        // fields are rejected.
+        let mut zed_release_stage_settings = zed_settings_ref.clone();
+        zed_release_stage_settings.insert("unevaluatedProperties".to_string(), false.into());
+        let zed_release_stage_settings_ref = add_new_subschema(
+            &mut generator,
+            "ZedReleaseStageSettings",
+            zed_release_stage_settings.to_value(),
+        );
+
+        // Remove `"additionalProperties": false` added by `DefaultDenyUnknownFields` so that
+        // unknown fields can be handled by the root schema and `ZedReleaseStageSettings`.
+        let mut definitions = generator.take_definitions(true);
+        definitions
+            .get_mut(ZED_SETTINGS)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("additionalProperties");
+
+        let meta_schema = generator
+            .settings()
+            .meta_schema
+            .as_ref()
+            .expect("meta_schema should be present in schemars settings")
+            .to_string();
+
+        json!({
+            "$schema": meta_schema,
+            "title": "Zed Settings",
+            "unevaluatedProperties": false,
+            // ZedSettings + settings overrides for each release stage
+            "allOf": [
+                zed_settings_ref,
+                {
+                    "properties": {
+                        "dev": zed_release_stage_settings_ref,
+                        "nightly": zed_release_stage_settings_ref,
+                        "stable": zed_release_stage_settings_ref,
+                        "preview": zed_release_stage_settings_ref,
+                    }
+                }
+            ],
+            "$defs": definitions,
+        })
     }
 
     fn recompute_values(
@@ -1289,13 +1358,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         }
     }
 
-    fn json_schema(
-        &self,
-        generator: &mut SchemaGenerator,
-        params: &SettingsJsonSchemaParams,
-        cx: &App,
-    ) -> RootSchema {
-        T::json_schema(generator, params, cx)
+    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        T::FileContent::json_schema(generator)
     }
 
     fn edits_for_update(
@@ -1332,218 +1396,6 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
             edits,
         );
     }
-}
-
-fn update_value_in_json_text<'a>(
-    text: &mut String,
-    key_path: &mut Vec<&'a str>,
-    tab_size: usize,
-    old_value: &'a Value,
-    new_value: &'a Value,
-    preserved_keys: &[&str],
-    edits: &mut Vec<(Range<usize>, String)>,
-) {
-    // If the old and new values are both objects, then compare them key by key,
-    // preserving the comments and formatting of the unchanged parts. Otherwise,
-    // replace the old value with the new value.
-    if let (Value::Object(old_object), Value::Object(new_object)) = (old_value, new_value) {
-        for (key, old_sub_value) in old_object.iter() {
-            key_path.push(key);
-            let new_sub_value = new_object.get(key).unwrap_or(&Value::Null);
-            update_value_in_json_text(
-                text,
-                key_path,
-                tab_size,
-                old_sub_value,
-                new_sub_value,
-                preserved_keys,
-                edits,
-            );
-            key_path.pop();
-        }
-        for (key, new_sub_value) in new_object.iter() {
-            key_path.push(key);
-            if !old_object.contains_key(key) {
-                update_value_in_json_text(
-                    text,
-                    key_path,
-                    tab_size,
-                    &Value::Null,
-                    new_sub_value,
-                    preserved_keys,
-                    edits,
-                );
-            }
-            key_path.pop();
-        }
-    } else if key_path
-        .last()
-        .map_or(false, |key| preserved_keys.contains(key))
-        || old_value != new_value
-    {
-        let mut new_value = new_value.clone();
-        if let Some(new_object) = new_value.as_object_mut() {
-            new_object.retain(|_, v| !v.is_null());
-        }
-        let (range, replacement) = replace_value_in_json_text(text, key_path, tab_size, &new_value);
-        text.replace_range(range.clone(), &replacement);
-        edits.push((range, replacement));
-    }
-}
-
-fn replace_value_in_json_text(
-    text: &str,
-    key_path: &[&str],
-    tab_size: usize,
-    new_value: &Value,
-) -> (Range<usize>, String) {
-    static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
-        Query::new(
-            &tree_sitter_json::LANGUAGE.into(),
-            "(pair key: (string) @key value: (_) @value)",
-        )
-        .expect("Failed to create PAIR_QUERY")
-    });
-
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_json::LANGUAGE.into())
-        .unwrap();
-    let syntax_tree = parser.parse(text, None).unwrap();
-
-    let mut cursor = tree_sitter::QueryCursor::new();
-
-    let mut depth = 0;
-    let mut last_value_range = 0..0;
-    let mut first_key_start = None;
-    let mut existing_value_range = 0..text.len();
-    let mut matches = cursor.matches(&PAIR_QUERY, syntax_tree.root_node(), text.as_bytes());
-    while let Some(mat) = matches.next() {
-        if mat.captures.len() != 2 {
-            continue;
-        }
-
-        let key_range = mat.captures[0].node.byte_range();
-        let value_range = mat.captures[1].node.byte_range();
-
-        // Don't enter sub objects until we find an exact
-        // match for the current keypath
-        if last_value_range.contains_inclusive(&value_range) {
-            continue;
-        }
-
-        last_value_range = value_range.clone();
-
-        if key_range.start > existing_value_range.end {
-            break;
-        }
-
-        first_key_start.get_or_insert(key_range.start);
-
-        let found_key = text
-            .get(key_range.clone())
-            .map(|key_text| {
-                depth < key_path.len() && key_text == format!("\"{}\"", key_path[depth])
-            })
-            .unwrap_or(false);
-
-        if found_key {
-            existing_value_range = value_range;
-            // Reset last value range when increasing in depth
-            last_value_range = existing_value_range.start..existing_value_range.start;
-            depth += 1;
-
-            if depth == key_path.len() {
-                break;
-            }
-
-            first_key_start = None;
-        }
-    }
-
-    // We found the exact key we want, insert the new value
-    if depth == key_path.len() {
-        let new_val = to_pretty_json(&new_value, tab_size, tab_size * depth);
-        (existing_value_range, new_val)
-    } else {
-        // We have key paths, construct the sub objects
-        let new_key = key_path[depth];
-
-        // We don't have the key, construct the nested objects
-        let mut new_value = serde_json::to_value(new_value).unwrap();
-        for key in key_path[(depth + 1)..].iter().rev() {
-            new_value = serde_json::json!({ key.to_string(): new_value });
-        }
-
-        if let Some(first_key_start) = first_key_start {
-            let mut row = 0;
-            let mut column = 0;
-            for (ix, char) in text.char_indices() {
-                if ix == first_key_start {
-                    break;
-                }
-                if char == '\n' {
-                    row += 1;
-                    column = 0;
-                } else {
-                    column += char.len_utf8();
-                }
-            }
-
-            if row > 0 {
-                // depth is 0 based, but division needs to be 1 based.
-                let new_val = to_pretty_json(&new_value, column / (depth + 1), column);
-                let space = ' ';
-                let content = format!("\"{new_key}\": {new_val},\n{space:width$}", width = column);
-                (first_key_start..first_key_start, content)
-            } else {
-                let new_val = serde_json::to_string(&new_value).unwrap();
-                let mut content = format!(r#""{new_key}": {new_val},"#);
-                content.push(' ');
-                (first_key_start..first_key_start, content)
-            }
-        } else {
-            new_value = serde_json::json!({ new_key.to_string(): new_value });
-            let indent_prefix_len = 4 * depth;
-            let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
-            if depth == 0 {
-                new_val.push('\n');
-            }
-
-            (existing_value_range, new_val)
-        }
-    }
-}
-
-fn to_pretty_json(value: &impl Serialize, indent_size: usize, indent_prefix_len: usize) -> String {
-    const SPACES: [u8; 32] = [b' '; 32];
-
-    debug_assert!(indent_size <= SPACES.len());
-    debug_assert!(indent_prefix_len <= SPACES.len());
-
-    let mut output = Vec::new();
-    let mut ser = serde_json::Serializer::with_formatter(
-        &mut output,
-        serde_json::ser::PrettyFormatter::with_indent(&SPACES[0..indent_size.min(SPACES.len())]),
-    );
-
-    value.serialize(&mut ser).unwrap();
-    let text = String::from_utf8(output).unwrap();
-
-    let mut adjusted_text = String::new();
-    for (i, line) in text.split('\n').enumerate() {
-        if i > 0 {
-            adjusted_text.push_str(str::from_utf8(&SPACES[0..indent_prefix_len]).unwrap());
-        }
-        adjusted_text.push_str(line);
-        adjusted_text.push('\n');
-    }
-    adjusted_text.pop();
-    adjusted_text
-}
-
-pub fn parse_json_with_comments<T: DeserializeOwned>(content: &str) -> Result<T> {
-    Ok(serde_json_lenient::from_str(content)?)
 }
 
 #[cfg(test)]
@@ -1729,6 +1581,22 @@ mod tests {
         );
     }
 
+    fn check_settings_update<T: Settings>(
+        store: &mut SettingsStore,
+        old_json: String,
+        update: fn(&mut T::FileContent),
+        expected_new_json: String,
+        cx: &mut App,
+    ) {
+        store.set_user_settings(&old_json, cx).ok();
+        let edits = store.edits_for_update::<T>(&old_json, update);
+        let mut new_json = old_json;
+        for (range, replacement) in edits.into_iter() {
+            new_json.replace_range(range, &replacement);
+        }
+        pretty_assertions::assert_eq!(new_json, expected_new_json);
+    }
+
     #[gpui::test]
     fn test_setting_store_update(cx: &mut App) {
         let mut store = SettingsStore::new(cx);
@@ -1775,17 +1643,72 @@ mod tests {
             cx,
         );
 
+        // entries removed
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("JSON").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
+        check_settings_update::<LanguageSettings>(
+            &mut store,
+            r#"{
+                "languages": {
+                    "Rust": {
+                        "language_setting_2": true
+                    },
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            |settings| {
+                settings.languages.remove("Rust").unwrap();
+            },
+            r#"{
+                "languages": {
+                    "JSON": {
+                        "language_setting_1": false
+                    }
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
+
         // weird formatting
         check_settings_update::<UserSettings>(
             &mut store,
             r#"{
                 "user":   { "age": 36, "name": "Max", "staff": true }
-            }"#
+                }"#
             .unindent(),
             |settings| settings.age = Some(37),
             r#"{
                 "user":   { "age": 37, "name": "Max", "staff": true }
-            }"#
+                }"#
             .unindent(),
             cx,
         );
@@ -2008,22 +1931,6 @@ mod tests {
         );
     }
 
-    fn check_settings_update<T: Settings>(
-        store: &mut SettingsStore,
-        old_json: String,
-        update: fn(&mut T::FileContent),
-        expected_new_json: String,
-        cx: &mut App,
-    ) {
-        store.set_user_settings(&old_json, cx).ok();
-        let edits = store.edits_for_update::<T>(&old_json, update);
-        let mut new_json = old_json;
-        for (range, replacement) in edits.into_iter() {
-            new_json.replace_range(range, &replacement);
-        }
-        pretty_assertions::assert_eq!(new_json, expected_new_json);
-    }
-
     fn check_vscode_import(
         store: &mut SettingsStore,
         old: String,
@@ -2047,7 +1954,6 @@ mod tests {
     }
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -2090,7 +1996,6 @@ mod tests {
     }
 
     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -2129,7 +2034,6 @@ mod tests {
     }
 
     #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
@@ -2224,7 +2128,6 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct LanguageSettingEntry {
         language_setting_1: Option<bool>,
         language_setting_2: Option<bool>,

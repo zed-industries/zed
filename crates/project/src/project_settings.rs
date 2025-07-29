@@ -36,7 +36,6 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -49,13 +48,17 @@ pub struct ProjectSettings {
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
 
+    /// Common language server settings.
+    #[serde(default)]
+    pub global_lsp_settings: GlobalLspSettings,
+
     /// Configuration for Debugger-related features
     #[serde(default)]
     pub dap: HashMap<DebugAdapterName, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
-    pub context_servers: HashMap<Arc<str>, ContextServerConfiguration>,
+    pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
     /// Configuration for Diagnostics-related features.
     #[serde(default)]
@@ -82,19 +85,64 @@ pub struct ProjectSettings {
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
     pub binary: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
-pub struct ContextServerConfiguration {
-    /// The command to run this context server.
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ContextServerSettings {
+    Custom {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+
+        #[serde(flatten)]
+        command: ContextServerCommand,
+    },
+    Extension {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The settings for this context server specified by the extension.
+        ///
+        /// Consult the documentation for the context server to see what settings
+        /// are supported.
+        settings: serde_json::Value,
+    },
+}
+
+/// Common language server settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalLspSettings {
+    /// Whether to show the LSP servers button in the status bar.
     ///
-    /// This will override the command set by an extension.
-    pub command: Option<ContextServerCommand>,
-    /// The settings for this context server.
-    ///
-    /// Consult the documentation for the context server to see what settings
-    /// are supported.
-    pub settings: Option<serde_json::Value>,
+    /// Default: `true`
+    #[serde(default = "default_true")]
+    pub button: bool,
+}
+
+impl ContextServerSettings {
+    pub fn default_extension() -> Self {
+        Self::Extension {
+            enabled: true,
+            settings: serde_json::json!({}),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        match self {
+            ContextServerSettings::Custom { enabled, .. } => *enabled,
+            ContextServerSettings::Extension { enabled, .. } => *enabled,
+        }
+    }
+
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
+            ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -235,6 +283,14 @@ impl Default for InlineDiagnosticsSettings {
     }
 }
 
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: default_true(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct CargoDiagnosticsSettings {
     /// When enabled, Zed disables rust-analyzer's check on save and starts to query
@@ -266,6 +322,79 @@ impl DiagnosticSeverity {
             DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
             DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
             DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+        }
+    }
+}
+
+/// Determines the severity of the diagnostic that should be moved to.
+#[derive(PartialEq, PartialOrd, Clone, Copy, Debug, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDiagnosticSeverity {
+    /// Errors
+    Error = 3,
+    /// Warnings
+    Warning = 2,
+    /// Information
+    Information = 1,
+    /// Hints
+    Hint = 0,
+}
+
+impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
+    fn from(severity: lsp::DiagnosticSeverity) -> Self {
+        match severity {
+            lsp::DiagnosticSeverity::ERROR => Self::Error,
+            lsp::DiagnosticSeverity::WARNING => Self::Warning,
+            lsp::DiagnosticSeverity::INFORMATION => Self::Information,
+            lsp::DiagnosticSeverity::HINT => Self::Hint,
+            _ => Self::Error,
+        }
+    }
+}
+
+impl GoToDiagnosticSeverity {
+    pub fn min() -> Self {
+        Self::Hint
+    }
+
+    pub fn max() -> Self {
+        Self::Error
+    }
+}
+
+/// Allows filtering diagnostics that should be moved to.
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum GoToDiagnosticSeverityFilter {
+    /// Move to diagnostics of a specific severity.
+    Only(GoToDiagnosticSeverity),
+
+    /// Specify a range of severities to include.
+    Range {
+        /// Minimum severity to move to. Defaults no "error".
+        #[serde(default = "GoToDiagnosticSeverity::min")]
+        min: GoToDiagnosticSeverity,
+        /// Maximum severity to move to. Defaults to "hint".
+        #[serde(default = "GoToDiagnosticSeverity::max")]
+        max: GoToDiagnosticSeverity,
+    },
+}
+
+impl Default for GoToDiagnosticSeverityFilter {
+    fn default() -> Self {
+        Self::Range {
+            min: GoToDiagnosticSeverity::min(),
+            max: GoToDiagnosticSeverity::max(),
+        }
+    }
+}
+
+impl GoToDiagnosticSeverityFilter {
+    pub fn matches(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        let severity: GoToDiagnosticSeverity = severity.into();
+        match self {
+            Self::Only(target) => *target == severity,
+            Self::Range { min, max } => severity >= *min && severity <= *max,
         }
     }
 }
@@ -452,7 +581,7 @@ impl Settings for ProjectSettings {
 
         #[derive(Deserialize)]
         struct VsCodeContextServerCommand {
-            command: String,
+            command: PathBuf,
             args: Option<Vec<String>>,
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type
@@ -472,13 +601,13 @@ impl Settings for ProjectSettings {
                 .extend(mcp.iter().filter_map(|(k, v)| {
                     Some((
                         k.clone().into(),
-                        ContextServerConfiguration {
-                            command: Some(
-                                serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
-                                    .ok()?
-                                    .into(),
-                            ),
-                            settings: None,
+                        ContextServerSettings::Custom {
+                            enabled: true,
+                            command: serde_json::from_value::<VsCodeContextServerCommand>(
+                                v.clone(),
+                            )
+                            .ok()?
+                            .into(),
                         },
                     ))
                 }));
@@ -497,6 +626,7 @@ pub enum SettingsObserverMode {
 pub enum SettingsObserverEvent {
     LocalSettingsUpdated(Result<PathBuf, InvalidSettingsError>),
     LocalTasksUpdated(Result<PathBuf, InvalidSettingsError>),
+    LocalDebugScenariosUpdated(Result<PathBuf, InvalidSettingsError>),
 }
 
 impl EventEmitter<SettingsObserverEvent> for SettingsObserver {}
@@ -508,6 +638,7 @@ pub struct SettingsObserver {
     project_id: u64,
     task_store: Entity<TaskStore>,
     _global_task_config_watcher: Task<()>,
+    _global_debug_config_watcher: Task<()>,
 }
 
 /// SettingsObserver observers changes to .zed/{settings, task}.json files in local worktrees
@@ -540,6 +671,11 @@ impl SettingsObserver {
                 paths::tasks_file().clone(),
                 cx,
             ),
+            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
+                fs.clone(),
+                paths::debug_scenarios_file().clone(),
+                cx,
+            ),
         }
     }
 
@@ -558,6 +694,11 @@ impl SettingsObserver {
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
                 fs.clone(),
                 paths::tasks_file().clone(),
+                cx,
+            ),
+            _global_debug_config_watcher: Self::subscribe_to_global_debug_scenarios_changes(
+                fs.clone(),
+                paths::debug_scenarios_file().clone(),
                 cx,
             ),
         }
@@ -985,6 +1126,61 @@ impl SettingsObserver {
                                 message: err.to_string(),
                             },
                         ))),
+                    })
+                    .ok();
+            }
+        })
+    }
+    fn subscribe_to_global_debug_scenarios_changes(
+        fs: Arc<dyn Fs>,
+        file_path: PathBuf,
+        cx: &mut Context<Self>,
+    ) -> Task<()> {
+        let mut user_tasks_file_rx =
+            watch_config_file(&cx.background_executor(), fs, file_path.clone());
+        let user_tasks_content = cx.background_executor().block(user_tasks_file_rx.next());
+        let weak_entry = cx.weak_entity();
+        cx.spawn(async move |settings_observer, cx| {
+            let Ok(task_store) = settings_observer.read_with(cx, |settings_observer, _| {
+                settings_observer.task_store.clone()
+            }) else {
+                return;
+            };
+            if let Some(user_tasks_content) = user_tasks_content {
+                let Ok(()) = task_store.update(cx, |task_store, cx| {
+                    task_store
+                        .update_user_debug_scenarios(
+                            TaskSettingsLocation::Global(&file_path),
+                            Some(&user_tasks_content),
+                            cx,
+                        )
+                        .log_err();
+                }) else {
+                    return;
+                };
+            }
+            while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
+                let Ok(result) = task_store.update(cx, |task_store, cx| {
+                    task_store.update_user_debug_scenarios(
+                        TaskSettingsLocation::Global(&file_path),
+                        Some(&user_tasks_content),
+                        cx,
+                    )
+                }) else {
+                    break;
+                };
+
+                weak_entry
+                    .update(cx, |_, cx| match result {
+                        Ok(()) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(Ok(
+                            file_path.clone(),
+                        ))),
+                        Err(err) => cx.emit(SettingsObserverEvent::LocalDebugScenariosUpdated(
+                            Err(InvalidSettingsError::Tasks {
+                                path: file_path.clone(),
+                                message: err.to_string(),
+                            }),
+                        )),
                     })
                     .ok();
             }

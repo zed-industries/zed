@@ -40,10 +40,12 @@ pub struct ProjectPanelSettings {
     pub git_status: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
+    pub sticky_scroll: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
+    pub hide_root: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -145,6 +147,14 @@ pub struct ProjectPanelSettingsContent {
     pub show_diagnostics: Option<ShowDiagnostics>,
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
+    /// Whether to hide the root entry when only one folder is open in the window.
+    ///
+    /// Default: false
+    pub hide_root: Option<bool>,
+    /// Whether to stick parent directories at top of the project panel.
+    ///
+    /// Default: true
+    pub sticky_scroll: Option<bool>,
 }
 
 impl Settings for ProjectPanelSettings {

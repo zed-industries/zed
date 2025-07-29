@@ -598,7 +598,6 @@ impl DirectWriteState {
                 text_system: self,
                 index_converter: StringIndexConverter::new(text),
                 runs: &mut runs,
-                utf16_index: 0,
                 width: 0.0,
             };
             text_layout.Draw(
@@ -1003,8 +1002,63 @@ struct RendererContext<'t, 'a, 'b> {
     text_system: &'t mut DirectWriteState,
     index_converter: StringIndexConverter<'a>,
     runs: &'b mut Vec<ShapedRun>,
-    utf16_index: usize,
     width: f32,
+}
+
+#[derive(Debug)]
+struct ClusterAnalyzer<'t> {
+    utf16_idx: usize,
+    glyph_idx: usize,
+    glyph_count: usize,
+    cluster_map: &'t [u16],
+}
+
+impl<'t> ClusterAnalyzer<'t> {
+    pub fn new(cluster_map: &'t [u16], glyph_count: usize) -> Self {
+        ClusterAnalyzer {
+            utf16_idx: 0,
+            glyph_idx: 0,
+            glyph_count,
+            cluster_map,
+        }
+    }
+}
+
+impl Iterator for ClusterAnalyzer<'_> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<(usize, usize)> {
+        if self.utf16_idx >= self.cluster_map.len() {
+            return None; // No more clusters
+        }
+        let start_utf16_idx = self.utf16_idx;
+        let current_glyph = self.cluster_map[start_utf16_idx] as usize;
+
+        // Find the end of current cluster (where glyph index changes)
+        let mut end_utf16_idx = start_utf16_idx + 1;
+        while end_utf16_idx < self.cluster_map.len()
+            && self.cluster_map[end_utf16_idx] as usize == current_glyph
+        {
+            end_utf16_idx += 1;
+        }
+
+        let utf16_len = end_utf16_idx - start_utf16_idx;
+
+        // Calculate glyph count for this cluster
+        let next_glyph = if end_utf16_idx < self.cluster_map.len() {
+            self.cluster_map[end_utf16_idx] as usize
+        } else {
+            self.glyph_count
+        };
+
+        let glyph_count = next_glyph - current_glyph;
+
+        // Update state for next call
+        self.utf16_idx = end_utf16_idx;
+        self.glyph_idx = next_glyph;
+
+        Some((utf16_len, glyph_count))
+    }
 }
 
 #[allow(non_snake_case)]
@@ -1054,59 +1108,73 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
         glyphrundescription: *const DWRITE_GLYPH_RUN_DESCRIPTION,
         _clientdrawingeffect: windows::core::Ref<windows::core::IUnknown>,
     ) -> windows::core::Result<()> {
-        unsafe {
-            let glyphrun = &*glyphrun;
-            let glyph_count = glyphrun.glyphCount as usize;
-            if glyph_count == 0 {
-                return Ok(());
-            }
-            let desc = &*glyphrundescription;
-            let utf16_length_per_glyph = desc.stringLength as usize / glyph_count;
-            let context =
-                &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext);
+        let glyphrun = unsafe { &*glyphrun };
+        let glyph_count = glyphrun.glyphCount as usize;
+        if glyph_count == 0 || glyphrun.fontFace.is_none() {
+            return Ok(());
+        }
+        let desc = unsafe { &*glyphrundescription };
+        let context = unsafe {
+            &mut *(clientdrawingcontext as *const RendererContext as *mut RendererContext)
+        };
+        let font_face = glyphrun.fontFace.as_ref().unwrap();
+        // This `cast()` action here should never fail since we are running on Win10+, and
+        // `IDWriteFontFace3` requires Win10
+        let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
+        let Some((font_identifier, font_struct, color_font)) =
+            get_font_identifier_and_font_struct(font_face, &self.locale)
+        else {
+            return Ok(());
+        };
 
-            if glyphrun.fontFace.is_none() {
-                return Ok(());
-            }
+        let font_id = if let Some(id) = context
+            .text_system
+            .font_id_by_identifier
+            .get(&font_identifier)
+        {
+            *id
+        } else {
+            context.text_system.select_font(&font_struct)
+        };
 
-            let font_face = glyphrun.fontFace.as_ref().unwrap();
-            // This `cast()` action here should never fail since we are running on Win10+, and
-            // `IDWriteFontFace3` requires Win10
-            let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((font_identifier, font_struct, color_font)) =
-                get_font_identifier_and_font_struct(font_face, &self.locale)
-            else {
-                return Ok(());
-            };
+        let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
+        let glyph_advances =
+            unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
+        let glyph_offsets =
+            unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
+        let cluster_map =
+            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
 
-            let font_id = if let Some(id) = context
-                .text_system
-                .font_id_by_identifier
-                .get(&font_identifier)
+        let mut cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
+        let mut utf16_idx = desc.textPosition as usize;
+        let mut glyph_idx = 0;
+        let mut glyphs = Vec::with_capacity(glyph_count);
+        for (cluster_utf16_len, cluster_glyph_count) in cluster_analyzer {
+            context.index_converter.advance_to_utf16_ix(utf16_idx);
+            utf16_idx += cluster_utf16_len;
+            for (cluster_glyph_idx, glyph_id) in glyph_ids
+                [glyph_idx..(glyph_idx + cluster_glyph_count)]
+                .iter()
+                .enumerate()
             {
-                *id
-            } else {
-                context.text_system.select_font(&font_struct)
-            };
-            let mut glyphs = Vec::with_capacity(glyph_count);
-            for index in 0..glyph_count {
-                let id = GlyphId(*glyphrun.glyphIndices.add(index) as u32);
-                context
-                    .index_converter
-                    .advance_to_utf16_ix(context.utf16_index);
+                let id = GlyphId(*glyph_id as u32);
                 let is_emoji = color_font
                     && is_color_glyph(font_face, id, &context.text_system.components.factory);
+                let this_glyph_idx = glyph_idx + cluster_glyph_idx;
                 glyphs.push(ShapedGlyph {
                     id,
-                    position: point(px(context.width), px(0.0)),
+                    position: point(
+                        px(context.width + glyph_offsets[this_glyph_idx].advanceOffset),
+                        px(0.0),
+                    ),
                     index: context.index_converter.utf8_ix,
                     is_emoji,
                 });
-                context.utf16_index += utf16_length_per_glyph;
-                context.width += *glyphrun.glyphAdvances.add(index);
+                context.width += glyph_advances[this_glyph_idx];
             }
-            context.runs.push(ShapedRun { font_id, glyphs });
+            glyph_idx += cluster_glyph_count;
         }
+        context.runs.push(ShapedRun { font_id, glyphs });
         Ok(())
     }
 
@@ -1499,3 +1567,45 @@ const BRUSH_COLOR: D2D1_COLOR_F = D2D1_COLOR_F {
     b: 1.0,
     a: 1.0,
 };
+
+#[cfg(test)]
+mod tests {
+    use crate::platform::windows::direct_write::ClusterAnalyzer;
+
+    #[test]
+    fn test_cluster_map() {
+        let cluster_map = [0];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
+        let next = analyzer.next();
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
+
+        let cluster_map = [0, 1, 2];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 3);
+        let next = analyzer.next();
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, Some((1, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
+        // 👨‍👩‍👧‍👦👩‍💻
+        let cluster_map = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 4, 4, 4, 4];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 5);
+        let next = analyzer.next();
+        assert_eq!(next, Some((11, 4)));
+        let next = analyzer.next();
+        assert_eq!(next, Some((5, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
+        // 👩‍💻
+        let cluster_map = [0, 0, 0, 0, 0];
+        let mut analyzer = ClusterAnalyzer::new(&cluster_map, 1);
+        let next = analyzer.next();
+        assert_eq!(next, Some((5, 1)));
+        let next = analyzer.next();
+        assert_eq!(next, None);
+    }
+}

@@ -7,7 +7,7 @@ use crate::{
     state::{Mode, Register},
 };
 use collections::HashMap;
-use editor::{ClipboardSelection, Editor};
+use editor::{ClipboardSelection, Editor, SelectionEffects};
 use gpui::Context;
 use gpui::Window;
 use language::Point;
@@ -31,7 +31,7 @@ impl Vim {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
                 let mut kind = None;
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let original_position = (selection.head(), selection.goal);
                         kind = motion.expand_selection(
@@ -51,7 +51,7 @@ impl Vim {
                 });
                 let Some(kind) = kind else { return };
                 vim.yank_selections_content(editor, kind, window, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
@@ -66,6 +66,7 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
+        times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -73,15 +74,15 @@ impl Vim {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
                 let mut start_positions: HashMap<_, _> = Default::default();
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
-                        object.expand_selection(map, selection, around);
+                        object.expand_selection(map, selection, around, times);
                         let start_position = (selection.start, selection.goal);
                         start_positions.insert(selection.id, start_position);
                     });
                 });
                 vim.yank_selections_content(editor, MotionKind::Exclusive, window, cx);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = start_positions.remove(&selection.id).unwrap();
                         selection.collapse_to(head, goal);
@@ -195,7 +196,7 @@ impl Vim {
                 }
                 clipboard_selections.push(ClipboardSelection {
                     len: text.len() - initial_len,
-                    is_entire_line: kind.linewise(),
+                    is_entire_line: false,
                     first_line_indent: buffer.indent_size_for_line(MultiBufferRow(start.row)).len,
                 });
             }
@@ -222,7 +223,7 @@ impl Vim {
 
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
-            |colors| colors.editor_document_highlight_read_background,
+            |colors| colors.colors().editor_document_highlight_read_background,
             cx,
         );
         cx.spawn(async move |this, cx| {

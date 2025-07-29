@@ -8,7 +8,7 @@ use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashSet;
 use editor::{
-    Editor, EditorEvent,
+    Editor, EditorEvent, SelectionEffects,
     actions::{GoToHunk, GoToPreviousHunk},
     scroll::Autoscroll,
 };
@@ -37,11 +37,19 @@ use util::ResultExt as _;
 use workspace::{
     CloseActiveItem, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
 
-actions!(git, [Diff, Add]);
+actions!(
+    git,
+    [
+        /// Shows the diff between the working directory and the index.
+        Diff,
+        /// Adds files to the git staging area.
+        Add
+    ]
+);
 
 pub struct ProjectDiff {
     project: Entity<Project>,
@@ -141,7 +149,7 @@ impl ProjectDiff {
         let editor = cx.new(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(multibuffer.clone(), Some(project.clone()), window, cx);
-            diff_display_editor.disable_inline_diagnostics();
+            diff_display_editor.disable_diagnostics(cx);
             diff_display_editor.set_expand_all_diff_hunks(cx);
             diff_display_editor.register_addon(GitPanelAddon {
                 workspace: workspace.downgrade(),
@@ -177,12 +185,19 @@ impl ProjectDiff {
         );
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_collapse_untracked_diff =
+            GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global::<SettingsStore>(move |this, cx| {
             let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            if is_sort_by_path != was_sort_by_path {
+            let is_collapse_untracked_diff =
+                GitPanelSettings::get_global(cx).collapse_untracked_diff;
+            if is_sort_by_path != was_sort_by_path
+                || is_collapse_untracked_diff != was_collapse_untracked_diff
+            {
                 *this.update_needed.borrow_mut() = ();
             }
-            was_sort_by_path = is_sort_by_path
+            was_sort_by_path = is_sort_by_path;
+            was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
 
@@ -248,9 +263,14 @@ impl ProjectDiff {
     fn move_to_path(&mut self, path_key: PathKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(position) = self.multibuffer.read(cx).location_for_path(&path_key, cx) {
             self.editor.update(cx, |editor, cx| {
-                editor.change_selections(Some(Autoscroll::focused()), window, cx, |s| {
-                    s.select_ranges([position..position]);
-                })
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::focused()),
+                    window,
+                    cx,
+                    |s| {
+                        s.select_ranges([position..position]);
+                    },
+                )
             });
         } else {
             self.pending_scroll = Some(path_key);
@@ -456,12 +476,16 @@ impl ProjectDiff {
 
         self.editor.update(cx, |editor, cx| {
             if was_empty {
-                editor.change_selections(None, window, cx, |selections| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                     // TODO select the very beginning (possibly inside a deletion)
                     selections.select_ranges([0..0])
                 });
             }
-            if is_excerpt_newly_added && diff_buffer.file_status.is_deleted() {
+            if is_excerpt_newly_added
+                && (diff_buffer.file_status.is_deleted()
+                    || (diff_buffer.file_status.is_untracked()
+                        && GitPanelSettings::get_global(cx).collapse_untracked_diff))
+            {
                 editor.fold_buffer(snapshot.text.remote_id(), cx)
             }
         });
@@ -632,12 +656,12 @@ impl Item for ProjectDiff {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.editor.save(format, project, window, cx)
+        self.editor.save(options, project, window, cx)
     }
 
     fn save_as(
@@ -1565,7 +1589,15 @@ mod tests {
 
         cx.update_window_entity(&buffer_editor, |buffer_editor, window, cx| {
             buffer_editor.set_text("different\n", window, cx);
-            buffer_editor.save(false, project.clone(), window, cx)
+            buffer_editor.save(
+                SaveOptions {
+                    format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
         })
         .await
         .unwrap();

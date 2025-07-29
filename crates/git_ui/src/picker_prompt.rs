@@ -28,6 +28,8 @@ pub fn prompt(
 ) -> Task<Option<usize>> {
     if options.is_empty() {
         return Task::ready(None);
+    } else if options.len() == 1 {
+        return Task::ready(Some(0));
     }
     let prompt = prompt.to_string().into();
 
@@ -171,6 +173,7 @@ impl PickerDelegate for PickerPromptDelegate {
                 fuzzy::match_strings(
                     &candidates,
                     &query,
+                    true,
                     true,
                     10000,
                     &Default::default(),
