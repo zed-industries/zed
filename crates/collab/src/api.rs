@@ -310,9 +310,9 @@ async fn refresh_llm_tokens(
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdatePlanBody {
-    pub plan: zed_llm_client::Plan,
+    pub plan: cloud_llm_client::Plan,
     pub subscription_period: SubscriptionPeriod,
-    pub usage: zed_llm_client::CurrentUsage,
+    pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<DateTime<Utc>>,
     pub is_usage_based_billing_enabled: bool,
     pub is_account_too_young: bool,
@@ -334,9 +334,9 @@ async fn update_plan(
     extract::Json(body): extract::Json<UpdatePlanBody>,
 ) -> Result<Json<UpdatePlanResponse>> {
     let plan = match body.plan {
-        zed_llm_client::Plan::ZedFree => proto::Plan::Free,
-        zed_llm_client::Plan::ZedPro => proto::Plan::ZedPro,
-        zed_llm_client::Plan::ZedProTrial => proto::Plan::ZedProTrial,
+        cloud_llm_client::Plan::ZedFree => proto::Plan::Free,
+        cloud_llm_client::Plan::ZedPro => proto::Plan::ZedPro,
+        cloud_llm_client::Plan::ZedProTrial => proto::Plan::ZedProTrial,
     };
 
     let update_user_plan = proto::UpdateUserPlan {
@@ -368,15 +368,15 @@ async fn update_plan(
     Ok(Json(UpdatePlanResponse {}))
 }
 
-fn usage_limit_to_proto(limit: zed_llm_client::UsageLimit) -> proto::UsageLimit {
+fn usage_limit_to_proto(limit: cloud_llm_client::UsageLimit) -> proto::UsageLimit {
     proto::UsageLimit {
         variant: Some(match limit {
-            zed_llm_client::UsageLimit::Limited(limit) => {
+            cloud_llm_client::UsageLimit::Limited(limit) => {
                 proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                     limit: limit as u32,
                 })
             }
-            zed_llm_client::UsageLimit::Unlimited => {
+            cloud_llm_client::UsageLimit::Unlimited => {
                 proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
             }
         }),
