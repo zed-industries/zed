@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{App, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
@@ -11,7 +12,7 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
-use crate::json::JsonTaskProvider;
+use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
 
 mod bash;
 mod c;
@@ -52,6 +53,12 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         ))
     });
 
+struct BasedPyrightFeatureFlag;
+
+impl FeatureFlag for BasedPyrightFeatureFlag {
+    const NAME: &'static str = "basedpyright";
+}
+
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
@@ -88,7 +95,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PythonLspAdapter::new(node.clone()));
-    let basedpyright_lsp_adapter = Arc::new(python::BasedPyrightLspAdapter::new());
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::default());
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -97,14 +103,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
     let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node.clone()));
-
-    let mut python_adapters = vec![
-        python_lsp_adapter.clone() as Arc<dyn LspAdapter>,
-        py_lsp_adapter.clone() as _,
-    ];
-    if cfg!(debug_assertions) {
-        python_adapters.push(basedpyright_lsp_adapter.clone());
-    }
 
     let built_in_languages = [
         LanguageInfo {
@@ -174,7 +172,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "python",
-            adapters: python_adapters,
+            adapters: vec![python_lsp_adapter.clone(), py_lsp_adapter.clone()],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
         },
@@ -236,6 +234,17 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             registration.toolchain,
         );
     }
+
+    cx.observe_flag::<BasedPyrightFeatureFlag, _>({
+        let languages = languages.clone();
+        move |enabled, _| {
+            if enabled {
+                let adapter = Arc::new(BasedPyrightLspAdapter::new());
+                languages.register_available_lsp_adapter(adapter.name(), move || adapter.clone());
+            }
+        }
+    })
+    .detach();
 
     // Register globally available language servers.
     //
