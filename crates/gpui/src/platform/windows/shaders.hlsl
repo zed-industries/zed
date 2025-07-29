@@ -872,7 +872,7 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 /*
 **
-**              Paths
+**              Path Rasterization
 **
 */
 
@@ -919,7 +919,7 @@ struct PathFragmentInput {
     nointerpolation Bounds bounds: BOUNDS;
 };
 
-PathVertexOutput paths_vertex(PathVertex input) {
+PathVertexOutput path_rasterization_vertex(PathVertex input) {
     PathRasterizationSprite sprite = path_rasterization_sprites[input.path_index];
 
     PathVertexOutput output;
@@ -944,7 +944,7 @@ PathVertexOutput paths_vertex(PathVertex input) {
     return output;
 }
 
-float4 paths_fragment(PathFragmentInput input): SV_Target {
+float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
     Background background;
     background.tag = input.tag;
     background.color_space = input.color_space;
@@ -960,7 +960,11 @@ float4 paths_fragment(PathFragmentInput input): SV_Target {
     return color;
 }
 
-// --- path sprite --- //
+/*
+**
+**              Path Sprites
+**
+*/
 
 struct PathSpriteVertexOutput {
     float4 position: SV_Position;

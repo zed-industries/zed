@@ -286,7 +286,8 @@ mod windows {
         let modules = [
             "quad",
             "shadow",
-            "paths",
+            "path_rasterization",
+            "path_sprite",
             "underline",
             "monochrome_sprite",
             "polychrome_sprite",

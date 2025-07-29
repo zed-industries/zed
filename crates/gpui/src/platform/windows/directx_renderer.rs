@@ -68,8 +68,8 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    paths_rasterization_pipeline: PathsPipelineState,
-    paths_sprite_pipeline: PipelineState<PathSprite>,
+    path_rasterization_pipeline: PathRasterizationPipelineState,
+    path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
     poly_sprites: PipelineState<PolychromeSprite>,
@@ -399,13 +399,13 @@ impl DirectXRenderer {
         }
 
         if !vertices.is_empty() {
-            self.pipelines.paths_rasterization_pipeline.update_buffer(
+            self.pipelines.path_rasterization_pipeline.update_buffer(
                 &self.devices.device,
                 &self.devices.device_context,
                 &sprites,
                 &vertices,
             )?;
-            self.pipelines.paths_rasterization_pipeline.draw(
+            self.pipelines.path_rasterization_pipeline.draw(
                 &self.devices.device_context,
                 vertices.len() as u32,
                 &self.resources.viewport,
@@ -460,14 +460,14 @@ impl DirectXRenderer {
             vec![PathSprite { bounds }]
         };
 
-        self.pipelines.paths_sprite_pipeline.update_buffer(
+        self.pipelines.path_sprite_pipeline.update_buffer(
             &self.devices.device,
             &self.devices.device_context,
             &sprites,
         )?;
 
         // Draw the sprites with the path texture
-        self.pipelines.paths_sprite_pipeline.draw_with_texture(
+        self.pipelines.path_sprite_pipeline.draw_with_texture(
             &self.devices.device_context,
             &[self.resources.path_intermediate_srv.clone()],
             &self.resources.viewport,
@@ -655,9 +655,9 @@ impl DirectXRenderPipelines {
         let shadow_pipeline =
             PipelineState::new(device, "shadow_pipeline", ShaderModule::Shadow, 4)?;
         let quad_pipeline = PipelineState::new(device, "quad_pipeline", ShaderModule::Quad, 64)?;
-        let paths_rasterization_pipeline = PathsPipelineState::new(device)?;
-        let paths_sprite_pipeline =
-            PipelineState::new(device, "paths_sprite_pipeline", ShaderModule::PathSprite, 1)?;
+        let path_rasterization_pipeline = PathRasterizationPipelineState::new(device)?;
+        let path_sprite_pipeline =
+            PipelineState::new(device, "path_sprite_pipeline", ShaderModule::PathSprite, 1)?;
         let underline_pipeline =
             PipelineState::new(device, "underline_pipeline", ShaderModule::Underline, 4)?;
         let mono_sprites = PipelineState::new(
@@ -676,8 +676,8 @@ impl DirectXRenderPipelines {
         Ok(Self {
             shadow_pipeline,
             quad_pipeline,
-            paths_rasterization_pipeline,
-            paths_sprite_pipeline,
+            path_rasterization_pipeline,
+            path_sprite_pipeline,
             underline_pipeline,
             mono_sprites,
             poly_sprites,
@@ -769,7 +769,7 @@ struct PipelineState<T> {
     _marker: std::marker::PhantomData<T>,
 }
 
-struct PathsPipelineState {
+struct PathRasterizationPipelineState {
     vertex: ID3D11VertexShader,
     fragment: ID3D11PixelShader,
     buffer: ID3D11Buffer,
@@ -883,17 +883,19 @@ impl<T> PipelineState<T> {
     }
 }
 
-impl PathsPipelineState {
+impl PathRasterizationPipelineState {
     fn new(device: &ID3D11Device) -> Result<Self> {
         let (vertex, vertex_shader) = {
-            let raw_vertex_shader = RawShaderBytes::new(ShaderModule::Paths, ShaderTarget::Vertex)?;
+            let raw_vertex_shader =
+                RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Vertex)?;
             (
                 create_vertex_shader(device, raw_vertex_shader.as_bytes())?,
                 raw_vertex_shader,
             )
         };
         let fragment = {
-            let raw_shader = RawShaderBytes::new(ShaderModule::Paths, ShaderTarget::Fragment)?;
+            let raw_shader =
+                RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Fragment)?;
             create_fragment_shader(device, raw_shader.as_bytes())?
         };
         let buffer = create_buffer(device, std::mem::size_of::<PathRasterizationSprite>(), 32)?;
@@ -1492,7 +1494,7 @@ mod shader_resources {
         Quad,
         Shadow,
         Underline,
-        Paths,
+        PathRasterization,
         PathSprite,
         MonochromeSprite,
         PolychromeSprite,
@@ -1549,9 +1551,13 @@ mod shader_resources {
                     ShaderTarget::Vertex => UNDERLINE_VERTEX_BYTES,
                     ShaderTarget::Fragment => UNDERLINE_FRAGMENT_BYTES,
                 },
-                ShaderModule::Paths => match target {
-                    ShaderTarget::Vertex => PATHS_VERTEX_BYTES,
-                    ShaderTarget::Fragment => PATHS_FRAGMENT_BYTES,
+                ShaderModule::PathRasterization => match target {
+                    ShaderTarget::Vertex => PATH_RASTERIZATION_VERTEX_BYTES,
+                    ShaderTarget::Fragment => PATH_RASTERIZATION_FRAGMENT_BYTES,
+                },
+                ShaderModule::PathSprite => match target {
+                    ShaderTarget::Vertex => PATH_SPRITE_VERTEX_BYTES,
+                    ShaderTarget::Fragment => PATH_SPRITE_FRAGMENT_BYTES,
                 },
                 ShaderModule::MonochromeSprite => match target {
                     ShaderTarget::Vertex => MONOCHROME_SPRITE_VERTEX_BYTES,
@@ -1627,7 +1633,7 @@ mod shader_resources {
                 ShaderModule::Quad => "quad",
                 ShaderModule::Shadow => "shadow",
                 ShaderModule::Underline => "underline",
-                ShaderModule::Paths => "paths",
+                ShaderModule::PathRasterization => "path_rasterization",
                 ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
