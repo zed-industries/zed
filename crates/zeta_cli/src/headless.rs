@@ -25,6 +25,7 @@ pub struct ZetaCliAppState {
     pub node_runtime: NodeRuntime,
 }
 
+// TODO: dedupe with crates/eval/src/eval.rs
 pub fn init(cx: &mut App) -> ZetaCliAppState {
     release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);

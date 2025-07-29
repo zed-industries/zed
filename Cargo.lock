@@ -20642,6 +20642,7 @@ dependencies = [
  "debug_adapter_extension",
  "extension",
  "fs",
+ "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "language",
