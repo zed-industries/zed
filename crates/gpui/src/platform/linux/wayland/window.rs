@@ -699,6 +699,7 @@ impl WaylandWindowStatePtr {
                     size,
                     fullscreen: false,
                     maximized: false,
+                    resizing: false,
                     tiling: Tiling::default(),
                 });
                 drop(state);
