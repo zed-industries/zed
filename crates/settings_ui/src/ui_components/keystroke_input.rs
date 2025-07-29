@@ -298,14 +298,16 @@ impl KeystrokeInput {
             && key_len <= Self::KEYSTROKE_COUNT_MAX
         {
             if self.search {
-                last.key = keystroke.key.clone();
-                if close_keystroke_result == CloseKeystrokeResult::Partial {
-                    self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
+                if self.previous_modifiers.modified() {
+                    last.key = keystroke.key.clone();
+                    if close_keystroke_result == CloseKeystrokeResult::Partial {
+                        self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
+                    }
+                    self.previous_modifiers = keystroke.modifiers;
+                    self.keystrokes_changed(cx);
+                    cx.stop_propagation();
+                    return;
                 }
-                self.previous_modifiers = keystroke.modifiers;
-                self.keystrokes_changed(cx);
-                cx.stop_propagation();
-                return;
             } else {
                 self.keystrokes.pop();
             }
