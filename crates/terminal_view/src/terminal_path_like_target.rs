@@ -380,16 +380,17 @@ mod tests {
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use terminal::{HoveredWord, alacritty_terminal::index::Point as AlacPoint};
-    use ui::VisualContext;
     use util::path;
     use workspace::AppState;
 
     pub async fn init_test<'a, 'b: 'a>(
         app_cx: &'a mut TestAppContext,
-        worktrees: impl IntoIterator<Item = (&'b str, serde_json::Value)>,
+        trees: impl IntoIterator<Item = (&'b str, serde_json::Value)>,
+        worktree_roots: impl IntoIterator<Item = &'b str>,
     ) -> impl AsyncFnMut(HoveredWord, PathLikeTarget) -> (Option<HoverTarget>, Option<OpenTarget>)
     {
-        let params = app_cx.update(AppState::test);
+        let fs = app_cx.update(AppState::test).fs.as_fake().clone();
+
         app_cx.update(|cx| {
             terminal::init(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
@@ -398,13 +399,19 @@ mod tests {
             editor::init(cx);
         });
 
-        let mut root_paths = Vec::new();
-        for (path, tree) in worktrees {
-            root_paths.push(Path::new(path));
-            params.fs.as_fake().insert_tree(path, tree).await;
+        for (path, tree) in trees {
+            fs.insert_tree(path, tree).await;
         }
 
-        let project = Project::test(params.fs.clone(), root_paths, app_cx).await;
+        let project = Project::test(
+            fs.clone(),
+            worktree_roots
+                .into_iter()
+                .map(Path::new)
+                .collect::<Vec<_>>(),
+            app_cx,
+        )
+        .await;
 
         let (workspace, cx) =
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -416,12 +423,16 @@ mod tests {
             .await
             .unwrap();
 
-        let weak_project = project.downgrade();
-        let weak_workspace = workspace.downgrade();
-
-        let terminal_a = terminal.clone();
+        let (terminal_a, workspace_a) = (terminal.clone(), workspace.clone());
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {
-            TerminalView::new(terminal_a, weak_workspace, None, weak_project, window, cx)
+            TerminalView::new(
+                terminal_a,
+                workspace_a.downgrade(),
+                None,
+                project.downgrade(),
+                window,
+                cx,
+            )
         });
 
         async move |hovered_word: HoveredWord,
@@ -442,19 +453,16 @@ mod tests {
             let hover_target =
                 terminal_view.read_with(cx, |terminal_view, _| terminal_view.hover.clone());
 
-            let open_target = cx
-                .update_window_entity(
-                    &terminal_view,
-                    |terminal_view: &mut TerminalView, window, cx| {
-                        possibly_open_target(
-                            &workspace.downgrade(),
-                            terminal_view,
-                            &path_like_target,
-                            window,
-                            cx,
-                        )
-                    },
-                )
+            let open_target = terminal_view
+                .update_in(cx, |terminal_view, window, cx| {
+                    possibly_open_target(
+                        &workspace.downgrade(),
+                        terminal_view,
+                        &path_like_target,
+                        window,
+                        cx,
+                    )
+                })
                 .await
                 .unwrap_or_default();
 
@@ -543,6 +551,7 @@ mod tests {
                     "test.rs": "",
                 }),
             )],
+            vec![path!("/test")],
         )
         .await;
 
@@ -554,6 +563,73 @@ mod tests {
 
         test!("lib.rs", "/test/lib.rs");
         test!("test.rs", "/test/test.rs");
+    }
+
+    #[gpui::test]
+    async fn mixed_worktrees(cx: &mut TestAppContext) {
+        let mut test_path_like = init_test(
+            cx,
+            vec![
+                (
+                    path!("/"),
+                    json!({
+                        "file.txt": "",
+                    }),
+                ),
+                (
+                    path!("/test"),
+                    json!({
+                        "lib.rs": "",
+                        "test.rs": "",
+                        "file.txt": "",
+                    }),
+                ),
+            ],
+            vec![path!("/file.txt"), path!("/test")],
+        )
+        .await;
+
+        macro_rules! test {
+            ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
+                test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
+            };
+        }
+
+        test!("file.txt", "/file.txt", "/");
+        test!("lib.rs", "/test/lib.rs", "/test");
+        test!("test.rs", "/test/test.rs", "/test");
+        test!("file.txt", "/test/file.txt", "/test");
+    }
+
+    #[gpui::test]
+    async fn worktree_file_preferred(cx: &mut TestAppContext) {
+        let mut test_path_like = init_test(
+            cx,
+            vec![
+                (
+                    path!("/"),
+                    json!({
+                        "file.txt": "",
+                    }),
+                ),
+                (
+                    path!("/test"),
+                    json!({
+                        "file.txt": "",
+                    }),
+                ),
+            ],
+            vec![path!("/test")],
+        )
+        .await;
+
+        macro_rules! test {
+            ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
+                test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
+            };
+        }
+
+        test!("file.txt", "/test/file.txt", "/test");
     }
 
     mod issues {
@@ -575,6 +651,7 @@ mod tests {
                         },
                     }),
                 )],
+                vec![path!("/dir1")],
             )
             .await;
 
@@ -609,6 +686,7 @@ mod tests {
                         },
                     }),
                 )],
+                vec![path!("/project")],
             )
             .await;
 
@@ -668,6 +746,7 @@ mod tests {
                         },
                     }),
                 )],
+                vec![path!("/tmp")],
             )
             .await;
 
@@ -707,6 +786,41 @@ mod tests {
                 "/tmp/issue28339/foo/bar.txt",
                 "/tmp/issue28339/foo"
             );
+        }
+
+        // TODO: Needs an issue created.
+        #[gpui::test]
+        #[should_panic(expected = "Tooltips mismatch")]
+        async fn issue_file_in_terminal_dir_should_be_preferred_over_worktree_file(
+            cx: &mut TestAppContext,
+        ) {
+            let mut test_path_like = init_test(
+                cx,
+                vec![
+                    (
+                        path!("/"),
+                        json!({
+                            "file.txt": "",
+                        }),
+                    ),
+                    (
+                        path!("/test"),
+                        json!({
+                            "file.txt": "",
+                        }),
+                    ),
+                ],
+                vec![path!("/test")],
+            )
+            .await;
+
+            macro_rules! test {
+                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
+                };
+            }
+
+            test!("file.txt", "/file.txt", "/");
         }
     }
 }
