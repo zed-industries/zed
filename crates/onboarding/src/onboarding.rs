@@ -20,6 +20,8 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod editing_page;
+
 pub struct OnBoardingFeatureFlag {}
 
 impl FeatureFlag for OnBoardingFeatureFlag {
@@ -212,7 +214,9 @@ impl Onboarding {
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
             SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
-            SelectedPage::Editing => self.render_editing_page(window, cx).into_any_element(),
+            SelectedPage::Editing => {
+                crate::editing_page::render_editing_page(window, cx).into_any_element()
+            }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
     }
@@ -245,11 +249,6 @@ impl Onboarding {
                 .button_width(rems_from_px(64.)),
             ),
         )
-    }
-
-    fn render_editing_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // div().child("editing page")
-        "Right"
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
