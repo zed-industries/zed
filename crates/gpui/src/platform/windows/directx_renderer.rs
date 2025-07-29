@@ -79,7 +79,6 @@ struct DirectXRenderPipelines {
 struct DirectXGlobalElements {
     global_params_buffer: [Option<ID3D11Buffer>; 1],
     sampler: [Option<ID3D11SamplerState>; 1],
-    blend_state: ID3D11BlendState,
 }
 
 #[repr(C)]
@@ -171,11 +170,6 @@ impl DirectXRenderer {
             self.devices
                 .device_context
                 .RSSetViewports(Some(&self.resources.viewport));
-            self.devices.device_context.OMSetBlendState(
-                &self.globals.blend_state,
-                None,
-                0xFFFFFFFF,
-            );
         }
         Ok(())
     }
@@ -653,30 +647,54 @@ impl DirectXResources {
 
 impl DirectXRenderPipelines {
     pub fn new(device: &ID3D11Device) -> Result<Self> {
-        let shadow_pipeline =
-            PipelineState::new(device, "shadow_pipeline", ShaderModule::Shadow, 4)?;
-        let quad_pipeline = PipelineState::new(device, "quad_pipeline", ShaderModule::Quad, 64)?;
+        let shadow_pipeline = PipelineState::new(
+            device,
+            "shadow_pipeline",
+            ShaderModule::Shadow,
+            4,
+            create_blend_state(device)?,
+        )?;
+        let quad_pipeline = PipelineState::new(
+            device,
+            "quad_pipeline",
+            ShaderModule::Quad,
+            64,
+            create_blend_state(device)?,
+        )?;
         let path_rasterization_pipeline = PipelineState::new(
             device,
             "path_rasterization_pipeline",
             ShaderModule::PathRasterization,
             32,
+            create_blend_state_for_path_rasterization(device)?,
         )?;
-        let path_sprite_pipeline =
-            PipelineState::new(device, "path_sprite_pipeline", ShaderModule::PathSprite, 1)?;
-        let underline_pipeline =
-            PipelineState::new(device, "underline_pipeline", ShaderModule::Underline, 4)?;
+        let path_sprite_pipeline = PipelineState::new(
+            device,
+            "path_sprite_pipeline",
+            ShaderModule::PathSprite,
+            4,
+            create_blend_state_for_path_sprite(device)?,
+        )?;
+        let underline_pipeline = PipelineState::new(
+            device,
+            "underline_pipeline",
+            ShaderModule::Underline,
+            4,
+            create_blend_state(device)?,
+        )?;
         let mono_sprites = PipelineState::new(
             device,
             "monochrome_sprite_pipeline",
             ShaderModule::MonochromeSprite,
             512,
+            create_blend_state(device)?,
         )?;
         let poly_sprites = PipelineState::new(
             device,
             "polychrome_sprite_pipeline",
             ShaderModule::PolychromeSprite,
             16,
+            create_blend_state(device)?,
         )?;
 
         Ok(Self {
@@ -748,12 +766,9 @@ impl DirectXGlobalElements {
             [output]
         };
 
-        let blend_state = create_blend_state(device)?;
-
         Ok(Self {
             global_params_buffer,
             sampler,
-            blend_state,
         })
     }
 }
@@ -772,19 +787,9 @@ struct PipelineState<T> {
     buffer: ID3D11Buffer,
     buffer_size: usize,
     view: [Option<ID3D11ShaderResourceView>; 1],
+    blend_state: ID3D11BlendState,
     _marker: std::marker::PhantomData<T>,
 }
-
-// struct PathRasterizationPipelineState {
-//     vertex: ID3D11VertexShader,
-//     fragment: ID3D11PixelShader,
-//     buffer: ID3D11Buffer,
-//     buffer_size: usize,
-//     view: [Option<ID3D11ShaderResourceView>; 1],
-//     vertex_buffer: Option<ID3D11Buffer>,
-//     vertex_buffer_size: usize,
-//     input_layout: ID3D11InputLayout,
-// }
 
 impl<T> PipelineState<T> {
     fn new(
@@ -792,6 +797,7 @@ impl<T> PipelineState<T> {
         label: &'static str,
         shader_module: ShaderModule,
         buffer_size: usize,
+        blend_state: ID3D11BlendState,
     ) -> Result<Self> {
         let vertex = {
             let raw_shader = RawShaderBytes::new(shader_module, ShaderTarget::Vertex)?;
@@ -811,6 +817,7 @@ impl<T> PipelineState<T> {
             buffer,
             buffer_size,
             view,
+            blend_state,
             _marker: std::marker::PhantomData,
         })
     }
@@ -855,6 +862,7 @@ impl<T> PipelineState<T> {
             &self.vertex,
             &self.fragment,
             global_params,
+            &self.blend_state,
         );
         unsafe {
             device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
@@ -879,6 +887,7 @@ impl<T> PipelineState<T> {
             &self.vertex,
             &self.fragment,
             global_params,
+            &self.blend_state,
         );
         unsafe {
             device_context.PSSetSamplers(0, Some(sampler));
@@ -890,123 +899,6 @@ impl<T> PipelineState<T> {
         Ok(())
     }
 }
-
-// impl PathRasterizationPipelineState {
-//     fn new(device: &ID3D11Device) -> Result<Self> {
-//         let (vertex, vertex_shader) = {
-//             let raw_vertex_shader =
-//                 RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Vertex)?;
-//             (
-//                 create_vertex_shader(device, raw_vertex_shader.as_bytes())?,
-//                 raw_vertex_shader,
-//             )
-//         };
-//         let fragment = {
-//             let raw_shader =
-//                 RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Fragment)?;
-//             create_fragment_shader(device, raw_shader.as_bytes())?
-//         };
-//         let buffer = create_buffer(device, std::mem::size_of::<PathRasterizationSprite>(), 32)?;
-//         let view = create_buffer_view(device, &buffer)?;
-//         let vertex_buffer = Some(create_buffer(
-//             device,
-//             std::mem::size_of::<PathRasterizationSprite>(),
-//             32,
-//         )?);
-
-//         Ok(Self {
-//             vertex,
-//             fragment,
-//             buffer,
-//             buffer_size: 32,
-//             view,
-//             vertex_buffer,
-//             vertex_buffer_size: 32,
-//         })
-//     }
-
-//     fn update_buffer(
-//         &mut self,
-//         device: &ID3D11Device,
-//         device_context: &ID3D11DeviceContext,
-//         sprites: &[PathRasterizationSprite],
-//         vertices_data: &[DirectXPathVertex],
-//     ) -> Result<()> {
-//         if self.buffer_size < sprites.len() {
-//             let new_buffer_size = sprites.len().next_power_of_two();
-//             log::info!(
-//                 "Updating Paths Pipeline buffer size from {} to {}",
-//                 self.buffer_size,
-//                 new_buffer_size
-//             );
-//             let buffer = create_buffer(
-//                 device,
-//                 std::mem::size_of::<PathRasterizationSprite>(),
-//                 new_buffer_size,
-//             )?;
-//             let view = create_buffer_view(device, &buffer)?;
-//             self.buffer = buffer;
-//             self.view = view;
-//             self.buffer_size = new_buffer_size;
-//         }
-//         update_buffer(device_context, &self.buffer, sprites)?;
-
-//         if self.vertex_buffer_size < vertices_data.len() {
-//             let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
-//             log::info!(
-//                 "Updating Paths Pipeline vertex buffer size from {} to {}",
-//                 self.vertex_buffer_size,
-//                 new_vertex_buffer_size
-//             );
-//             let vertex_buffer = create_buffer(
-//                 device,
-//                 std::mem::size_of::<DirectXPathVertex>(),
-//                 new_vertex_buffer_size,
-//             )?;
-//             self.vertex_buffer = Some(vertex_buffer);
-//             self.vertex_buffer_size = new_vertex_buffer_size;
-//         }
-//         update_buffer(
-//             device_context,
-//             self.vertex_buffer.as_ref().unwrap(),
-//             vertices_data,
-//         )?;
-
-//         Ok(())
-//     }
-
-//     fn draw(
-//         &self,
-//         device_context: &ID3D11DeviceContext,
-//         vertex_count: u32,
-//         viewport: &[D3D11_VIEWPORT],
-//         global_params: &[Option<ID3D11Buffer>],
-//     ) -> Result<()> {
-//         set_pipeline_state(
-//             device_context,
-//             &self.view,
-//             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-//             viewport,
-//             &self.vertex,
-//             &self.fragment,
-//             global_params,
-//         );
-//         unsafe {
-//             const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
-//             const OFFSET: u32 = 0;
-//             device_context.IASetInputLayout(&self.input_layout);
-//             device_context.IASetVertexBuffers(
-//                 0,
-//                 1,
-//                 Some(&self.vertex_buffer),
-//                 Some(&STRIDE),
-//                 Some(&OFFSET),
-//             );
-//             device_context.Draw(vertex_count, 0);
-//         }
-//         Ok(())
-//     }
-// }
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -1355,6 +1247,46 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
 }
 
 #[inline]
+fn create_blend_state_for_path_rasterization(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
+    // device performs the blend in linear space, which is ideal.
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+#[inline]
+fn create_blend_state_for_path_sprite(device: &ID3D11Device) -> Result<ID3D11BlendState> {
+    // If the feature level is set to greater than D3D_FEATURE_LEVEL_9_3, the display
+    // device performs the blend in linear space, which is ideal.
+    let mut desc = D3D11_BLEND_DESC::default();
+    desc.RenderTarget[0].BlendEnable = true.into();
+    desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    desc.RenderTarget[0].SrcBlend = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+    unsafe {
+        let mut state = None;
+        device.CreateBlendState(&desc, Some(&mut state))?;
+        Ok(state.unwrap())
+    }
+}
+
+#[inline]
 fn create_vertex_shader(device: &ID3D11Device, bytes: &[u8]) -> Result<ID3D11VertexShader> {
     unsafe {
         let mut shader = None;
@@ -1425,6 +1357,7 @@ fn set_pipeline_state(
     vertex_shader: &ID3D11VertexShader,
     fragment_shader: &ID3D11PixelShader,
     global_params: &[Option<ID3D11Buffer>],
+    blend_state: &ID3D11BlendState,
 ) {
     unsafe {
         device_context.VSSetShaderResources(1, Some(buffer_view));
@@ -1435,6 +1368,7 @@ fn set_pipeline_state(
         device_context.PSSetShader(fragment_shader, None);
         device_context.VSSetConstantBuffers(0, Some(global_params));
         device_context.PSSetConstantBuffers(0, Some(global_params));
+        device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
 }
 
