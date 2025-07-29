@@ -344,7 +344,7 @@ impl KeystrokeInput {
         self.previous_modifiers = window.modifiers();
         #[cfg(test)]
         {
-            self.recording = false;
+            self.recording = true;
         }
         cx.stop_propagation();
     }
@@ -355,7 +355,7 @@ impl KeystrokeInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.inner_focus_handle.is_focused(window) {
+        if !self.is_recording(window) {
             return;
         }
         window.focus(&self.outer_focus_handle);
@@ -384,9 +384,11 @@ impl KeystrokeInput {
 
     fn is_recording(&self, window: &Window) -> bool {
         #[cfg(test)]
-        if true {
-            // in tests, we just need a simple bool that is toggled on start and stop recording
-            return self.recording;
+        {
+            if true {
+                // in tests, we just need a simple bool that is toggled on start and stop recording
+                return dbg!(self.recording);
+            }
         }
         // however, in the real world, checking if the inner focus handle is focused
         // is a much more reliable check, as the intercept keystroke handlers are installed
@@ -610,7 +612,6 @@ mod tests {
     use settings::SettingsStore;
     use workspace::Workspace;
 
-    /// Test helper for KeystrokeInput component with fluent API and string-based event system
     pub struct KeystrokeInputTestHelper {
         input: Entity<KeystrokeInput>,
         current_modifiers: Modifiers,
@@ -622,11 +623,14 @@ mod tests {
         pub fn new(mut cx: VisualTestContext) -> Self {
             let input = cx.new_window_entity(|window, cx| KeystrokeInput::new(None, window, cx));
 
-            Self {
+            let mut helper = Self {
                 input,
                 current_modifiers: Modifiers::default(),
                 cx,
-            }
+            };
+
+            helper.start_recording();
+            helper
         }
 
         /// Sets search mode on the input
@@ -707,6 +711,7 @@ mod tests {
         }
 
         /// Verifies that the keystrokes match the expected strings
+        #[track_caller]
         pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
             let expected_keystrokes: Result<Vec<Keystroke>, _> = expected
                 .iter()
@@ -731,42 +736,42 @@ mod tests {
             let expected_keystrokes = expected_keystrokes
                 .unwrap_or_else(|e: anyhow::Error| panic!("Invalid expected keystroke: {}", e));
 
-            self.input.read_with(&mut self.cx, |input, _| {
-                let actual = &input.keystrokes;
+            let actual = self
+                .input
+                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+            assert_eq!(
+                actual.len(),
+                expected_keystrokes.len(),
+                "Keystroke count mismatch. Expected: {:?}, Actual: {:?}",
+                expected_keystrokes
+                    .iter()
+                    .map(|k| k.unparse())
+                    .collect::<Vec<_>>(),
+                actual.iter().map(|k| k.unparse()).collect::<Vec<_>>()
+            );
+
+            for (i, (actual, expected)) in actual.iter().zip(expected_keystrokes.iter()).enumerate()
+            {
                 assert_eq!(
-                    actual.len(),
-                    expected_keystrokes.len(),
-                    "Keystroke count mismatch. Expected: {:?}, Actual: {:?}",
-                    expected_keystrokes
-                        .iter()
-                        .map(|k| k.unparse())
-                        .collect::<Vec<_>>(),
-                    actual.iter().map(|k| k.unparse()).collect::<Vec<_>>()
+                    actual.unparse(),
+                    expected.unparse(),
+                    "Keystroke {} mismatch. Expected: '{}', Actual: '{}'",
+                    i,
+                    expected.unparse(),
+                    actual.unparse()
                 );
-
-                for (i, (actual, expected)) in
-                    actual.iter().zip(expected_keystrokes.iter()).enumerate()
-                {
-                    assert_eq!(
-                        actual.unparse(),
-                        expected.unparse(),
-                        "Keystroke {} mismatch. Expected: '{}', Actual: '{}'",
-                        i,
-                        expected.unparse(),
-                        actual.unparse()
-                    );
-                }
-            });
-
+            }
             self
         }
 
         /// Verifies that there are no keystrokes
+        #[track_caller]
         pub fn expect_empty(&mut self) -> &mut Self {
             self.expect_keystrokes(&[])
         }
 
         /// Starts recording keystrokes
+        #[track_caller]
         pub fn start_recording(&mut self) -> &mut Self {
             self.expect_is_recording(false);
             self.input.update_in(&mut self.cx, |input, window, cx| {
@@ -793,15 +798,16 @@ mod tests {
         }
 
         /// Verifies the recording state
+        #[track_caller]
         pub fn expect_is_recording(&mut self, expected: bool) -> &mut Self {
-            self.input.update_in(&mut self.cx, |input, window, _| {
-                let actual = input.is_recording(window);
-                assert_eq!(
-                    actual, expected,
-                    "Recording state mismatch. Expected: {}, Actual: {}",
-                    expected, actual
-                );
-            });
+            let actual = self
+                .input
+                .update_in(&mut self.cx, |input, window, _| input.is_recording(window));
+            assert_eq!(
+                actual, expected,
+                "Recording state mismatch. Expected: {}, Actual: {}",
+                expected, actual
+            );
             self
         }
 
@@ -856,9 +862,7 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = VisualTestContext::from_window(*workspace, cx);
-        let mut helper = KeystrokeInputTestHelper::new(cx);
-        helper.start_recording();
-        helper
+        KeystrokeInputTestHelper::new(cx)
     }
 
     #[gpui::test]
@@ -1037,15 +1041,13 @@ mod tests {
     async fn test_start_stop_recording(cx: &mut TestAppContext) {
         init_test(cx)
             .await
-            .with_search_mode(true)
-            .send_events(&["a"])
-            .expect_keystrokes(&["a"])
-            .start_recording()
-            .send_events(&["b"])
-            .expect_keystrokes(&["b"]) // start_recording clears existing keystrokes
+            .send_events(&["a", "b"])
+            .expect_keystrokes(&["a", "b", ""]) // start_recording clears existing keystrokes
             .stop_recording()
+            .expect_is_recording(false)
+            .start_recording()
             .send_events(&["c"])
-            .expect_keystrokes(&["b", "c"]);
+            .expect_keystrokes(&["c", ""]);
     }
 
     #[gpui::test]
@@ -1080,9 +1082,9 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["a", "escape", "escape", "escape"])
-            .expect_keystrokes(&["a", "escape", "escape"]); // Triple escape stops recording but only removes final escape
+            .expect_keystrokes(&["a"]) // Triple escape removes final escape, stops recording
+            .expect_is_recording(false);
     }
 
     #[gpui::test]
@@ -1090,9 +1092,8 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(false)
-            .start_recording()
             .send_events(&["a", "escape", "escape", "escape"])
-            .expect_keystrokes(&["a", "escape", "escape"]); // Triple escape stops recording but only removes final escape
+            .expect_keystrokes(&["a"]); // Triple escape stops recording but only removes final escape
     }
 
     #[gpui::test]
@@ -1100,7 +1101,6 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["a", "b", "c", "escape", "escape", "escape"]) // 6 keystrokes total, exceeds limit
             .expect_keystrokes(&["a", "b", "c"]); // Triple escape stops recording and removes escapes, leaves original keystrokes
     }
@@ -1110,7 +1110,6 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["escape", "escape", "a", "escape"]) // Partial escape sequence interrupted by 'a'
             .expect_keystrokes(&["escape", "escape", "a"]); // Escape sequence interrupted by 'a', no close triggered
     }
@@ -1120,7 +1119,6 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["escape", "escape", "a"]) // Partial escape sequence interrupted by 'a' (3 keystrokes, at limit)
             .expect_keystrokes(&["escape", "escape", "a"]); // Should not trigger close, interruption resets escape detection
     }
@@ -1130,9 +1128,9 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["escape", "escape"]) // Only 2 escapes, not enough to close
-            .expect_keystrokes(&["escape", "escape"]); // Should remain in keystrokes, no close triggered
+            .expect_keystrokes(&["escape", "escape"])
+            .expect_is_recording(true); // Should remain in keystrokes, no close triggered
     }
 
     #[gpui::test]
@@ -1140,11 +1138,9 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["a", "escape", "escape", "escape"])
-            .expect_keystrokes(&["a", "escape", "escape"]) // Triple escape stops recording, removes final escape
-            .send_events(&["b"]) // Should still be able to add keystrokes after recording stopped
-            .expect_empty(); // Adding 'b' exceeds keystroke limit (4 > 3), all cleared
+            .expect_keystrokes(&["a"]) // Triple escape stops recording, removes final escape
+            .expect_is_recording(false);
     }
 
     #[gpui::test]
@@ -1152,7 +1148,6 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["a", "escape", "b", "escape", "escape"]) // Mixed sequence, should not trigger close
             .expect_keystrokes(&["a", "escape", "b"]); // No complete triple escape sequence, stays at limit
     }
@@ -1162,23 +1157,7 @@ mod tests {
         init_test(cx)
             .await
             .with_search_mode(true)
-            .start_recording()
             .send_events(&["escape", "escape", "escape"]) // Pure triple escape sequence
-            .expect_keystrokes(&["escape", "escape"]) // Triple escape stops recording, removes final escape
-            .expect_is_recording(false); // Recording state reflects focus state in test environment
-    }
-
-    #[gpui::test]
-    async fn test_recording_state_transitions(cx: &mut TestAppContext) {
-        init_test(cx)
-            .await
-            .with_search_mode(true)
-            .expect_is_recording(false) // Initially not recording
-            .start_recording()
-            .expect_is_recording(false) // Focus may not work properly in test environment
-            .send_events(&["a", "b"])
-            .expect_is_recording(false) // Still not recording due to focus issues in tests
-            .stop_recording()
-            .expect_is_recording(false); // Remains not recording
+            .expect_empty();
     }
 }
