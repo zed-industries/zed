@@ -422,11 +422,13 @@ impl Zeta {
             .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
         let full_path_str = full_path.to_string_lossy().to_string();
+        let cursor_point = cursor.to_point(&snapshot);
+        let cursor_offset = cursor_point.to_offset(&snapshot);
         let gather_task = gather_context(
             project,
             full_path_str,
             &snapshot,
-            cursor,
+            cursor_point,
             events,
             can_collect_data,
             cx,
@@ -436,7 +438,6 @@ impl Zeta {
             let GatherContextOutput {
                 body,
                 editable_range,
-                cursor_offset,
             } = gather_task.await?;
 
             log::debug!(
@@ -1173,55 +1174,45 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
 pub struct GatherContextOutput {
     pub body: PredictEditsBody,
     pub editable_range: Range<usize>,
-    pub cursor_offset: usize,
 }
 
 pub fn gather_context(
     project: Option<&Entity<Project>>,
     full_path_str: String,
     snapshot: &BufferSnapshot,
-    cursor: language::Anchor,
+    cursor_point: language::Point,
     events: VecDeque<Event>,
     can_collect_data: bool,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
-    let diagnostic_groups = snapshot.diagnostic_groups(None);
-    let cursor_point = cursor.to_point(&snapshot);
-    let cursor_offset = cursor_point.to_offset(&snapshot);
-
     let local_lsp_store =
         project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
-    let diagnostic_groups = if let Some(local_lsp_store) = local_lsp_store {
-        Some(
-            diagnostic_groups
+    let diagnostic_groups: Vec<(String, serde_json::Value)> =
+        if let Some(local_lsp_store) = local_lsp_store {
+            snapshot
+                .diagnostic_groups(None)
                 .into_iter()
                 .filter_map(|(language_server_id, diagnostic_group)| {
                     let language_server =
                         local_lsp_store.running_language_server_for_id(language_server_id)?;
-
-                    Some((
-                        language_server.name(),
-                        diagnostic_group.resolve::<usize>(&snapshot),
-                    ))
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let language_server_name = language_server.name().to_string();
+                    let serialized = serde_json::to_value(diagnostic_group).unwrap();
+                    Some((language_server_name, serialized))
                 })
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        None
-    };
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let diagnostic_groups = diagnostic_groups.and_then(|diagnostic_groups| {
-                diagnostic_groups
-                    .into_iter()
-                    .map(|(name, diagnostic_group)| {
-                        Ok((name.to_string(), serde_json::to_value(diagnostic_group)?))
-                    })
-                    .collect::<Result<Vec<_>>>()
-                    .log_err()
-            });
+            let diagnostic_groups = if diagnostic_groups.is_empty() {
+                None
+            } else {
+                Some(diagnostic_groups)
+            };
 
             let input_excerpt = excerpt_for_cursor_position(
                 cursor_point,
@@ -1246,7 +1237,6 @@ pub fn gather_context(
             Ok(GatherContextOutput {
                 body,
                 editable_range,
-                cursor_offset,
             })
         }
     })

@@ -123,7 +123,6 @@ async fn get_context(
             ));
         }
     }
-    let cursor_anchor = snapshot.anchor_before(cursor.point);
 
     let events = VecDeque::new();
     let can_collect_data = false;
@@ -132,7 +131,7 @@ async fn get_context(
             project.as_ref(),
             full_path_str,
             &snapshot,
-            cursor_anchor,
+            clipped_cursor,
             events,
             can_collect_data,
             cx,
