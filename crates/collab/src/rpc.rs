@@ -23,6 +23,7 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
     body::Body,
@@ -750,6 +751,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
@@ -762,9 +764,14 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
+            user_agent=field::Empty,
             geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(user_agent) = user_agent {
+            span.record("user_agent", user_agent);
+        }
+
         if let Some(country_code) = geoip_country_code.as_ref() {
             span.record("geoip_country_code", country_code);
         }
@@ -1172,6 +1179,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     system_id_header: Option<TypedHeader<SystemIdHeader>>,
     ws: WebSocketUpgrade,
@@ -1227,6 +1235,7 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
                     None,
