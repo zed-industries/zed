@@ -1228,6 +1228,35 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
+/// Builds a PredictEditsBody for CLI context retrieval at a cursor position
+pub fn build_predict_edits_body_for_cli(
+    cursor_point: language::Point,
+    path: &Path,
+    snapshot: &BufferSnapshot,
+    can_collect_data: bool,
+) -> Result<PredictEditsBody> {
+    let path_str = path.to_string_lossy();
+    let input_excerpt = excerpt_for_cursor_position(
+        cursor_point,
+        &path_str,
+        snapshot,
+        MAX_REWRITE_TOKENS,
+        MAX_CONTEXT_TOKENS,
+    );
+    let empty_events = VecDeque::new();
+    let input_events = prompt_for_events(&empty_events, MAX_EVENT_TOKENS);
+    let input_outline = prompt_for_outline(snapshot);
+
+    Ok(PredictEditsBody {
+        input_events,
+        input_excerpt: input_excerpt.prompt,
+        speculated_output: Some(input_excerpt.speculated_output),
+        outline: Some(input_outline),
+        can_collect_data,
+        diagnostic_groups: None,
+    })
+}
+
 fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     let mut input_outline = String::new();
 
