@@ -161,13 +161,15 @@ impl KeystrokeInput {
                 .timer(std::time::Duration::from_millis(300))
                 .await;
             this.update(cx, |this, _cx| {
-                this.clear_close_keystrokes();
+                this.end_close_keystrokes_capture();
             })
             .ok();
         }));
     }
 
-    fn clear_close_keystrokes(&mut self) -> Option<usize> {
+    /// Interrupt the capture of close keystrokes, but do not clear the close keystrokes
+    /// from the input
+    fn end_close_keystrokes_capture(&mut self) -> Option<usize> {
         self.close_keystrokes.take();
         self.clear_close_keystrokes_timer.take();
         return self.close_keystrokes_start.take();
@@ -181,7 +183,7 @@ impl KeystrokeInput {
     ) -> CloseKeystrokeResult {
         let Some(keybind_for_close_action) = Self::determine_stop_recording_binding(window) else {
             log::trace!("No keybinding to stop recording keystrokes in keystroke input");
-            self.clear_close_keystrokes();
+            self.end_close_keystrokes_capture();
             return CloseKeystrokeResult::None;
         };
         let action_keystrokes = keybind_for_close_action.keystrokes();
@@ -197,7 +199,7 @@ impl KeystrokeInput {
             }
             if index == close_keystrokes.len() {
                 if index >= action_keystrokes.len() {
-                    self.clear_close_keystrokes();
+                    self.end_close_keystrokes_capture();
                     return CloseKeystrokeResult::None;
                 }
                 if keystroke.should_match(&action_keystrokes[index]) {
@@ -210,7 +212,7 @@ impl KeystrokeInput {
                         return CloseKeystrokeResult::Partial;
                     }
                 } else {
-                    self.clear_close_keystrokes();
+                    self.end_close_keystrokes_capture();
                     return CloseKeystrokeResult::None;
                 }
             }
@@ -220,7 +222,7 @@ impl KeystrokeInput {
             self.close_keystrokes = Some(vec![keystroke.clone()]);
             return CloseKeystrokeResult::Partial;
         }
-        self.clear_close_keystrokes();
+        self.end_close_keystrokes_capture();
         return CloseKeystrokeResult::None;
     }
 
@@ -399,8 +401,9 @@ impl KeystrokeInput {
             && close_keystrokes_start < self.keystrokes.len()
         {
             self.keystrokes.drain(close_keystrokes_start..);
+            self.keystrokes_changed(cx);
         }
-        self.clear_close_keystrokes();
+        self.end_close_keystrokes_capture();
         #[cfg(test)]
         {
             self.recording = false;
