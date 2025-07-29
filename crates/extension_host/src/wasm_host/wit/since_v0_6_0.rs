@@ -938,7 +938,7 @@ impl ExtensionImports for WasmState {
                             binary: settings.binary.map(|binary| settings::CommandSettings {
                                 path: binary.path,
                                 arguments: binary.arguments,
-                                env: binary.env,
+                                env: binary.env.map(|env| env.into_iter().collect()),
                             }),
                             settings: settings.settings,
                             initialization_options: settings.initialization_options,

@@ -223,6 +223,7 @@ impl ManifestTree {
 pub(crate) struct ManifestQueryDelegate {
     worktree: Snapshot,
 }
+
 impl ManifestQueryDelegate {
     pub fn new(worktree: Snapshot) -> Self {
         Self { worktree }

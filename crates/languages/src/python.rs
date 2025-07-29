@@ -318,6 +318,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &dyn Fs,
+
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,

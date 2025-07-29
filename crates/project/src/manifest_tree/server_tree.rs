@@ -88,6 +88,10 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
     }
 }
 
+// /project_a/pyproject.toml <- manifest
+// /project_a/src/foo.py
+//
+// we know that for: /project_a/, there should be an instance of pylsp running
 #[derive(Debug)]
 pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
