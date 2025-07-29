@@ -2423,12 +2423,12 @@ impl LocalLspStore {
                 }
 
                 let server_id = server_node.server_id_or_init(
-                    |LaunchDisposition {
-                         server_name,
-
-                         path,
-                         settings,
-                     }| {
+                    |disposition| {
+                        let LaunchDisposition {
+                             server_name,
+                             path,
+                             settings,
+                         } = &**disposition;
                         let server_id =
                            {
                                let uri = Url::from_file_path(
@@ -2446,7 +2446,7 @@ impl LocalLspStore {
                                        &worktree,
                                        delegate.clone(),
                                        adapter,
-                                       settings,
+                                       settings.clone(),
                                        cx,
                                    );
                                }
@@ -4679,13 +4679,13 @@ impl LspStore {
                         for node in nodes {
                             if !reused {
                                 let server_id = node.server_id_or_init(
-                                    |LaunchDisposition {
-                                         server_name,
-
-                                         path,
-                                         settings,
-                                     }|
+                                    |disposition|
                                          {
+                                             let LaunchDisposition {
+                                                  server_name,
+                                                  path,
+                                                  settings,
+                                              } = &**disposition;
                                             let uri = Url::from_file_path(
                                                 worktree.read(cx).abs_path().join(&path.path),
                                             );
@@ -4702,7 +4702,7 @@ impl LspStore {
                                                 &worktree,
                                                 delegate.clone(),
                                                 adapter,
-                                                settings,
+                                                settings.clone(),
                                                 cx,
                                             );
                                             if let Some(state) =
@@ -7620,7 +7620,7 @@ impl LspStore {
                     cx,
                 ) {
                     node.server_id_or_init(|disposition| {
-                        assert_eq!(disposition.server_name, &language_server_name);
+                        assert_eq!(&disposition.server_name, &language_server_name);
 
                         language_server_id
                     });

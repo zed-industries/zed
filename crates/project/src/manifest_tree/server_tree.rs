@@ -49,22 +49,13 @@ pub struct LanguageServerTree {
 pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.
-#[derive(Debug)]
-pub(crate) struct LaunchDisposition<'a> {
-    pub(crate) server_name: &'a LanguageServerName,
+#[derive(Clone, Debug)]
+pub(crate) struct LaunchDisposition {
+    pub(crate) server_name: LanguageServerName,
     pub(crate) path: ProjectPath,
     pub(crate) settings: Arc<LspSettings>,
 }
 
-impl<'a> From<&'a InnerTreeNode> for LaunchDisposition<'a> {
-    fn from(value: &'a InnerTreeNode) -> Self {
-        LaunchDisposition {
-            server_name: &value.name,
-            path: value.path.clone(),
-            settings: value.settings.clone(),
-        }
-    }
-}
 impl LanguageServerTreeNode {
     /// Returns a language server ID for this node if there is one.
     /// Returns None if this node has not been initialized yet or it is no longer in the tree.
@@ -76,19 +67,17 @@ impl LanguageServerTreeNode {
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
         &self,
-        init: impl FnOnce(LaunchDisposition) -> LanguageServerId,
+        init: impl FnOnce(&Arc<LaunchDisposition>) -> LanguageServerId,
     ) -> Option<LanguageServerId> {
         let this = self.0.upgrade()?;
-        Some(
-            *this
-                .id
-                .get_or_init(|| init(LaunchDisposition::from(&*this))),
-        )
+        Some(*this.id.get_or_init(|| init(&this.disposition)))
     }
 
     /// Returns a language server name as the language server adapter would return.
     pub fn name(&self) -> Option<LanguageServerName> {
-        self.0.upgrade().map(|node| node.name.clone())
+        self.0
+            .upgrade()
+            .map(|node| node.disposition.server_name.clone())
     }
 }
 
@@ -101,22 +90,18 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 #[derive(Debug)]
 pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
-    name: LanguageServerName,
-    path: ProjectPath,
-    settings: Arc<LspSettings>,
+    disposition: Arc<LaunchDisposition>,
 }
 
 impl InnerTreeNode {
-    fn new(
-        name: LanguageServerName,
-        path: ProjectPath,
-        settings: impl Into<Arc<LspSettings>>,
-    ) -> Self {
+    fn new(server_name: LanguageServerName, path: ProjectPath, settings: LspSettings) -> Self {
         InnerTreeNode {
             id: Default::default(),
-            name,
-            path,
-            settings: settings.into(),
+            disposition: Arc::new(LaunchDisposition {
+                server_name,
+                path,
+                settings: settings.into(),
+            }),
         }
     }
 }
@@ -354,7 +339,7 @@ impl LanguageServerTree {
             .roots
             .entry(Arc::from(Path::new("")))
             .or_default()
-            .entry(node.name.clone())
+            .entry(node.disposition.server_name.clone())
             .or_insert_with(|| (node, BTreeSet::new()))
             .1
             .insert(language_name);
@@ -384,7 +369,7 @@ impl<'tree> ServerTreeRebase<'tree> {
                             .id
                             .get()
                             .copied()
-                            .map(|id| (id, server.0.name.clone()))
+                            .map(|id| (id, server.0.disposition.server_name.clone()))
                     })
                 })
             })
@@ -430,23 +415,24 @@ impl<'tree> ServerTreeRebase<'tree> {
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.
-                let disposition = node.0.upgrade()?;
+                let live_node = node.0.upgrade()?;
 
-                if disposition.id.get().is_some() {
+                if live_node.id.get().is_some() {
                     return Some(node);
                 }
+                let disposition = &live_node.disposition;
                 let Some((existing_node, _)) = self
                     .old_contents
                     .get(&disposition.path.worktree_id)
                     .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
-                    .and_then(|roots| roots.get(&disposition.name))
-                    .filter(|(old_node, _)| disposition.settings == old_node.settings)
+                    .and_then(|roots| roots.get(&disposition.server_name))
+                    .filter(|(old_node, _)| disposition.settings == old_node.disposition.settings)
                 else {
                     return Some(node);
                 };
                 if let Some(existing_id) = existing_node.id.get() {
                     self.rebased_server_ids.insert(*existing_id);
-                    disposition.id.set(*existing_id).ok();
+                    live_node.id.set(*existing_id).ok();
                 }
 
                 Some(node)
