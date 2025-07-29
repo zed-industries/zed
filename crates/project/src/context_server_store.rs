@@ -372,7 +372,7 @@ impl ContextServerStore {
             let configuration = state.configuration();
 
             self.stop_server(&state.server().id(), cx)?;
-            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx)?;
+            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx);
             self.run_server(new_server, configuration, cx);
         }
         Ok(())
@@ -462,7 +462,7 @@ impl ContextServerStore {
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
-    ) -> Result<Arc<ContextServer>> {
+    ) -> Arc<ContextServer> {
         let root_path = self
             .project
             .read_with(cx, |project, cx| project.active_project_directory(cx))
@@ -481,13 +481,13 @@ impl ContextServerStore {
             });
 
         if let Some(factory) = self.context_server_factory.as_ref() {
-            Ok(factory(id, configuration))
+            factory(id, configuration)
         } else {
-            Ok(Arc::new(ContextServer::stdio(
+            Arc::new(ContextServer::stdio(
                 id,
                 configuration.command().clone(),
                 root_path,
-            )))
+            ))
         }
     }
 
@@ -603,14 +603,10 @@ impl ContextServerStore {
                 let existing_config = state.as_ref().map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
-                    if let Some(server) = this
-                        .create_context_server(id.clone(), config.clone(), cx)
-                        .log_err()
-                    {
-                        servers_to_start.push((server, config));
-                        if this.servers.contains_key(&id) {
-                            servers_to_stop.insert(id);
-                        }
+                    let server = this.create_context_server(id.clone(), config.clone(), cx);
+                    servers_to_start.push((server, config));
+                    if this.servers.contains_key(&id) {
+                        servers_to_stop.insert(id);
                     }
                 }
             }
