@@ -1138,7 +1138,7 @@ impl Client {
                 .to_str()
                 .map_err(EstablishConnectionError::other)?
                 .to_string();
-            Url::parse(&collab_url).with_context(|| format!("parsing colab rpc url {collab_url}"))
+            Url::parse(&collab_url).with_context(|| format!("parsing collab rpc url {collab_url}"))
         }
     }
 
