@@ -822,9 +822,9 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_change_word_issue_35269(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
-    cx.set_state(indoc! {"ˇa-"}, Mode::Normal);
+    cx.set_state(indoc! {"hellˇo-world"}, Mode::Normal);
     cx.simulate_keystrokes("c w");
-    cx.assert_state(indoc! {"ˇ-"}, Mode::Insert);
+    cx.assert_state(indoc! {"hellˇ-world"}, Mode::Insert);
 }
 
 #[gpui::test]
