@@ -54,10 +54,9 @@ struct DirectXResources {
 
     // Path intermediate textures (with MSAA)
     path_intermediate_texture: ID3D11Texture2D,
-    path_intermediate_view: [Option<ID3D11RenderTargetView>; 1],
+    path_intermediate_srv: [Option<ID3D11ShaderResourceView>; 1],
     path_intermediate_msaa_texture: ID3D11Texture2D,
     path_intermediate_msaa_view: [Option<ID3D11RenderTargetView>; 1],
-    path_intermediate_srv: Option<ID3D11ShaderResourceView>,
 
     // Cached window size and viewport
     width: u32,
@@ -68,7 +67,6 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    // path_rasterization_pipeline: PathRasterizationPipelineState,
     path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
@@ -415,8 +413,6 @@ impl DirectXRenderer {
                 0,
                 RENDER_TARGET_FORMAT,
             );
-            // Flush to ensure the resolve operation is complete before using the texture
-            self.devices.device_context.Flush();
             // Restore main render target
             self.devices
                 .device_context
@@ -462,7 +458,7 @@ impl DirectXRenderer {
         // Draw the sprites with the path texture
         self.pipelines.path_sprite_pipeline.draw_with_texture(
             &self.devices.device_context,
-            &[self.resources.path_intermediate_srv.clone()],
+            &self.resources.path_intermediate_srv,
             &self.resources.viewport,
             &self.globals.global_params_buffer,
             &self.globals.sampler,
@@ -591,10 +587,9 @@ impl DirectXResources {
             render_target,
             render_target_view,
             path_intermediate_texture,
-            path_intermediate_view,
+            path_intermediate_srv,
             path_intermediate_msaa_texture,
             path_intermediate_msaa_view,
-            path_intermediate_srv,
             viewport,
         ) = create_resources(devices, &swap_chain, width, height)?;
         set_rasterizer_state(&devices.device, &devices.device_context)?;
@@ -604,7 +599,6 @@ impl DirectXResources {
             render_target,
             render_target_view,
             path_intermediate_texture,
-            path_intermediate_view,
             path_intermediate_msaa_texture,
             path_intermediate_msaa_view,
             path_intermediate_srv,
@@ -625,16 +619,14 @@ impl DirectXResources {
             render_target,
             render_target_view,
             path_intermediate_texture,
-            path_intermediate_view,
+            path_intermediate_srv,
             path_intermediate_msaa_texture,
             path_intermediate_msaa_view,
-            path_intermediate_srv,
             viewport,
         ) = create_resources(devices, &self.swap_chain, width, height)?;
         self.render_target = render_target;
         self.render_target_view = render_target_view;
         self.path_intermediate_texture = path_intermediate_texture;
-        self.path_intermediate_view = path_intermediate_view;
         self.path_intermediate_msaa_texture = path_intermediate_msaa_texture;
         self.path_intermediate_msaa_view = path_intermediate_msaa_view;
         self.path_intermediate_srv = path_intermediate_srv;
@@ -1066,16 +1058,15 @@ fn create_resources(
     ManuallyDrop<ID3D11Texture2D>,
     [Option<ID3D11RenderTargetView>; 1],
     ID3D11Texture2D,
-    [Option<ID3D11RenderTargetView>; 1],
+    [Option<ID3D11ShaderResourceView>; 1],
     ID3D11Texture2D,
     [Option<ID3D11RenderTargetView>; 1],
-    Option<ID3D11ShaderResourceView>,
     [D3D11_VIEWPORT; 1],
 )> {
     let (render_target, render_target_view) =
         create_render_target_and_its_view(&swap_chain, &devices.device)?;
-    let (path_intermediate_texture, path_intermediate_view, path_intermediate_srv) =
-        create_path_intermediate_texture_and_view(&devices.device, width, height)?;
+    let (path_intermediate_texture, path_intermediate_srv) =
+        create_path_intermediate_texture(&devices.device, width, height)?;
     let (path_intermediate_msaa_texture, path_intermediate_msaa_view) =
         create_path_intermediate_msaa_texture_and_view(&devices.device, width, height)?;
     let viewport = set_viewport(&devices.device_context, width as f32, height as f32);
@@ -1083,10 +1074,9 @@ fn create_resources(
         render_target,
         render_target_view,
         path_intermediate_texture,
-        path_intermediate_view,
+        path_intermediate_srv,
         path_intermediate_msaa_texture,
         path_intermediate_msaa_view,
-        path_intermediate_srv,
         viewport,
     ))
 }
@@ -1109,15 +1099,11 @@ fn create_render_target_and_its_view(
 }
 
 #[inline]
-fn create_path_intermediate_texture_and_view(
+fn create_path_intermediate_texture(
     device: &ID3D11Device,
     width: u32,
     height: u32,
-) -> Result<(
-    ID3D11Texture2D,
-    [Option<ID3D11RenderTargetView>; 1],
-    Option<ID3D11ShaderResourceView>,
-)> {
+) -> Result<(ID3D11Texture2D, [Option<ID3D11ShaderResourceView>; 1])> {
     let texture = unsafe {
         let mut output = None;
         let desc = D3D11_TEXTURE2D_DESC {
@@ -1139,17 +1125,10 @@ fn create_path_intermediate_texture_and_view(
         output.unwrap()
     };
 
-    let mut render_target_view = None;
-    unsafe { device.CreateRenderTargetView(&texture, None, Some(&mut render_target_view))? };
-
     let mut shader_resource_view = None;
     unsafe { device.CreateShaderResourceView(&texture, None, Some(&mut shader_resource_view))? };
 
-    Ok((
-        texture,
-        [Some(render_target_view.unwrap())],
-        shader_resource_view,
-    ))
+    Ok((texture, [Some(shader_resource_view.unwrap())]))
 }
 
 #[inline]
