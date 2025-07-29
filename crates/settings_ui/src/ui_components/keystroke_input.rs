@@ -239,46 +239,48 @@ impl KeystrokeInput {
     fn on_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.stop_propagation();
         let keystrokes_len = self.keystrokes.len();
 
         if self.previous_modifiers.modified()
             && event.modifiers.is_subset_of(&self.previous_modifiers)
         {
             self.previous_modifiers &= event.modifiers;
-            cx.stop_propagation();
             return;
         }
+        self.keystrokes_changed(cx);
 
         if let Some(last) = self.keystrokes.last_mut()
             && last.key.is_empty()
             && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
         {
+            if !self.search && !event.modifiers.modified() {
+                self.keystrokes.pop();
+                return;
+            }
             if self.search {
                 if self.previous_modifiers.modified() {
                     last.modifiers |= event.modifiers;
-                    self.previous_modifiers |= event.modifiers;
                 } else {
                     self.keystrokes.push(Self::dummy(event.modifiers));
-                    self.previous_modifiers |= event.modifiers;
                 }
-            } else if !event.modifiers.modified() {
-                self.keystrokes.pop();
+                self.previous_modifiers |= event.modifiers;
             } else {
                 last.modifiers = event.modifiers;
+                return;
             }
-
-            self.keystrokes_changed(cx);
         } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
             self.keystrokes.push(Self::dummy(event.modifiers));
             if self.search {
                 self.previous_modifiers |= event.modifiers;
             }
-            self.keystrokes_changed(cx);
         }
-        cx.stop_propagation();
+        if keystrokes_len >= Self::KEYSTROKE_COUNT_MAX {
+            self.clear_keystrokes(&ClearKeystrokes, window, cx);
+        }
     }
 
     fn handle_keystroke(
@@ -1296,5 +1298,25 @@ mod tests {
             .expect_keystrokes(&["ctrl-shift-alt-"])
             .send_events(&["-all", "j"])
             .expect_keystrokes(&["ctrl-shift-alt-", "j"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_repeat_modifiers(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
+            .expect_keystrokes(&["ctrl-", "alt-", "shift-"])
+            .send_events(&["+cmd"])
+            .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_not_search_repeat_modifiers(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(false)
+            .send_events(&["+ctrl", "-ctrl", "+alt", "-alt", "+shift", "-shift"])
+            .expect_empty();
     }
 }
