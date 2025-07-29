@@ -957,7 +957,8 @@ float4 paths_fragment(PathFragmentInput input): SV_Target {
 
     float4 color = gradient_color(background, input.position.xy, input.bounds,
         input.solid_color, input.color0, input.color1);
-    return color;
+    // Return premultiplied alpha for correct blending
+    return float4(color.rgb * color.a, color.a);
 }
 
 // --- path sprite --- //
