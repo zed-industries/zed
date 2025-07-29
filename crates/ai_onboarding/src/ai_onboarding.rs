@@ -1,10 +1,14 @@
+mod agent_api_keys_onboarding;
 mod agent_panel_onboarding_card;
 mod agent_panel_onboarding_content;
+mod ai_upsell_card;
 mod edit_prediction_onboarding_content;
 mod young_account_banner;
 
+pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProviders};
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
+pub use ai_upsell_card::AiUpsellCard;
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use young_account_banner::YoungAccountBanner;
 
@@ -12,8 +16,9 @@ use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
-use ui::{Divider, List, ListItem, RegisterComponent, TintColor, prelude::*};
+use ui::{Divider, List, ListItem, RegisterComponent, TintColor, Tooltip, prelude::*};
 
+#[derive(IntoElement)]
 pub struct BulletItem {
     label: SharedString,
 }
@@ -26,22 +31,32 @@ impl BulletItem {
     }
 }
 
-impl IntoElement for BulletItem {
-    type Element = AnyElement;
+impl RenderOnce for BulletItem {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let line_height = 0.85 * window.line_height();
 
-    fn into_element(self) -> Self::Element {
         ListItem::new("list-item")
             .selectable(false)
-            .start_slot(
-                Icon::new(IconName::Dash)
-                    .size(IconSize::XSmall)
-                    .color(Color::Hidden),
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Hidden),
+                        ),
+                    )
+                    .child(div().w_full().min_w_0().child(Label::new(self.label))),
             )
-            .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
 }
 
+#[derive(PartialEq)]
 pub enum SignInStatus {
     SignedIn,
     SigningIn,
@@ -69,6 +84,7 @@ pub struct ZedAiOnboarding {
     pub continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
     pub accept_terms_of_service: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub dismiss_onboarding: Option<Arc<dyn Fn(&mut Window, &mut App)>>,
 }
 
 impl ZedAiOnboarding {
@@ -80,6 +96,7 @@ impl ZedAiOnboarding {
     ) -> Self {
         let store = user_store.read(cx);
         let status = *client.status().borrow();
+
         Self {
             sign_in_status: status.into(),
             has_accepted_terms_of_service: store.current_user_has_accepted_terms().unwrap_or(false),
@@ -102,14 +119,22 @@ impl ZedAiOnboarding {
                 })
                 .detach();
             }),
+            dismiss_onboarding: None,
         }
     }
 
-    fn render_free_plan_section(&self, cx: &mut App) -> impl IntoElement {
+    pub fn with_dismiss(
+        mut self,
+        dismiss_callback: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.dismiss_onboarding = Some(Arc::new(dismiss_callback));
+        self
+    }
+
+    fn free_plan_definition(&self, cx: &mut App) -> impl IntoElement {
         v_flex()
             .mt_2()
             .gap_1()
-            .when(self.account_too_young, |this| this.opacity(0.4))
             .child(
                 h_flex()
                     .gap_2()
@@ -119,151 +144,205 @@ impl ZedAiOnboarding {
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
-                    .child(Divider::horizontal()),
-            )
-            .child(
-                List::new()
-                    .child(BulletItem::new(
-                        "50 prompts per month with the Claude models",
-                    ))
-                    .child(BulletItem::new(
-                        "2000 accepted edit predictions using our open-source Zeta model",
-                    )),
-            )
-            .child(
-                Button::new("continue", "Continue Free")
-                    .disabled(self.account_too_young)
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click({
-                        let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
-                    }),
-            )
-    }
-
-    fn render_pro_plan_section(&self, cx: &mut App) -> impl IntoElement {
-        let (button_label, button_url) = if self.account_too_young {
-            ("Start with Pro", zed_urls::upgrade_to_zed_pro_url(cx))
-        } else {
-            ("Start Pro Trial", zed_urls::account_url(cx))
-        };
-
-        v_flex()
-            .mt_2()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
                     .child(
-                        Label::new("Pro")
+                        Label::new("(Current Plan)")
                             .size(LabelSize::Small)
-                            .color(Color::Accent)
+                            .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
                             .buffer_font(cx),
                     )
                     .child(Divider::horizontal()),
             )
             .child(
                 List::new()
-                    .child(BulletItem::new("500 prompts per month with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions"))
-                    .when(!self.account_too_young, |this| {
-                        this.child(BulletItem::new(
-                            "Try it out for 14 days with no charge, no credit card required",
-                        ))
-                    }),
-            )
-            .child(
-                Button::new("pro", button_label)
-                    .full_width()
-                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(move |_, _window, cx| cx.open_url(&button_url)),
+                    .child(BulletItem::new("50 prompts per month with Claude models"))
+                    .child(BulletItem::new(
+                        "2,000 accepted edit predictions with Zeta, our open-source model",
+                    )),
             )
     }
 
-    fn render_accept_terms_of_service(&self) -> Div {
-        v_flex()
-            .w_full()
-            .gap_1()
-            .child(Headline::new("Before starting…"))
-            .child(Label::new(
-                "Make sure you have read and accepted Zed AI's terms of service.",
+    fn pro_trial_definition(&self) -> impl IntoElement {
+        List::new()
+            .child(BulletItem::new("150 prompts with Claude models"))
+            .child(BulletItem::new(
+                "Unlimited accepted edit predictions with Zeta, our open-source model",
             ))
+    }
+
+    fn pro_plan_definition(&self, cx: &mut App) -> impl IntoElement {
+        v_flex().mt_2().gap_1().map(|this| {
+            if self.account_too_young {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Label::new("Pro")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent)
+                                .buffer_font(cx),
+                        )
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    List::new()
+                        .child(BulletItem::new("500 prompts per month with Claude models"))
+                        .child(BulletItem::new(
+                            "Unlimited accepted edit predictions with Zeta, our open-source model",
+                        ))
+                        .child(BulletItem::new("$20 USD per month")),
+                )
+                .child(
+                    Button::new("pro", "Get Started")
+                        .full_width()
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(move |_, _window, cx| {
+                            telemetry::event!("Upgrade To Pro Clicked", state = "young-account");
+                            cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                        }),
+                )
+            } else {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Label::new("Pro Trial")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent)
+                                .buffer_font(cx),
+                        )
+                        .child(Divider::horizontal()),
+                )
+                .child(
+                    List::new()
+                        .child(self.pro_trial_definition())
+                        .child(BulletItem::new(
+                            "Try it out for 14 days for free, no credit card required",
+                        )),
+                )
+                .child(
+                    Button::new("pro", "Start Free Trial")
+                        .full_width()
+                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .on_click(move |_, _window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "post-sign-in");
+                            cx.open_url(&zed_urls::start_trial_url(cx))
+                        }),
+                )
+            }
+        })
+    }
+
+    fn render_accept_terms_of_service(&self) -> AnyElement {
+        v_flex()
+            .gap_1()
+            .w_full()
+            .child(Headline::new("Accept Terms of Service"))
             .child(
-                Button::new("terms_of_service", "View and Read the Terms of Service")
+                Label::new("We don’t sell your data, track you across the web, or compromise your privacy.")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(
+                Button::new("terms_of_service", "Review Terms of Service")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .icon(IconName::ArrowUpRight)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::XSmall)
                     .on_click(move |_, _window, cx| {
-                        cx.open_url("https://zed.dev/terms-of-service")
+                        telemetry::event!("Review Terms of Service Clicked");
+                        cx.open_url(&zed_urls::terms_of_service(cx))
                     }),
             )
             .child(
-                Button::new("accept_terms", "I've read it and accept it")
+                Button::new("accept_terms", "Accept")
                     .full_width()
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
-                        move |_, window, cx| (callback)(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Terms of Service Accepted");
+                            (callback)(window, cx)}
                     }),
             )
+            .into_any_element()
     }
 
-    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> Div {
-        const SIGN_IN_DISCLAIMER: &str =
-            "To start using AI in Zed with our hosted models, sign in and subscribe to a plan.";
+    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
 
         v_flex()
-            .gap_2()
+            .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
-            .child(div().w_full().child(Label::new(SIGN_IN_DISCLAIMER)))
             .child(
-                Button::new("sign_in", "Sign In with GitHub")
-                    .icon(IconName::Github)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
+                Label::new("Sign in to try Zed Pro for 14 days, no credit card required.")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
+            .child(self.pro_trial_definition())
+            .child(
+                Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click({
                         let callback = self.sign_in.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "pre-sign-in");
+                            callback(window, cx)
+                        }
                     }),
             )
+            .into_any_element()
     }
 
-    fn render_free_plan_onboarding(&self, cx: &mut App) -> Div {
-        const PLANS_DESCRIPTION: &str = "Choose how you want to start.";
+    fn render_free_plan_state(&self, cx: &mut App) -> AnyElement {
         let young_account_banner = YoungAccountBanner;
 
         v_flex()
+            .relative()
+            .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
-            .child(
-                Label::new(PLANS_DESCRIPTION)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_1()
-                    .mb_3(),
-            )
-            .when(self.account_too_young, |this| {
-                this.child(young_account_banner)
+            .map(|this| {
+                if self.account_too_young {
+                    this.child(young_account_banner)
+                } else {
+                    this.child(self.free_plan_definition(cx)).when_some(
+                        self.dismiss_onboarding.as_ref(),
+                        |this, dismiss_callback| {
+                            let callback = dismiss_callback.clone();
+
+                            this.child(
+                                h_flex().absolute().top_0().right_0().child(
+                                    IconButton::new("dismiss_onboarding", IconName::Close)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(Tooltip::text("Dismiss"))
+                                        .on_click(move |_, window, cx| {
+                                            telemetry::event!(
+                                                "Banner Dismissed",
+                                                source = "AI Onboarding",
+                                            );
+                                            callback(window, cx)
+                                        }),
+                                ),
+                            )
+                        },
+                    )
+                }
             })
-            .child(self.render_free_plan_section(cx))
-            .child(self.render_pro_plan_section(cx))
+            .child(self.pro_plan_definition(cx))
+            .into_any_element()
     }
 
-    fn render_trial_onboarding(&self, _cx: &mut App) -> Div {
+    fn render_trial_state(&self, _cx: &mut App) -> AnyElement {
         v_flex()
-            .child(Headline::new("Welcome to the trial of Zed Pro"))
+            .relative()
+            .gap_1()
+            .child(Headline::new("Welcome to the Zed Pro Trial"))
             .child(
                 Label::new("Here's what you get for the next 14 days:")
-                    .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .mt_1(),
+                    .mb_2(),
             )
             .child(
                 List::new()
@@ -272,30 +351,44 @@ impl ZedAiOnboarding {
                         "Unlimited edit predictions with Zeta, our open-source model",
                     )),
             )
-            .child(
-                Button::new("trial", "Start Trial")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click({
-                        let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
-                    }),
+            .when_some(
+                self.dismiss_onboarding.as_ref(),
+                |this, dismiss_callback| {
+                    let callback = dismiss_callback.clone();
+                    this.child(
+                        h_flex().absolute().top_0().right_0().child(
+                            IconButton::new("dismiss_onboarding", IconName::Close)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Dismiss"))
+                                .on_click(move |_, window, cx| {
+                                    telemetry::event!(
+                                        "Banner Dismissed",
+                                        source = "AI Onboarding",
+                                    );
+                                    callback(window, cx)
+                                }),
+                        ),
+                    )
+                },
             )
+            .into_any_element()
     }
 
-    fn render_pro_plan_onboarding(&self, _cx: &mut App) -> Div {
+    fn render_pro_plan_state(&self, _cx: &mut App) -> AnyElement {
         v_flex()
+            .gap_1()
             .child(Headline::new("Welcome to Zed Pro"))
             .child(
                 Label::new("Here's what you get:")
-                    .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .mt_1(),
+                    .mb_2(),
             )
             .child(
                 List::new()
                     .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("pro", "Continue with Zed Pro")
@@ -303,9 +396,13 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Outlined)
                     .on_click({
                         let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                            callback(window, cx)
+                        }
                     }),
             )
+            .into_any_element()
     }
 }
 
@@ -314,9 +411,9 @@ impl RenderOnce for ZedAiOnboarding {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             if self.has_accepted_terms_of_service {
                 match self.plan {
-                    None | Some(proto::Plan::Free) => self.render_free_plan_onboarding(cx),
-                    Some(proto::Plan::ZedProTrial) => self.render_trial_onboarding(cx),
-                    Some(proto::Plan::ZedPro) => self.render_pro_plan_onboarding(cx),
+                    None | Some(proto::Plan::Free) => self.render_free_plan_state(cx),
+                    Some(proto::Plan::ZedProTrial) => self.render_trial_state(cx),
+                    Some(proto::Plan::ZedPro) => self.render_pro_plan_state(cx),
                 }
             } else {
                 self.render_accept_terms_of_service()
@@ -339,18 +436,17 @@ impl Component for ZedAiOnboarding {
             plan: Option<proto::Plan>,
             account_too_young: bool,
         ) -> AnyElement {
-            div()
-                .w(px(800.))
-                .child(ZedAiOnboarding {
-                    sign_in_status,
-                    has_accepted_terms_of_service,
-                    plan,
-                    account_too_young,
-                    continue_with_zed_ai: Arc::new(|_, _| {}),
-                    sign_in: Arc::new(|_, _| {}),
-                    accept_terms_of_service: Arc::new(|_, _| {}),
-                })
-                .into_any_element()
+            ZedAiOnboarding {
+                sign_in_status,
+                has_accepted_terms_of_service,
+                plan,
+                account_too_young,
+                continue_with_zed_ai: Arc::new(|_, _| {}),
+                sign_in: Arc::new(|_, _| {}),
+                accept_terms_of_service: Arc::new(|_, _| {}),
+                dismiss_onboarding: None,
+            }
+            .into_any_element()
         }
 
         Some(
@@ -368,7 +464,7 @@ impl Component for ZedAiOnboarding {
                     ),
                     single_example(
                         "Account too young",
-                        onboarding(SignInStatus::SignedIn, true, None, true),
+                        onboarding(SignInStatus::SignedIn, false, None, true),
                     ),
                     single_example(
                         "Free Plan",

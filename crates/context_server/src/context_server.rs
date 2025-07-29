@@ -6,9 +6,9 @@ pub mod test;
 pub mod transport;
 pub mod types;
 
-use std::fmt::Display;
 use std::path::Path;
 use std::sync::Arc;
+use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
@@ -31,7 +31,7 @@ impl Display for ContextServerId {
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
-    pub path: String,
+    pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
 }

@@ -1,17 +1,18 @@
 mod claude;
+mod codex;
 mod gemini;
+mod mcp_server;
 mod settings;
-mod stdio_agent_server;
 
 #[cfg(test)]
 mod e2e_tests;
 
 pub use claude::*;
+pub use codex::*;
 pub use gemini::*;
 pub use settings::*;
-pub use stdio_agent_server::*;
 
-use acp_thread::AcpThread;
+use acp_thread::AgentConnection;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -20,6 +21,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::ResultExt as _;
@@ -33,14 +35,14 @@ pub trait AgentServer: Send {
     fn name(&self) -> &'static str;
     fn empty_state_headline(&self) -> &'static str;
     fn empty_state_message(&self) -> &'static str;
-    fn supports_always_allow(&self) -> bool;
 
-    fn new_thread(
+    fn connect(
         &self,
+        // these will go away when old_acp is fully removed
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>>;
+    ) -> Task<Result<Rc<dyn AgentConnection>>>;
 }
 
 impl std::fmt::Debug for AgentServerCommand {

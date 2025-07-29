@@ -111,6 +111,11 @@ jobs:
           echo "Publishing version: ${version} on release channel nightly"
           echo "nightly" > crates/zed/RELEASE_CHANNEL
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
       - name: Create macOS app bundle
         run: script/bundle-mac
 
@@ -135,6 +140,11 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -167,6 +177,11 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -261,6 +276,11 @@ jobs:
           $version = git rev-parse --short HEAD
           Write-Host "Publishing version: $version on release channel nightly"
           "nightly" | Set-Content -Path "crates/zed/RELEASE_CHANNEL"
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Build Zed installer
         working-directory: ${{ env.ZED_WORKSPACE }}

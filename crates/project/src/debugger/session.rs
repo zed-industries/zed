@@ -61,15 +61,10 @@ use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
-pub struct ThreadId(pub u64);
+pub struct ThreadId(pub i64);
 
-impl ThreadId {
-    pub const MIN: ThreadId = ThreadId(u64::MIN);
-    pub const MAX: ThreadId = ThreadId(u64::MAX);
-}
-
-impl From<u64> for ThreadId {
-    fn from(id: u64) -> Self {
+impl From<i64> for ThreadId {
+    fn from(id: i64) -> Self {
         Self(id)
     }
 }

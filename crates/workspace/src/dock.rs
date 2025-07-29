@@ -242,6 +242,7 @@ struct PanelEntry {
 
 pub struct PanelButtons {
     dock: Entity<Dock>,
+    _settings_subscription: Subscription,
 }
 
 impl Dock {
@@ -833,7 +834,11 @@ impl Render for Dock {
 impl PanelButtons {
     pub fn new(dock: Entity<Dock>, cx: &mut Context<Self>) -> Self {
         cx.observe(&dock, |_, _, cx| cx.notify()).detach();
-        Self { dock }
+        let settings_subscription = cx.observe_global::<SettingsStore>(|_, cx| cx.notify());
+        Self {
+            dock,
+            _settings_subscription: settings_subscription,
+        }
     }
 }
 
@@ -929,6 +934,10 @@ impl Render for PanelButtons {
 
         h_flex()
             .gap_1()
+            .when(
+                has_buttons && dock.position == DockPosition::Bottom,
+                |this| this.child(Divider::vertical().color(DividerColor::Border)),
+            )
             .children(buttons)
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))

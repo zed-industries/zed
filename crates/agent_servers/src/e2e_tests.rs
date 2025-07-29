@@ -1,10 +1,13 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
-use acp_thread::{
-    AcpThread, AgentThreadEntry, ToolCall, ToolCallConfirmation, ToolCallContent, ToolCallStatus,
-};
-use agentic_coding_protocol as acp;
+use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
+use agent_client_protocol as acp;
+
 use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{Entity, TestAppContext};
 use indoc::indoc;
@@ -54,19 +57,25 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
     thread
         .update(cx, |thread, cx| {
             thread.send(
-                acp::SendUserMessageParams {
-                    chunks: vec![
-                        acp::UserMessageChunk::Text {
-                            text: "Read the file ".into(),
-                        },
-                        acp::UserMessageChunk::Path {
-                            path: Path::new("foo.rs").into(),
-                        },
-                        acp::UserMessageChunk::Text {
-                            text: " and tell me what the content of the println! is".into(),
-                        },
-                    ],
-                },
+                vec![
+                    acp::ContentBlock::Text(acp::TextContent {
+                        text: "Read the file ".into(),
+                        annotations: None,
+                    }),
+                    acp::ContentBlock::ResourceLink(acp::ResourceLink {
+                        uri: "foo.rs".into(),
+                        name: "foo.rs".into(),
+                        annotations: None,
+                        description: None,
+                        mime_type: None,
+                        size: None,
+                        title: None,
+                    }),
+                    acp::ContentBlock::Text(acp::TextContent {
+                        text: " and tell me what the content of the println! is".into(),
+                        annotations: None,
+                    }),
+                ],
                 cx,
             )
         })
@@ -74,21 +83,28 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
         .unwrap();
 
     thread.read_with(cx, |thread, cx| {
-        assert_eq!(thread.entries().len(), 3);
         assert!(matches!(
             thread.entries()[0],
             AgentThreadEntry::UserMessage(_)
         ));
-        assert!(matches!(thread.entries()[1], AgentThreadEntry::ToolCall(_)));
-        let AgentThreadEntry::AssistantMessage(assistant_message) = &thread.entries()[2] else {
-            panic!("Expected AssistantMessage")
-        };
+        let assistant_message = &thread
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                AgentThreadEntry::AssistantMessage(msg) => Some(msg),
+                _ => None,
+            })
+            .unwrap();
+
         assert!(
             assistant_message.to_markdown(cx).contains("Hello, world!"),
             "unexpected assistant message: {:?}",
             assistant_message.to_markdown(cx)
         );
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
@@ -131,6 +147,7 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
 
 pub async fn test_tool_call_with_confirmation(
     server: impl AgentServer + 'static,
+    allow_option_id: acp::PermissionOptionId,
     cx: &mut TestAppContext,
 ) {
     let fs = init_test(cx).await;
@@ -161,11 +178,8 @@ pub async fn test_tool_call_with_confirmation(
     let tool_call_id = thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            status:
-                ToolCallStatus::WaitingForConfirmation {
-                    confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                    ..
-                },
+            content,
+            status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread
             .entries()
@@ -176,13 +190,18 @@ pub async fn test_tool_call_with_confirmation(
             panic!();
         };
 
-        assert!(root_command.contains("touch"));
+        assert!(content.iter().any(|c| c.to_markdown(_cx).contains("touch")));
 
-        *id
+        id.clone()
     });
 
     thread.update(cx, |thread, cx| {
-        thread.authorize_tool_call(tool_call_id, acp::ToolCallConfirmationOutcome::Allow, cx);
+        thread.authorize_tool_call(
+            tool_call_id,
+            allow_option_id,
+            acp::PermissionOptionKind::AllowOnce,
+            cx,
+        );
 
         assert!(thread.entries().iter().any(|entry| matches!(
             entry,
@@ -197,7 +216,7 @@ pub async fn test_tool_call_with_confirmation(
 
     thread.read_with(cx, |thread, cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
-            content: Some(ToolCallContent::Markdown { markdown }),
+            content,
             status: ToolCallStatus::Allowed { .. },
             ..
         }) = thread
@@ -209,13 +228,10 @@ pub async fn test_tool_call_with_confirmation(
             panic!();
         };
 
-        markdown.read_with(cx, |md, _cx| {
-            assert!(
-                md.source().contains("Hello"),
-                r#"Expected '{}' to contain "Hello""#,
-                md.source()
-            );
-        });
+        assert!(
+            content.iter().any(|c| c.to_markdown(cx).contains("Hello")),
+            "Expected content to contain 'Hello'"
+        );
     });
 }
 
@@ -249,26 +265,20 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             id,
-            status:
-                ToolCallStatus::WaitingForConfirmation {
-                    confirmation: ToolCallConfirmation::Execute { root_command, .. },
-                    ..
-                },
+            content,
+            status: ToolCallStatus::WaitingForConfirmation { .. },
             ..
         }) = &thread.entries()[first_tool_call_ix]
         else {
             panic!("{:?}", thread.entries()[1]);
         };
 
-        assert!(root_command.contains("touch"));
+        assert!(content.iter().any(|c| c.to_markdown(_cx).contains("touch")));
 
-        *id
+        id.clone()
     });
 
-    thread
-        .update(cx, |thread, cx| thread.cancel(cx))
-        .await
-        .unwrap();
+    let _ = thread.update(cx, |thread, cx| thread.cancel(cx));
     full_turn.await.unwrap();
     thread.read_with(cx, |thread, _| {
         let AgentThreadEntry::ToolCall(ToolCall {
@@ -296,7 +306,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 
 #[macro_export]
 macro_rules! common_e2e_tests {
-    ($server:expr) => {
+    ($server:expr, allow_option_id = $allow_option_id:expr) => {
         mod common_e2e {
             use super::*;
 
@@ -321,7 +331,12 @@ macro_rules! common_e2e_tests {
             #[::gpui::test]
             #[cfg_attr(not(feature = "e2e"), ignore)]
             async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
-                $crate::e2e_tests::test_tool_call_with_confirmation($server, cx).await;
+                $crate::e2e_tests::test_tool_call_with_confirmation(
+                    $server,
+                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    cx,
+                )
+                .await;
             }
 
             #[::gpui::test]
@@ -353,6 +368,9 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 gemini: Some(AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
                 }),
+                codex: Some(AgentServerSettings {
+                    command: crate::codex::tests::local_command(),
+                }),
             },
             cx,
         );
@@ -369,15 +387,16 @@ pub async fn new_test_thread(
     current_dir: impl AsRef<Path>,
     cx: &mut TestAppContext,
 ) -> Entity<AcpThread> {
-    let thread = cx
-        .update(|cx| server.new_thread(current_dir.as_ref(), &project, cx))
+    let connection = cx
+        .update(|cx| server.connect(current_dir.as_ref(), &project, cx))
         .await
         .unwrap();
 
-    thread
-        .update(cx, |thread, _| thread.initialize())
+    let thread = connection
+        .new_thread(project.clone(), current_dir.as_ref(), &mut cx.to_async())
         .await
         .unwrap();
+
     thread
 }
 
@@ -409,4 +428,25 @@ pub async fn run_until_first_tool_call(
             ix.unwrap()
         }
     }
+}
+
+pub fn get_zed_path() -> PathBuf {
+    let mut zed_path = std::env::current_exe().unwrap();
+
+    while zed_path
+        .file_name()
+        .map_or(true, |name| name.to_string_lossy() != "debug")
+    {
+        if !zed_path.pop() {
+            panic!("Could not find target directory");
+        }
+    }
+
+    zed_path.push("zed");
+
+    if !zed_path.exists() {
+        panic!("\n🚨 Run `cargo build` at least once before running e2e tests\n\n");
+    }
+
+    zed_path
 }

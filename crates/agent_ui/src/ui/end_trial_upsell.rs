@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ai_onboarding::{AgentPanelOnboardingCard, BulletItem};
 use client::zed_urls;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
-use ui::{Divider, List, prelude::*};
+use ui::{Divider, List, Tooltip, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
@@ -33,14 +33,19 @@ impl RenderOnce for EndTrialUpsell {
             )
             .child(
                 List::new()
-                    .child(BulletItem::new("500 prompts per month with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new("500 prompts with Claude models"))
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("cta-button", "Upgrade to Zed Pro")
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                    .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+                    .on_click(move |_, _window, cx| {
+                        telemetry::event!("Upgrade To Pro Clicked", state = "end-of-trial");
+                        cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                    }),
             );
 
         let free_section = v_flex()
@@ -55,37 +60,43 @@ impl RenderOnce for EndTrialUpsell {
                             .color(Color::Muted)
                             .buffer_font(cx),
                     )
+                    .child(
+                        Label::new("(Current Plan)")
+                            .size(LabelSize::Small)
+                            .color(Color::Custom(cx.theme().colors().text_muted.opacity(0.6)))
+                            .buffer_font(cx),
+                    )
                     .child(Divider::horizontal()),
             )
             .child(
                 List::new()
-                    .child(BulletItem::new(
-                        "50 prompts per month with the Claude models",
-                    ))
-                    .child(BulletItem::new(
-                        "2000 accepted edit predictions using our open-source Zeta model",
-                    )),
-            )
-            .child(
-                Button::new("dismiss-button", "Stay on Free")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click({
-                        let callback = self.dismiss_upsell.clone();
-                        move |_, window, cx| callback(window, cx)
-                    }),
+                    .child(BulletItem::new("50 prompts with the Claude models"))
+                    .child(BulletItem::new("2,000 accepted edit predictions")),
             );
 
         AgentPanelOnboardingCard::new()
-            .child(Headline::new("Your Zed Pro trial has expired."))
+            .child(Headline::new("Your Zed Pro Trial has expired"))
             .child(
                 Label::new("You've been automatically reset to the Free plan.")
-                    .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .mb_1(),
+                    .mb_2(),
             )
             .child(pro_section)
             .child(free_section)
+            .child(
+                h_flex().absolute().top_4().right_4().child(
+                    IconButton::new("dismiss_onboarding", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click({
+                            let callback = self.dismiss_upsell.clone();
+                            move |_, window, cx| {
+                                telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                                callback(window, cx)
+                            }
+                        }),
+                ),
+            )
     }
 }
 
