@@ -166,6 +166,7 @@ pub struct ToolCall {
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
+    pub raw_input: Option<serde_json::Value>,
 }
 
 impl ToolCall {
@@ -193,6 +194,50 @@ impl ToolCall {
                 .collect(),
             locations: tool_call.locations,
             status,
+            raw_input: tool_call.raw_input,
+        }
+    }
+
+    fn update(
+        &mut self,
+        fields: acp::ToolCallUpdateFields,
+        language_registry: Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) {
+        let acp::ToolCallUpdateFields {
+            kind,
+            status,
+            label,
+            content,
+            locations,
+            raw_input,
+        } = fields;
+
+        if let Some(kind) = kind {
+            self.kind = kind;
+        }
+
+        if let Some(status) = status {
+            self.status = ToolCallStatus::Allowed { status };
+        }
+
+        if let Some(label) = label {
+            self.label = cx.new(|cx| Markdown::new_text(label.into(), cx));
+        }
+
+        if let Some(content) = content {
+            self.content = content
+                .into_iter()
+                .map(|chunk| ToolCallContent::from_acp(chunk, language_registry.clone(), cx))
+                .collect();
+        }
+
+        if let Some(locations) = locations {
+            self.locations = locations;
+        }
+
+        if let Some(raw_input) = raw_input {
+            self.raw_input = Some(raw_input);
         }
     }
 
@@ -238,6 +283,7 @@ impl Display for ToolCallStatus {
             match self {
                 ToolCallStatus::WaitingForConfirmation { .. } => "Waiting for confirmation",
                 ToolCallStatus::Allowed { status } => match status {
+                    acp::ToolCallStatus::Pending => "Pending",
                     acp::ToolCallStatus::InProgress => "In Progress",
                     acp::ToolCallStatus::Completed => "Completed",
                     acp::ToolCallStatus::Failed => "Failed",
@@ -345,7 +391,7 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::ContentBlock { content } => Self::ContentBlock {
+            acp::ToolCallContent::ContentBlock(content) => Self::ContentBlock {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
@@ -630,12 +676,50 @@ impl AcpThread {
         false
     }
 
-    pub fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
-        self.entries.push(entry);
-        cx.emit(AcpThreadEvent::NewEntry);
+    pub fn handle_session_update(
+        &mut self,
+        update: acp::SessionUpdate,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        match update {
+            acp::SessionUpdate::UserMessage(content_block) => {
+                self.push_user_content_block(content_block, cx);
+            }
+            acp::SessionUpdate::AgentMessageChunk(content_block) => {
+                self.push_assistant_content_block(content_block, false, cx);
+            }
+            acp::SessionUpdate::AgentThoughtChunk(content_block) => {
+                self.push_assistant_content_block(content_block, true, cx);
+            }
+            acp::SessionUpdate::ToolCall(tool_call) => {
+                self.upsert_tool_call(tool_call, cx);
+            }
+            acp::SessionUpdate::ToolCallUpdate(tool_call_update) => {
+                self.update_tool_call(tool_call_update, cx)?;
+            }
+            acp::SessionUpdate::Plan(plan) => {
+                self.update_plan(plan, cx);
+            }
+        }
+        Ok(())
     }
 
-    pub fn push_assistant_chunk(
+    pub fn push_user_content_block(&mut self, chunk: acp::ContentBlock, cx: &mut Context<Self>) {
+        let language_registry = self.project.read(cx).languages().clone();
+        let entries_len = self.entries.len();
+
+        if let Some(last_entry) = self.entries.last_mut()
+            && let AgentThreadEntry::UserMessage(UserMessage { content }) = last_entry
+        {
+            content.append(chunk, &language_registry, cx);
+            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+        } else {
+            let content = ContentBlock::new(chunk, &language_registry, cx);
+            self.push_entry(AgentThreadEntry::UserMessage(UserMessage { content }), cx);
+        }
+    }
+
+    pub fn push_assistant_content_block(
         &mut self,
         chunk: acp::ContentBlock,
         is_thought: bool,
@@ -678,23 +762,22 @@ impl AcpThread {
         }
     }
 
+    fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+        self.entries.push(entry);
+        cx.emit(AcpThreadEvent::NewEntry);
+    }
+
     pub fn update_tool_call(
         &mut self,
-        id: acp::ToolCallId,
-        status: acp::ToolCallStatus,
-        content: Option<Vec<acp::ToolCallContent>>,
+        update: acp::ToolCallUpdate,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let languages = self.project.read(cx).languages().clone();
-        let (ix, current_call) = self.tool_call_mut(&id).context("Tool call not found")?;
 
-        if let Some(content) = content {
-            current_call.content = content
-                .into_iter()
-                .map(|chunk| ToolCallContent::from_acp(chunk, languages.clone(), cx))
-                .collect();
-        }
-        current_call.status = ToolCallStatus::Allowed { status };
+        let (ix, current_call) = self
+            .tool_call_mut(&update.id)
+            .context("Tool call not found")?;
+        current_call.update(update.fields, languages, cx);
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
@@ -751,6 +834,37 @@ impl AcpThread {
             })
     }
 
+    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
+        self.project.update(cx, |project, cx| {
+            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
+                return;
+            };
+            let buffer = project.open_buffer(path, cx);
+            cx.spawn(async move |project, cx| {
+                let buffer = buffer.await?;
+
+                project.update(cx, |project, cx| {
+                    let position = if let Some(line) = location.line {
+                        let snapshot = buffer.read(cx).snapshot();
+                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
+                        snapshot.anchor_before(point)
+                    } else {
+                        Anchor::MIN
+                    };
+
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position,
+                        }),
+                        cx,
+                    );
+                })
+            })
+            .detach_and_log_err(cx);
+        });
+    }
+
     pub fn request_tool_call_permission(
         &mut self,
         tool_call: acp::ToolCall,
@@ -801,6 +915,25 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
+    /// Returns true if the last turn is awaiting tool authorization
+    pub fn waiting_for_tool_confirmation(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match &entry {
+                AgentThreadEntry::ToolCall(call) => match call.status {
+                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
+                    ToolCallStatus::Allowed { .. }
+                    | ToolCallStatus::Rejected
+                    | ToolCallStatus::Canceled => continue,
+                },
+                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
+                    // Reached the beginning of the turn
+                    return false;
+                }
+            }
+        }
+        false
+    }
+
     pub fn plan(&self) -> &Plan {
         &self.plan
     }
@@ -822,56 +955,6 @@ impl AcpThread {
             .entries
             .retain(|entry| !matches!(entry.status, acp::PlanEntryStatus::Completed));
         cx.notify();
-    }
-
-    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
-                return;
-            };
-            let buffer = project.open_buffer(path, cx);
-            cx.spawn(async move |project, cx| {
-                let buffer = buffer.await?;
-
-                project.update(cx, |project, cx| {
-                    let position = if let Some(line) = location.line {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
-                        snapshot.anchor_before(point)
-                    } else {
-                        Anchor::MIN
-                    };
-
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })
-            })
-            .detach_and_log_err(cx);
-        });
-    }
-
-    /// Returns true if the last turn is awaiting tool authorization
-    pub fn waiting_for_tool_confirmation(&self) -> bool {
-        for entry in self.entries.iter().rev() {
-            match &entry {
-                AgentThreadEntry::ToolCall(call) => match call.status {
-                    ToolCallStatus::WaitingForConfirmation { .. } => return true,
-                    ToolCallStatus::Allowed { .. }
-                    | ToolCallStatus::Rejected
-                    | ToolCallStatus::Canceled => continue,
-                },
-                AgentThreadEntry::UserMessage(_) | AgentThreadEntry::AssistantMessage(_) => {
-                    // Reached the beginning of the turn
-                    return false;
-                }
-            }
-        }
-        false
     }
 
     pub fn authenticate(&self, cx: &mut App) -> impl use<> + Future<Output = Result<()>> {
@@ -919,7 +1002,7 @@ impl AcpThread {
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
-                            acp::PromptToolArguments {
+                            acp::PromptArguments {
                                 prompt: message,
                                 session_id: this.session_id.clone(),
                             },
@@ -1148,7 +1231,87 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_thinking_concatenation(cx: &mut TestAppContext) {
+    async fn test_push_user_content_block(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (thread, _fake_server) = fake_acp_thread(project, cx);
+
+        // Test creating a new user message
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "Hello, ".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
+            } else {
+                panic!("Expected UserMessage");
+            }
+        });
+
+        // Test appending to existing user message
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "world!".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
+            } else {
+                panic!("Expected UserMessage");
+            }
+        });
+
+        // Test creating new user message after assistant message
+        thread.update(cx, |thread, cx| {
+            thread.push_assistant_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "Assistant response".to_string(),
+                }),
+                false,
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block(
+                acp::ContentBlock::Text(acp::TextContent {
+                    annotations: None,
+                    text: "New user message".to_string(),
+                }),
+                cx,
+            );
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 3);
+            if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
+                assert_eq!(user_msg.content.to_markdown(cx), "New user message");
+            } else {
+                panic!("Expected UserMessage at index 2");
+            }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_thinking_concatenation(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -1434,6 +1597,7 @@ mod tests {
                 name: "test",
                 connection,
                 child_status: io_task,
+                current_thread: thread_rc,
             };
 
             AcpThread::new(

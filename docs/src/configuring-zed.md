@@ -3390,7 +3390,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Agent
 
-Visit [the Configuration page](/ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Outline Panel
 

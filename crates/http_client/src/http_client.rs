@@ -4,6 +4,7 @@ pub mod github;
 pub use anyhow::{Result, anyhow};
 pub use async_body::{AsyncBody, Inner};
 use derive_more::Deref;
+use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
@@ -38,6 +39,8 @@ impl HttpRequestExt for http::request::Builder {
 
 pub trait HttpClient: 'static + Send + Sync {
     fn type_name(&self) -> &'static str;
+
+    fn user_agent(&self) -> Option<&HeaderValue>;
 
     fn send(
         &self,
@@ -118,6 +121,10 @@ impl HttpClient for HttpClientWithProxy {
         self.client.send(req)
     }
 
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.client.user_agent()
+    }
+
     fn proxy(&self) -> Option<&Url> {
         self.proxy.as_ref()
     }
@@ -133,6 +140,10 @@ impl HttpClient for Arc<HttpClientWithProxy> {
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
+    }
+
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.client.user_agent()
     }
 
     fn proxy(&self) -> Option<&Url> {
@@ -250,6 +261,10 @@ impl HttpClient for Arc<HttpClientWithUrl> {
         self.client.send(req)
     }
 
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.client.user_agent()
+    }
+
     fn proxy(&self) -> Option<&Url> {
         self.client.proxy.as_ref()
     }
@@ -265,6 +280,10 @@ impl HttpClient for HttpClientWithUrl {
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         self.client.send(req)
+    }
+
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.client.user_agent()
     }
 
     fn proxy(&self) -> Option<&Url> {
@@ -314,6 +333,10 @@ impl HttpClient for BlockedHttpClient {
         })
     }
 
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        None
+    }
+
     fn proxy(&self) -> Option<&Url> {
         None
     }
@@ -334,6 +357,7 @@ type FakeHttpHandler = Box<
 #[cfg(feature = "test-support")]
 pub struct FakeHttpClient {
     handler: FakeHttpHandler,
+    user_agent: HeaderValue,
 }
 
 #[cfg(feature = "test-support")]
@@ -348,6 +372,7 @@ impl FakeHttpClient {
             client: HttpClientWithProxy {
                 client: Arc::new(Self {
                     handler: Box::new(move |req| Box::pin(handler(req))),
+                    user_agent: HeaderValue::from_static(type_name::<Self>()),
                 }),
                 proxy: None,
             },
@@ -388,6 +413,10 @@ impl HttpClient for FakeHttpClient {
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let future = (self.handler)(req);
         future
+    }
+
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        Some(&self.user_agent)
     }
 
     fn proxy(&self) -> Option<&Url> {

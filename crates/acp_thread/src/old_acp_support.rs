@@ -7,8 +7,9 @@ use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
 use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
 use ui::App;
+use util::ResultExt as _;
 
-use crate::{AcpThread, AcpThreadEvent, AgentConnection, ToolCallContent, ToolCallStatus};
+use crate::{AcpThread, AgentConnection};
 
 #[derive(Clone)]
 pub struct OldAcpClientDelegate {
@@ -40,13 +41,13 @@ impl acp_old::Client for OldAcpClientDelegate {
                 .borrow()
                 .update(cx, |thread, cx| match params.chunk {
                     acp_old::AssistantMessageChunk::Text { text } => {
-                        thread.push_assistant_chunk(text.into(), false, cx)
+                        thread.push_assistant_content_block(text.into(), false, cx)
                     }
                     acp_old::AssistantMessageChunk::Thought { thought } => {
-                        thread.push_assistant_chunk(thought.into(), true, cx)
+                        thread.push_assistant_content_block(thought.into(), true, cx)
                     }
                 })
-                .ok();
+                .log_err();
         })?;
 
         Ok(())
@@ -182,31 +183,23 @@ impl acp_old::Client for OldAcpClientDelegate {
 
         cx.update(|cx| {
             self.thread.borrow().update(cx, |thread, cx| {
-                let languages = thread.project.read(cx).languages().clone();
-
-                if let Some((ix, tool_call)) = thread
-                    .tool_call_mut(&acp::ToolCallId(request.tool_call_id.0.to_string().into()))
-                {
-                    tool_call.status = ToolCallStatus::Allowed {
-                        status: into_new_tool_call_status(request.status),
-                    };
-                    tool_call.content = request
-                        .content
-                        .into_iter()
-                        .map(|content| {
-                            ToolCallContent::from_acp(
-                                into_new_tool_call_content(content),
-                                languages.clone(),
-                                cx,
-                            )
-                        })
-                        .collect();
-
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                    anyhow::Ok(())
-                } else {
-                    anyhow::bail!("Tool call not found")
-                }
+                thread.update_tool_call(
+                    acp::ToolCallUpdate {
+                        id: acp::ToolCallId(request.tool_call_id.0.to_string().into()),
+                        fields: acp::ToolCallUpdateFields {
+                            status: Some(into_new_tool_call_status(request.status)),
+                            content: Some(
+                                request
+                                    .content
+                                    .into_iter()
+                                    .map(into_new_tool_call_content)
+                                    .collect::<Vec<_>>(),
+                            ),
+                            ..Default::default()
+                        },
+                    },
+                    cx,
+                )
             })
         })?
         .context("Failed to update thread")??;
@@ -285,6 +278,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .into_iter()
             .map(into_new_tool_call_location)
             .collect(),
+        raw_input: None,
     }
 }
 
@@ -311,12 +305,7 @@ fn into_new_tool_call_status(status: acp_old::ToolCallStatus) -> acp::ToolCallSt
 
 fn into_new_tool_call_content(content: acp_old::ToolCallContent) -> acp::ToolCallContent {
     match content {
-        acp_old::ToolCallContent::Markdown { markdown } => acp::ToolCallContent::ContentBlock {
-            content: acp::ContentBlock::Text(acp::TextContent {
-                annotations: None,
-                text: markdown,
-            }),
-        },
+        acp_old::ToolCallContent::Markdown { markdown } => markdown.into(),
         acp_old::ToolCallContent::Diff { diff } => acp::ToolCallContent::Diff {
             diff: into_new_diff(diff),
         },
@@ -376,6 +365,7 @@ pub struct OldAcpAgentConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
+    pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -395,6 +385,7 @@ impl AgentConnection for OldAcpAgentConnection {
             }
             .into_any(),
         );
+        let current_thread = self.current_thread.clone();
         cx.spawn(async move |cx| {
             let result = task.await?;
             let result = acp_old::InitializeParams::response_from_any(result)?;
@@ -408,6 +399,7 @@ impl AgentConnection for OldAcpAgentConnection {
                     let session_id = acp::SessionId("acp-old-no-id".into());
                     AcpThread::new(self.clone(), project, session_id, cx)
                 });
+                current_thread.replace(thread.downgrade());
                 thread
             })
         })
@@ -423,7 +415,7 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
         let chunks = params
             .prompt
             .into_iter()
