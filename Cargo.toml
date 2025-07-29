@@ -29,6 +29,7 @@ members = [
     "crates/cli",
     "crates/client",
     "crates/clock",
+    "crates/cloud_llm_client",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
@@ -70,7 +71,6 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
-
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -251,6 +251,7 @@ channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
+cloud_llm_client = { path = "crates/cloud_llm_client" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
