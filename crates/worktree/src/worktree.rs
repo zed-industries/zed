@@ -2802,9 +2802,11 @@ impl LocalSnapshot {
         } else {
             IgnoreStack::none()
         };
+        dbg!(&abs_path, &repo_root);
         ignore_stack.repo_root = repo_root;
         for (parent_abs_path, ignore) in new_ignores.into_iter().rev() {
             if ignore_stack.is_abs_path_ignored(parent_abs_path, true) {
+                dbg!("ALL");
                 ignore_stack = IgnoreStack::all();
                 break;
             } else if let Some(ignore) = ignore {
@@ -2813,6 +2815,7 @@ impl LocalSnapshot {
         }
 
         if ignore_stack.is_abs_path_ignored(abs_path, is_dir) {
+            dbg!("ALL");
             ignore_stack = IgnoreStack::all();
         }
 
@@ -4365,14 +4368,23 @@ impl BackgroundScanner {
         swap_to_front(&mut child_paths, *GITIGNORE);
         swap_to_front(&mut child_paths, *DOT_GIT);
 
+        if let Some(path) = child_paths.first()
+            && path == *DOT_GIT
+        {
+            ignore_stack.repo_root = Some(job.abs_path.clone());
+        }
+
+        // Since we check for the presence of .git first, we can register this
+        // directory as a repo root on the ignore stack before we call is_abs_path_ignored below.
         let mut repo_root = None;
+        dbg!("------");
         for child_abs_path in child_paths {
+            dbg!(&child_abs_path);
             let child_abs_path: Arc<Path> = child_abs_path.into();
             let child_name = child_abs_path.file_name().unwrap();
             let child_path: Arc<Path> = job.path.join(child_name).into();
 
             if child_name == *DOT_GIT {
-                repo_root = Some(child_abs_path.clone());
                 let mut state = self.state.lock();
                 state.insert_git_repository(
                     child_path.clone(),
@@ -4384,9 +4396,6 @@ impl BackgroundScanner {
                     Ok(ignore) => {
                         let ignore = Arc::new(ignore);
                         ignore_stack = ignore_stack.append(job.abs_path.clone(), ignore.clone());
-                        if let Some(repo_root) = repo_root.clone() {
-                            ignore_stack.repo_root = Some(repo_root);
-                        }
                         new_ignore = Some(ignore);
                     }
                     Err(error) => {
@@ -4469,6 +4478,7 @@ impl BackgroundScanner {
                         path: child_path,
                         is_external: child_entry.is_external,
                         ignore_stack: if child_entry.is_ignored {
+                            dbg!("ALL");
                             IgnoreStack::all()
                         } else {
                             ignore_stack.clone()
@@ -4801,13 +4811,20 @@ impl BackgroundScanner {
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
 
+        if snapshot.entry_for_path(path.join(*DOT_GIT)).is_some() {
+            dbg!("HERE");
+            ignore_stack.repo_root = Some(job.abs_path.join(*DOT_GIT).into());
+        }
+
         for mut entry in snapshot.child_entries(path).cloned() {
+            dbg!(&path);
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot.abs_path().join(&entry.path).into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
 
             if entry.is_dir() {
                 let child_ignore_stack = if entry.is_ignored {
+                    dbg!("ALL");
                     IgnoreStack::all()
                 } else {
                     ignore_stack.clone()
