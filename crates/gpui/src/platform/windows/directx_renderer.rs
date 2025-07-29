@@ -191,18 +191,28 @@ impl DirectXRenderer {
 
     fn handle_device_lost(&mut self) -> Result<()> {
         unsafe {
-            ManuallyDrop::drop(&mut self.devices);
+            #[cfg(debug_assertions)]
+            report_live_objects(&self.devices.device)
+                .context("Failed to report live objects after device lost")
+                .log_err();
+
             ManuallyDrop::drop(&mut self.resources);
+            self.devices.device_context.OMSetRenderTargets(None, None);
+            self.devices.device_context.ClearState();
+            self.devices.device_context.Flush();
+
+            #[cfg(debug_assertions)]
+            report_live_objects(&self.devices.device)
+                .context("Failed to report live objects after device lost")
+                .log_err();
+
+            ManuallyDrop::drop(&mut self.devices);
             #[cfg(not(feature = "enable-renderdoc"))]
             ManuallyDrop::drop(&mut self._direct_composition);
         }
+
         let devices =
             ManuallyDrop::new(DirectXDevices::new().context("Recreating DirectX devices")?);
-        unsafe {
-            devices.device_context.OMSetRenderTargets(None, None);
-            devices.device_context.ClearState();
-            devices.device_context.Flush();
-        }
         #[cfg(not(feature = "enable-renderdoc"))]
         let resources =
             DirectXResources::new(&devices, self.resources.width, self.resources.height)?;
@@ -908,6 +918,8 @@ struct PathSprite {
 
 impl Drop for DirectXRenderer {
     fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        report_live_objects(&self.devices.device).ok();
         unsafe {
             ManuallyDrop::drop(&mut self.devices);
             ManuallyDrop::drop(&mut self.resources);
@@ -1348,6 +1360,17 @@ fn set_pipeline_state(
         device_context.PSSetConstantBuffers(0, Some(global_params));
         device_context.OMSetBlendState(blend_state, None, 0xFFFFFFFF);
     }
+}
+
+#[cfg(debug_assertions)]
+fn report_live_objects(device: &ID3D11Device) -> Result<()> {
+    use windows::core::Interface;
+
+    let debug_device: ID3D11Debug = device.cast()?;
+    unsafe {
+        debug_device.ReportLiveDeviceObjects(D3D11_RLDO_DETAIL)?;
+    }
+    Ok(())
 }
 
 const BUFFER_COUNT: usize = 3;
