@@ -9226,6 +9226,7 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
+ "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -11028,6 +11029,7 @@ dependencies = [
  "ui",
  "workspace",
  "workspace-hack",
+ "zed_actions",
 ]
 
 [[package]]

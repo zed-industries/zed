@@ -216,7 +216,12 @@ pub trait Tool: 'static + Send + Sync {
 
     /// Returns true if the tool needs the users's confirmation
     /// before having permission to run.
-    fn needs_confirmation(&self, input: &serde_json::Value, cx: &App) -> bool;
+    fn needs_confirmation(
+        &self,
+        input: &serde_json::Value,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> bool;
 
     /// Returns true if the tool may perform edits.
     fn may_perform_edits(&self) -> bool;
