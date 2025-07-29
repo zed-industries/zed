@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use util::ResultExt as _;
 
-/// Subset of `workspace::AppState` needed by current uses of headless Zed, with additional fields.
-pub struct HeadlessAppState {
+/// Headless subset of `workspace::AppState`.
+pub struct ZetaCliAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
@@ -25,7 +25,7 @@ pub struct HeadlessAppState {
     pub node_runtime: NodeRuntime,
 }
 
-pub fn init(cx: &mut App) -> HeadlessAppState {
+pub fn init(cx: &mut App) -> ZetaCliAppState {
     release_channel::init(SemanticVersion::default(), cx);
     gpui_tokio::init(cx);
 
@@ -116,7 +116,7 @@ pub fn init(cx: &mut App) -> HeadlessAppState {
     prompt_store::init(cx);
     terminal_view::init(cx);
 
-    HeadlessAppState {
+    ZetaCliAppState {
         languages,
         client,
         user_store,
