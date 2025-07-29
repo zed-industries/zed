@@ -1,6 +1,7 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint2 _global_pad;
+    uint premultiplied_alpha;
+    uint _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -256,7 +257,7 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds, 
+float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
                                       TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
     float2 transformed = mul(position, transformation.rotation_scale) + transformation.translation;
@@ -970,7 +971,7 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     Underline underline = underlines[underline_id];
     float4 device_position = to_device_position(unit_vertex, underline.bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds, 
+    float4 clip_distance = distance_from_clip_rect(unit_vertex, underline.bounds,
                                                     underline.content_mask);
     float4 color = hsla_to_rgba(underline.color);
 
@@ -1031,6 +1032,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
 };
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
@@ -1052,11 +1054,21 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     return output;
 }
 
+float4 blend_color(float4 color, float alpha_factor) {
+    float alpha = color.a * alpha_factor;
+    float multiplier = premultiplied_alpha != 0 ? alpha : 1.0;
+    return float4(color.rgb * multiplier, alpha);
+}
+
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float4 color = input.color;
-    color.a *= sample.a;
+    color.a *= sample;
     return color;
+    // if (any(input.clip_distance < 0.0)) {
+    //     return float4(0.0, 0.0, 0.0, 0.0);
+    // }
+    // return blend_color(input.color, sample);
 }
 
 /*

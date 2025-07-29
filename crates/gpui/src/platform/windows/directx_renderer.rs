@@ -149,6 +149,11 @@ impl DirectXRenderer {
     }
 
     fn pre_draw(&self) -> Result<()> {
+        #[cfg(not(feature = "enable-renderdoc"))]
+        let premultiplied_alpha = 1;
+        #[cfg(feature = "enable-renderdoc")]
+        let premultiplied_alpha = 0;
+
         update_buffer(
             &self.devices.device_context,
             self.globals.global_params_buffer[0].as_ref().unwrap(),
@@ -157,6 +162,7 @@ impl DirectXRenderer {
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
+                premultiplied_alpha,
                 ..Default::default()
             }],
         )?;
@@ -667,7 +673,8 @@ impl DirectXGlobalElements {
 #[repr(C)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    _pad: u64,
+    premultiplied_alpha: u32,
+    _pad: u32,
 }
 
 struct PipelineState<T> {
@@ -1093,7 +1100,7 @@ fn create_swap_chain(
         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
         Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
+        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,
     };
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
@@ -1262,7 +1269,7 @@ fn create_blend_state(device: &ID3D11Device) -> Result<ID3D11BlendState> {
     desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
     desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+    desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
     desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
     unsafe {
         let mut state = None;
