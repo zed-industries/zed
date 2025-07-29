@@ -3032,6 +3032,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud_llm_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum 0.27.1",
+ "uuid",
+]
+
+[[package]]
 name = "clru"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
