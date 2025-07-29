@@ -40,6 +40,7 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
+use presentation_mode_selector::presentation_mode_selector_button;
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
@@ -356,6 +357,8 @@ pub fn initialize_workspace(
             window,
             cx,
         );
+        let presentation_mode_button =
+            cx.new(|_| presentation_mode_selector_button::PresentationModeSelectorButton::new());
         let active_buffer_language =
             cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
@@ -379,6 +382,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(lsp_tool, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
+            status_bar.add_left_item(presentation_mode_button, window, cx);
             status_bar.add_right_item(edit_prediction_button, window, cx);
             status_bar.add_right_item(active_buffer_language, window, cx);
             status_bar.add_right_item(active_toolchain_language, window, cx);

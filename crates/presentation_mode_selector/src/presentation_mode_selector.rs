@@ -8,10 +8,11 @@ use settings::{Settings, SettingsStore};
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use workspace::{ModalView, Workspace};
-mod presentation_mode_settings;
+pub mod presentation_mode_selector_button;
 use presentation_mode_settings::{
     ActivePresentationMode, PresentationMode, PresentationModeSettings,
 };
+mod presentation_mode_settings;
 
 pub fn init(cx: &mut App) {
     PresentationModeSettings::register(cx);
