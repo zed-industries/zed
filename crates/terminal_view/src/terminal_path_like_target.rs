@@ -1,5 +1,5 @@
 use super::{HoverTarget, HoveredWord, TerminalView};
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use editor::Editor;
 use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
 use itertools::Itertools;
@@ -8,6 +8,35 @@ use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{ResultExt, debug_panic, paths::PathWithPosition};
 use workspace::{OpenOptions, OpenVisible, Workspace};
+
+#[derive(Debug, Clone)]
+enum OpenTarget {
+    Worktree(PathWithPosition, Entry),
+    File(PathWithPosition, Metadata),
+}
+
+impl OpenTarget {
+    fn is_file(&self) -> bool {
+        match self {
+            OpenTarget::Worktree(_, entry) => entry.is_file(),
+            OpenTarget::File(_, metadata) => !metadata.is_dir,
+        }
+    }
+
+    fn is_dir(&self) -> bool {
+        match self {
+            OpenTarget::Worktree(_, entry) => entry.is_dir(),
+            OpenTarget::File(_, metadata) => metadata.is_dir,
+        }
+    }
+
+    fn path(&self) -> &PathWithPosition {
+        match self {
+            OpenTarget::Worktree(path, _) => path,
+            OpenTarget::File(path, _) => path,
+        }
+    }
+}
 
 pub(super) fn hover_path_like_target(
     workspace: &WeakEntity<Workspace>,
@@ -37,119 +66,6 @@ pub(super) fn hover_path_like_target(
             })
             .ok();
     })
-}
-
-pub(super) fn open_path_like_target(
-    workspace: &WeakEntity<Workspace>,
-    terminal_view: &mut TerminalView,
-    path_like_target: &PathLikeTarget,
-    window: &mut Window,
-    cx: &mut Context<TerminalView>,
-) {
-    if terminal_view.hover.is_none() {
-        return;
-    }
-    let workspace = workspace.clone();
-    let path_like_target = path_like_target.clone();
-    cx.spawn_in(window, async move |terminal_view, cx| {
-        let open_target = terminal_view
-            .update(cx, |_, cx| {
-                possible_open_target(
-                    &workspace,
-                    &path_like_target.terminal_dir,
-                    &path_like_target.maybe_path,
-                    cx,
-                )
-            })?
-            .await;
-        if let Some(open_target) = open_target {
-            let path_to_open = open_target.path();
-            let opened_items = workspace
-                .update_in(cx, |workspace, window, cx| {
-                    workspace.open_paths(
-                        vec![path_to_open.path.clone()],
-                        OpenOptions {
-                            visible: Some(OpenVisible::OnlyDirectories),
-                            ..Default::default()
-                        },
-                        None,
-                        window,
-                        cx,
-                    )
-                })
-                .context("workspace update")?
-                .await;
-            if opened_items.len() != 1 {
-                debug_panic!(
-                    "Received {} items for one path {path_to_open:?}",
-                    opened_items.len(),
-                );
-            }
-
-            if let Some(opened_item) = opened_items.first() {
-                if open_target.is_file() {
-                    if let Some(Ok(opened_item)) = opened_item {
-                        if let Some(row) = path_to_open.row {
-                            let col = path_to_open.column.unwrap_or(0);
-                            if let Some(active_editor) = opened_item.downcast::<Editor>() {
-                                active_editor
-                                    .downgrade()
-                                    .update_in(cx, |editor, window, cx| {
-                                        editor.go_to_singleton_buffer_point(
-                                            language::Point::new(
-                                                row.saturating_sub(1),
-                                                col.saturating_sub(1),
-                                            ),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                    .log_err();
-                            }
-                        }
-                    }
-                } else if open_target.is_dir() {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.project().update(cx, |_, cx| {
-                            cx.emit(project::Event::ActivateProjectPanel);
-                        })
-                    })?;
-                }
-            }
-        }
-
-        anyhow::Ok(())
-    })
-    .detach_and_log_err(cx)
-}
-
-#[derive(Debug, Clone)]
-enum OpenTarget {
-    Worktree(PathWithPosition, Entry),
-    File(PathWithPosition, Metadata),
-}
-
-impl OpenTarget {
-    fn is_file(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry) => entry.is_file(),
-            OpenTarget::File(_, metadata) => !metadata.is_dir,
-        }
-    }
-
-    fn is_dir(&self) -> bool {
-        match self {
-            OpenTarget::Worktree(_, entry) => entry.is_dir(),
-            OpenTarget::File(_, metadata) => metadata.is_dir,
-        }
-    }
-
-    fn path(&self) -> &PathWithPosition {
-        match self {
-            OpenTarget::Worktree(path, _) => path,
-            OpenTarget::File(path, _) => path,
-        }
-    }
 }
 
 fn possible_open_target(
@@ -359,6 +275,103 @@ fn possible_open_target(
     })
 }
 
+pub(super) fn open_path_like_target(
+    workspace: &WeakEntity<Workspace>,
+    terminal_view: &mut TerminalView,
+    path_like_target: &PathLikeTarget,
+    window: &mut Window,
+    cx: &mut Context<TerminalView>,
+) {
+    possibly_open_target(workspace, terminal_view, path_like_target, window, cx)
+        .detach_and_log_err(cx)
+}
+
+fn possibly_open_target(
+    workspace: &WeakEntity<Workspace>,
+    terminal_view: &mut TerminalView,
+    path_like_target: &PathLikeTarget,
+    window: &mut Window,
+    cx: &mut Context<TerminalView>,
+) -> Task<Result<Option<OpenTarget>>> {
+    if terminal_view.hover.is_none() {
+        return Task::ready(Ok(None));
+    }
+    let workspace = workspace.clone();
+    let path_like_target = path_like_target.clone();
+    cx.spawn_in(window, async move |terminal_view, cx| {
+        let Some(open_target) = terminal_view
+            .update(cx, |_, cx| {
+                possible_open_target(
+                    &workspace,
+                    &path_like_target.terminal_dir,
+                    &path_like_target.maybe_path,
+                    cx,
+                )
+            })?
+            .await
+        else {
+            return Ok(None);
+        };
+
+        let path_to_open = open_target.path();
+        let opened_items = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_paths(
+                    vec![path_to_open.path.clone()],
+                    OpenOptions {
+                        visible: Some(OpenVisible::OnlyDirectories),
+                        ..Default::default()
+                    },
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .context("workspace update")?
+            .await;
+        if opened_items.len() != 1 {
+            debug_panic!(
+                "Received {} items for one path {path_to_open:?}",
+                opened_items.len(),
+            );
+        }
+
+        if let Some(opened_item) = opened_items.first() {
+            if open_target.is_file() {
+                if let Some(Ok(opened_item)) = opened_item {
+                    if let Some(row) = path_to_open.row {
+                        let col = path_to_open.column.unwrap_or(0);
+                        if let Some(active_editor) = opened_item.downcast::<Editor>() {
+                            active_editor
+                                .downgrade()
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.go_to_singleton_buffer_point(
+                                        language::Point::new(
+                                            row.saturating_sub(1),
+                                            col.saturating_sub(1),
+                                        ),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                    }
+                    return Ok(Some(open_target));
+                }
+            } else if open_target.is_dir() {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.project().update(cx, |_, cx| {
+                        cx.emit(project::Event::ActivateProjectPanel);
+                    })
+                })?;
+                return Ok(Some(open_target));
+            }
+        }
+        return Ok(None);
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,14 +379,16 @@ mod tests {
     use project::{Project, terminals::TerminalKind};
     use serde_json::json;
     use std::path::{Path, PathBuf};
-    use terminal::{HoveredWord, alacritty_terminal::index::Point};
+    use terminal::{HoveredWord, alacritty_terminal::index::Point as AlacPoint};
+    use ui::VisualContext;
     use util::path;
     use workspace::AppState;
 
     pub async fn init_test<'a, 'b: 'a>(
         app_cx: &'a mut TestAppContext,
         worktrees: impl IntoIterator<Item = (&'b str, serde_json::Value)>,
-    ) -> impl AsyncFnMut(HoveredWord, PathLikeTarget) -> Option<HoverTarget> {
+    ) -> impl AsyncFnMut(HoveredWord, PathLikeTarget) -> (Option<HoverTarget>, Option<OpenTarget>)
+    {
         let params = app_cx.update(AppState::test);
         app_cx.update(|cx| {
             terminal::init(cx);
@@ -404,24 +419,19 @@ mod tests {
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
 
+        let terminal_a = terminal.clone();
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {
-            TerminalView::new(
-                terminal.clone(),
-                weak_workspace,
-                None,
-                weak_project,
-                window,
-                cx,
-            )
+            TerminalView::new(terminal_a, weak_workspace, None, weak_project, window, cx)
         });
 
         async move |hovered_word: HoveredWord,
                     path_like_target: PathLikeTarget|
-                    -> Option<HoverTarget> {
+                    -> (Option<HoverTarget>, Option<OpenTarget>) {
+            let workspace_a = workspace.clone();
             terminal_view
                 .update(cx, |_, cx| {
                     hover_path_like_target(
-                        &workspace.downgrade(),
+                        &workspace_a.downgrade(),
                         hovered_word,
                         &path_like_target,
                         cx,
@@ -429,21 +439,43 @@ mod tests {
                 })
                 .await;
 
-            terminal_view.read_with(cx, |terminal_view, _| terminal_view.hover.clone())
+            let hover_target =
+                terminal_view.read_with(cx, |terminal_view, _| terminal_view.hover.clone());
+
+            let open_target = cx
+                .update_window_entity(
+                    &terminal_view,
+                    |terminal_view: &mut TerminalView, window, cx| {
+                        possibly_open_target(
+                            &workspace.downgrade(),
+                            terminal_view,
+                            &path_like_target,
+                            window,
+                            cx,
+                        )
+                    },
+                )
+                .await
+                .unwrap_or_default();
+
+            (hover_target, open_target)
         }
     }
 
     async fn test_path_like_simple(
-        test_path_like: &mut impl AsyncFnMut(HoveredWord, PathLikeTarget) -> Option<HoverTarget>,
+        test_path_like: &mut impl AsyncFnMut(
+            HoveredWord,
+            PathLikeTarget,
+        ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
         source_location: &str,
     ) {
-        let hover_target = test_path_like(
+        let (hover_target, open_target) = test_path_like(
             HoveredWord {
                 word: maybe_path.to_string(),
-                word_match: Point::default()..=Point::default(),
+                word_match: AlacPoint::default()..=AlacPoint::default(),
                 id: 0,
             },
             PathLikeTarget {
@@ -451,8 +483,9 @@ mod tests {
                 terminal_dir,
             },
         )
-        .await
-        .expect("Hover target should not be None");
+        .await;
+
+        let hover_target = hover_target.expect("Hover target should not be None");
 
         assert_eq!(
             hover_target.tooltip, tooltip,
@@ -462,26 +495,37 @@ mod tests {
             hover_target.hovered_word.word, maybe_path,
             "Hovered word mismatch\n     at {source_location}:\n"
         );
+
+        let open_target = open_target.expect("Open target should not be None");
+        let expected_path = Path::new(tooltip);
+        match open_target {
+            OpenTarget::File(path, _metadata) => {
+                assert_eq!(path.path.as_path(), expected_path);
+            }
+            OpenTarget::Worktree(path, _entry) => {
+                assert_eq!(path.path.as_path(), expected_path);
+            }
+        }
     }
 
     macro_rules! test_path_like {
-        ($test_path_like:expr, $maybe_path:expr, $tooltip:expr) => {
+        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal) => {
             test_path_like_simple(
                 &mut $test_path_like,
-                $maybe_path,
-                $tooltip,
+                path!($maybe_path),
+                path!($tooltip),
                 None,
                 &format!("{}:{}", std::file!(), std::line!()),
             )
             .await
         };
 
-        ($test_path_like:expr, $maybe_path:expr, $tooltip:expr, $cwd:expr) => {
+        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal, $cwd:literal) => {
             test_path_like_simple(
                 &mut $test_path_like,
-                $maybe_path,
-                $tooltip,
-                Some($crate::PathBuf::from($cwd)),
+                path!($maybe_path),
+                path!($tooltip),
+                Some($crate::PathBuf::from(path!($cwd))),
                 &format!("{}:{}", std::file!(), std::line!()),
             )
             .await
@@ -606,6 +650,62 @@ mod tests {
                 "lib/src/main.rs",
                 "/project/lib/src/main.rs",
                 "/project/lib/src"
+            );
+        }
+
+        // https://github.com/zed-industries/zed/issues/28339
+        #[gpui::test]
+        async fn issue_28339(cx: &mut TestAppContext) {
+            let mut test_path_like = init_test(
+                cx,
+                vec![(
+                    path!("/tmp"),
+                    json!({
+                        "issue28339": {
+                            "foo": {
+                                "bar.txt": ""
+                            },
+                        },
+                    }),
+                )],
+            )
+            .await;
+
+            macro_rules! test {
+                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
+                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
+                };
+            }
+
+            test!(
+                "foo/./bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339"
+            );
+            test!(
+                "foo/../foo/bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339"
+            );
+            test!(
+                "foo/..///foo/bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339"
+            );
+            test!(
+                "issue28339/../issue28339/foo/../foo/bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339"
+            );
+            test!(
+                "./bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339/foo"
+            );
+            test!(
+                "../foo/bar.txt",
+                "/tmp/issue28339/foo/bar.txt",
+                "/tmp/issue28339/foo"
             );
         }
     }
