@@ -549,13 +549,13 @@ impl DirectXRenderer {
             0x10DE => "NVIDIA Corporation".to_string(),
             0x1002 => "AMD Corporation".to_string(),
             0x8086 => "Intel Corporation".to_string(),
-            _ => "Unknown Vendor".to_string(),
+            id => format!("Unknown Vendor (ID: {:#X})", id),
         };
         let driver_version = match desc.VendorId {
             0x10DE => nvidia::get_driver_version(),
             0x1002 => amd::get_driver_version(),
             0x8086 => intel::get_driver_version(&self.devices.adapter),
-            _ => Err(anyhow::anyhow!("Unknown vendor detected.")),
+            id => Err(anyhow::anyhow!("Unknown vendor detected (ID: {:#X}).", id)),
         }
         .context("Failed to get gpu driver info")
         .log_err()
