@@ -940,7 +940,7 @@ mod tests {
 
     struct KeystrokeUpdateTracker {
         initial_keystrokes: Vec<Keystroke>,
-        subscriptions: Vec<Subscription>,
+        _subscription: Subscription,
         input: Entity<KeystrokeInput>,
         received_keystrokes_updated: bool,
     }
@@ -948,21 +948,21 @@ mod tests {
     impl KeystrokeUpdateTracker {
         fn new(input: Entity<KeystrokeInput>, cx: &mut VisualTestContext) -> Entity<Self> {
             cx.new(|cx| Self {
-                initial_keystrokes: input.read_with(cx, |input, cx| input.keystrokes.clone()),
-                subscriptions: vec![cx.subscribe(&input, |this: &mut Self, input, _evt, cx| {
+                initial_keystrokes: input.read_with(cx, |input, _| input.keystrokes.clone()),
+                _subscription: cx.subscribe(&input, |this: &mut Self, _, _, _| {
                     this.received_keystrokes_updated = true;
-                })],
+                }),
                 input,
                 received_keystrokes_updated: false,
             })
         }
         #[track_caller]
-        fn finish(mut this: Entity<Self>, cx: &VisualTestContext) {
+        fn finish(this: Entity<Self>, cx: &VisualTestContext) {
             let (received_keystrokes_updated, initial_keystrokes_str, updated_keystrokes_str) =
                 this.read_with(cx, |this, cx| {
                     let updated_keystrokes = this
                         .input
-                        .read_with(cx, |input, cx| input.keystrokes.clone());
+                        .read_with(cx, |input, _| input.keystrokes.clone());
                     let initial_keystrokes_str = keystrokes_str(&this.initial_keystrokes);
                     let updated_keystrokes_str = keystrokes_str(&updated_keystrokes);
                     (
