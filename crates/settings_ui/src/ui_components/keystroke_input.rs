@@ -299,18 +299,10 @@ impl KeystrokeInput {
         {
             if self.search {
                 last.key = keystroke.key.clone();
-                if close_keystroke_result == CloseKeystrokeResult::Partial
-                    && self.close_keystrokes_start.is_none()
-                {
+                if close_keystroke_result == CloseKeystrokeResult::Partial {
                     self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
                 }
-                if self.search {
-                    self.previous_modifiers = keystroke.modifiers;
-                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
-                    && keystroke.modifiers.modified()
-                {
-                    self.keystrokes.push(Self::dummy(keystroke.modifiers));
-                }
+                self.previous_modifiers = keystroke.modifiers;
                 self.keystrokes_changed(cx);
                 cx.stop_propagation();
                 return;
@@ -319,9 +311,7 @@ impl KeystrokeInput {
             }
         }
         if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-            if close_keystroke_result == CloseKeystrokeResult::Partial
-                && self.close_keystrokes_start.is_none()
-            {
+            if close_keystroke_result == CloseKeystrokeResult::Partial {
                 self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
             }
             self.keystrokes.push(keystroke.clone());
@@ -861,6 +851,7 @@ mod tests {
             self.input.update_in(&mut self.cx, |input, window, cx| {
                 input.clear_keystrokes(&ClearKeystrokes, window, cx);
             });
+            self.current_modifiers = Default::default();
             self
         }
 
@@ -891,32 +882,36 @@ mod tests {
         }
 
         /// Parses modifier change strings like "+ctrl", "-shift", "+cmd+alt"
+        #[track_caller]
         fn parse_modifier_change(&self, modifiers_str: &str) -> Modifiers {
             let mut modifiers = self.current_modifiers;
 
+            assert!(!modifiers_str.is_empty(), "Empty modifier string");
+
+            let value;
+            let split_char;
+            let remaining;
             if let Some(to_add) = modifiers_str.strip_prefix('+') {
-                // Add modifiers
-                for modifier in to_add.split('+') {
-                    match modifier {
-                        "ctrl" | "control" => modifiers.control = true,
-                        "alt" | "option" => modifiers.alt = true,
-                        "shift" => modifiers.shift = true,
-                        "cmd" | "command" => modifiers.platform = true,
-                        "fn" | "function" => modifiers.function = true,
-                        _ => panic!("Unknown modifier: {}", modifier),
-                    }
-                }
-            } else if let Some(to_remove) = modifiers_str.strip_prefix('-') {
-                // Remove modifiers
-                for modifier in to_remove.split('+') {
-                    match modifier {
-                        "ctrl" | "control" => modifiers.control = false,
-                        "alt" | "option" => modifiers.alt = false,
-                        "shift" => modifiers.shift = false,
-                        "cmd" | "command" => modifiers.platform = false,
-                        "fn" | "function" => modifiers.function = false,
-                        _ => panic!("Unknown modifier: {}", modifier),
-                    }
+                value = true;
+                split_char = '+';
+                remaining = to_add;
+            } else {
+                let to_remove = modifiers_str
+                    .strip_prefix('-')
+                    .expect("Modifier string must start with '+' or '-'");
+                value = false;
+                split_char = '-';
+                remaining = to_remove;
+            }
+
+            for modifier in remaining.split(split_char) {
+                match modifier {
+                    "ctrl" | "control" => modifiers.control = value,
+                    "alt" | "option" => modifiers.alt = value,
+                    "shift" => modifiers.shift = value,
+                    "cmd" | "command" | "platform" => modifiers.platform = value,
+                    "fn" | "function" => modifiers.function = value,
+                    _ => panic!("Unknown modifier: {}", modifier),
                 }
             }
 
@@ -1253,5 +1248,51 @@ mod tests {
             .expect_close_keystrokes(&["escape", "escape"])
             .send_keystroke("escape")
             .expect_keystrokes(&["ctrl-g", "escape"]);
+    }
+
+    #[gpui::test]
+    async fn test_search_previous_modifiers_are_sticky(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "j"])
+            .expect_keystrokes(&["ctrl-alt-j"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_can_be_entered_separately(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl", "-ctrl"])
+            .expect_keystrokes(&["ctrl-"])
+            .send_events(&["+alt", "-alt"])
+            .expect_keystrokes(&["ctrl-", "alt-"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_reset_on_key(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
+            .expect_keystrokes(&["ctrl-shift-alt-"])
+            .send_keystroke("j")
+            .expect_keystrokes(&["ctrl-shift-alt-j"])
+            .send_keystroke("i")
+            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i"])
+            .send_events(&["-shift-alt", "+cmd"])
+            .expect_keystrokes(&["ctrl-shift-alt-j", "shift-alt-i", "cmd-"]);
+    }
+
+    #[gpui::test]
+    async fn test_previous_modifiers_reset_on_release_all(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .with_search_mode(true)
+            .send_events(&["+ctrl+alt", "-ctrl", "+shift"])
+            .expect_keystrokes(&["ctrl-shift-alt-"])
+            .send_events(&["-all", "j"])
+            .expect_keystrokes(&["ctrl-shift-alt-", "j"]);
     }
 }
