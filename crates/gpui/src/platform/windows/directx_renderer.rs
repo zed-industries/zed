@@ -68,7 +68,8 @@ struct DirectXResources {
 struct DirectXRenderPipelines {
     shadow_pipeline: PipelineState<Shadow>,
     quad_pipeline: PipelineState<Quad>,
-    path_rasterization_pipeline: PathRasterizationPipelineState,
+    // path_rasterization_pipeline: PathRasterizationPipelineState,
+    path_rasterization_pipeline: PipelineState<PathRasterizationSprite>,
     path_sprite_pipeline: PipelineState<PathSprite>,
     underline_pipeline: PipelineState<Underline>,
     mono_sprites: PipelineState<MonochromeSprite>,
@@ -341,6 +342,8 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.resources.viewport,
             &self.globals.global_params_buffer,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
             shadows.len() as u32,
         )
     }
@@ -358,6 +361,8 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.resources.viewport,
             &self.globals.global_params_buffer,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
             quads.len() as u32,
         )
     }
@@ -383,35 +388,29 @@ impl DirectXRenderer {
 
         // Collect all vertices and sprites for a single draw call
         let mut vertices = Vec::new();
-        let mut sprites = Vec::new();
 
-        for (path_index, path) in paths.iter().enumerate() {
-            vertices.extend(path.vertices.iter().map(|v| DirectXPathVertex {
+        for path in paths {
+            vertices.extend(path.vertices.iter().map(|v| PathRasterizationSprite {
                 xy_position: v.xy_position,
                 st_position: v.st_position,
-                path_index: path_index as u32,
-            }));
-
-            sprites.push(PathRasterizationSprite {
-                bounds: path.bounds.intersect(&path.content_mask.bounds),
                 color: path.color,
-            });
+                bounds: path.bounds.intersect(&path.content_mask.bounds),
+            }));
         }
 
-        if !vertices.is_empty() {
-            self.pipelines.path_rasterization_pipeline.update_buffer(
-                &self.devices.device,
-                &self.devices.device_context,
-                &sprites,
-                &vertices,
-            )?;
-            self.pipelines.path_rasterization_pipeline.draw(
-                &self.devices.device_context,
-                vertices.len() as u32,
-                &self.resources.viewport,
-                &self.globals.global_params_buffer,
-            )?;
-        }
+        self.pipelines.path_rasterization_pipeline.update_buffer(
+            &self.devices.device,
+            &self.devices.device_context,
+            &vertices,
+        )?;
+        self.pipelines.path_rasterization_pipeline.draw(
+            &self.devices.device_context,
+            &self.resources.viewport,
+            &self.globals.global_params_buffer,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            vertices.len() as u32,
+            1,
+        )?;
 
         // Resolve MSAA to non-MSAA intermediate texture
         unsafe {
@@ -490,6 +489,8 @@ impl DirectXRenderer {
             &self.devices.device_context,
             &self.resources.viewport,
             &self.globals.global_params_buffer,
+            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            4,
             underlines.len() as u32,
         )
     }
@@ -655,7 +656,12 @@ impl DirectXRenderPipelines {
         let shadow_pipeline =
             PipelineState::new(device, "shadow_pipeline", ShaderModule::Shadow, 4)?;
         let quad_pipeline = PipelineState::new(device, "quad_pipeline", ShaderModule::Quad, 64)?;
-        let path_rasterization_pipeline = PathRasterizationPipelineState::new(device)?;
+        let path_rasterization_pipeline = PipelineState::new(
+            device,
+            "path_rasterization_pipeline",
+            ShaderModule::PathRasterization,
+            32,
+        )?;
         let path_sprite_pipeline =
             PipelineState::new(device, "path_sprite_pipeline", ShaderModule::PathSprite, 1)?;
         let underline_pipeline =
@@ -769,16 +775,16 @@ struct PipelineState<T> {
     _marker: std::marker::PhantomData<T>,
 }
 
-struct PathRasterizationPipelineState {
-    vertex: ID3D11VertexShader,
-    fragment: ID3D11PixelShader,
-    buffer: ID3D11Buffer,
-    buffer_size: usize,
-    view: [Option<ID3D11ShaderResourceView>; 1],
-    vertex_buffer: Option<ID3D11Buffer>,
-    vertex_buffer_size: usize,
-    input_layout: ID3D11InputLayout,
-}
+// struct PathRasterizationPipelineState {
+//     vertex: ID3D11VertexShader,
+//     fragment: ID3D11PixelShader,
+//     buffer: ID3D11Buffer,
+//     buffer_size: usize,
+//     view: [Option<ID3D11ShaderResourceView>; 1],
+//     vertex_buffer: Option<ID3D11Buffer>,
+//     vertex_buffer_size: usize,
+//     input_layout: ID3D11InputLayout,
+// }
 
 impl<T> PipelineState<T> {
     fn new(
@@ -837,19 +843,21 @@ impl<T> PipelineState<T> {
         device_context: &ID3D11DeviceContext,
         viewport: &[D3D11_VIEWPORT],
         global_params: &[Option<ID3D11Buffer>],
+        topology: D3D_PRIMITIVE_TOPOLOGY,
+        vertex_count: u32,
         instance_count: u32,
     ) -> Result<()> {
         set_pipeline_state(
             device_context,
             &self.view,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            topology,
             viewport,
             &self.vertex,
             &self.fragment,
             global_params,
         );
         unsafe {
-            device_context.DrawInstanced(4, instance_count, 0, 0);
+            device_context.DrawInstanced(vertex_count, instance_count, 0, 0);
         }
         Ok(())
     }
@@ -883,175 +891,130 @@ impl<T> PipelineState<T> {
     }
 }
 
-impl PathRasterizationPipelineState {
-    fn new(device: &ID3D11Device) -> Result<Self> {
-        let (vertex, vertex_shader) = {
-            let raw_vertex_shader =
-                RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Vertex)?;
-            (
-                create_vertex_shader(device, raw_vertex_shader.as_bytes())?,
-                raw_vertex_shader,
-            )
-        };
-        let fragment = {
-            let raw_shader =
-                RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Fragment)?;
-            create_fragment_shader(device, raw_shader.as_bytes())?
-        };
-        let buffer = create_buffer(device, std::mem::size_of::<PathRasterizationSprite>(), 32)?;
-        let view = create_buffer_view(device, &buffer)?;
-        let vertex_buffer = Some(create_buffer(
-            device,
-            std::mem::size_of::<DirectXPathVertex>(),
-            32,
-        )?);
+// impl PathRasterizationPipelineState {
+//     fn new(device: &ID3D11Device) -> Result<Self> {
+//         let (vertex, vertex_shader) = {
+//             let raw_vertex_shader =
+//                 RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Vertex)?;
+//             (
+//                 create_vertex_shader(device, raw_vertex_shader.as_bytes())?,
+//                 raw_vertex_shader,
+//             )
+//         };
+//         let fragment = {
+//             let raw_shader =
+//                 RawShaderBytes::new(ShaderModule::PathRasterization, ShaderTarget::Fragment)?;
+//             create_fragment_shader(device, raw_shader.as_bytes())?
+//         };
+//         let buffer = create_buffer(device, std::mem::size_of::<PathRasterizationSprite>(), 32)?;
+//         let view = create_buffer_view(device, &buffer)?;
+//         let vertex_buffer = Some(create_buffer(
+//             device,
+//             std::mem::size_of::<PathRasterizationSprite>(),
+//             32,
+//         )?);
 
-        let input_layout = unsafe {
-            let mut layout = None;
-            device.CreateInputLayout(
-                &[
-                    D3D11_INPUT_ELEMENT_DESC {
-                        SemanticName: windows::core::s!("POSITION"),
-                        SemanticIndex: 0,
-                        Format: DXGI_FORMAT_R32G32_FLOAT,
-                        InputSlot: 0,
-                        AlignedByteOffset: 0,
-                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                        InstanceDataStepRate: 0,
-                    },
-                    D3D11_INPUT_ELEMENT_DESC {
-                        SemanticName: windows::core::s!("TEXCOORD"),
-                        SemanticIndex: 0,
-                        Format: DXGI_FORMAT_R32G32_FLOAT,
-                        InputSlot: 0,
-                        AlignedByteOffset: 8,
-                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                        InstanceDataStepRate: 0,
-                    },
-                    D3D11_INPUT_ELEMENT_DESC {
-                        SemanticName: windows::core::s!("TEXCOORD"),
-                        SemanticIndex: 1,
-                        Format: DXGI_FORMAT_R32_UINT,
-                        InputSlot: 0,
-                        AlignedByteOffset: 16,
-                        InputSlotClass: D3D11_INPUT_PER_VERTEX_DATA,
-                        InstanceDataStepRate: 0,
-                    },
-                ],
-                vertex_shader.as_bytes(),
-                Some(&mut layout),
-            )?;
-            layout.unwrap()
-        };
+//         Ok(Self {
+//             vertex,
+//             fragment,
+//             buffer,
+//             buffer_size: 32,
+//             view,
+//             vertex_buffer,
+//             vertex_buffer_size: 32,
+//         })
+//     }
 
-        Ok(Self {
-            vertex,
-            fragment,
-            buffer,
-            buffer_size: 32,
-            view,
-            vertex_buffer,
-            vertex_buffer_size: 32,
-            input_layout,
-        })
-    }
+//     fn update_buffer(
+//         &mut self,
+//         device: &ID3D11Device,
+//         device_context: &ID3D11DeviceContext,
+//         sprites: &[PathRasterizationSprite],
+//         vertices_data: &[DirectXPathVertex],
+//     ) -> Result<()> {
+//         if self.buffer_size < sprites.len() {
+//             let new_buffer_size = sprites.len().next_power_of_two();
+//             log::info!(
+//                 "Updating Paths Pipeline buffer size from {} to {}",
+//                 self.buffer_size,
+//                 new_buffer_size
+//             );
+//             let buffer = create_buffer(
+//                 device,
+//                 std::mem::size_of::<PathRasterizationSprite>(),
+//                 new_buffer_size,
+//             )?;
+//             let view = create_buffer_view(device, &buffer)?;
+//             self.buffer = buffer;
+//             self.view = view;
+//             self.buffer_size = new_buffer_size;
+//         }
+//         update_buffer(device_context, &self.buffer, sprites)?;
 
-    fn update_buffer(
-        &mut self,
-        device: &ID3D11Device,
-        device_context: &ID3D11DeviceContext,
-        sprites: &[PathRasterizationSprite],
-        vertices_data: &[DirectXPathVertex],
-    ) -> Result<()> {
-        if self.buffer_size < sprites.len() {
-            let new_buffer_size = sprites.len().next_power_of_two();
-            log::info!(
-                "Updating Paths Pipeline buffer size from {} to {}",
-                self.buffer_size,
-                new_buffer_size
-            );
-            let buffer = create_buffer(
-                device,
-                std::mem::size_of::<PathRasterizationSprite>(),
-                new_buffer_size,
-            )?;
-            let view = create_buffer_view(device, &buffer)?;
-            self.buffer = buffer;
-            self.view = view;
-            self.buffer_size = new_buffer_size;
-        }
-        update_buffer(device_context, &self.buffer, sprites)?;
+//         if self.vertex_buffer_size < vertices_data.len() {
+//             let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
+//             log::info!(
+//                 "Updating Paths Pipeline vertex buffer size from {} to {}",
+//                 self.vertex_buffer_size,
+//                 new_vertex_buffer_size
+//             );
+//             let vertex_buffer = create_buffer(
+//                 device,
+//                 std::mem::size_of::<DirectXPathVertex>(),
+//                 new_vertex_buffer_size,
+//             )?;
+//             self.vertex_buffer = Some(vertex_buffer);
+//             self.vertex_buffer_size = new_vertex_buffer_size;
+//         }
+//         update_buffer(
+//             device_context,
+//             self.vertex_buffer.as_ref().unwrap(),
+//             vertices_data,
+//         )?;
 
-        if self.vertex_buffer_size < vertices_data.len() {
-            let new_vertex_buffer_size = vertices_data.len().next_power_of_two();
-            log::info!(
-                "Updating Paths Pipeline vertex buffer size from {} to {}",
-                self.vertex_buffer_size,
-                new_vertex_buffer_size
-            );
-            let vertex_buffer = create_buffer(
-                device,
-                std::mem::size_of::<DirectXPathVertex>(),
-                new_vertex_buffer_size,
-            )?;
-            self.vertex_buffer = Some(vertex_buffer);
-            self.vertex_buffer_size = new_vertex_buffer_size;
-        }
-        update_buffer(
-            device_context,
-            self.vertex_buffer.as_ref().unwrap(),
-            vertices_data,
-        )?;
+//         Ok(())
+//     }
 
-        Ok(())
-    }
-
-    fn draw(
-        &self,
-        device_context: &ID3D11DeviceContext,
-        vertex_count: u32,
-        viewport: &[D3D11_VIEWPORT],
-        global_params: &[Option<ID3D11Buffer>],
-    ) -> Result<()> {
-        set_pipeline_state(
-            device_context,
-            &self.view,
-            D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
-            viewport,
-            &self.vertex,
-            &self.fragment,
-            global_params,
-        );
-        unsafe {
-            const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
-            const OFFSET: u32 = 0;
-            device_context.IASetInputLayout(&self.input_layout);
-            device_context.IASetVertexBuffers(
-                0,
-                1,
-                Some(&self.vertex_buffer),
-                Some(&STRIDE),
-                Some(&OFFSET),
-            );
-            device_context.Draw(vertex_count, 0);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Copy)]
-#[repr(C)]
-struct DirectXPathVertex {
-    xy_position: Point<ScaledPixels>,
-    st_position: Point<f32>,
-    path_index: u32,
-}
+//     fn draw(
+//         &self,
+//         device_context: &ID3D11DeviceContext,
+//         vertex_count: u32,
+//         viewport: &[D3D11_VIEWPORT],
+//         global_params: &[Option<ID3D11Buffer>],
+//     ) -> Result<()> {
+//         set_pipeline_state(
+//             device_context,
+//             &self.view,
+//             D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+//             viewport,
+//             &self.vertex,
+//             &self.fragment,
+//             global_params,
+//         );
+//         unsafe {
+//             const STRIDE: u32 = std::mem::size_of::<DirectXPathVertex>() as u32;
+//             const OFFSET: u32 = 0;
+//             device_context.IASetInputLayout(&self.input_layout);
+//             device_context.IASetVertexBuffers(
+//                 0,
+//                 1,
+//                 Some(&self.vertex_buffer),
+//                 Some(&STRIDE),
+//                 Some(&OFFSET),
+//             );
+//             device_context.Draw(vertex_count, 0);
+//         }
+//         Ok(())
+//     }
+// }
 
 #[derive(Clone, Copy)]
 #[repr(C)]
 struct PathRasterizationSprite {
-    bounds: Bounds<ScaledPixels>,
+    xy_position: Point<ScaledPixels>,
+    st_position: Point<f32>,
     color: Background,
+    bounds: Bounds<ScaledPixels>,
 }
 
 #[derive(Clone, Copy)]
