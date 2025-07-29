@@ -287,48 +287,47 @@ impl KeystrokeInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        cx.stop_propagation();
+
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
         if close_keystroke_result == CloseKeystrokeResult::Close {
             self.stop_recording(&StopRecording, window, cx);
             return;
         }
-        let key_len = self.keystrokes.len();
-        if let Some(last) = self.keystrokes.last_mut()
+
+        let mut keystroke = keystroke.clone();
+        if let Some(last) = self.keystrokes.last()
             && last.key.is_empty()
-            && key_len <= Self::KEYSTROKE_COUNT_MAX
+            && (!self.search || self.previous_modifiers.modified())
         {
-            if self.search {
-                if self.previous_modifiers.modified() {
-                    last.key = keystroke.key.clone();
-                    if close_keystroke_result == CloseKeystrokeResult::Partial {
-                        self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
-                    }
-                    self.previous_modifiers = keystroke.modifiers;
-                    self.keystrokes_changed(cx);
-                    cx.stop_propagation();
-                    return;
-                }
-            } else {
-                self.keystrokes.pop();
+            let key = keystroke.key.clone();
+            keystroke = last.clone();
+            keystroke.key = key;
+            self.keystrokes.pop();
+        }
+
+        if close_keystroke_result == CloseKeystrokeResult::Partial {
+            self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
+            if self.keystrokes.len() >= Self::KEYSTROKE_COUNT_MAX {
+                return;
             }
         }
-        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-            if close_keystroke_result == CloseKeystrokeResult::Partial {
-                self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
-            }
-            self.keystrokes.push(keystroke.clone());
-            if self.search {
-                self.previous_modifiers = keystroke.modifiers;
-            } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
-                && keystroke.modifiers.modified()
-            {
-                self.keystrokes.push(Self::dummy(keystroke.modifiers));
-            }
-        } else if close_keystroke_result != CloseKeystrokeResult::Partial {
+
+        if self.keystrokes.len() >= Self::KEYSTROKE_COUNT_MAX {
             self.clear_keystrokes(&ClearKeystrokes, window, cx);
+            return;
         }
+
+        self.keystrokes.push(keystroke.clone());
         self.keystrokes_changed(cx);
-        cx.stop_propagation();
+
+        if self.search {
+            self.previous_modifiers = keystroke.modifiers;
+            return;
+        }
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX && keystroke.modifiers.modified() {
+            self.keystrokes.push(Self::dummy(keystroke.modifiers));
+        }
     }
 
     fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -421,6 +420,7 @@ impl KeystrokeInput {
     ) {
         self.keystrokes.clear();
         self.keystrokes_changed(cx);
+        self.end_close_keystrokes_capture();
     }
 
     fn is_recording(&self, window: &Window) -> bool {
