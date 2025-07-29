@@ -79,7 +79,6 @@ struct DirectXGlobalElements {
     sampler: [Option<ID3D11SamplerState>; 1],
 }
 
-#[repr(C)]
 #[cfg(not(feature = "enable-renderdoc"))]
 struct DirectComposition {
     comp_device: IDCompositionDevice,
