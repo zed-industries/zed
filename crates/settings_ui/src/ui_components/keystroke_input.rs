@@ -389,7 +389,7 @@ impl KeystrokeInput {
         {
             if true {
                 // in tests, we just need a simple bool that is toggled on start and stop recording
-                return dbg!(self.recording);
+                return self.recording;
             }
         }
         // however, in the real world, checking if the inner focus handle is focused
@@ -817,9 +817,8 @@ mod tests {
         fn parse_modifier_change(&self, modifiers_str: &str) -> Modifiers {
             let mut modifiers = self.current_modifiers;
 
-            if modifiers_str.starts_with('+') {
+            if let Some(to_add) = modifiers_str.strip_prefix('+') {
                 // Add modifiers
-                let to_add = &modifiers_str[1..];
                 for modifier in to_add.split('+') {
                     match modifier {
                         "ctrl" | "control" => modifiers.control = true,
@@ -830,9 +829,8 @@ mod tests {
                         _ => panic!("Unknown modifier: {}", modifier),
                     }
                 }
-            } else if modifiers_str.starts_with('-') {
+            } else if let Some(to_remove) = modifiers_str.strip_prefix('-') {
                 // Remove modifiers
-                let to_remove = &modifiers_str[1..];
                 for modifier in to_remove.split('+') {
                     match modifier {
                         "ctrl" | "control" => modifiers.control = false,
