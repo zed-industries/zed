@@ -310,7 +310,7 @@ pub(crate) mod tests {
 
         AgentServerCommand {
             path: cli_path,
-            args: vec!["mcp".into()],
+            args: vec![],
             env: None,
         }
     }
