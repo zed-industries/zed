@@ -1065,7 +1065,6 @@ pub struct Workspace {
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
-    bottom_dock_layout: BottomDockLayout,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
@@ -1307,7 +1306,6 @@ impl Workspace {
         )
         .detach();
 
-        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
@@ -1406,7 +1404,6 @@ impl Workspace {
             suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
-            bottom_dock_layout,
             right_dock,
             project: project.clone(),
             follower_states: Default::default(),
@@ -1633,10 +1630,6 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn bottom_dock_layout(&self) -> BottomDockLayout {
-        self.bottom_dock_layout
-    }
-
     pub fn set_bottom_dock_layout(
         &mut self,
         layout: BottomDockLayout,
@@ -1648,7 +1641,6 @@ impl Workspace {
             content.bottom_dock_layout = Some(layout);
         });
 
-        self.bottom_dock_layout = layout;
         cx.notify();
         self.serialize_workspace(window, cx);
     }
@@ -6246,6 +6238,7 @@ impl Render for Workspace {
             .iter()
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
+        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -6369,7 +6362,7 @@ impl Render for Workspace {
                                     ))
                                 })
                                 .child({
-                                    match self.bottom_dock_layout {
+                                    match bottom_dock_layout {
                                         BottomDockLayout::Full => div()
                                             .flex()
                                             .flex_col()
