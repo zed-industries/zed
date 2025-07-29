@@ -1,3 +1,4 @@
+use crate::welcome::{ShowWelcome, WelcomePage};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -21,6 +22,7 @@ use workspace::{
 };
 
 mod editing_page;
+mod welcome;
 
 pub struct OnBoardingFeatureFlag {}
 
@@ -65,12 +67,43 @@ pub fn init(cx: &mut App) {
                 .detach();
         });
     });
+
+    cx.on_action(|_: &ShowWelcome, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            workspace
+                .with_local_workspace(window, cx, |workspace, window, cx| {
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<WelcomePage>());
+
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let settings_page = WelcomePage::new(cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(settings_page),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .detach();
+        });
+    });
+
     cx.observe_new::<Workspace>(|_, window, cx| {
         let Some(window) = window else {
             return;
         };
 
-        let onboarding_actions = [std::any::TypeId::of::<OpenOnboarding>()];
+        let onboarding_actions = [
+            std::any::TypeId::of::<OpenOnboarding>(),
+            std::any::TypeId::of::<ShowWelcome>(),
+        ];
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&onboarding_actions);
