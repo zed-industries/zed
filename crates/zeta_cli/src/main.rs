@@ -30,7 +30,7 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    GetContext {
+    Context {
         #[arg(long)]
         worktree: PathBuf,
         #[arg(long)]
@@ -273,7 +273,7 @@ fn main() -> Result<()> {
     let app = Application::headless().with_http_client(http_client);
 
     match args.command {
-        Commands::GetContext {
+        Commands::Context {
             worktree,
             cursor,
             use_language_server,
