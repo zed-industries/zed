@@ -1,6 +1,6 @@
 use gpui::{
     Animation, AnimationExt, Context, EventEmitter, FocusHandle, Focusable, FontWeight, KeyContext,
-    Keystroke, Modifiers, ModifiersChangedEvent, Subscription, actions,
+    Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
 };
 use ui::{
     ActiveTheme as _, Color, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
@@ -20,6 +20,9 @@ actions!(
 );
 
 const KEY_CONTEXT_VALUE: &'static str = "KeystrokeInput";
+
+const CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_millis(300);
 
 enum CloseKeystrokeResult {
     Partial,
@@ -46,10 +49,19 @@ pub struct KeystrokeInput {
     intercept_subscription: Option<Subscription>,
     _focus_subscriptions: [Subscription; 2],
     search: bool,
-    /// Handles triple escape to stop recording
+    /// The sequence of close keystrokes being typed
     close_keystrokes: Option<Vec<Keystroke>>,
     close_keystrokes_start: Option<usize>,
     previous_modifiers: Modifiers,
+    /// In order to support inputting keystrokes that end with a prefix of the
+    /// close keybind keystrokes, we clear the close keystroke capture info
+    /// on a timeout after a close keystroke is pressed
+    ///
+    /// e.g. if close binding is `esc esc esc` and user wants to search for
+    /// `ctrl-g esc`, after entering the `ctrl-g esc`, hitting `esc` twice would
+    /// stop recording because of the sequence of three escapes making it
+    /// impossible to search for anything ending in `esc`
+    clear_close_keystrokes_timer: Option<Task<()>>,
     #[cfg(test)]
     recording: bool,
 }
@@ -79,6 +91,7 @@ impl KeystrokeInput {
             close_keystrokes: None,
             close_keystrokes_start: None,
             previous_modifiers: Modifiers::default(),
+            clear_close_keystrokes_timer: None,
             #[cfg(test)]
             recording: false,
         }
@@ -144,6 +157,34 @@ impl KeystrokeInput {
         }
     }
 
+    fn upsert_close_keystrokes_start(&mut self, start: usize, cx: &mut Context<Self>) {
+        if self.close_keystrokes_start.is_some() {
+            return;
+        }
+        self.close_keystrokes_start = Some(start);
+        self.update_clear_close_keystrokes_timer(cx);
+    }
+
+    fn update_clear_close_keystrokes_timer(&mut self, cx: &mut Context<Self>) {
+        self.clear_close_keystrokes_timer = Some(cx.spawn(async |this, cx| {
+            cx.background_executor()
+                .timer(CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT)
+                .await;
+            this.update(cx, |this, _cx| {
+                this.end_close_keystrokes_capture();
+            })
+            .ok();
+        }));
+    }
+
+    /// Interrupt the capture of close keystrokes, but do not clear the close keystrokes
+    /// from the input
+    fn end_close_keystrokes_capture(&mut self) -> Option<usize> {
+        self.close_keystrokes.take();
+        self.clear_close_keystrokes_timer.take();
+        return self.close_keystrokes_start.take();
+    }
+
     fn handle_possible_close_keystroke(
         &mut self,
         keystroke: &Keystroke,
@@ -152,8 +193,7 @@ impl KeystrokeInput {
     ) -> CloseKeystrokeResult {
         let Some(keybind_for_close_action) = Self::determine_stop_recording_binding(window) else {
             log::trace!("No keybinding to stop recording keystrokes in keystroke input");
-            self.close_keystrokes.take();
-            self.close_keystrokes_start.take();
+            self.end_close_keystrokes_capture();
             return CloseKeystrokeResult::None;
         };
         let action_keystrokes = keybind_for_close_action.keystrokes();
@@ -169,20 +209,20 @@ impl KeystrokeInput {
             }
             if index == close_keystrokes.len() {
                 if index >= action_keystrokes.len() {
-                    self.close_keystrokes_start.take();
+                    self.end_close_keystrokes_capture();
                     return CloseKeystrokeResult::None;
                 }
                 if keystroke.should_match(&action_keystrokes[index]) {
-                    if action_keystrokes.len() >= 1 && index == action_keystrokes.len() - 1 {
-                        self.stop_recording(&StopRecording, window, cx);
+                    close_keystrokes.push(keystroke.clone());
+                    if close_keystrokes.len() == action_keystrokes.len() {
                         return CloseKeystrokeResult::Close;
                     } else {
-                        close_keystrokes.push(keystroke.clone());
                         self.close_keystrokes = Some(close_keystrokes);
+                        self.update_clear_close_keystrokes_timer(cx);
                         return CloseKeystrokeResult::Partial;
                     }
                 } else {
-                    self.close_keystrokes_start.take();
+                    self.end_close_keystrokes_capture();
                     return CloseKeystrokeResult::None;
                 }
             }
@@ -192,7 +232,7 @@ impl KeystrokeInput {
             self.close_keystrokes = Some(vec![keystroke.clone()]);
             return CloseKeystrokeResult::Partial;
         }
-        self.close_keystrokes_start.take();
+        self.end_close_keystrokes_capture();
         return CloseKeystrokeResult::None;
     }
 
@@ -248,36 +288,22 @@ impl KeystrokeInput {
         cx: &mut Context<Self>,
     ) {
         let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
-        if close_keystroke_result != CloseKeystrokeResult::Close {
-            let key_len = self.keystrokes.len();
-            if let Some(last) = self.keystrokes.last_mut()
-                && last.key.is_empty()
-                && key_len <= Self::KEYSTROKE_COUNT_MAX
-            {
-                if self.search {
-                    last.key = keystroke.key.clone();
-                    if close_keystroke_result == CloseKeystrokeResult::Partial
-                        && self.close_keystrokes_start.is_none()
-                    {
-                        self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
-                    }
-                    if self.search {
-                        self.previous_modifiers = keystroke.modifiers;
-                    }
-                    self.keystrokes_changed(cx);
-                    cx.stop_propagation();
-                    return;
-                } else {
-                    self.keystrokes.pop();
-                }
-            }
-            if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+        if close_keystroke_result == CloseKeystrokeResult::Close {
+            self.stop_recording(&StopRecording, window, cx);
+            return;
+        }
+        let key_len = self.keystrokes.len();
+        if let Some(last) = self.keystrokes.last_mut()
+            && last.key.is_empty()
+            && key_len <= Self::KEYSTROKE_COUNT_MAX
+        {
+            if self.search {
+                last.key = keystroke.key.clone();
                 if close_keystroke_result == CloseKeystrokeResult::Partial
                     && self.close_keystrokes_start.is_none()
                 {
-                    self.close_keystrokes_start = Some(self.keystrokes.len());
+                    self.upsert_close_keystrokes_start(self.keystrokes.len() - 1, cx);
                 }
-                self.keystrokes.push(keystroke.clone());
                 if self.search {
                     self.previous_modifiers = keystroke.modifiers;
                 } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
@@ -285,9 +311,29 @@ impl KeystrokeInput {
                 {
                     self.keystrokes.push(Self::dummy(keystroke.modifiers));
                 }
-            } else if close_keystroke_result != CloseKeystrokeResult::Partial {
-                self.clear_keystrokes(&ClearKeystrokes, window, cx);
+                self.keystrokes_changed(cx);
+                cx.stop_propagation();
+                return;
+            } else {
+                self.keystrokes.pop();
             }
+        }
+        if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
+            if close_keystroke_result == CloseKeystrokeResult::Partial
+                && self.close_keystrokes_start.is_none()
+            {
+                self.upsert_close_keystrokes_start(self.keystrokes.len(), cx);
+            }
+            self.keystrokes.push(keystroke.clone());
+            if self.search {
+                self.previous_modifiers = keystroke.modifiers;
+            } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX
+                && keystroke.modifiers.modified()
+            {
+                self.keystrokes.push(Self::dummy(keystroke.modifiers));
+            }
+        } else if close_keystroke_result != CloseKeystrokeResult::Partial {
+            self.clear_keystrokes(&ClearKeystrokes, window, cx);
         }
         self.keystrokes_changed(cx);
         cx.stop_propagation();
@@ -365,8 +411,9 @@ impl KeystrokeInput {
             && close_keystrokes_start < self.keystrokes.len()
         {
             self.keystrokes.drain(close_keystrokes_start..);
+            self.keystrokes_changed(cx);
         }
-        self.close_keystrokes.take();
+        self.end_close_keystrokes_capture();
         #[cfg(test)]
         {
             self.recording = false;
@@ -645,6 +692,7 @@ mod tests {
 
         /// Sends a keystroke event based on string description
         /// Examples: "a", "ctrl-a", "cmd-shift-z", "escape"
+        #[track_caller]
         pub fn send_keystroke(&mut self, keystroke_input: &str) -> &mut Self {
             self.expect_is_recording(true);
             let keystroke_str = if keystroke_input.ends_with('-') {
@@ -677,6 +725,7 @@ mod tests {
 
         /// Sends a modifier change event based on string description
         /// Examples: "+ctrl", "-ctrl", "+cmd+shift", "-all"
+        #[track_caller]
         pub fn send_modifiers(&mut self, modifiers: &str) -> &mut Self {
             self.expect_is_recording(true);
             let new_modifiers = if modifiers == "-all" {
@@ -700,6 +749,7 @@ mod tests {
 
         /// Sends multiple events in sequence
         /// Each event string is either a keystroke or modifier change
+        #[track_caller]
         pub fn send_events(&mut self, events: &[&str]) -> &mut Self {
             self.expect_is_recording(true);
             for event in events {
@@ -712,9 +762,8 @@ mod tests {
             self
         }
 
-        /// Verifies that the keystrokes match the expected strings
         #[track_caller]
-        pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+        fn expect_keystrokes_equal(actual: &[Keystroke], expected: &[&str]) {
             let expected_keystrokes: Result<Vec<Keystroke>, _> = expected
                 .iter()
                 .map(|s| {
@@ -738,9 +787,6 @@ mod tests {
             let expected_keystrokes = expected_keystrokes
                 .unwrap_or_else(|e: anyhow::Error| panic!("Invalid expected keystroke: {}", e));
 
-            let actual = self
-                .input
-                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
             assert_eq!(
                 actual.len(),
                 expected_keystrokes.len(),
@@ -763,6 +809,25 @@ mod tests {
                     actual.unparse()
                 );
             }
+        }
+
+        /// Verifies that the keystrokes match the expected strings
+        #[track_caller]
+        pub fn expect_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+            let actual = self
+                .input
+                .read_with(&mut self.cx, |input, _| input.keystrokes.clone());
+            Self::expect_keystrokes_equal(&actual, expected);
+            self
+        }
+
+        #[track_caller]
+        pub fn expect_close_keystrokes(&mut self, expected: &[&str]) -> &mut Self {
+            let actual = self
+                .input
+                .read_with(&mut self.cx, |input, _| input.close_keystrokes.clone())
+                .unwrap_or_default();
+            Self::expect_keystrokes_equal(&actual, expected);
             self
         }
 
@@ -810,6 +875,18 @@ mod tests {
                 "Recording state mismatch. Expected: {}, Actual: {}",
                 expected, actual
             );
+            self
+        }
+
+        pub async fn wait_for_close_keystroke_capture_end(&mut self) -> &mut Self {
+            let task = self.input.update_in(&mut self.cx, |input, _, _| {
+                input.clear_close_keystrokes_timer.take()
+            });
+            let task = task.expect("No close keystroke capture end timer task");
+            self.cx
+                .executor()
+                .advance_clock(CLOSE_KEYSTROKE_CAPTURE_END_TIMEOUT);
+            task.await;
             self
         }
 
@@ -1161,5 +1238,20 @@ mod tests {
             .with_search_mode(true)
             .send_events(&["escape", "escape", "escape"]) // Pure triple escape sequence
             .expect_empty();
+    }
+
+    #[gpui::test]
+    async fn test_end_close_keystroke_capture(cx: &mut TestAppContext) {
+        init_test(cx)
+            .await
+            .send_events(&["+ctrl", "g", "-ctrl", "escape"])
+            .expect_keystrokes(&["ctrl-g", "escape"])
+            .wait_for_close_keystroke_capture_end()
+            .await
+            .send_events(&["escape", "escape"])
+            .expect_keystrokes(&["ctrl-g", "escape", "escape"])
+            .expect_close_keystrokes(&["escape", "escape"])
+            .send_keystroke("escape")
+            .expect_keystrokes(&["ctrl-g", "escape"]);
     }
 }
