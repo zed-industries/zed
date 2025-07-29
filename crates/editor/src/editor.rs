@@ -7414,12 +7414,6 @@ impl Editor {
             return;
         };
 
-        // Only report telemetry events for online providers managed by Zed's service,
-        // not for third-party providers like Ollama that don't count toward online usage
-        if provider.name() != "zed-predict" {
-            return;
-        }
-
         let Some((_, buffer, _)) = self
             .buffer
             .read(cx)
