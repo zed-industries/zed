@@ -11,7 +11,10 @@ use collections::BTreeMap;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
-use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
+use language::{
+    LanguageName, LanguageRegistry, LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain,
+    ToolchainList,
+};
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self, FromProto, ToProto},
@@ -105,7 +108,7 @@ impl ToolchainStore {
     ) -> Task<Option<Toolchain>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => {
-                local.read(cx).active_toolchain(path, language_name, cx)
+                Task::ready(local.read(cx).active_toolchain(path, language_name))
             }
             ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).active_toolchain(path, language_name, cx)
@@ -232,9 +235,15 @@ impl ToolchainStore {
             ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
+    pub(crate) fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => Some(local),
+            ToolchainStoreInner::Remote(_) => None,
+        }
+    }
 }
 
-struct LocalToolchainStore {
+pub struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
@@ -243,8 +252,8 @@ struct LocalToolchainStore {
 }
 
 #[async_trait(?Send)]
-impl language::LanguageToolchainStore for LocalStore {
-    async fn active_toolchain(
+impl language::LocalLanguageToolchainStore for LocalStore {
+    fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
         path: Arc<Path>,
@@ -252,11 +261,10 @@ impl language::LanguageToolchainStore for LocalStore {
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
-            .update(cx, |this, cx| {
-                this.active_toolchain(ProjectPath { worktree_id, path }, language_name, cx)
+            .update(cx, |this, _| {
+                this.active_toolchain(ProjectPath { worktree_id, path }, language_name)
             })
             .ok()?
-            .await
     }
 }
 
@@ -279,9 +287,8 @@ impl language::LanguageToolchainStore for RemoteStore {
 }
 
 pub struct EmptyToolchainStore;
-#[async_trait(?Send)]
-impl language::LanguageToolchainStore for EmptyToolchainStore {
-    async fn active_toolchain(
+impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
+    fn active_toolchain(
         self: Arc<Self>,
         _: WorktreeId,
         _: Arc<Path>,
@@ -291,7 +298,7 @@ impl language::LanguageToolchainStore for EmptyToolchainStore {
         None
     }
 }
-struct LocalStore(WeakEntity<LocalToolchainStore>);
+pub(crate) struct LocalStore(WeakEntity<LocalToolchainStore>);
 struct RemoteStore(WeakEntity<RemoteToolchainStore>);
 
 #[derive(Clone)]
@@ -396,19 +403,23 @@ impl LocalToolchainStore {
         &self,
         path: ProjectPath,
         language_name: LanguageName,
-        _: &App,
-    ) -> Task<Option<Toolchain>> {
+    ) -> Option<Toolchain> {
         let ancestors = path.path.ancestors();
-        Task::ready(
-            self.active_toolchains
-                .get(&(path.worktree_id, language_name))
-                .and_then(|paths| {
-                    ancestors
-                        .into_iter()
-                        .find_map(|root_path| paths.get(root_path))
-                })
-                .cloned(),
-        )
+
+        self.active_toolchains
+            .get(&(path.worktree_id, language_name))
+            .and_then(|paths| {
+                ancestors
+                    .into_iter()
+                    .find_map(|root_path| paths.get(root_path))
+            })
+            .cloned()
+    }
+    pub(crate) fn as_local_trait_object(
+        &self,
+        cx: &Context<Self>,
+    ) -> Arc<dyn LocalLanguageToolchainStore> {
+        Arc::new(LocalStore(cx.weak_entity()))
     }
 }
 struct RemoteToolchainStore {

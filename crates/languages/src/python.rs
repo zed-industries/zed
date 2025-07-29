@@ -4,12 +4,12 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::{App, Task};
 use gpui::{AsyncApp, SharedString};
-use language::ToolchainList;
 use language::ToolchainLister;
 use language::language_settings::language_settings;
 use language::{ContextLocation, LanguageToolchainStore};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
+use language::{LocalLanguageToolchainStore, ToolchainList};
 use language::{Toolchain, WorkspaceFoldersContent};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
@@ -127,7 +127,7 @@ impl LspAdapter for PythonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
@@ -319,17 +319,15 @@ impl LspAdapter for PythonLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
+        let toolchain = toolchains.active_toolchain(
+            adapter.worktree_id(),
+            Arc::from("".as_ref()),
+            LanguageName::new("Python"),
+            cx,
+        );
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1046,7 +1044,7 @@ impl LspAdapter for PyLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
@@ -1057,14 +1055,12 @@ impl LspAdapter for PyLspAdapter {
                 arguments: vec![],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
+            let venv = toolchains.active_toolchain(
+                delegate.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                &mut cx.clone(),
+            )?;
             let pylsp_path = Path::new(venv.path.as_ref()).parent()?.join("pylsp");
             pylsp_path.exists().then(|| LanguageServerBinary {
                 path: venv.path.to_string().into(),
@@ -1211,17 +1207,15 @@ impl LspAdapter for PyLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
+        let toolchain = toolchains.active_toolchain(
+            adapter.worktree_id(),
+            Arc::from("".as_ref()),
+            LanguageName::new("Python"),
+            cx,
+        );
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -1377,7 +1371,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
@@ -1388,14 +1382,12 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 arguments: vec!["--stdio".into()],
             })
         } else {
-            let venv = toolchains
-                .active_toolchain(
-                    delegate.worktree_id(),
-                    Arc::from("".as_ref()),
-                    LanguageName::new("Python"),
-                    &mut cx.clone(),
-                )
-                .await?;
+            let venv = toolchains.active_toolchain(
+                delegate.worktree_id(),
+                Arc::from("".as_ref()),
+                LanguageName::new("Python"),
+                &mut cx.clone(),
+            )?;
             let path = Path::new(venv.path.as_ref())
                 .parent()?
                 .join(Self::BINARY_NAME);
@@ -1543,17 +1535,15 @@ impl LspAdapter for BasedPyrightLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let toolchain = toolchains
-            .active_toolchain(
-                adapter.worktree_id(),
-                Arc::from("".as_ref()),
-                LanguageName::new("Python"),
-                cx,
-            )
-            .await;
+        let toolchain = toolchains.active_toolchain(
+            adapter.worktree_id(),
+            Arc::from("".as_ref()),
+            LanguageName::new("Python"),
+            cx,
+        );
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)

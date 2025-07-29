@@ -7,7 +7,6 @@ use crate::{
     CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
     CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
     ProjectItem, ProjectPath, ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
-    ToolchainStore,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -19,7 +18,7 @@ use crate::{
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
-    toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
+    toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
 };
@@ -44,8 +43,8 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
-    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    LanguageRegistry, LocalFile, LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
     WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
@@ -142,7 +141,7 @@ impl FormatTrigger {
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     worktree_store: Entity<WorktreeStore>,
-    toolchain_store: Entity<ToolchainStore>,
+    toolchain_store: Entity<LocalToolchainStore>,
     http_client: Arc<dyn HttpClient>,
     environment: Entity<ProjectEnvironment>,
     fs: Arc<dyn Fs>,
@@ -273,17 +272,19 @@ impl LocalLspStore {
                 .diagnostics
                 .lsp_pull_diagnostics
                 .enabled;
+            let toolchains = self.toolchain_store().downgrade();
             cx.spawn(async move |cx| {
                 let result = async {
-                    let toolchains =
-                        lsp_store.update(cx, |lsp_store, cx| lsp_store.toolchain_store(cx))?;
+                    let toolchains = toolchains
+                        .upgrade()
+                        .context("upgrading toolchains handle")?;
                     let language_server = pending_server.await?;
 
                     let workspace_config = Self::workspace_configuration_for_adapter(
                         adapter.adapter.clone(),
                         fs.as_ref(),
                         &delegate,
-                        toolchains.clone(),
+                        &toolchains,
                         cx,
                     )
                     .await?;
@@ -447,7 +448,9 @@ impl LocalLspStore {
                 .unwrap_or_default(),
             allow_binary_download,
         };
-        let toolchains = self.toolchain_store.read(cx).as_language_toolchain_store();
+        let toolchains = self
+            .toolchain_store
+            .update(cx, |this, cx| this.as_local_trait_object(cx));
         cx.spawn(async move |cx| {
             let binary_result = adapter
                 .clone()
@@ -536,14 +539,18 @@ impl LocalLspStore {
                     let fs = fs.clone();
                     let mut cx = cx.clone();
                     async move {
-                        let toolchains =
-                            this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
+                        let toolchains = this
+                            .update(&mut cx, |this, _| {
+                                Some(this.as_local()?.toolchain_store().clone())
+                            })
+                            ?
+                            .context("Setting up handler for workspace configuration expected a local LSP store")?;
 
                         let workspace_config = Self::workspace_configuration_for_adapter(
                             adapter.clone(),
                             fs.as_ref(),
                             &delegate,
-                            toolchains.clone(),
+                            &toolchains,
                             &mut cx,
                         )
                         .await?;
@@ -3458,16 +3465,21 @@ impl LocalLspStore {
         Ok(Some(initialization_config))
     }
 
+    fn toolchain_store(&self) -> &Entity<LocalToolchainStore> {
+        &self.toolchain_store
+    }
+
     async fn workspace_configuration_for_adapter(
         adapter: Arc<dyn LspAdapter>,
         fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: &Entity<LocalToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
+        let weak_toolchain = toolchains.update(cx, |this, cx| this.as_local_trait_object(cx))?;
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(fs, delegate, toolchains.clone(), cx)
+            .workspace_configuration(fs, delegate, weak_toolchain, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -3476,13 +3488,7 @@ impl LocalLspStore {
             }
             if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_workspace_configuration(
-                    adapter.name(),
-                    fs,
-                    delegate,
-                    toolchains.clone(),
-                    cx,
-                )
+                .additional_workspace_configuration(adapter.name(), fs, delegate, cx)
                 .await
             {
                 merge_json_value_into(target_config.clone(), &mut workspace_config);
@@ -3524,7 +3530,6 @@ pub struct LspStore {
     nonce: u128,
     buffer_store: Entity<BufferStore>,
     worktree_store: Entity<WorktreeStore>,
-    toolchain_store: Option<Entity<ToolchainStore>>,
     pub languages: Arc<LanguageRegistry>,
     language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
@@ -3715,7 +3720,7 @@ impl LspStore {
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         prettier_store: Entity<PrettierStore>,
-        toolchain_store: Entity<ToolchainStore>,
+        toolchain_store: Entity<LocalToolchainStore>,
         environment: Entity<ProjectEnvironment>,
         manifest_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
@@ -3757,7 +3762,7 @@ impl LspStore {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
                 worktree_store: worktree_store.clone(),
-                toolchain_store: toolchain_store.clone(),
+                toolchain_store,
                 supplementary_language_servers: Default::default(),
                 languages: languages.clone(),
                 language_server_ids: Default::default(),
@@ -3789,7 +3794,6 @@ impl LspStore {
             downstream_client: None,
             buffer_store,
             worktree_store,
-            toolchain_store: Some(toolchain_store),
             languages: languages.clone(),
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
@@ -3823,7 +3827,6 @@ impl LspStore {
     pub(super) fn new_remote(
         buffer_store: Entity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
-        toolchain_store: Option<Entity<ToolchainStore>>,
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
@@ -3855,7 +3858,7 @@ impl LspStore {
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
             active_entry: None,
-            toolchain_store,
+
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
         }
@@ -3954,7 +3957,7 @@ impl LspStore {
 
     fn on_toolchain_store_event(
         &mut self,
-        _: Entity<ToolchainStore>,
+        _: Entity<LocalToolchainStore>,
         event: &ToolchainStoreEvent,
         _: &mut Context<Self>,
     ) {
@@ -4077,9 +4080,9 @@ impl LspStore {
                 return;
             };
 
-            let Ok(Some((fs, toolchain_store))) = this.read_with(cx, |this, cx| {
+            let Ok(Some((fs, toolchain_store))) = this.read_with(cx, |this, _| {
                 let local = this.as_local()?;
-                let toolchain_store = this.toolchain_store(cx);
+                let toolchain_store = local.toolchain_store().clone();
                 return Some((local.fs.clone(), toolchain_store));
             }) else {
                 return;
@@ -4091,7 +4094,7 @@ impl LspStore {
                         adapter,
                         fs.as_ref(),
                         &delegate,
-                        toolchain_store.clone(),
+                        &toolchain_store,
                         cx,
                     )
                     .await
@@ -7398,12 +7401,10 @@ impl LspStore {
         cx: &mut AsyncApp,
     ) {
         maybe!(async move {
-            let servers = this
+            let (servers, toolchain_store) = this
                 .update(cx, |this, cx| {
-                    let Some(local) = this.as_local() else {
-                        return Vec::default();
-                    };
-                    local
+                    let local = this.as_local()?;
+                    let servers = local
                         .language_server_ids
                         .iter()
                         .flat_map(|((worktree_id, _), server_ids)| {
@@ -7438,17 +7439,19 @@ impl LspStore {
                                 }
                             })
                         })
-                        .collect::<Vec<_>>()
-                })
-                .ok()?;
+                        .collect::<Vec<_>>();
 
-            let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
+                    Some((servers, local.toolchain_store().clone()))
+                })
+                .ok()
+                .flatten()?;
+
             for (adapter, server, delegate) in servers {
                 let settings = LocalLspStore::workspace_configuration_for_adapter(
                     adapter,
                     fs.as_ref(),
                     &delegate,
-                    toolchain_store.clone(),
+                    &toolchain_store,
                     cx,
                 )
                 .await
@@ -7465,13 +7468,6 @@ impl LspStore {
         .await;
     }
 
-    fn toolchain_store(&self, cx: &App) -> Arc<dyn LanguageToolchainStore> {
-        if let Some(toolchain_store) = self.toolchain_store.as_ref() {
-            toolchain_store.read(cx).as_language_toolchain_store()
-        } else {
-            Arc::new(EmptyToolchainStore)
-        }
-    }
     fn maintain_workspace_config(
         fs: Arc<dyn Fs>,
         external_refresh_requests: watch::Receiver<()>,
@@ -12264,7 +12260,7 @@ impl LspAdapter for SshLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.binary.clone())

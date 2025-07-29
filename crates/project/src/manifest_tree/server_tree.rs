@@ -52,6 +52,7 @@ pub struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 #[derive(Clone, Debug)]
 pub(crate) struct LaunchDisposition {
     pub(crate) server_name: LanguageServerName,
+    /// Path to the root directory of a subproject.
     pub(crate) path: ProjectPath,
     pub(crate) settings: Arc<LspSettings>,
 }

@@ -67,7 +67,9 @@ pub use text_diff::{
     DiffOptions, apply_diff_patch, line_diff, text_diff, text_diff_with_options, unified_diff,
 };
 use theme::SyntaxTheme;
-pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
+pub use toolchain::{
+    LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+};
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
@@ -212,7 +214,7 @@ impl CachedLspAdapter {
     pub async fn get_language_server_command(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
@@ -326,7 +328,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn LanguageToolchainStore>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         binary_options: LanguageServerBinaryOptions,
         mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         cx: &'a mut AsyncApp,
@@ -401,7 +403,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         None
@@ -534,7 +536,7 @@ pub trait LspAdapter: 'static + Send + Sync {
         self: Arc<Self>,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -554,7 +556,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
         Ok(None)

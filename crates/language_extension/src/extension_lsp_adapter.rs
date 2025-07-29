@@ -12,7 +12,7 @@ use fs::Fs;
 use futures::{Future, FutureExt, future::join_all};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LanguageToolchainStore,
+    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LocalLanguageToolchainStore,
     LspAdapter, LspAdapterDelegate,
 };
 use lsp::{
@@ -159,7 +159,7 @@ impl LspAdapter for ExtensionLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncApp,
@@ -288,7 +288,7 @@ impl LspAdapter for ExtensionLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _cx: &mut AsyncApp,
     ) -> Result<Value> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
@@ -336,7 +336,7 @@ impl LspAdapter for ExtensionLspAdapter {
         target_language_server_id: LanguageServerName,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+
         _cx: &mut AsyncApp,
     ) -> Result<Option<serde_json::Value>> {
         let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;

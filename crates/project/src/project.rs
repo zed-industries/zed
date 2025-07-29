@@ -1075,7 +1075,11 @@ impl Project {
                     buffer_store.clone(),
                     worktree_store.clone(),
                     prettier_store.clone(),
-                    toolchain_store.clone(),
+                    toolchain_store
+                        .read(cx)
+                        .as_local_store()
+                        .expect("Toolchain store to be local")
+                        .clone(),
                     environment.clone(),
                     manifest_tree,
                     languages.clone(),
@@ -1219,7 +1223,6 @@ impl Project {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
-                    Some(toolchain_store.clone()),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -1449,7 +1452,6 @@ impl Project {
             let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
-                None,
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
