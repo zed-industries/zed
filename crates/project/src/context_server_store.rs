@@ -13,6 +13,7 @@ use settings::{Settings as _, SettingsStore};
 use util::ResultExt as _;
 
 use crate::{
+    Project,
     project_settings::{ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
@@ -144,6 +145,7 @@ pub struct ContextServerStore {
     context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
     servers: HashMap<ContextServerId, ContextServerState>,
     worktree_store: Entity<WorktreeStore>,
+    project: WeakEntity<Project>,
     registry: Entity<ContextServerDescriptorRegistry>,
     update_servers_task: Option<Task<Result<()>>>,
     context_server_factory: Option<ContextServerFactory>,
@@ -161,12 +163,17 @@ pub enum Event {
 impl EventEmitter<Event> for ContextServerStore {}
 
 impl ContextServerStore {
-    pub fn new(worktree_store: Entity<WorktreeStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        worktree_store: Entity<WorktreeStore>,
+        weak_project: WeakEntity<Project>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::new_internal(
             true,
             None,
             ContextServerDescriptorRegistry::default_global(cx),
             worktree_store,
+            weak_project,
             cx,
         )
     }
@@ -184,9 +191,10 @@ impl ContextServerStore {
     pub fn test(
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
+        weak_project: WeakEntity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::new_internal(false, None, registry, worktree_store, cx)
+        Self::new_internal(false, None, registry, worktree_store, weak_project, cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -194,6 +202,7 @@ impl ContextServerStore {
         context_server_factory: ContextServerFactory,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
+        weak_project: WeakEntity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new_internal(
@@ -201,6 +210,7 @@ impl ContextServerStore {
             Some(context_server_factory),
             registry,
             worktree_store,
+            weak_project,
             cx,
         )
     }
@@ -210,6 +220,7 @@ impl ContextServerStore {
         context_server_factory: Option<ContextServerFactory>,
         registry: Entity<ContextServerDescriptorRegistry>,
         worktree_store: Entity<WorktreeStore>,
+        weak_project: WeakEntity<Project>,
         cx: &mut Context<Self>,
     ) -> Self {
         let subscriptions = if maintain_server_loop {
@@ -235,6 +246,7 @@ impl ContextServerStore {
             context_server_settings: Self::resolve_context_server_settings(&worktree_store, cx)
                 .clone(),
             worktree_store,
+            project: weak_project,
             registry,
             needs_server_update: false,
             servers: HashMap::default(),
@@ -360,7 +372,7 @@ impl ContextServerStore {
             let configuration = state.configuration();
 
             self.stop_server(&state.server().id(), cx)?;
-            let new_server = self.create_context_server(id.clone(), configuration.clone())?;
+            let new_server = self.create_context_server(id.clone(), configuration.clone(), cx);
             self.run_server(new_server, configuration, cx);
         }
         Ok(())
@@ -449,14 +461,33 @@ impl ContextServerStore {
         &self,
         id: ContextServerId,
         configuration: Arc<ContextServerConfiguration>,
-    ) -> Result<Arc<ContextServer>> {
+        cx: &mut Context<Self>,
+    ) -> Arc<ContextServer> {
+        let root_path = self
+            .project
+            .read_with(cx, |project, cx| project.active_project_directory(cx))
+            .ok()
+            .flatten()
+            .or_else(|| {
+                self.worktree_store.read_with(cx, |store, cx| {
+                    store.visible_worktrees(cx).fold(None, |acc, item| {
+                        if acc.is_none() {
+                            item.read(cx).root_dir()
+                        } else {
+                            acc
+                        }
+                    })
+                })
+            });
+
         if let Some(factory) = self.context_server_factory.as_ref() {
-            Ok(factory(id, configuration))
+            factory(id, configuration)
         } else {
-            Ok(Arc::new(ContextServer::stdio(
+            Arc::new(ContextServer::stdio(
                 id,
                 configuration.command().clone(),
-            )))
+                root_path,
+            ))
         }
     }
 
@@ -553,7 +584,7 @@ impl ContextServerStore {
         let mut servers_to_remove = HashSet::default();
         let mut servers_to_stop = HashSet::default();
 
-        this.update(cx, |this, _cx| {
+        this.update(cx, |this, cx| {
             for server_id in this.servers.keys() {
                 // All servers that are not in desired_servers should be removed from the store.
                 // This can happen if the user removed a server from the context server settings.
@@ -572,14 +603,10 @@ impl ContextServerStore {
                 let existing_config = state.as_ref().map(|state| state.configuration());
                 if existing_config.as_deref() != Some(&config) || is_stopped {
                     let config = Arc::new(config);
-                    if let Some(server) = this
-                        .create_context_server(id.clone(), config.clone())
-                        .log_err()
-                    {
-                        servers_to_start.push((server, config));
-                        if this.servers.contains_key(&id) {
-                            servers_to_stop.insert(id);
-                        }
+                    let server = this.create_context_server(id.clone(), config.clone(), cx);
+                    servers_to_start.push((server, config));
+                    if this.servers.contains_key(&id) {
+                        servers_to_stop.insert(id);
                     }
                 }
             }
@@ -630,7 +657,12 @@ mod tests {
 
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
-            ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(), cx)
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
         });
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -705,7 +737,12 @@ mod tests {
 
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
-            ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(), cx)
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
         });
 
         let server_1_id = ContextServerId(SERVER_1_ID.into());
@@ -758,7 +795,12 @@ mod tests {
 
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
-            ContextServerStore::test(registry.clone(), project.read(cx).worktree_store(), cx)
+            ContextServerStore::test(
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
         });
 
         let server_id = ContextServerId(SERVER_1_ID.into());
@@ -842,6 +884,7 @@ mod tests {
                 }),
                 registry.clone(),
                 project.read(cx).worktree_store(),
+                project.downgrade(),
                 cx,
             )
         });
@@ -1074,6 +1117,7 @@ mod tests {
                 }),
                 registry.clone(),
                 project.read(cx).worktree_store(),
+                project.downgrade(),
                 cx,
             )
         });
