@@ -813,7 +813,9 @@ impl LanguageModel for CloudLanguageModel {
         cx: &App,
     ) -> BoxFuture<'static, Result<u64>> {
         match self.model.provider {
-            cloud_llm_client::LanguageModelProvider::Anthropic => count_anthropic_tokens(request, cx),
+            cloud_llm_client::LanguageModelProvider::Anthropic => {
+                count_anthropic_tokens(request, cx)
+            }
             cloud_llm_client::LanguageModelProvider::OpenAi => {
                 let model = match open_ai::Model::from_id(&self.model.id.0) {
                     Ok(model) => model,
