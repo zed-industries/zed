@@ -1,0 +1,18 @@
+[package]
+name = "zeta_cli"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "zeta"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+language.workspace = true
+anyhow.workspace = true
