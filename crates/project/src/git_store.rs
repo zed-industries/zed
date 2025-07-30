@@ -20,17 +20,13 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
-    blame::Blame,
-    parse_git_remote_url,
-    repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
+    blame::Blame, commit::{CommitDetails, CommitSummary}, parse_git_remote_url, repository::{
+        Branch, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus,
-    },
-    status::{
+    }, status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
-    },
+    }, BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH
 };
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Subscription, Task,
@@ -52,7 +48,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     future::Future,
     mem,
-    ops::Range,
+    ops::{Range, Deref},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -1887,7 +1883,7 @@ impl GitStore {
             .await??;
         Ok(proto::GitCommitDetails {
             sha: commit.sha.into(),
-            message: commit.message.into(),
+            message: commit.message.and_then(|msg| Some(msg.deref().to_string())).unwrap_or_default(),
             commit_timestamp: commit.commit_timestamp,
             author_email: commit.author_email.into(),
             author_name: commit.author_name.into(),
@@ -3387,7 +3383,7 @@ impl Repository {
 
                     Ok(CommitDetails {
                         sha: resp.sha.into(),
-                        message: resp.message.into(),
+                        message: resp.message.try_into().ok(),
                         commit_timestamp: resp.commit_timestamp,
                         author_email: resp.author_email.into(),
                         author_name: resp.author_name.into(),
@@ -4721,7 +4717,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                     .unwrap_or(git::repository::UpstreamTracking::Gone),
             }),
         most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
-            git::repository::CommitSummary {
+            CommitSummary {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
@@ -4734,7 +4730,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
 fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
     proto::GitCommitDetails {
         sha: commit.sha.to_string(),
-        message: commit.message.to_string(),
+        message: commit.message.as_ref().and_then(|msg| Some(msg.deref().to_string())).unwrap_or_default(),
         commit_timestamp: commit.commit_timestamp,
         author_email: commit.author_email.to_string(),
         author_name: commit.author_name.to_string(),
@@ -4744,7 +4740,7 @@ fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
 fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
     CommitDetails {
         sha: proto.sha.clone().into(),
-        message: proto.message.clone().into(),
+        message: proto.message.clone().try_into().ok(),
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),

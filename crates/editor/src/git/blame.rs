@@ -3,7 +3,8 @@ use anyhow::Result;
 use collections::HashMap;
 use git::{
     GitHostingProviderRegistry, GitRemote, Oid,
-    blame::{Blame, BlameEntry, ParsedCommitMessage},
+    blame::{Blame, BlameEntry},
+    commit::ParsedCommitMessage,
     parse_git_remote_url,
 };
 use gpui::{

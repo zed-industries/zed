@@ -1,11 +1,11 @@
 use crate::{
-    commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
+    commit_tooltip::{CommitAvatar, CommitTooltip},
     commit_view::CommitView,
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{
-    blame::{BlameEntry, ParsedCommitMessage},
-    repository::CommitSummary,
+    blame::{BlameEntry},
+    commit::{ParsedCommitMessage, CommitSummary, CommitDetails},
 };
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle, WeakEntity,
@@ -166,7 +166,7 @@ impl BlameRenderer for GitBlameRenderer {
 
         let commit_details = CommitDetails {
             sha: blame.sha.to_string().into(),
-            commit_time,
+            commit_timestamp: commit_time.unix_timestamp(),
             author_name: blame
                 .author
                 .clone()
@@ -188,7 +188,7 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or_else(|| commit_details.sha.clone());
         let full_sha = commit_details.sha.to_string().clone();
         let absolute_timestamp = format_local_timestamp(
-            commit_details.commit_time,
+            time::OffsetDateTime::from_unix_timestamp(commit_details.commit_timestamp).unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
@@ -228,7 +228,7 @@ impl BlameRenderer for GitBlameRenderer {
                         .to_string()
                         .into()
                 }),
-            commit_timestamp: commit_details.commit_time.unix_timestamp(),
+            commit_timestamp: commit_details.commit_timestamp,
             has_parent: false,
         };
 

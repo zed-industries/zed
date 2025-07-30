@@ -19,12 +19,13 @@ use editor::{
     scroll::ScrollbarAutoHide,
 };
 use futures::StreamExt as _;
-use git::blame::ParsedCommitMessage;
+use git::commit::ParsedCommitMessage;
 use git::repository::{
-    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
+    Branch, CommitOptions, DiffType, FetchOptions, GitCommitter,
     PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
+use git::commit::{CommitDetails, CommitSummary};
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
@@ -63,7 +64,6 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
-use time::OffsetDateTime;
 use ui::{
     Checkbox, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize, PopoverMenu, Scrollbar,
     ScrollbarState, SplitButton, Tooltip, prelude::*,
@@ -1601,7 +1601,7 @@ impl GitPanel {
                     this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                         let start = buffer.anchor_before(0);
                         let end = buffer.anchor_after(buffer.len());
-                        buffer.edit([(start..end, message)], None, cx);
+                        buffer.edit([(start..end, message.and_then(|msg| Some(msg.message)).unwrap_or_default())], None, cx);
                     });
                 })
                 .log_err();
@@ -1771,7 +1771,7 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(prior_commit.message, window, cx)
+                            editor.set_text(prior_commit.message.and_then(|msg| Some(msg.message)).unwrap_or_default(), window, cx)
                         });
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
@@ -4601,13 +4601,13 @@ impl GitPanelMessageTooltip {
                 })?;
                 let details = details.await?;
 
-                let commit_details = crate::commit_tooltip::CommitDetails {
+                let commit_details = git::commit::CommitDetails {
                     sha: details.sha.clone(),
                     author_name: details.author_name.clone(),
                     author_email: details.author_email.clone(),
-                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
+                    commit_timestamp: details.commit_timestamp,
                     message: Some(ParsedCommitMessage {
-                        message: details.message.clone(),
+                        message: details.message.unwrap_or_default().message,
                         ..Default::default()
                     }),
                 };

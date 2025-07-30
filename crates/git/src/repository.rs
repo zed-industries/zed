@@ -1,6 +1,6 @@
-use crate::commit::parse_git_diff_name_status;
+use crate::commit::{parse_git_diff_name_status, CommitDetails, CommitSummary};
 use crate::status::{GitStatus, StatusCode};
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::Oid;
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -13,6 +13,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::{Borrow, Cow};
 use std::ffi::{OsStr, OsString};
+use std::hash::Hash;
 use std::io::prelude::*;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
@@ -144,24 +145,6 @@ pub struct UpstreamTrackingStatus {
     pub behind: u32,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct CommitSummary {
-    pub sha: SharedString,
-    pub subject: SharedString,
-    /// This is a unix timestamp
-    pub commit_timestamp: i64,
-    pub has_parent: bool,
-}
-
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub struct CommitDetails {
-    pub sha: SharedString,
-    pub message: SharedString,
-    pub commit_timestamp: i64,
-    pub author_email: SharedString,
-    pub author_name: SharedString,
-}
-
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
@@ -174,11 +157,6 @@ pub struct CommitFile {
     pub new_text: Option<String>,
 }
 
-impl CommitDetails {
-    pub fn short_sha(&self) -> SharedString {
-        self.sha[..SHORT_SHA_LENGTH].to_string().into()
-    }
-}
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct Remote {
@@ -599,7 +577,7 @@ impl GitRepository for RealGitRepository {
                     bail!("unexpected git-show output for {commit:?}: {output:?}")
                 }
                 let sha = fields[0].to_string().into();
-                let message = fields[1].to_string().into();
+                let message = fields[1].to_string().try_into().ok();
                 let commit_timestamp = fields[2].parse()?;
                 let author_email = fields[3].to_string().into();
                 let author_name = fields[4].to_string().into();
