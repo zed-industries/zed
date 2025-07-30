@@ -10982,12 +10982,16 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -14773,7 +14777,6 @@ dependencies = [
  "notifications",
  "paths",
  "project",
- "schemars",
  "search",
  "serde",
  "serde_json",
