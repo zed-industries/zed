@@ -87,7 +87,7 @@ struct DirectComposition {
 }
 
 impl DirectXDevices {
-    pub(crate) fn new(disable_direct_composition: bool) -> Result<Self> {
+    pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
         let dxgi_factory = get_dxgi_factory().context("Creating DXGI factory")?;
         let adapter = get_adapter(&dxgi_factory).context("Getting DXGI adapter")?;
         let (device, device_context) = {
@@ -121,13 +121,13 @@ impl DirectXDevices {
             Some(device.cast().context("Creating DXGI device")?)
         };
 
-        Ok(Self {
+        Ok(ManuallyDrop::new(Self {
             adapter,
             dxgi_factory,
             dxgi_device,
             device,
             device_context,
-        })
+        }))
     }
 }
 
@@ -137,20 +137,25 @@ impl DirectXRenderer {
             log::info!("Direct Composition is disabled.");
         }
 
-        let devices = ManuallyDrop::new(
-            DirectXDevices::new(disable_direct_composition).context("Creating DirectX devices")?,
-        );
+        let devices =
+            DirectXDevices::new(disable_direct_composition).context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
-        let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)?;
-        let globals = DirectXGlobalElements::new(&devices.device)?;
-        let pipelines = DirectXRenderPipelines::new(&devices.device)?;
+        let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
+            .context("Creating DirectX resources")?;
+        let globals = DirectXGlobalElements::new(&devices.device)
+            .context("Creating DirectX global elements")?;
+        let pipelines = DirectXRenderPipelines::new(&devices.device)
+            .context("Creating DirectX render pipelines")?;
 
         let direct_composition = if disable_direct_composition {
             None
         } else {
-            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)?;
-            composition.set_swap_chain(&resources.swap_chain)?;
+            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
+                .context("Creating DirectComposition")?;
+            composition
+                .set_swap_chain(&resources.swap_chain)
+                .context("Setting swap chain for DirectComposition")?;
             Some(composition)
         };
 
@@ -240,10 +245,8 @@ impl DirectXRenderer {
             ManuallyDrop::drop(&mut self.devices);
         }
 
-        let devices = ManuallyDrop::new(
-            DirectXDevices::new(disable_direct_composition)
-                .context("Recreating DirectX devices")?,
-        );
+        let devices = DirectXDevices::new(disable_direct_composition)
+            .context("Recreating DirectX devices")?;
         let resources = DirectXResources::new(
             &devices,
             self.resources.width,
