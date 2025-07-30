@@ -14756,6 +14756,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings_profile_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde_json",
+ "settings",
+ "ui",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+]
+
+[[package]]
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
@@ -20321,6 +20340,7 @@ dependencies = [
  "serde_json",
  "session",
  "settings",
+ "settings_profile_selector",
  "settings_ui",
  "shellexpand 2.1.2",
  "smol",
