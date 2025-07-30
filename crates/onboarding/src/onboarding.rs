@@ -81,7 +81,7 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = WelcomePage::new(cx);
+                        let settings_page = WelcomePage::new(window, cx);
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
