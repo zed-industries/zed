@@ -7,17 +7,17 @@ license = "GPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+command_palette.workspace = true
+gpui.workspace = true
 mdbook = "0.4.40"
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-regex.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 zed.workspace = true
-gpui.workspace = true
-command_palette.workspace = true
+zlog.workspace = true
 
 [lints]
 workspace = true

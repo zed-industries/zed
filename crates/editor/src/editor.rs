@@ -65,7 +65,7 @@ use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
     CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowScrollbar,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -21834,11 +21834,11 @@ impl CodeActionProvider for Entity<Project> {
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
-            let code_lens = project.code_lens(buffer, range.clone(), cx);
+            let code_lens_actions = project.code_lens_actions(buffer, range.clone(), cx);
             let code_actions = project.code_actions(buffer, range, None, cx);
             cx.background_spawn(async move {
-                let (code_lens, code_actions) = join(code_lens, code_actions).await;
-                Ok(code_lens
+                let (code_lens_actions, code_actions) = join(code_lens_actions, code_actions).await;
+                Ok(code_lens_actions
                     .context("code lens fetch")?
                     .into_iter()
                     .chain(code_actions.context("code action fetch")?)

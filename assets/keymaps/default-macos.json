@@ -549,7 +549,7 @@
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "cmd-|": "editor::MoveToEnclosingBracket",
-      "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-m": "editor::MoveToEnclosingBracket", // From Jetbrains
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",

@@ -21,6 +21,7 @@ ai_onboarding.workspace = true
 anyhow.workspace = true
 arrayvec.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 copilot.workspace = true
@@ -52,11 +53,10 @@ thiserror.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+workspace-hack.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 zed_actions.workspace = true
-zed_llm_client.workspace = true
-workspace-hack.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

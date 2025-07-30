@@ -47,6 +47,7 @@ impl AgentServer for Codex {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let project = project.clone();
+        let working_directory = project.read(cx).active_project_directory(cx);
         cx.spawn(async move |cx| {
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).codex.clone()
@@ -65,6 +66,7 @@ impl AgentServer for Codex {
                     args: command.args,
                     env: command.env,
                 },
+                working_directory,
             )
             .into();
             ContextServer::start(client.clone(), cx).await?;
@@ -310,7 +312,7 @@ pub(crate) mod tests {
 
         AgentServerCommand {
             path: cli_path,
-            args: vec!["mcp".into()],
+            args: vec![],
             env: None,
         }
     }

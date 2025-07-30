@@ -2,7 +2,7 @@ use gpui::ClickEvent;
 
 use crate::{IconButtonShape, prelude::*};
 
-#[derive(IntoElement)]
+#[derive(IntoElement, RegisterComponent)]
 pub struct NumericStepper {
     id: ElementId,
     value: SharedString,
@@ -91,5 +91,36 @@ impl RenderOnce for NumericStepper {
                             .on_click(self.on_increment),
                     ),
             )
+    }
+}
+
+impl Component for NumericStepper {
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn name() -> &'static str {
+        "NumericStepper"
+    }
+
+    fn sort_name() -> &'static str {
+        Self::name()
+    }
+
+    fn description() -> Option<&'static str> {
+        Some("A button used to increment or decrement a numeric value. ")
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            div()
+                .child(NumericStepper::new(
+                    "numeric-stepper-component-preview",
+                    "10",
+                    move |_, _, _| {},
+                    move |_, _, _| {},
+                ))
+                .into_any_element(),
+        )
     }
 }
