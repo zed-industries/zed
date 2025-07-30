@@ -7914,7 +7914,7 @@ impl LspStore {
         }
     }
 
-    pub fn open_local_buffer_via_lsp(
+    pub(crate) fn open_local_buffer_via_lsp(
         &mut self,
         mut abs_path: lsp::Url,
         language_server_id: LanguageServerId,
