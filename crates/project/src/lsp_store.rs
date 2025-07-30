@@ -81,7 +81,6 @@ use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::Any,
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
@@ -12225,87 +12224,6 @@ fn glob_literal_prefix(glob: &Path) -> PathBuf {
             _ => true,
         })
         .collect()
-}
-
-pub struct SshLspAdapter {
-    name: LanguageServerName,
-    binary: LanguageServerBinary,
-    initialization_options: Option<String>,
-    code_action_kinds: Option<Vec<CodeActionKind>>,
-}
-
-impl SshLspAdapter {
-    pub fn new(
-        name: LanguageServerName,
-        binary: LanguageServerBinary,
-        initialization_options: Option<String>,
-        code_action_kinds: Option<String>,
-    ) -> Self {
-        Self {
-            name,
-            binary,
-            initialization_options,
-            code_action_kinds: code_action_kinds
-                .as_ref()
-                .and_then(|c| serde_json::from_str(c).ok()),
-        }
-    }
-}
-
-#[async_trait(?Send)]
-impl LspAdapter for SshLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        self.name.clone()
-    }
-
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &dyn Fs,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let Some(options) = &self.initialization_options else {
-            return Ok(None);
-        };
-        let result = serde_json::from_str(options)?;
-        Ok(result)
-    }
-
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        Some(self.binary.clone())
-    }
-
-    async fn cached_server_binary(
-        &self,
-        _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        None
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        _: Box<dyn 'static + Send + Any>,
-        _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
-    }
 }
 
 pub fn language_server_settings<'a>(

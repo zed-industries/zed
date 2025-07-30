@@ -265,29 +265,18 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     // ```
     languages.register_available_lsp_adapter(
         LanguageServerName("tailwindcss-language-server".into()),
-        {
-            let adapter = tailwind_adapter.clone();
-            move || adapter.clone()
-        },
+        tailwind_adapter.clone(),
     );
-    languages.register_available_lsp_adapter(LanguageServerName("eslint".into()), {
-        let adapter = eslint_adapter.clone();
-        move || adapter.clone()
-    });
-    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), {
-        let adapter = vtsls_adapter.clone();
-        move || adapter.clone()
-    });
+    languages.register_available_lsp_adapter(
+        LanguageServerName("eslint".into()),
+        eslint_adapter.clone(),
+    );
+    languages.register_available_lsp_adapter(LanguageServerName("vtsls".into()), vtsls_adapter);
     languages.register_available_lsp_adapter(
         LanguageServerName("typescript-language-server".into()),
-        {
-            let adapter = typescript_lsp_adapter.clone();
-            move || adapter.clone()
-        },
+        typescript_lsp_adapter,
     );
-    languages.register_available_lsp_adapter(python_lsp_adapter.name(), move || {
-        python_lsp_adapter.clone()
-    });
+    languages.register_available_lsp_adapter(python_lsp_adapter.name(), python_lsp_adapter);
 
     // Register Tailwind for the existing languages that should have it by default.
     //
