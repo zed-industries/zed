@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/activity_indicator",
     "crates/acp_thread",
-    "crates/agent_ui",
+    "crates/activity_indicator",
     "crates/agent",
-    "crates/agent_settings",
-    "crates/ai_onboarding",
     "crates/agent_servers",
+    "crates/agent_settings",
+    "crates/agent_ui",
+    "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
@@ -51,8 +51,8 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
-    "crates/explorer_command_injector",
     "crates/eval",
+    "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -101,7 +101,6 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
-    "crates/svg_preview",
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
@@ -119,7 +118,6 @@ members = [
     "crates/paths",
     "crates/picker",
     "crates/prettier",
-    "crates/settings_profile_selector",
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
@@ -143,6 +141,7 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_profile_selector",
     "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
@@ -155,6 +154,7 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/svg_preview",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -211,7 +211,7 @@ members = [
     #
 
     "tooling/workspace-hack",
-    "tooling/xtask", "crates/settings_profile_selector",
+    "tooling/xtask",
 ]
 default-members = ["crates/zed"]
 
