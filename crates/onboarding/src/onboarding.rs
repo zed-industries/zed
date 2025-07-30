@@ -12,7 +12,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
 use std::sync::Arc;
-use theme::{ThemeMode, ThemeSettings};
+use theme::{ThemeMode, ThemeRegistry, ThemeSettings};
 use ui::{
     Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
     ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*, rems_from_px,
@@ -25,6 +25,7 @@ use workspace::{
 };
 
 mod editing_page;
+mod theme_preview;
 mod welcome;
 
 pub struct OnBoardingFeatureFlag {}
@@ -314,32 +315,55 @@ impl Onboarding {
 
     fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme_mode = read_theme_selection(cx);
+        let theme_registry = ThemeRegistry::global(cx);
 
-        v_flex().child(
-            h_flex().justify_between().child(Label::new("Theme")).child(
-                ToggleButtonGroup::single_row(
-                    "theme-selector-onboarding",
-                    [
-                        ToggleButtonSimple::new("Light", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Light, cx)
-                        }),
-                        ToggleButtonSimple::new("Dark", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Dark, cx)
-                        }),
-                        ToggleButtonSimple::new("System", |_, _, cx| {
-                            write_theme_selection(ThemeMode::System, cx)
-                        }),
-                    ],
-                )
-                .selected_index(match theme_mode {
-                    ThemeMode::Light => 0,
-                    ThemeMode::Dark => 1,
-                    ThemeMode::System => 2,
-                })
-                .style(ui::ToggleButtonGroupStyle::Outlined)
-                .button_width(rems_from_px(64.)),
-            ),
-        )
+        let selected_index = match theme_mode {
+            ThemeMode::Light => 0,
+            ThemeMode::Dark => 1,
+            ThemeMode::System => 2,
+        };
+
+        let theme_seed = 0xBEEF as f32;
+        let light_themes = ["One Light", "Ayu Light", "Gruvbox Light"];
+        let dark_themes = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+
+        let theme_names = match theme_mode {
+            ThemeMode::Light => light_themes,
+            ThemeMode::Dark => dark_themes,
+            ThemeMode::System => match *theme::SystemAppearance::global(cx) {
+                theme::Appearance::Light => light_themes,
+                theme::Appearance::Dark => dark_themes,
+            },
+        };
+        let themes = theme_names
+            .map(|theme_name| theme_registry.get(theme_name))
+            .map(Result::unwrap);
+
+        v_flex()
+            .child(
+                h_flex().justify_between().child(Label::new("Theme")).child(
+                    ToggleButtonGroup::single_row(
+                        "theme-selector-onboarding",
+                        [
+                            ToggleButtonSimple::new("Light", |_, _, cx| {
+                                write_theme_selection(ThemeMode::Light, cx)
+                            }),
+                            ToggleButtonSimple::new("Dark", |_, _, cx| {
+                                write_theme_selection(ThemeMode::Dark, cx)
+                            }),
+                            ToggleButtonSimple::new("System", |_, _, cx| {
+                                write_theme_selection(ThemeMode::System, cx)
+                            }),
+                        ],
+                    )
+                    .selected_index(selected_index)
+                    .style(ui::ToggleButtonGroupStyle::Outlined)
+                    .button_width(rems_from_px(64.)),
+                ),
+            )
+            .child(h_flex().justify_between().children(
+                themes.map(|theme| theme_preview::ThemePreviewTile::new(theme, false, theme_seed)),
+            ))
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
