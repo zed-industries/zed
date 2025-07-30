@@ -1,15 +1,48 @@
-use anyhow::Result;
-use cloud_api_types::{AuthenticatedUser, GetAuthenticatedUserResponse};
+use std::sync::Arc;
+
+use anyhow::{Result, anyhow};
+pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
 use http_client::{AsyncBody, HttpClientWithUrl, Method, Request};
+use parking_lot::RwLock;
+
+struct Credentials {
+    user_id: u32,
+    access_token: String,
+}
 
 pub struct CloudApiClient {
-    user_id: i32,
-    access_token: String,
-    http_client: HttpClientWithUrl,
+    credentials: RwLock<Option<Credentials>>,
+    http_client: Arc<HttpClientWithUrl>,
 }
 
 impl CloudApiClient {
+    pub fn new(http_client: Arc<HttpClientWithUrl>) -> Self {
+        Self {
+            credentials: RwLock::new(None),
+            http_client,
+        }
+    }
+
+    pub fn set_credentials(&self, user_id: u32, access_token: String) {
+        *self.credentials.write() = Some(Credentials {
+            user_id,
+            access_token,
+        });
+    }
+
+    fn authorization_header(&self) -> Result<String> {
+        let guard = self.credentials.read();
+        let credentials = guard
+            .as_ref()
+            .ok_or_else(|| anyhow!("No credentials provided"))?;
+
+        Ok(format!(
+            "{} {}",
+            credentials.user_id, credentials.access_token
+        ))
+    }
+
     pub async fn get_authenticated_user(&self) -> Result<AuthenticatedUser> {
         let request = Request::builder()
             .method(Method::GET)
@@ -19,10 +52,7 @@ impl CloudApiClient {
                     .as_ref(),
             )
             .header("Content-Type", "application/json")
-            .header(
-                "Authorization",
-                format!("{} {}", self.user_id, self.access_token),
-            )
+            .header("Authorization", self.authorization_header()?)
             .body(AsyncBody::default())?;
 
         let mut response = self.http_client.send(request).await?;

@@ -2976,6 +2976,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clock",
+ "cloud_api_client",
  "cloud_llm_client",
  "cocoa 0.26.0",
  "collections",
@@ -3039,6 +3040,7 @@ dependencies = [
  "cloud_api_types",
  "futures 0.3.31",
  "http_client",
+ "parking_lot",
  "serde_json",
 ]
 
