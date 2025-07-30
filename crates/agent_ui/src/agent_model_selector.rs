@@ -38,6 +38,13 @@ impl AgentModelSelector {
                     move |model, cx| {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
+
+                        // Authenticate the provider when a model is selected
+                        let registry = LanguageModelRegistry::read_global(cx);
+                        if let Some(provider) = registry.provider(&model.provider_id()) {
+                            provider.authenticate(cx).detach();
+                        }
+
                         match &model_usage_context {
                             ModelUsageContext::Thread(thread) => {
                                 thread.update(cx, |thread, cx| {
