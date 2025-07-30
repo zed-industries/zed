@@ -14743,7 +14743,6 @@ dependencies = [
  "notifications",
  "paths",
  "project",
- "schemars",
  "search",
  "serde",
  "serde_json",
