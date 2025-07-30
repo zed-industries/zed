@@ -216,15 +216,6 @@ impl AcpThreadView {
                 }
             };
 
-            if connection.state().needs_authentication {
-                this.update(cx, |this, cx| {
-                    this.thread_state = ThreadState::Unauthenticated { connection };
-                    cx.notify();
-                })
-                .ok();
-                return;
-            }
-
             let result = match connection
                 .clone()
                 .new_thread(project.clone(), &root_dir, cx)
@@ -233,7 +224,7 @@ impl AcpThreadView {
                 Err(e) => {
                     let mut cx = cx.clone();
                     // todo! remove duplication
-                    if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
+                    if e.downcast_ref::<acp_thread::AuthRequired>().is_some() {
                         this.update(&mut cx, |this, cx| {
                             this.thread_state = ThreadState::Unauthenticated { connection };
                             cx.notify();
@@ -2219,17 +2210,14 @@ impl Render for AcpThreadView {
                     .justify_center()
                     .child(self.render_pending_auth_state())
                     .child(h_flex().mt_1p5().justify_center().children(
-                        connection.state().auth_methods.iter().map(|method| {
-                            Button::new(
-                                SharedString::from(method.id.0.clone()),
-                                method.label.clone(),
-                            )
-                            .on_click({
-                                let method_id = method.id.clone();
-                                cx.listener(move |this, _, window, cx| {
-                                    this.authenticate(method_id.clone(), window, cx)
+                        connection.auth_methods().into_iter().map(|method| {
+                            Button::new(SharedString::from(method.id.0.clone()), method.label)
+                                .on_click({
+                                    let method_id = method.id.clone();
+                                    cx.listener(move |this, _, window, cx| {
+                                        this.authenticate(method_id.clone(), window, cx)
+                                    })
                                 })
-                            })
                         }),
                     )),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),

@@ -7,24 +7,23 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
 use project::Project;
 use smol::stream::StreamExt as _;
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::{path::Path, sync::Arc};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 use anyhow::{Context, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
 use crate::mcp_server::ZedMcpServer;
 use crate::{AgentServerCommand, mcp_server};
-use acp_thread::{AcpThread, AgentConnection};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 pub struct AcpConnection {
-    agent_state: Rc<RefCell<acp::AgentState>>,
+    auth_methods: Rc<RefCell<Vec<acp::AuthMethod>>>,
     server_name: &'static str,
     client: Arc<context_server::ContextServer>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    _agent_state_task: Task<()>,
     _session_update_task: Task<()>,
 }
 
@@ -47,23 +46,7 @@ impl AcpConnection {
         .into();
         ContextServer::start(client.clone(), cx).await?;
 
-        let (mut state_tx, mut state_rx) = watch::channel(acp::AgentState::default());
         let mcp_client = client.client().context("Failed to subscribe")?;
-
-        mcp_client.on_notification(acp::AGENT_METHODS.agent_state, {
-            move |notification, _cx| {
-                log::trace!(
-                    "ACP Notification: {}",
-                    serde_json::to_string_pretty(&notification).unwrap()
-                );
-
-                if let Some(state) =
-                    serde_json::from_value::<acp::AgentState>(notification).log_err()
-                {
-                    state_tx.send(state).log_err();
-                }
-            }
-        });
 
         let (notification_tx, mut notification_rx) = mpsc::unbounded();
         mcp_client.on_notification(acp::AGENT_METHODS.session_update, {
@@ -83,17 +66,6 @@ impl AcpConnection {
         });
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
-        let initial_state = state_rx.recv().await?;
-        let agent_state = Rc::new(RefCell::new(initial_state));
-
-        let agent_state_task = cx.foreground_executor().spawn({
-            let agent_state = agent_state.clone();
-            async move {
-                while let Some(state) = state_rx.recv().log_err().await {
-                    agent_state.replace(state);
-                }
-            }
-        });
 
         let session_update_handler_task = cx.spawn({
             let sessions = sessions.clone();
@@ -105,11 +77,10 @@ impl AcpConnection {
         });
 
         Ok(Self {
+            auth_methods: Default::default(),
             server_name,
             client,
             sessions,
-            agent_state,
-            _agent_state_task: agent_state_task,
             _session_update_task: session_update_handler_task,
         })
     }
@@ -154,6 +125,7 @@ impl AgentConnection for AcpConnection {
     ) -> Task<Result<Entity<AcpThread>>> {
         let client = self.client.client();
         let sessions = self.sessions.clone();
+        let auth_methods = self.auth_methods.clone();
         let cwd = cwd.to_path_buf();
         cx.spawn(async move |cx| {
             let client = client.context("MCP server is not initialized yet")?;
@@ -194,12 +166,18 @@ impl AgentConnection for AcpConnection {
                 response.structured_content.context("Empty response")?,
             )?;
 
+            auth_methods.replace(result.auth_methods);
+
+            let Some(session_id) = result.session_id else {
+                anyhow::bail!(AuthRequired);
+            };
+
             let thread = cx.new(|cx| {
                 AcpThread::new(
                     self.server_name,
                     self.clone(),
                     project,
-                    result.session_id.clone(),
+                    session_id.clone(),
                     cx,
                 )
             })?;
@@ -211,14 +189,14 @@ impl AgentConnection for AcpConnection {
                 cancel_tx: None,
                 _mcp_server: mcp_server,
             };
-            sessions.borrow_mut().insert(result.session_id, session);
+            sessions.borrow_mut().insert(session_id, session);
 
             Ok(thread)
         })
     }
 
-    fn state(&self) -> Ref<'_, acp::AgentState> {
-        self.agent_state.borrow()
+    fn auth_methods(&self) -> Vec<agent_client_protocol::AuthMethod> {
+        self.auth_methods.borrow().clone()
     }
 
     fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {

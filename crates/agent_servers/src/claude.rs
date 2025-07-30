@@ -6,7 +6,7 @@ use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
 use std::rc::Rc;
@@ -58,7 +58,6 @@ impl AgentServer for ClaudeCode {
         _cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let connection = ClaudeAgentConnection {
-            agent_state: Default::default(),
             sessions: Default::default(),
         };
 
@@ -67,7 +66,6 @@ impl AgentServer for ClaudeCode {
 }
 
 struct ClaudeAgentConnection {
-    agent_state: Rc<RefCell<acp::AgentState>>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, ClaudeAgentSession>>>,
 }
 
@@ -185,8 +183,8 @@ impl AgentConnection for ClaudeAgentConnection {
         })
     }
 
-    fn state(&self) -> Ref<'_, acp::AgentState> {
-        self.agent_state.borrow()
+    fn auth_methods(&self) -> Vec<acp::AuthMethod> {
+        vec![]
     }
 
     fn authenticate(&self, _: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {

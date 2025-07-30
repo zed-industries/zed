@@ -1,4 +1,4 @@
-use std::{cell::Ref, path::Path, rc::Rc};
+use std::{error::Error, fmt, path::Path, rc::Rc};
 
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
@@ -16,11 +16,21 @@ pub trait AgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
-    fn state(&self) -> Ref<'_, acp::AgentState>;
+    fn auth_methods(&self) -> Vec<acp::AuthMethod>;
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
     fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
+}
+
+#[derive(Debug)]
+pub struct AuthRequired;
+
+impl Error for AuthRequired {}
+impl fmt::Display for AuthRequired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AuthRequired")
+    }
 }

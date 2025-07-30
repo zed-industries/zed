@@ -1595,7 +1595,6 @@ mod tests {
                 connection,
                 child_status: io_task,
                 current_thread: thread_rc,
-                agent_state: Default::default(),
             };
 
             AcpThread::new(
