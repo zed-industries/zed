@@ -88,7 +88,7 @@ impl SvgRenderer {
         let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.as_u32(), size.height.as_u32())
             .ok_or(usvg::Error::InvalidSize)?;
 
-        let scale = size.width.0 as f32 / tree.size().width();
+        let scale = size.width.raw() as f32 / tree.size().width();
         let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
 
         resvg::render(&tree, transform, &mut pixmap.as_mut());

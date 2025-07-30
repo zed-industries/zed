@@ -329,8 +329,8 @@ pub(crate) async fn capture_local_video_track(
     let metadata = capture_source.metadata()?;
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
-            width: metadata.resolution.width.0 as u32,
-            height: metadata.resolution.height.0 as u32,
+            width: metadata.resolution.width.as_u32(),
+            height: metadata.resolution.height.as_u32(),
         })
     })?
     .await?;

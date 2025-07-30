@@ -435,11 +435,11 @@ impl X11WindowState {
             );
 
         let mut bounds = params.bounds.to_device_pixels(scale_factor);
-        if bounds.size.width.0 == 0 || bounds.size.height.0 == 0 {
+        if bounds.size.width == physical_px(0) || bounds.size.height == physical_px(0) {
             log::warn!(
-                "Window bounds contain a zero value. height={}, width={}. Falling back to defaults.",
-                bounds.size.height.0,
-                bounds.size.width.0
+                "Window bounds contain a zero value. height={:?}, width={:?}. Falling back to defaults.",
+                bounds.size.height,
+                bounds.size.width,
             );
             bounds.size.width = 800.into();
             bounds.size.height = 600.into();
@@ -448,24 +448,24 @@ impl X11WindowState {
         check_reply(
             || {
                 format!(
-                    "X11 CreateWindow failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x.0: {}, bounds.origin.y.0: {}, bounds.size.width.0: {}, bounds.size.height.0: {}",
+                    "X11 CreateWindow failed. depth: {}, x_window: {}, visual_set.root: {}, bounds.origin.x: {:?}, bounds.origin.y: {:?}, bounds.size.width: {:?}, bounds.size.height: {:?}",
                     visual.depth,
                     x_window,
                     visual_set.root,
-                    bounds.origin.x.0 + 2,
-                    bounds.origin.y.0,
-                    bounds.size.width.0,
-                    bounds.size.height.0
+                    bounds.origin.x + physical_px(2),
+                    bounds.origin.y,
+                    bounds.size.width,
+                    bounds.size.height
                 )
             },
             xcb.create_window(
                 visual.depth,
                 x_window,
                 visual_set.root,
-                (bounds.origin.x.0 + 2) as i16,
-                bounds.origin.y.0 as i16,
-                bounds.size.width.0 as u16,
-                bounds.size.height.0 as u16,
+                (bounds.origin.x.raw() + 2) as i16,
+                bounds.origin.y.raw() as i16,
+                bounds.size.width.raw() as u16,
+                bounds.size.height.raw() as u16,
                 0,
                 xproto::WindowClass::INPUT_OUTPUT,
                 visual.id,
@@ -504,12 +504,13 @@ impl X11WindowState {
 
             let reply = get_reply(|| "X11 GetGeometry failed.", xcb.get_geometry(x_window))?;
             if reply.x == 0 && reply.y == 0 {
-                bounds.origin.x.0 += 2;
+                bounds.origin.x += physical_px(2);
+
                 // Work around a bug where our rendered content appears
                 // outside the window bounds when opened at the default position
                 // (14px, 49px on X + Gnome + Ubuntu 22).
-                let x = bounds.origin.x.0;
-                let y = bounds.origin.y.0;
+                let x = bounds.origin.x.raw();
+                let y = bounds.origin.y.raw();
                 check_reply(
                     || format!("X11 ConfigureWindow failed. x: {}, y: {}", x, y),
                     xcb.configure_window(x_window, &xproto::ConfigureWindowAux::new().x(x).y(y)),
@@ -1165,8 +1166,8 @@ impl PlatformWindow for X11Window {
     fn resize(&mut self, size: Size<Pixels>) {
         let state = self.0.state.borrow();
         let size = size.to_device_pixels(state.scale_factor);
-        let width = size.width.0 as u32;
-        let height = size.height.0 as u32;
+        let width = size.width.as_u32();
+        let height = size.height.as_u32();
 
         check_reply(
             || {

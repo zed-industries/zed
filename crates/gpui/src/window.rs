@@ -2869,8 +2869,8 @@ impl Window {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            x: (glyph_origin.x.raw().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (glyph_origin.y.raw().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
         let params = RenderGlyphParams {
             font_id,
@@ -2988,9 +2988,9 @@ impl Window {
         let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
             path,
-            size: bounds.size.map(|pixels| {
-                DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
-            }),
+            size: bounds
+                .size
+                .map(|pixels| (pixels * SMOOTH_SVG_SCALE_FACTOR).ceil().quantize()),
         };
 
         let Some(tile) =

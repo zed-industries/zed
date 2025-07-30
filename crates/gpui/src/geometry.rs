@@ -2837,7 +2837,7 @@ impl From<usize> for Pixels {
     Deserialize,
 )]
 #[repr(transparent)]
-pub struct PhysicalPixels<T>(pub T);
+pub struct PhysicalPixels<T>(T);
 
 /// Deprecated alias to physical pixels.
 pub type DevicePixels = PhysicalPixels<i32>;
@@ -2987,6 +2987,16 @@ impl PhysicalPixels<f32> {
     /// with a given scale factor.
     pub fn to_logical(self, scale_factor: f32) -> Pixels {
         px(self.0 / scale_factor)
+    }
+}
+
+impl<T> PhysicalPixels<T> {
+    /// Returns the number of physical pixels represented by `self`.
+    pub const fn raw(self) -> T
+    where
+        T: Copy,
+    {
+        self.0
     }
 }
 

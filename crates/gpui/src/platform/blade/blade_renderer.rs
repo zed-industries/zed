@@ -35,8 +35,8 @@ struct PodBounds {
 impl From<Bounds<ScaledPixels>> for PodBounds {
     fn from(bounds: Bounds<ScaledPixels>) -> Self {
         Self {
-            origin: [bounds.origin.x.0, bounds.origin.y.0],
-            size: [bounds.size.width.0, bounds.size.height.0],
+            origin: [bounds.origin.x.raw(), bounds.origin.y.raw()],
+            size: [bounds.size.width.raw(), bounds.size.height.raw()],
         }
     }
 }
@@ -472,8 +472,8 @@ impl BladeRenderer {
 
     fn update_drawable_size_impl(&mut self, size: Size<DevicePixels>, always_resize: bool) {
         let gpu_size = gpu::Extent {
-            width: size.width.0 as u32,
-            height: size.height.0 as u32,
+            width: size.width.as_u32(),
+            height: size.height.as_u32(),
             depth: 1,
         };
 
