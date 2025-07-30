@@ -3035,7 +3035,11 @@ dependencies = [
 name = "cloud_api_client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "cloud_api_types",
+ "futures 0.3.31",
+ "http_client",
+ "serde_json",
 ]
 
 [[package]]

@@ -12,4 +12,8 @@ workspace = true
 path = "src/cloud_api_client.rs"
 
 [dependencies]
+anyhow.workspace = true
 cloud_api_types.workspace = true
+futures.workspace = true
+http_client.workspace = true
+serde_json.workspace = true
