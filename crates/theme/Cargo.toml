@@ -28,7 +28,6 @@ inventory.workspace = true
 log.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
 parking_lot.workspace = true
-# presentation_mode_settings.workspace = true
 refineable.workspace = true
 schemars = { workspace = true, features = ["indexmap2"] }
 serde.workspace = true

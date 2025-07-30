@@ -27,7 +27,6 @@ pub use settings_store::{
 };
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
-/// Global to store the currently active settings profile name
 #[derive(Clone, Debug, PartialEq)]
 pub struct ActiveSettingsProfileName(pub String);
 
@@ -80,7 +79,7 @@ pub fn init(cx: &mut App) {
         .unwrap();
     cx.set_global(settings);
     BaseKeymap::register(cx);
-    SettingsStore::observe_active_settings_profile(cx).detach();
+    SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
 pub fn default_settings() -> Cow<'static, str> {

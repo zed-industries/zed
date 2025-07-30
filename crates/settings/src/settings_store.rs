@@ -285,7 +285,7 @@ impl SettingsStore {
         }
     }
 
-    pub fn observe_active_settings_profile(cx: &mut App) -> gpui::Subscription {
+    pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
         cx.observe_global::<ActiveSettingsProfileName>(|cx| {
             Self::update_global(cx, |store, cx| {
                 store.recompute_values(None, cx).log_err();
@@ -426,14 +426,14 @@ impl SettingsStore {
     }
 
     /// Get the currently active profile name, if any.
-    pub fn active_profile(&self) -> Option<&str> {
+    pub fn active_setting_profile(&self) -> Option<&str> {
         self.raw_user_settings
             .get("active_profile")
             .and_then(|v| v.as_str())
     }
 
-    /// Get the available profile names.
-    pub fn available_profiles(&self) -> impl Iterator<Item = &str> {
+    /// Get the configured settings profile names.
+    pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.raw_user_settings
             .get("profiles")
             .and_then(|v| v.as_object())

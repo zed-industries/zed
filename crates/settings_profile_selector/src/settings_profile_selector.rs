@@ -61,7 +61,7 @@ pub struct SettingsProfileSelectorDelegate {
     matches: Vec<StringMatch>,
     profile_names: Vec<Option<String>>,
     original_profile_name: Option<String>,
-    selected_profile: Option<String>,
+    selected_profile_name: Option<String>,
     selected_index: usize,
     selection_completed: bool,
     selector: WeakEntity<SettingsProfileSelector>,
@@ -75,7 +75,7 @@ impl SettingsProfileSelectorDelegate {
     ) -> Self {
         let settings_store = cx.global::<SettingsStore>();
         let mut profile_names: Vec<String> = settings_store
-            .available_profiles()
+            .configured_settings_profiles()
             .map(|s| s.to_string())
             .collect();
 
@@ -94,22 +94,22 @@ impl SettingsProfileSelectorDelegate {
             })
             .collect();
 
-        let original_profile_name = cx
+        let profile_name = cx
             .try_global::<ActiveSettingsProfileName>()
             .map(|p| p.0.clone());
 
         let mut this = Self {
             matches,
             profile_names,
-            original_profile_name,
-            selected_profile: None,
+            original_profile_name: profile_name.clone(),
+            selected_profile_name: None,
             selected_index: 0,
             selection_completed: false,
             selector,
         };
 
-        if let Some(active_profile_name) = cx.try_global::<ActiveSettingsProfileName>() {
-            this.select_if_matching(&active_profile_name.0);
+        if let Some(profile_name) = profile_name {
+            this.select_if_matching(&profile_name);
         }
 
         this
@@ -131,18 +131,18 @@ impl SettingsProfileSelectorDelegate {
             return None;
         };
 
-        let name = self.profile_names.get(mat.candidate_id)?;
+        let profile_name = self.profile_names.get(mat.candidate_id)?;
 
-        return Self::update_active_profile_name_global(name.clone(), cx);
+        return Self::update_active_profile_name_global(profile_name.clone(), cx);
     }
 
     fn update_active_profile_name_global(
-        name: Option<String>,
+        profile_name: Option<String>,
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) -> Option<String> {
-        if let Some(name) = name {
-            cx.set_global(ActiveSettingsProfileName(name.clone()));
-            return Some(name.clone());
+        if let Some(profile_name) = profile_name {
+            cx.set_global(ActiveSettingsProfileName(profile_name.clone()));
+            return Some(profile_name.clone());
         }
 
         if cx.has_global::<ActiveSettingsProfileName>() {
@@ -175,7 +175,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) {
         self.selected_index = ix;
-        self.selected_profile = self.set_selected_profile(cx);
+        self.selected_profile_name = self.set_selected_profile(cx);
     }
 
     fn update_matches(
@@ -189,7 +189,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
             .profile_names
             .iter()
             .enumerate()
-            .map(|(id, name)| StringMatchCandidate::new(id, &display_name(name)))
+            .map(|(id, profile_name)| StringMatchCandidate::new(id, &display_name(profile_name)))
             .collect::<Vec<_>>();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -223,7 +223,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                     .delegate
                     .selected_index
                     .min(this.delegate.matches.len().saturating_sub(1));
-                this.delegate.selected_profile = this.delegate.set_selected_profile(cx);
+                this.delegate.selected_profile_name = this.delegate.set_selected_profile(cx);
             })
             .ok();
         })
@@ -263,7 +263,7 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let name = &self.profile_names[mat.candidate_id];
+        let profile_name = &self.profile_names[mat.candidate_id];
 
         Some(
             ListItem::new(ix)
@@ -271,16 +271,13 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(HighlightedLabel::new(
-                    display_name(name),
+                    display_name(profile_name),
                     mat.positions.clone(),
                 )),
         )
     }
 }
 
-fn display_name(name: &Option<String>) -> String {
-    name.clone().unwrap_or("Disabled".into())
+fn display_name(profile_name: &Option<String>) -> String {
+    profile_name.clone().unwrap_or("Disabled".into())
 }
-
-// TODO: Test all states manually and with tests
-// TODO: Subscribe to global properly

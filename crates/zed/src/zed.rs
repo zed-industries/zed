@@ -40,7 +40,6 @@ use paths::{
     local_debug_file_relative_path, local_settings_file_relative_path,
     local_tasks_file_relative_path,
 };
-
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
 use prompt_store::PromptBuilder;
@@ -357,7 +356,6 @@ pub fn initialize_workspace(
             window,
             cx,
         );
-
         let active_buffer_language =
             cx.new(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
