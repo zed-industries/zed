@@ -165,7 +165,7 @@ mod tests {
             ]
         );
 
-        let untrap_handles = vec![
+        let untrap_handles = [
             focus_handles[1].clone(),
             focus_handles[8].clone(),
             focus_handles[0].clone(),
@@ -173,7 +173,7 @@ mod tests {
             focus_handles[9].clone(),
         ];
 
-        let trap1_handles = vec![
+        let trap1_handles = [
             focus_handles[5].clone(),
             focus_handles[6].clone(),
             focus_handles[7].clone(),
