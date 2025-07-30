@@ -22,7 +22,7 @@ use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 pub struct AcpConnection {
     auth_methods: Rc<RefCell<Vec<acp::AuthMethod>>>,
     server_name: &'static str,
-    client: Arc<context_server::ContextServer>,
+    context_server: Arc<context_server::ContextServer>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     _session_update_task: Task<()>,
 }
@@ -34,7 +34,7 @@ impl AcpConnection {
         working_directory: Option<Arc<Path>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let client: Arc<ContextServer> = ContextServer::stdio(
+        let context_server: Arc<ContextServer> = ContextServer::stdio(
             ContextServerId(format!("{}-mcp-server", server_name).into()),
             ContextServerCommand {
                 path: command.path,
@@ -44,26 +44,8 @@ impl AcpConnection {
             working_directory,
         )
         .into();
-        ContextServer::start(client.clone(), cx).await?;
-
-        let mcp_client = client.client().context("Failed to subscribe")?;
 
         let (notification_tx, mut notification_rx) = mpsc::unbounded();
-        mcp_client.on_notification(acp::AGENT_METHODS.session_update, {
-            move |notification, _cx| {
-                let notification_tx = notification_tx.clone();
-                log::trace!(
-                    "ACP Notification: {}",
-                    serde_json::to_string_pretty(&notification).unwrap()
-                );
-
-                if let Some(notification) =
-                    serde_json::from_value::<acp::SessionNotification>(notification).log_err()
-                {
-                    notification_tx.unbounded_send(notification).ok();
-                }
-            }
-        });
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
@@ -76,10 +58,32 @@ impl AcpConnection {
             }
         });
 
+        context_server
+            .start_with_handlers(
+                vec![(acp::AGENT_METHODS.session_update, {
+                    Box::new(move |notification, _cx| {
+                        let notification_tx = notification_tx.clone();
+                        log::trace!(
+                            "ACP Notification: {}",
+                            serde_json::to_string_pretty(&notification).unwrap()
+                        );
+
+                        if let Some(notification) =
+                            serde_json::from_value::<acp::SessionNotification>(notification)
+                                .log_err()
+                        {
+                            notification_tx.unbounded_send(notification).ok();
+                        }
+                    })
+                })],
+                cx,
+            )
+            .await?;
+
         Ok(Self {
             auth_methods: Default::default(),
             server_name,
-            client,
+            context_server,
             sessions,
             _session_update_task: session_update_handler_task,
         })
@@ -123,7 +127,7 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let client = self.client.client();
+        let client = self.context_server.client();
         let sessions = self.sessions.clone();
         let auth_methods = self.auth_methods.clone();
         let cwd = cwd.to_path_buf();
@@ -200,7 +204,7 @@ impl AgentConnection for AcpConnection {
     }
 
     fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
-        let client = self.client.client();
+        let client = self.context_server.client();
         cx.foreground_executor().spawn(async move {
             let params = acp::AuthenticateArguments { method_id };
 
@@ -226,7 +230,7 @@ impl AgentConnection for AcpConnection {
         params: agent_client_protocol::PromptArguments,
         cx: &mut App,
     ) -> Task<Result<()>> {
-        let client = self.client.client();
+        let client = self.context_server.client();
         let sessions = self.sessions.clone();
 
         cx.foreground_executor().spawn(async move {
@@ -283,6 +287,6 @@ impl AgentConnection for AcpConnection {
 
 impl Drop for AcpConnection {
     fn drop(&mut self) {
-        self.client.stop().log_err();
+        self.context_server.stop().log_err();
     }
 }
