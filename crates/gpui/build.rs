@@ -322,7 +322,7 @@ mod windows {
         }
 
         // Try to find in PATH
-        // NOTE: This has to be `where.exe` on Windows, not `which`
+        // NOTE: This has to be `where.exe` on Windows, not `where`, it must be ended with `.exe`
         if let Ok(output) = std::process::Command::new("where.exe")
             .arg("fxc.exe")
             .output()

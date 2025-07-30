@@ -564,8 +564,8 @@ impl DirectXRenderer {
         let driver_version = match desc.VendorId {
             0x10DE => nvidia::get_driver_version(),
             0x1002 => amd::get_driver_version(),
-            0x8086 => intel::get_driver_version(&self.devices.adapter),
-            id => Err(anyhow::anyhow!("Unknown vendor detected (ID: {:#X}).", id)),
+            // For Intel and other vendors, we use the DXGI API to get the driver version.
+            _ => dxgi::get_driver_version(&self.devices.adapter),
         }
         .context("Failed to get gpu driver info")
         .log_err()
@@ -1710,7 +1710,7 @@ mod amd {
     }
 }
 
-mod intel {
+mod dxgi {
     use windows::{
         Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice},
         core::Interface,
