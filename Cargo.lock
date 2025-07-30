@@ -4920,6 +4920,7 @@ dependencies = [
  "theme",
  "time",
  "tree-sitter-bash",
+ "tree-sitter-c",
  "tree-sitter-html",
  "tree-sitter-python",
  "tree-sitter-rust",

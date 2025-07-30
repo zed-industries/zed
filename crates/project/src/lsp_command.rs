@@ -2269,7 +2269,7 @@ impl LspCommand for GetCompletions {
                     // the range based on the syntax tree.
                     None => {
                         if self.position != clipped_position {
-                            log::info!("completion out of expected range");
+                            log::info!("completion out of expected range 1");
                             return false;
                         }
 
@@ -2288,7 +2288,7 @@ impl LspCommand for GetCompletions {
                             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
                             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
                             if start != range.start.0 || end != range.end.0 {
-                                log::info!("completion out of expected range");
+                                log::info!("completion out of expected range 2");
                                 return false;
                             }
 
@@ -2483,8 +2483,12 @@ pub(crate) fn parse_completion_text_edit(
         let start = snapshot.clip_point_utf16(range.start, Bias::Left);
         let end = snapshot.clip_point_utf16(range.end, Bias::Left);
         if start != range.start.0 || end != range.end.0 {
-            log::info!("completion out of expected range");
+            log::info!(
+                "completion out of expected range 3, start: {start:?}, end: {end:?}, range: {range:?}"
+            );
             return None;
+        } else {
+            log::info!("!!!!! all ok, start: {start:?}, end: {end:?}, range: {range:?}");
         }
         snapshot.anchor_before(start)..snapshot.anchor_after(end)
     };
