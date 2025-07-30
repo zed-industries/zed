@@ -176,24 +176,28 @@ impl Render for ZedPromptRenderer {
                 }),
             ));
 
-        div().size_full().occlude().child(
-            div()
-                .size_full()
-                .absolute()
-                .top_0()
-                .left_0()
-                .flex()
-                .flex_col()
-                .justify_around()
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_row()
-                        .justify_around()
-                        .child(prompt),
-                ),
-        )
+        div()
+            .size_full()
+            .occlude()
+            .bg(gpui::black().opacity(0.2))
+            .child(
+                div()
+                    .size_full()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .flex()
+                    .flex_col()
+                    .justify_around()
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .flex_row()
+                            .justify_around()
+                            .child(prompt),
+                    ),
+            )
     }
 }
 
