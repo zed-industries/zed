@@ -37,10 +37,12 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
     cx.set_global(settings_store);
     client::init_settings(cx);
 
+    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
         "Zed/{} ({}; {})",
-        AppVersion::global(cx),
+        app_version,
         std::env::consts::OS,
         std::env::consts::ARCH
     );

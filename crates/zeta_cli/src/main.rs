@@ -1,7 +1,8 @@
 mod headless;
 
 use anyhow::{Result, anyhow};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+use client::Client;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
@@ -9,7 +10,9 @@ use gpui::{Entity, Task};
 use language::Bias;
 use language::Buffer;
 use language::Point;
+use language_model::LlmApiToken;
 use project::{Project, ProjectPath};
+use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -17,27 +20,39 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use zeta::{GatherContextOutput, gather_context};
+use util::ConnectionResult;
+use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
 
 use crate::headless::ZetaCliAppState;
 
 #[derive(Parser, Debug)]
 #[command(name = "zeta")]
-struct Args {
+struct ZetaCliArgs {
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    Context {
+    Context(ContextArgs),
+    Predict {
         #[arg(long)]
-        worktree: PathBuf,
-        #[arg(long)]
-        cursor: CursorPosition,
-        #[arg(long)]
-        use_language_server: bool,
+        predict_edits_body_file: Option<PathBuf>,
+        #[clap(flatten)]
+        context_args: Option<ContextArgs>,
     },
+}
+
+// todo! Need a way to provide events (edit history etc)
+#[derive(Debug, Args)]
+#[group(requires = "worktree")]
+struct ContextArgs {
+    #[arg(long)]
+    worktree: PathBuf,
+    #[arg(long)]
+    cursor: CursorPosition,
+    #[arg(long)]
+    use_language_server: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -74,12 +89,16 @@ impl FromStr for CursorPosition {
 }
 
 async fn get_context(
-    worktree_path: &Path,
-    cursor: &CursorPosition,
-    use_language_server: bool,
-    app_state: Arc<ZetaCliAppState>,
+    args: ContextArgs,
+    app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<GatherContextOutput> {
+    let ContextArgs {
+        worktree: worktree_path,
+        cursor,
+        use_language_server,
+    } = args;
+
     let worktree_path = worktree_path.canonicalize()?;
     if cursor.path.is_absolute() {
         return Err(anyhow!("Absolute paths are not supported in --cursor"));
@@ -87,8 +106,7 @@ async fn get_context(
 
     let (project, _lsp_open_handle, buffer) = if use_language_server {
         let (project, lsp_open_handle, buffer) =
-            open_buffer_with_language_server(&worktree_path, &cursor.path, app_state.clone(), cx)
-                .await?;
+            open_buffer_with_language_server(&worktree_path, &cursor.path, &app_state, cx).await?;
         (Some(project), Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
@@ -143,7 +161,7 @@ async fn get_context(
 pub async fn open_buffer_with_language_server(
     worktree_path: &Path,
     path: &Path,
-    app_state: Arc<ZetaCliAppState>,
+    app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Project>, Entity<Entity<Buffer>>, Entity<Buffer>)> {
     let project = cx.update(|cx| {
@@ -266,38 +284,78 @@ pub fn wait_for_lang_server(
     })
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-
+fn main() {
+    let args = ZetaCliArgs::parse();
     let http_client = Arc::new(ReqwestClient::new());
     let app = Application::headless().with_http_client(http_client);
 
-    match args.command {
-        Commands::Context {
-            worktree,
-            cursor,
-            use_language_server,
-        } => {
-            app.run(move |cx| {
-                let app_state = Arc::new(headless::init(cx));
-                cx.spawn(async move |cx| {
-                    let result =
-                        get_context(&worktree, &cursor, use_language_server, app_state, cx).await;
-                    match result {
-                        Ok(output) => {
-                            println!("{}", serde_json::to_string_pretty(&output.body).unwrap());
-                            let _ = cx.update(|cx| cx.quit());
+    app.run(move |cx| {
+        let app_state = Arc::new(headless::init(cx));
+        cx.spawn(async move |cx| {
+            let result = match args.command {
+                Commands::Context(context_args) => get_context(context_args, &app_state, cx)
+                    .await
+                    .map(|output| serde_json::to_string_pretty(&output.body).unwrap()),
+                Commands::Predict {
+                    predict_edits_body_file,
+                    context_args,
+                } => {
+                    cx.spawn(async move |cx| {
+                        let connection_result =
+                            Client::authenticate_and_connect(&app_state.client, true, cx).await;
+                        match connection_result {
+                            ConnectionResult::Timeout => {
+                                return Err(anyhow!("Timeout while connecting"));
+                            }
+                            ConnectionResult::ConnectionReset => {
+                                return Err(anyhow!("Connection reset"));
+                            }
+                            ConnectionResult::Result(Err(err)) => return Err(err),
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-                        Err(e) => {
-                            eprintln!("Failed to get context:\n{:?}", e);
-                            exit(1);
-                        }
-                    }
-                })
-                .detach();
-            });
-        }
-    }
 
-    Ok(())
+                        let app_version = cx.update(|cx| AppVersion::global(cx))?;
+                        dbg!(app_version);
+                        let llm_token = LlmApiToken::default();
+                        llm_token.refresh(&app_state.client).await?;
+
+                        let predict_edits_body = if let Some(content) = predict_edits_body_file {
+                            let context_string = smol::fs::read_to_string(content).await?;
+                            serde_json::from_str(&context_string)?
+                        } else if let Some(context_args) = context_args {
+                            get_context(context_args, &app_state, cx).await?.body
+                        } else {
+                            return Err(anyhow!(
+                                "Expected either --predict-edits-body-file \
+                                    or the required args of the `context` command."
+                            ));
+                        };
+
+                        let (response, _usage) =
+                            Zeta::perform_predict_edits(PerformPredictEditsParams {
+                                client: app_state.client.clone(),
+                                llm_token,
+                                app_version,
+                                body: predict_edits_body,
+                            })
+                            .await?;
+
+                        Ok(serde_json::to_string_pretty(&response).unwrap())
+                    })
+                    .await
+                }
+            };
+            match result {
+                Ok(output) => {
+                    println!("{}", output);
+                    let _ = cx.update(|cx| cx.quit());
+                }
+                Err(e) => {
+                    eprintln!("Failed: {:?}", e);
+                    exit(1);
+                }
+            }
+        })
+        .detach();
+    });
 }

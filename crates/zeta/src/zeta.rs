@@ -711,7 +711,7 @@ and then another
         )
     }
 
-    fn perform_predict_edits(
+    pub fn perform_predict_edits(
         params: PerformPredictEditsParams,
     ) -> impl Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>> {
         async move {
@@ -1096,7 +1096,7 @@ and then another
     }
 }
 
-struct PerformPredictEditsParams {
+pub struct PerformPredictEditsParams {
     pub client: Arc<Client>,
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,

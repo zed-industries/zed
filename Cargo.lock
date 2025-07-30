@@ -20660,6 +20660,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
+ "smol",
  "terminal_view",
  "util",
  "watch",

@@ -42,3 +42,4 @@ util.workspace = true
 watch.workspace = true
 workspace-hack.workspace = true
 zeta.workspace = true
+smol.workspace = true
