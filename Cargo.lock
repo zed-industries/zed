@@ -3041,6 +3041,9 @@ dependencies = [
 [[package]]
 name = "cloud_api_types"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "cloud_llm_client"
