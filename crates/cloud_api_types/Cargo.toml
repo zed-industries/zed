@@ -13,3 +13,4 @@ path = "src/cloud_api_types.rs"
 
 [dependencies]
 serde.workspace = true
+workspace-hack.workspace = true

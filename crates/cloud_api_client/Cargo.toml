@@ -18,3 +18,4 @@ futures.workspace = true
 http_client.workspace = true
 parking_lot.workspace = true
 serde_json.workspace = true
+workspace-hack.workspace = true

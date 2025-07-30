@@ -3042,6 +3042,7 @@ dependencies = [
  "http_client",
  "parking_lot",
  "serde_json",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -3049,6 +3050,7 @@ name = "cloud_api_types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "workspace-hack",
 ]
 
 [[package]]
