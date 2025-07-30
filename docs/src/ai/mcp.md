@@ -50,7 +50,7 @@ You can connect them by adding their commands directly to your `settings.json`, 
 }
 ```
 
-Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open configuration` action).
+Alternatively, you can also add a custom server by accessing the Agent Panel's Settings view (also accessible via the `agent: open settings` action).
 From there, you can add it through the modal that appears when you click the "Add Custom Server" button.
 
 ## Using MCP Servers

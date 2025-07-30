@@ -78,7 +78,7 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding, ToggleModelSelector},
+    agent::{OpenOnboardingModal, OpenSettings, ResetOnboarding, ToggleModelSelector},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
@@ -105,7 +105,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
+                .register_action(|workspace, _: &OpenSettings, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
@@ -2088,7 +2088,7 @@ impl AgentPanel {
 
                         menu = menu
                             .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                            .action("Settings", Box::new(OpenConfiguration))
+                            .action("Settings", Box::new(OpenSettings))
                             .action(zoom_in_label, Box::new(ToggleZoom));
                         menu
                     }))
@@ -2482,14 +2482,14 @@ impl AgentPanel {
                                                 .icon_color(Color::Muted)
                                                 .full_width()
                                                 .key_binding(KeyBinding::for_action_in(
-                                                    &OpenConfiguration,
+                                                    &OpenSettings,
                                                     &focus_handle,
                                                     window,
                                                     cx,
                                                 ))
                                                 .on_click(|_event, window, cx| {
                                                     window.dispatch_action(
-                                                        OpenConfiguration.boxed_clone(),
+                                                        OpenSettings.boxed_clone(),
                                                         cx,
                                                     )
                                                 }),
@@ -2713,16 +2713,11 @@ impl AgentPanel {
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(
-                                &OpenConfiguration,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
-                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx)
                         }),
                 ),
             ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
@@ -3226,7 +3221,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &OpenConfiguration, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
