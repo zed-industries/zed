@@ -97,7 +97,7 @@ struct Specimen {
 
 impl Specimen {
     pub fn new(id: usize) -> Self {
-        let string = SharedString::new_static("many thihngs could be written here");
+        let string = SharedString::new_static("The quick brown fox jumps over the lazy dog");
         let id_string = format!("specimen-{}", id);
         let id = ElementId::Name(id_string.into());
         Self {
@@ -151,7 +151,6 @@ impl RenderOnce for Specimen {
         div()
             .id(self.id)
             .bg(theme.bg)
-            .font_family("Zed Plex Mono")
             .text_color(theme.fg)
             .text_size(px(font_size * scale))
             .line_height(relative(line_height))
@@ -271,7 +270,7 @@ impl Render for TextExample {
                     .overflow_x_hidden()
                     .bg(rgb(0xffffff))
                     .size_full()
-                    // .child(div().child(CharacterGrid::new().scale(base)))
+                    .child(div().child(CharacterGrid::new().scale(base)))
                     .child(
                         div()
                             .child(Specimen::new(self.next_id()).scale(step_down_2))
