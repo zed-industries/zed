@@ -21,6 +21,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod ai_setup_page;
 mod editing_page;
 mod welcome;
 
@@ -250,7 +251,9 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
+            SelectedPage::AiSetup => {
+                crate::ai_setup_page::render_ai_setup_page(window, cx).into_any_element()
+            }
         }
     }
 
@@ -282,10 +285,6 @@ impl Onboarding {
                 .button_width(rems_from_px(64.)),
             ),
         )
-    }
-
-    fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child("ai setup page")
     }
 }
 

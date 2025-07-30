@@ -10959,6 +10959,7 @@ dependencies = [
  "fs",
  "gpui",
  "language",
+ "language_model",
  "project",
  "settings",
  "theme",
