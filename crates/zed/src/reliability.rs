@@ -63,7 +63,7 @@ pub fn init_panic_hook(
                 location.column(),
                 match app_commit_sha.as_ref() {
                     Some(commit_sha) => format!(
-                        "https://github.com/zed-industries/zed/blob/{}/src/{}#L{} \
+                        "https://github.com/zed-industries/zed/blob/{}/{}#L{} \
                         (may not be uploaded, line may be incorrect if files modified)\n",
                         commit_sha.full(),
                         location.file(),

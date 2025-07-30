@@ -107,6 +107,7 @@ impl AgentServer for Gemini {
                 name,
                 connection,
                 child_status,
+                current_thread: thread_rc,
             });
 
             Ok(connection)

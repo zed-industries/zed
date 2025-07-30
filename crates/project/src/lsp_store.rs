@@ -7447,33 +7447,36 @@ impl LspStore {
     }
 
     pub(crate) async fn refresh_workspace_configurations(
-        this: &WeakEntity<Self>,
+        lsp_store: &WeakEntity<Self>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) {
         maybe!(async move {
-            let (servers, toolchain_store) = this
-                .update(cx, |this, cx| {
-                    let local = this.as_local()?;
+            let mut refreshed_servers = HashSet::default();
+            let (servers, toolchain_store) = lsp_store
+                .update(cx, |lsp_store, cx| {
+                    let local = lsp_store.as_local()?;
+                    let toolchain_store = local.toolchain_store();
                     let servers = local
                         .language_server_ids
                         .iter()
-                        .flat_map(|(seed, state)| {
-                            let worktree = this
+                        .filter_map(|(seed, state)| {
+                            let worktree = lsp_store
                                 .worktree_store
                                 .read(cx)
                                 .worktree_for_id(seed.worktree_id, cx);
-                            let delegate = worktree.map(|worktree| {
-                                LocalLspAdapterDelegate::new(
-                                    local.languages.clone(),
-                                    &local.environment,
-                                    cx.weak_entity(),
-                                    &worktree,
-                                    local.http_client.clone(),
-                                    local.fs.clone(),
-                                    cx,
-                                )
-                            });
+                            let delegate: Arc<dyn LspAdapterDelegate> =
+                                worktree.map(|worktree| {
+                                    LocalLspAdapterDelegate::new(
+                                        local.languages.clone(),
+                                        &local.environment,
+                                        cx.weak_entity(),
+                                        &worktree,
+                                        local.http_client.clone(),
+                                        local.fs.clone(),
+                                        cx,
+                                    )
+                                })?;
                             let server_id = state.id;
 
                             let states = local.language_servers.get(&server_id)?;
@@ -7482,11 +7485,31 @@ impl LspStore {
                                 LanguageServerState::Starting { .. } => None,
                                 LanguageServerState::Running {
                                     adapter, server, ..
-                                } => Some((
-                                    adapter.adapter.clone(),
-                                    server.clone(),
-                                    delegate.clone()? as Arc<dyn LspAdapterDelegate>,
-                                )),
+                                } => {
+                                    let fs = fs.clone();
+                                    let toolchain_store = toolchain_store.clone();
+                                    let adapter = adapter.clone();
+                                    let server = server.clone();
+                                    refreshed_servers.insert(server.name());
+                                    Some(cx.spawn(async move |_, cx| {
+                                        let settings =
+                                            LocalLspStore::workspace_configuration_for_adapter(
+                                                adapter.adapter.clone(),
+                                                fs.as_ref(),
+                                                &delegate,
+                                                &toolchain_store,
+                                                cx,
+                                            )
+                                            .await
+                                            .ok()?;
+                                        server
+                                            .notify::<lsp::notification::DidChangeConfiguration>(
+                                                &lsp::DidChangeConfigurationParams { settings },
+                                            )
+                                            .ok()?;
+                                        Some(())
+                                    }))
+                                }
                             }
                         })
                         .collect::<Vec<_>>();
@@ -7496,23 +7519,13 @@ impl LspStore {
                 .ok()
                 .flatten()?;
 
-            for (adapter, server, delegate) in servers {
-                let settings = LocalLspStore::workspace_configuration_for_adapter(
-                    adapter,
-                    fs.as_ref(),
-                    &delegate,
-                    &toolchain_store,
-                    cx,
-                )
-                .await
-                .ok()?;
+            log::info!("Refreshing workspace configurations for servers {refreshed_servers:?}");
+            // TODO this asynchronous job runs concurrently with extension (de)registration and may take enough time for a certain extension
+            // to stop and unregister its language server wrapper.
+            // This is racy : an extension might have already removed all `local.language_servers` state, but here we `.clone()` and hold onto it anyway.
+            // This now causes errors in the logs, we should find a way to remove such servers from the processing everywhere.
+            let _: Vec<Option<()>> = join_all(servers).await;
 
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        &lsp::DidChangeConfigurationParams { settings },
-                    )
-                    .ok();
-            }
             Some(())
         })
         .await;

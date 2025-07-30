@@ -1616,6 +1616,10 @@ impl LspAdapter for BasedPyrightLspAdapter {
     fn manifest_name(&self) -> Option<ManifestName> {
         Some(SharedString::new_static("pyproject.toml").into())
     }
+
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::WorktreeRoot
+    }
 }
 
 #[cfg(test)]
