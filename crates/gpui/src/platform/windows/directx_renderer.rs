@@ -980,7 +980,7 @@ fn get_dxgi_factory() -> Result<IDXGIFactory6> {
     {
         DXGI_CREATE_FACTORY_DEBUG
     } else {
-        log::error!(
+        log::warn!(
             "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
         );
         DXGI_CREATE_FACTORY_FLAGS::default()
