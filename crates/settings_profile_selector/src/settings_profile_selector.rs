@@ -244,10 +244,12 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) {
-        SettingsProfileSelectorDelegate::update_active_profile_name_global(
-            self.original_profile_name.clone(),
-            cx,
-        );
+        if !self.selection_completed {
+            SettingsProfileSelectorDelegate::update_active_profile_name_global(
+                self.original_profile_name.clone(),
+                cx,
+            );
+        }
         self.selector.update(cx, |_, cx| cx.emit(DismissEvent)).ok();
     }
 
@@ -276,4 +278,271 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
 
 fn display_name(profile_name: &Option<String>) -> String {
     profile_name.clone().unwrap_or("Disabled".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor;
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
+    use language;
+    use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use workspace::{self, AppState};
+    use zed_actions::settings_profile_selector;
+
+    async fn init_test<'a>(
+        profiles_json: serde_json::Value,
+        cx: &'a mut TestAppContext,
+    ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            language::init(cx);
+            super::init(cx);
+            editor::init(cx);
+            workspace::init_settings(cx);
+            Project::init_settings(cx);
+            state
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                let settings_json = json!({
+                    "profiles": profiles_json
+                });
+
+                store
+                    .set_user_settings(&settings_json.to_string(), cx)
+                    .unwrap();
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        cx.update(|_, cx| {
+            assert!(!cx.has_global::<ActiveSettingsProfileName>());
+        });
+
+        (workspace, cx)
+    }
+
+    #[track_caller]
+    fn active_settings_profile_picker(
+        workspace: &Entity<Workspace>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<Picker<SettingsProfileSelectorDelegate>> {
+        workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<SettingsProfileSelector>(cx)
+                .expect("settings profile selector is not open")
+                .read(cx)
+                .picker
+                .clone()
+        })
+    }
+
+    #[gpui::test]
+    async fn test_settings_profile_selector_state(cx: &mut TestAppContext) {
+        let profiles_json = json!({
+            "Demo Videos": {
+                "buffer_font_size": 14
+            },
+            "Classroom / Streaming": {
+                "buffer_font_size": 16,
+                "vim_mode": true
+            }
+        });
+        let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.matches.len(), 3);
+            assert_eq!(picker.delegate.matches[0].string, "Disabled");
+            assert_eq!(picker.delegate.matches[1].string, "Classroom / Streaming");
+            assert_eq!(picker.delegate.matches[2].string, "Demo Videos");
+            assert_eq!(picker.delegate.matches.get(3), None);
+
+            assert_eq!(picker.delegate.selected_index, 0);
+            assert_eq!(picker.delegate.selected_profile_name, None);
+
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+        });
+
+        cx.dispatch_action(Confirm);
+
+        cx.update(|_, cx| {
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+        });
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 1);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Classroom / Streaming".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Classroom / Streaming".to_string())
+            );
+        });
+
+        cx.dispatch_action(Cancel);
+
+        cx.update(|_, cx| {
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+        });
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 1);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Classroom / Streaming".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Classroom / Streaming".to_string())
+            );
+        });
+
+        cx.dispatch_action(SelectNext);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 2);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Demo Videos".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Demo Videos".to_string())
+            );
+        });
+
+        cx.dispatch_action(Confirm);
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Demo Videos".to_string())
+            );
+        });
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 2);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Demo Videos".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Demo Videos".to_string())
+            );
+        });
+
+        cx.dispatch_action(SelectPrevious);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 1);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Classroom / Streaming".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Classroom / Streaming".to_string())
+            );
+        });
+
+        cx.dispatch_action(Cancel);
+
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Demo Videos".to_string())
+            );
+        });
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 2);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Demo Videos".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Demo Videos".to_string())
+            );
+        });
+
+        cx.dispatch_action(SelectPrevious);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 1);
+            assert_eq!(
+                picker.delegate.selected_profile_name,
+                Some("Classroom / Streaming".to_string())
+            );
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                Some("Classroom / Streaming".to_string())
+            );
+        });
+
+        cx.dispatch_action(SelectPrevious);
+
+        picker.read_with(cx, |picker, cx| {
+            assert_eq!(picker.delegate.selected_index, 0);
+            assert_eq!(picker.delegate.selected_profile_name, None);
+
+            assert_eq!(
+                cx.try_global::<ActiveSettingsProfileName>()
+                    .map(|p| p.0.clone()),
+                None
+            );
+        });
+
+        cx.dispatch_action(Confirm);
+
+        cx.update(|_, cx| {
+            assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+        });
+    }
 }

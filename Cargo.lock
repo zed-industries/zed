@@ -14724,6 +14724,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "serde_json",
  "settings",
  "ui",
  "workspace",
