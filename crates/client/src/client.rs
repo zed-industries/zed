@@ -31,7 +31,6 @@ use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::pin::Pin;
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -45,6 +44,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -78,7 +78,7 @@ pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
-pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
+pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(
@@ -727,11 +727,10 @@ impl Client {
                                 },
                                 &cx,
                             );
-                            cx.background_executor().timer(delay).await;
-                            delay = delay
-                                .mul_f32(rng.gen_range(0.5..=2.5))
-                                .max(INITIAL_RECONNECTION_DELAY)
-                                .min(MAX_RECONNECTION_DELAY);
+                            let jitter =
+                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            cx.background_executor().timer(delay + jitter).await;
+                            delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
                             break;
                         }
