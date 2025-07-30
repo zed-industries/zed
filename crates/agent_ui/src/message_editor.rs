@@ -18,6 +18,7 @@ use agent_settings::{AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
 use client::UserStore;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
@@ -53,7 +54,6 @@ use util::ResultExt as _;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::Chat;
 use zed_actions::agent::ToggleModelSelector;
-use zed_llm_client::CompletionIntent;
 
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crease_for_mention};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -1300,11 +1300,11 @@ impl MessageEditor {
         let plan = user_store
             .current_plan()
             .map(|plan| match plan {
-                Plan::Free => zed_llm_client::Plan::ZedFree,
-                Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+                Plan::Free => cloud_llm_client::Plan::ZedFree,
+                Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+                Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
             })
-            .unwrap_or(zed_llm_client::Plan::ZedFree);
+            .unwrap_or(cloud_llm_client::Plan::ZedFree);
 
         let usage = user_store.model_request_usage()?;
 

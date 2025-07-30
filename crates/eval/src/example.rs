@@ -15,11 +15,11 @@ use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
+use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use zed_llm_client::CompletionIntent;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
