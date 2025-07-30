@@ -1795,6 +1795,7 @@ impl X11ClientState {
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
+                                force_render: false,
                             });
                         }
                         xcb_connection
