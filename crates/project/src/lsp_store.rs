@@ -424,7 +424,7 @@ impl LocalLspStore {
         if settings.as_ref().is_some_and(|b| b.path.is_some()) {
             let settings = settings.unwrap();
 
-            return cx.spawn(async move |_| {
+            return cx.background_spawn(async move {
                 let mut env = delegate.shell_env().await;
                 env.extend(settings.env.unwrap_or_default());
 
