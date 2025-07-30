@@ -269,6 +269,10 @@ jobs:
           mkdir -p ./../.cargo
           cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
+      - name: Check that Cargo.lock is up to date
+        run: |
+          cargo update --locked --workspace
+
       - name: cargo clippy
         run: ./script/clippy
 
@@ -767,7 +771,7 @@ jobs:
     timeout-minutes: 120
     name: Create a Windows installer
     runs-on: [self-hosted, Windows, X64]
-    if: false && (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    if: (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     needs: [windows_tests]
     env:
       AZURE_TENANT_ID: ${{ secrets.AZURE_SIGNING_TENANT_ID }}

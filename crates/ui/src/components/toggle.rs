@@ -588,7 +588,7 @@ impl SwitchField {
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,
-            color: SwitchColor::default(),
+            color: SwitchColor::Accent,
         }
     }
 
@@ -634,6 +634,15 @@ impl RenderOnce for SwitchField {
                     }
                 }),
             )
+            .when(!self.disabled, |this| {
+                this.on_click({
+                    let on_click = self.on_click.clone();
+                    let toggle_state = self.toggle_state;
+                    move |_click, window, cx| {
+                        (on_click)(&toggle_state.inverse(), window, cx);
+                    }
+                })
+            })
     }
 }
 

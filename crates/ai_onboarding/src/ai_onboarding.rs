@@ -1,12 +1,14 @@
 mod agent_api_keys_onboarding;
 mod agent_panel_onboarding_card;
 mod agent_panel_onboarding_content;
+mod ai_upsell_card;
 mod edit_prediction_onboarding_content;
 mod young_account_banner;
 
 pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProviders};
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
+pub use ai_upsell_card::AiUpsellCard;
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use young_account_banner::YoungAccountBanner;
 
@@ -16,6 +18,7 @@ use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, TintColor, Tooltip, prelude::*};
 
+#[derive(IntoElement)]
 pub struct BulletItem {
     label: SharedString,
 }
@@ -28,22 +31,32 @@ impl BulletItem {
     }
 }
 
-impl IntoElement for BulletItem {
-    type Element = AnyElement;
+impl RenderOnce for BulletItem {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let line_height = 0.85 * window.line_height();
 
-    fn into_element(self) -> Self::Element {
         ListItem::new("list-item")
             .selectable(false)
-            .start_slot(
-                Icon::new(IconName::Dash)
-                    .size(IconSize::XSmall)
-                    .color(Color::Hidden),
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Hidden),
+                        ),
+                    )
+                    .child(div().w_full().min_w_0().child(Label::new(self.label))),
             )
-            .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
 }
 
+#[derive(PartialEq)]
 pub enum SignInStatus {
     SignedIn,
     SigningIn,
@@ -141,22 +154,18 @@ impl ZedAiOnboarding {
             )
             .child(
                 List::new()
+                    .child(BulletItem::new("50 prompts per month with Claude models"))
                     .child(BulletItem::new(
-                        "50 prompts per month with the Claude models",
-                    ))
-                    .child(BulletItem::new(
-                        "2000 accepted edit predictions using our open-source Zeta model",
+                        "2,000 accepted edit predictions with Zeta, our open-source model",
                     )),
             )
     }
 
     fn pro_trial_definition(&self) -> impl IntoElement {
         List::new()
+            .child(BulletItem::new("150 prompts with Claude models"))
             .child(BulletItem::new(
-                "150 prompts per month with the Claude models",
-            ))
-            .child(BulletItem::new(
-                "Unlimited accepted edit predictions using our open-source Zeta model",
+                "Unlimited accepted edit predictions with Zeta, our open-source model",
             ))
     }
 
@@ -178,15 +187,16 @@ impl ZedAiOnboarding {
                     List::new()
                         .child(BulletItem::new("500 prompts per month with Claude models"))
                         .child(BulletItem::new(
-                            "Unlimited accepted edit predictions using our open-source Zeta model",
+                            "Unlimited accepted edit predictions with Zeta, our open-source model",
                         ))
-                        .child(BulletItem::new("USD $20 per month")),
+                        .child(BulletItem::new("$20 USD per month")),
                 )
                 .child(
-                    Button::new("pro", "Start with Pro")
+                    Button::new("pro", "Get Started")
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Upgrade To Pro Clicked", state = "young-account");
                             cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
                         }),
                 )
@@ -206,14 +216,15 @@ impl ZedAiOnboarding {
                     List::new()
                         .child(self.pro_trial_definition())
                         .child(BulletItem::new(
-                            "Try it out for 14 days with no charge and no credit card required",
+                            "Try it out for 14 days for free, no credit card required",
                         )),
                 )
                 .child(
-                    Button::new("pro", "Start Pro Trial")
+                    Button::new("pro", "Start Free Trial")
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .on_click(move |_, _window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "post-sign-in");
                             cx.open_url(&zed_urls::start_trial_url(cx))
                         }),
                 )
@@ -225,28 +236,33 @@ impl ZedAiOnboarding {
         v_flex()
             .gap_1()
             .w_full()
-            .child(Headline::new("Before starting…"))
+            .child(Headline::new("Accept Terms of Service"))
             .child(
-                Label::new("Make sure you have read and accepted Zed AI's terms of service.")
+                Label::new("We don’t sell your data, track you across the web, or compromise your privacy.")
                     .color(Color::Muted)
                     .mb_2(),
             )
             .child(
-                Button::new("terms_of_service", "View and Read the Terms of Service")
+                Button::new("terms_of_service", "Review Terms of Service")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .icon(IconName::ArrowUpRight)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::XSmall)
-                    .on_click(move |_, _window, cx| cx.open_url(&zed_urls::terms_of_service(cx))),
+                    .on_click(move |_, _window, cx| {
+                        telemetry::event!("Review Terms of Service Clicked");
+                        cx.open_url(&zed_urls::terms_of_service(cx))
+                    }),
             )
             .child(
-                Button::new("accept_terms", "I've read it and accept it")
+                Button::new("accept_terms", "Accept")
                     .full_width()
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .on_click({
                         let callback = self.accept_terms_of_service.clone();
-                        move |_, window, cx| (callback)(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Terms of Service Accepted");
+                            (callback)(window, cx)}
                     }),
             )
             .into_any_element()
@@ -259,19 +275,22 @@ impl ZedAiOnboarding {
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
             .child(
-                Label::new("Sign in to start using AI in Zed with a free trial of the Pro plan, which includes:")
+                Label::new("Sign in to try Zed Pro for 14 days, no credit card required.")
                     .color(Color::Muted)
                     .mb_2(),
             )
             .child(self.pro_trial_definition())
             .child(
-                Button::new("sign_in", "Sign in to Start Trial")
+                Button::new("sign_in", "Try Zed Pro for Free")
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click({
                         let callback = self.sign_in.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Start Trial Clicked", state = "pre-sign-in");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()
@@ -284,11 +303,6 @@ impl ZedAiOnboarding {
             .relative()
             .gap_1()
             .child(Headline::new("Welcome to Zed AI"))
-            .child(
-                Label::new("Choose how you want to start.")
-                    .color(Color::Muted)
-                    .mb_2(),
-            )
             .map(|this| {
                 if self.account_too_young {
                     this.child(young_account_banner)
@@ -303,7 +317,13 @@ impl ZedAiOnboarding {
                                     IconButton::new("dismiss_onboarding", IconName::Close)
                                         .icon_size(IconSize::Small)
                                         .tooltip(Tooltip::text("Dismiss"))
-                                        .on_click(move |_, window, cx| callback(window, cx)),
+                                        .on_click(move |_, window, cx| {
+                                            telemetry::event!(
+                                                "Banner Dismissed",
+                                                source = "AI Onboarding",
+                                            );
+                                            callback(window, cx)
+                                        }),
                                 ),
                             )
                         },
@@ -318,7 +338,7 @@ impl ZedAiOnboarding {
         v_flex()
             .relative()
             .gap_1()
-            .child(Headline::new("Welcome to the Zed Pro free trial"))
+            .child(Headline::new("Welcome to the Zed Pro Trial"))
             .child(
                 Label::new("Here's what you get for the next 14 days:")
                     .color(Color::Muted)
@@ -340,7 +360,13 @@ impl ZedAiOnboarding {
                             IconButton::new("dismiss_onboarding", IconName::Close)
                                 .icon_size(IconSize::Small)
                                 .tooltip(Tooltip::text("Dismiss"))
-                                .on_click(move |_, window, cx| callback(window, cx)),
+                                .on_click(move |_, window, cx| {
+                                    telemetry::event!(
+                                        "Banner Dismissed",
+                                        source = "AI Onboarding",
+                                    );
+                                    callback(window, cx)
+                                }),
                         ),
                     )
                 },
@@ -360,7 +386,9 @@ impl ZedAiOnboarding {
             .child(
                 List::new()
                     .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("pro", "Continue with Zed Pro")
@@ -368,7 +396,10 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Outlined)
                     .on_click({
                         let callback = self.continue_with_zed_ai.clone();
-                        move |_, window, cx| callback(window, cx)
+                        move |_, window, cx| {
+                            telemetry::event!("Banner Dismissed", source = "AI Onboarding");
+                            callback(window, cx)
+                        }
                     }),
             )
             .into_any_element()

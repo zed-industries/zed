@@ -7,6 +7,7 @@ use gpui::{
 actions!(example, [Tab, TabPrev]);
 
 struct Example {
+    focus_handle: FocusHandle,
     items: Vec<FocusHandle>,
     modal_items: Vec<FocusHandle>,
     message: SharedString,
@@ -31,8 +32,11 @@ impl Example {
             cx.focus_handle().tab_index(2).tab_stop(true),
         ];
 
-        window.focus(items.first().unwrap());
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle);
+
         Self {
+            focus_handle,
             items,
             modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
@@ -153,6 +157,7 @@ impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("app")
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .size_full()

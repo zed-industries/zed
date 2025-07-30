@@ -65,7 +65,7 @@ use display_map::*;
 pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
 pub use editor_settings::{
     CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowScrollbar,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap, ShowScrollbar,
 };
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 pub use editor_settings_controls::*;
@@ -109,10 +109,10 @@ use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    AutoindentMode, BracketMatch, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, DiagnosticEntry, DiffOptions, DocumentationConfig, EditPredictionsMode,
-    EditPreview, HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point,
-    Selection, SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, Capability, CharKind,
+    CodeLabel, CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview,
+    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
+    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
@@ -213,6 +213,7 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
+use zed_actions;
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
@@ -1773,7 +1774,7 @@ impl Editor {
     ) -> Self {
         debug_assert!(
             display_map.is_none() || mode.is_minimap(),
-            "Providing a display map for a new editor is only intended for the minimap and might have unindended side effects otherwise!"
+            "Providing a display map for a new editor is only intended for the minimap and might have unintended side effects otherwise!"
         );
 
         let full_mode = mode.is_full();
@@ -4407,7 +4408,9 @@ impl Editor {
                                     })
                                     .max_by_key(|(_, len)| *len)?;
 
-                                if let Some((block_start, _)) = language.block_comment_delimiters()
+                                if let Some(BlockCommentConfig {
+                                    start: block_start, ..
+                                }) = language.block_comment()
                                 {
                                     let block_start_trimmed = block_start.trim_end();
                                     if block_start_trimmed.starts_with(delimiter.trim_end()) {
@@ -4444,13 +4447,12 @@ impl Editor {
                                     return None;
                                 }
 
-                                let DocumentationConfig {
+                                let BlockCommentConfig {
                                     start: start_tag,
                                     end: end_tag,
                                     prefix: delimiter,
                                     tab_size: len,
-                                } = language.documentation()?;
-
+                                } = language.documentation_comment()?;
                                 let is_within_block_comment = buffer
                                     .language_scope_at(start_point)
                                     .is_some_and(|scope| scope.override_name() == Some("comment"));
@@ -4520,7 +4522,7 @@ impl Editor {
                                             let cursor_is_at_start_of_end_tag =
                                                 column == end_tag_offset;
                                             if cursor_is_at_start_of_end_tag {
-                                                indent_on_extra_newline.len = (*len).into();
+                                                indent_on_extra_newline.len = *len;
                                             }
                                         }
                                         cursor_is_before_end_tag
@@ -4533,7 +4535,7 @@ impl Editor {
                                     && cursor_is_before_end_tag_if_exists
                                 {
                                     if cursor_is_after_start_tag {
-                                        indent_on_newline.len = (*len).into();
+                                        indent_on_newline.len = *len;
                                     }
                                     Some(delimiter.clone())
                                 } else {
@@ -8233,8 +8235,7 @@ impl Editor {
             return;
         };
 
-        // Try to find a closest, enclosing node using tree-sitter that has a
-        // task
+        // Try to find a closest, enclosing node using tree-sitter that has a task
         let Some((buffer, buffer_row, tasks)) = self
             .find_enclosing_node_task(cx)
             // Or find the task that's closest in row-distance.
@@ -10876,17 +10877,6 @@ impl Editor {
         });
     }
 
-    pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
-        self.manipulate_text(window, cx, |text| {
-            let has_upper_case_characters = text.chars().any(|c| c.is_uppercase());
-            if has_upper_case_characters {
-                text.to_lowercase()
-            } else {
-                text.to_uppercase()
-            }
-        })
-    }
-
     fn manipulate_immutable_lines<Fn>(
         &mut self,
         window: &mut Window,
@@ -11139,6 +11129,26 @@ impl Editor {
                     }
                     t
                 })
+        })
+    }
+
+    pub fn convert_to_sentence_case(
+        &mut self,
+        _: &ConvertToSentenceCase,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.manipulate_text(window, cx, |text| text.to_case(Case::Sentence))
+    }
+
+    pub fn toggle_case(&mut self, _: &ToggleCase, window: &mut Window, cx: &mut Context<Self>) {
+        self.manipulate_text(window, cx, |text| {
+            let has_upper_case_characters = text.chars().any(|c| c.is_uppercase());
+            if has_upper_case_characters {
+                text.to_lowercase()
+            } else {
+                text.to_uppercase()
+            }
         })
     }
 
@@ -12152,6 +12162,41 @@ impl Editor {
                 this.insert(&clipboard_text, window, cx);
             }
         });
+    }
+
+    pub fn diff_clipboard_with_selection(
+        &mut self,
+        _: &DiffClipboardWithSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self.selections.all::<usize>(cx);
+
+        if selections.is_empty() {
+            log::warn!("There should always be at least one selection in Zed. This is a bug.");
+            return;
+        };
+
+        let clipboard_text = match cx.read_from_clipboard() {
+            Some(item) => match item.entries().first() {
+                Some(ClipboardEntry::String(text)) => Some(text.text().to_string()),
+                _ => None,
+            },
+            None => None,
+        };
+
+        let Some(clipboard_text) = clipboard_text else {
+            log::warn!("Clipboard doesn't contain text.");
+            return;
+        };
+
+        window.dispatch_action(
+            Box::new(DiffClipboardWithSelectionData {
+                clipboard_text,
+                editor: cx.entity(),
+            }),
+            cx,
+        );
     }
 
     pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -14313,8 +14358,11 @@ impl Editor {
                             (position..position, first_prefix.clone())
                         }));
                     }
-                } else if let Some((full_comment_prefix, comment_suffix)) =
-                    language.block_comment_delimiters()
+                } else if let Some(BlockCommentConfig {
+                    start: full_comment_prefix,
+                    end: comment_suffix,
+                    ..
+                }) = language.block_comment()
                 {
                     let comment_prefix = full_comment_prefix.trim_end_matches(' ');
                     let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
@@ -16928,7 +16976,7 @@ impl Editor {
         now: Instant,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<TransactionId> {
         self.end_selection(window, cx);
         if let Some(tx_id) = self
             .buffer
@@ -16938,7 +16986,10 @@ impl Editor {
                 .insert_transaction(tx_id, self.selections.disjoint_anchors());
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
-            })
+            });
+            Some(tx_id)
+        } else {
+            None
         }
     }
 
@@ -16964,6 +17015,17 @@ impl Editor {
         } else {
             None
         }
+    }
+
+    pub fn modify_transaction_selection_history(
+        &mut self,
+        transaction_id: TransactionId,
+        modify: impl FnOnce(&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)),
+    ) -> bool {
+        self.selection_history
+            .transaction_mut(transaction_id)
+            .map(modify)
+            .is_some()
     }
 
     pub fn set_mark(&mut self, _: &actions::SetMark, window: &mut Window, cx: &mut Context<Self>) {
@@ -21772,11 +21834,11 @@ impl CodeActionProvider for Entity<Project> {
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
-            let code_lens = project.code_lens(buffer, range.clone(), cx);
+            let code_lens_actions = project.code_lens_actions(buffer, range.clone(), cx);
             let code_actions = project.code_actions(buffer, range, None, cx);
             cx.background_spawn(async move {
-                let (code_lens, code_actions) = join(code_lens, code_actions).await;
-                Ok(code_lens
+                let (code_lens_actions, code_actions) = join(code_lens_actions, code_actions).await;
+                Ok(code_lens_actions
                     .context("code lens fetch")?
                     .into_iter()
                     .chain(code_actions.context("code action fetch")?)
@@ -22218,7 +22280,7 @@ fn consume_contiguous_rows(
     selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
     contiguous_row_selections.push(selection.clone());
-    let start_row = MultiBufferRow(selection.start.row);
+    let start_row = starting_row(selection, display_map);
     let mut end_row = ending_row(selection, display_map);
 
     while let Some(next_selection) = selections.peek() {
@@ -22230,6 +22292,14 @@ fn consume_contiguous_rows(
         }
     }
     (start_row, end_row)
+}
+
+fn starting_row(selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {
+    if selection.start.column > 0 {
+        MultiBufferRow(display_map.prev_line_boundary(selection.start).0.row)
+    } else {
+        MultiBufferRow(selection.start.row)
+    }
 }
 
 fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) -> MultiBufferRow {

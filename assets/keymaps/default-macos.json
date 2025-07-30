@@ -549,7 +549,7 @@
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
       "cmd-|": "editor::MoveToEnclosingBracket",
-      "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-m": "editor::MoveToEnclosingBracket", // From Jetbrains
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",
@@ -950,8 +950,6 @@
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
-      "cmd-enter": "git::Commit",
-      "cmd-shift-enter": "git::Amend",
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "cmd-backspace": ["git::RestoreFile", { "skip_prompt": true }],
@@ -1001,7 +999,9 @@
       "ctrl-g backspace": "git::RestoreTrackedFiles",
       "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
       "cmd-ctrl-y": "git::StageAll",
-      "cmd-ctrl-shift-y": "git::UnstageAll"
+      "cmd-ctrl-shift-y": "git::UnstageAll",
+      "cmd-enter": "git::Commit",
+      "cmd-shift-enter": "git::Amend"
     }
   },
   {
@@ -1037,9 +1037,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm",
-      "cmd-up": "collab_panel::MoveChannelUp",
-      "cmd-down": "collab_panel::MoveChannelDown"
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "CollabPanel",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "collab_panel::MoveChannelUp",
+      "alt-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -1233,7 +1239,10 @@
       "cmd-alt-f": "keymap_editor::ToggleKeystrokeSearch",
       "cmd-alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
-      "alt-enter": "keymap_editor::CreateBinding"
+      "alt-enter": "keymap_editor::CreateBinding",
+      "cmd-c": "keymap_editor::CopyAction",
+      "cmd-shift-c": "keymap_editor::CopyContext",
+      "cmd-t": "keymap_editor::ShowMatchingKeybinds"
     }
   },
   {

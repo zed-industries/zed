@@ -38,10 +38,6 @@ impl ApiKeysWithProviders {
             .map(|provider| (provider.icon(), provider.name().0.clone()))
             .collect()
     }
-
-    pub fn has_providers(&self) -> bool {
-        !self.configured_providers.is_empty()
-    }
 }
 
 impl Render for ApiKeysWithProviders {
@@ -53,11 +49,10 @@ impl Render for ApiKeysWithProviders {
                 .map(|(icon, name)| {
                     h_flex()
                         .gap_1p5()
-                        .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                        .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
                         .child(Label::new(name))
                 });
-
-        h_flex()
+        div()
             .mx_2p5()
             .p_1()
             .pb_0()
@@ -85,8 +80,24 @@ impl Render for ApiKeysWithProviders {
                     .border_x_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().panel_background)
-                    .child(Icon::new(IconName::Info).size(IconSize::XSmall).color(Color::Muted))
-                    .child(Label::new("Or start now using API keys from your environment for the following providers:").color(Color::Muted))
+                    .child(
+                        h_flex()
+                            .min_w_0()
+                            .gap_2()
+                            .child(
+                                Icon::new(IconName::Info)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Muted)
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .child(
+                                        Label::new("Start now using API keys from your environment for the following providers:")
+                                            .color(Color::Muted)
+                                    )
+                            )
+                    )
                     .children(configured_providers_list)
             )
     }
@@ -118,7 +129,7 @@ impl RenderOnce for ApiKeysWithoutProviders {
                     .child(Divider::horizontal()),
             )
             .child(List::new().child(BulletItem::new(
-                "You can also use AI in Zed by bringing your own API keys",
+                "Add your own keys to use AI without signing in.",
             )))
             .child(
                 Button::new("configure-providers", "Configure Providers")

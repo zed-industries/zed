@@ -93,6 +93,7 @@ impl RenderOnce for Modal {
 #[derive(IntoElement)]
 pub struct ModalHeader {
     headline: Option<SharedString>,
+    description: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
     show_dismiss_button: bool,
     show_back_button: bool,
@@ -108,6 +109,7 @@ impl ModalHeader {
     pub fn new() -> Self {
         Self {
             headline: None,
+            description: None,
             children: SmallVec::new(),
             show_dismiss_button: false,
             show_back_button: false,
@@ -120,6 +122,11 @@ impl ModalHeader {
     /// of `children` if it is not already present.
     pub fn headline(mut self, headline: impl Into<SharedString>) -> Self {
         self.headline = Some(headline.into());
+        self
+    }
+
+    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
         self
     }
 
@@ -171,7 +178,14 @@ impl RenderOnce for ModalHeader {
                         }),
                 )
             })
-            .child(div().flex_1().children(children))
+            .child(
+                v_flex().flex_1().children(children).when_some(
+                    self.description,
+                    |this, description| {
+                        this.child(Label::new(description).color(Color::Muted).mb_2())
+                    },
+                ),
+            )
             .when(self.show_dismiss_button, |this| {
                 this.child(
                     IconButton::new("dismiss", IconName::Close)

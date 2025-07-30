@@ -29,6 +29,7 @@ members = [
     "crates/cli",
     "crates/client",
     "crates/clock",
+    "crates/cloud_llm_client",
     "crates/collab",
     "crates/collab_ui",
     "crates/collections",
@@ -70,7 +71,6 @@ members = [
     "crates/gpui",
     "crates/gpui_macros",
     "crates/gpui_tokio",
-
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/http_client_tls",
@@ -251,6 +251,7 @@ channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
+cloud_llm_client = { path = "crates/cloud_llm_client" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
 collections = { path = "crates/collections" }
@@ -413,6 +414,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
+agent-client-protocol = "0.0.11"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -459,7 +461,7 @@ core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "7f39295b441614ca9dbf44293e53c32f666897f9" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
@@ -482,6 +484,7 @@ heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
 html5ever = "0.27.0"
 http = "1.1"
+http-body = "1.0"
 hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
@@ -643,7 +646,6 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
-zed_llm_client = "= 0.8.6"
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -716,6 +718,11 @@ workspace-hack = { path = "tooling/workspace-hack" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
+codegen-units = 16
+
+# mirror configuration for crates compiled for the build platform
+# (without this cargo will compile ~400 crates twice)
+[profile.dev.build-override]
 codegen-units = 16
 
 [profile.dev.package]

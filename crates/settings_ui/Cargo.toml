@@ -23,6 +23,7 @@ feature_flags.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
@@ -44,3 +45,10 @@ ui_input.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+
+[dev-dependencies]
+db = {"workspace"= true, "features" = ["test-support"]}
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

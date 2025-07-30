@@ -7,7 +7,7 @@ use crate::{FocusHandle, FocusId, GlobalElementId};
 /// Used to manage the `Tab` event to switch between focus handles.
 #[derive(Default)]
 pub(crate) struct TabHandles {
-    handles: Vec<FocusHandle>,
+    pub(crate) handles: Vec<FocusHandle>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -56,15 +56,14 @@ impl TabHandles {
 
     pub(crate) fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let group_handles = self.with_focus_trap(focused_id);
-        let ix = group_handles
+        let next_ix = group_handles
             .iter()
             .position(|h| Some(&h.id) == focused_id)
+            .and_then(|ix| {
+                let next_ix = ix + 1;
+                (next_ix < group_handles.len()).then_some(next_ix)
+            })
             .unwrap_or_default();
-
-        let mut next_ix = ix + 1;
-        if next_ix >= group_handles.len() {
-            next_ix = 0;
-        }
 
         group_handles.get(next_ix).cloned()
     }
@@ -150,8 +149,14 @@ mod tests {
             ]
         );
 
-        // next
-        assert_eq!(tab.next(None), Some(tab.handles[4].clone()));
+        // Select first tab index if no handle is currently focused.
+        assert_eq!(tab.next(None), Some(tab.handles[0].clone()));
+        // Select last tab index if no handle is currently focused.
+        assert_eq!(
+            tab.prev(None),
+            Some(tab.handles[tab.handles.len() - 1].clone())
+        );
+
         assert_eq!(
             tab.next(Some(&tab.handles[0].id)),
             Some(tab.handles[4].clone())

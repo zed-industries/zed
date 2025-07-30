@@ -145,15 +145,15 @@ pub fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action(
                     "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: true },
+                    zed_actions::IncreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: true },
+                    zed_actions::DecreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: true },
+                    zed_actions::ResetBufferFontSize { persist: false },
                 ),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),

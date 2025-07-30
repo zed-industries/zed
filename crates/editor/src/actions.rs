@@ -259,6 +259,13 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(no_json, no_register)]
+pub struct DiffClipboardWithSelectionData {
+    pub clipboard_text: String,
+    pub editor: Entity<Editor>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
 pub enum UuidVersion {
     #[default]
@@ -358,6 +365,8 @@ actions!(
         ConvertToLowerCase,
         /// Toggles the case of selected text.
         ConvertToOppositeCase,
+        /// Converts selected text to sentence case.
+        ConvertToSentenceCase,
         /// Converts selected text to snake_case.
         ConvertToSnakeCase,
         /// Converts selected text to Title Case.
@@ -398,6 +407,8 @@ actions!(
         DeleteToNextSubwordEnd,
         /// Deletes to the start of the previous subword.
         DeleteToPreviousSubwordStart,
+        /// Diffs the text stored in the clipboard against the current selection.
+        DiffClipboardWithSelection,
         /// Displays names of all active cursors.
         DisplayCursorNames,
         /// Duplicates the current line below.

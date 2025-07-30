@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
@@ -47,9 +48,8 @@ use std::{
     time::{Duration, Instant},
 };
 use thiserror::Error;
-use util::{ResultExt as _, debug_panic, post_inc};
+use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 const MAX_RETRY_ATTEMPTS: u8 = 4;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -942,7 +942,7 @@ impl Thread {
     }
 
     pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
-        self.tool_use.tool_uses_for_message(id, cx)
+        self.tool_use.tool_uses_for_message(id, &self.project, cx)
     }
 
     pub fn tool_results_for_message(
@@ -1582,20 +1582,18 @@ impl Thread {
         model: Arc<dyn LanguageModel>,
         cx: &mut App,
     ) -> Option<PendingToolUse> {
-        let action_log = self.action_log.read(cx);
+        // Represent notification as a simulated `project_notifications` tool call
+        let tool_name = Arc::from("project_notifications");
+        let tool = self.tools.read(cx).tool(&tool_name, cx)?;
 
-        if !action_log.has_unnotified_user_edits() {
+        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
             return None;
         }
 
-        // Represent notification as a simulated `project_notifications` tool call
-        let tool_name = Arc::from("project_notifications");
-        let Some(tool) = self.tools.read(cx).tool(&tool_name, cx) else {
-            debug_panic!("`project_notifications` tool not found");
-            return None;
-        };
-
-        if !self.profile.is_tool_enabled(tool.source(), tool.name(), cx) {
+        if self
+            .action_log
+            .update(cx, |log, cx| log.unnotified_user_edits(cx).is_none())
+        {
             return None;
         }
 
@@ -1683,7 +1681,7 @@ impl Thread {
 
         let completion_mode = request
             .mode
-            .unwrap_or(zed_llm_client::CompletionMode::Normal);
+            .unwrap_or(cloud_llm_client::CompletionMode::Normal);
 
         self.last_received_chunk_at = Some(Instant::now());
 
@@ -2039,6 +2037,12 @@ impl Thread {
                                         if let Some(retry_strategy) =
                                             Thread::get_retry_strategy(completion_error)
                                         {
+                                            log::info!(
+                                                "Retrying with {:?} for language model completion error {:?}",
+                                                retry_strategy,
+                                                completion_error
+                                            );
+
                                             retry_scheduled = thread
                                                 .handle_retryable_error_with_delay(
                                                     &completion_error,
@@ -2248,15 +2252,14 @@ impl Thread {
                 ..
             }
             | AuthenticationError { .. }
-            | PermissionError { .. } => None,
-            // These errors might be transient, so retry them
-            SerializeRequest { .. }
-            | BuildRequestBody { .. }
-            | PromptTooLarge { .. }
+            | PermissionError { .. }
+            | NoApiKey { .. }
             | ApiEndpointNotFound { .. }
-            | NoApiKey { .. } => Some(RetryStrategy::Fixed {
+            | PromptTooLarge { .. } => None,
+            // These errors might be transient, so retry them
+            SerializeRequest { .. } | BuildRequestBody { .. } => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
-                max_attempts: 2,
+                max_attempts: 1,
             }),
             // Retry all other 4xx and 5xx errors once.
             HttpResponseError { status_code, .. }
@@ -2554,7 +2557,7 @@ impl Thread {
             return self.handle_hallucinated_tool_use(tool_use.id, tool_use.name, window, cx);
         }
 
-        if tool.needs_confirmation(&tool_use.input, cx)
+        if tool.needs_confirmation(&tool_use.input, &self.project, cx)
             && !AgentSettings::get_global(cx).always_allow_tool_actions
         {
             self.tool_use.confirm_tool_use(
@@ -5492,7 +5495,7 @@ fn main() {{
         let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
         let context_store = cx.new(|_cx| ContextStore::new(project.downgrade(), None));
 
-        let provider = Arc::new(FakeLanguageModelProvider);
+        let provider = Arc::new(FakeLanguageModelProvider::default());
         let model = provider.test_model();
         let model: Arc<dyn LanguageModel> = Arc::new(model);
 

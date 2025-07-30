@@ -45,12 +45,6 @@ impl SearchHistory {
     }
 
     pub fn add(&mut self, cursor: &mut SearchHistoryCursor, search_string: String) {
-        if let Some(selected_ix) = cursor.selection {
-            if self.history.get(selected_ix) == Some(&search_string) {
-                return;
-            }
-        }
-
         if self.insertion_behavior == QueryInsertionBehavior::ReplacePreviousIfContains {
             if let Some(previously_searched) = self.history.back_mut() {
                 if search_string.contains(previously_searched.as_str()) {
@@ -142,6 +136,14 @@ mod tests {
             1,
             "Should replace previous item if it's a substring"
         );
+        assert_eq!(search_history.current(&cursor), Some("rustlang"));
+
+        // add item when it equals to current item if it's not the last one
+        search_history.add(&mut cursor, "php".to_string());
+        search_history.previous(&mut cursor);
+        assert_eq!(search_history.current(&cursor), Some("rustlang"));
+        search_history.add(&mut cursor, "rustlang".to_string());
+        assert_eq!(search_history.history.len(), 3, "Should add item");
         assert_eq!(search_history.current(&cursor), Some("rustlang"));
 
         // push enough items to test SEARCH_HISTORY_LIMIT

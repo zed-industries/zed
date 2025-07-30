@@ -320,7 +320,39 @@ impl History {
             last_edit_at: now,
             suppress_grouping: false,
         });
-        self.redo_stack.clear();
+    }
+
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    fn push_empty_transaction(
+        &mut self,
+        start: clock::Global,
+        now: Instant,
+        clock: &mut clock::Lamport,
+    ) -> TransactionId {
+        assert_eq!(self.transaction_depth, 0);
+        let id = clock.tick();
+        let transaction = Transaction {
+            id,
+            start,
+            edit_ids: Vec::new(),
+        };
+        self.undo_stack.push(HistoryEntry {
+            transaction,
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: false,
+        });
+        id
     }
 
     fn push_undo(&mut self, op_id: clock::Lamport) {
@@ -824,14 +856,13 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>(&None);
-        let mut new_fragments =
-            old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right, &None);
+        let mut new_fragments = old_fragments.slice(&edits.peek().unwrap().0.start, Bias::Right);
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().visible;
         for (range, new_text) in edits {
             let new_text = LineEnding::normalize_arc(new_text.into());
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.end().visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -847,10 +878,10 @@ impl Buffer {
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
-                    old_fragments.next(&None);
+                    old_fragments.next();
                 }
 
-                let slice = old_fragments.slice(&range.start, Bias::Right, &None);
+                let slice = old_fragments.slice(&range.start, Bias::Right);
                 new_ropes.append(slice.summary().text);
                 new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().visible;
@@ -903,7 +934,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).visible;
+                let fragment_end = old_fragments.end().visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -930,7 +961,7 @@ impl Buffer {
                     fragment_start = intersection_end;
                 }
                 if fragment_end <= range.end {
-                    old_fragments.next(&None);
+                    old_fragments.next();
                 }
             }
 
@@ -942,7 +973,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.start().visible {
-            let fragment_end = old_fragments.end(&None).visible;
+            let fragment_end = old_fragments.end().visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -951,10 +982,10 @@ impl Buffer {
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
-            old_fragments.next(&None);
+            old_fragments.next();
         }
 
-        let suffix = old_fragments.suffix(&None);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
@@ -1041,16 +1072,13 @@ impl Buffer {
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>(&cx);
-        let mut new_fragments = old_fragments.slice(
-            &VersionedFullOffset::Offset(ranges[0].start),
-            Bias::Left,
-            &cx,
-        );
+        let mut new_fragments =
+            old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
         new_ropes.append(new_fragments.summary().text);
 
         let mut fragment_start = old_fragments.start().0.full_offset();
         for (range, new_text) in edits {
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
@@ -1067,18 +1095,18 @@ impl Buffer {
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                 }
 
                 let slice =
-                    old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left, &cx);
+                    old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left);
                 new_ropes.append(slice.summary().text);
                 new_fragments.append(slice, &None);
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end.0 - fragment_start.0;
@@ -1086,7 +1114,7 @@ impl Buffer {
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
-                old_fragments.next(&cx);
+                old_fragments.next();
                 fragment_start = old_fragments.start().0.full_offset();
             }
 
@@ -1096,7 +1124,7 @@ impl Buffer {
                 if fragment_start == range.start && fragment.timestamp > timestamp {
                     new_ropes.push_fragment(fragment, fragment.visible);
                     new_fragments.push(fragment.clone(), &None);
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                     debug_assert_eq!(fragment_start, range.start);
                 } else {
                     break;
@@ -1152,7 +1180,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).0.full_offset();
+                let fragment_end = old_fragments.end().0.full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
@@ -1181,7 +1209,7 @@ impl Buffer {
                     fragment_start = intersection_end;
                 }
                 if fragment_end <= range.end {
-                    old_fragments.next(&cx);
+                    old_fragments.next();
                 }
             }
         }
@@ -1189,7 +1217,7 @@ impl Buffer {
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
         if fragment_start > old_fragments.start().0.full_offset() {
-            let fragment_end = old_fragments.end(&cx).0.full_offset();
+            let fragment_end = old_fragments.end().0.full_offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end.0 - fragment_start.0;
@@ -1198,10 +1226,10 @@ impl Buffer {
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
-            old_fragments.next(&cx);
+            old_fragments.next();
         }
 
-        let suffix = old_fragments.suffix(&cx);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
         let (visible_text, deleted_text) = new_ropes.finish();
@@ -1250,7 +1278,6 @@ impl Buffer {
                         split_offset: insertion_slice.range.start,
                     },
                     Bias::Left,
-                    &(),
                 );
             }
             while let Some(item) = insertions_cursor.item() {
@@ -1260,7 +1287,7 @@ impl Buffer {
                     break;
                 }
                 fragment_ids.push(&item.fragment_id);
-                insertions_cursor.next(&());
+                insertions_cursor.next();
             }
         }
         fragment_ids.sort_unstable();
@@ -1277,7 +1304,7 @@ impl Buffer {
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
 
         for fragment_id in self.fragment_ids_for_edits(undo.counts.keys()) {
-            let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left, &None);
+            let preceding_fragments = old_fragments.slice(&Some(fragment_id), Bias::Left);
             new_ropes.append(preceding_fragments.summary().text);
             new_fragments.append(preceding_fragments, &None);
 
@@ -1304,11 +1331,11 @@ impl Buffer {
                 new_ropes.push_fragment(&fragment, fragment_was_visible);
                 new_fragments.push(fragment, &None);
 
-                old_fragments.next(&None);
+                old_fragments.next();
             }
         }
 
-        let suffix = old_fragments.suffix(&None);
+        let suffix = old_fragments.suffix();
         new_ropes.append(suffix.summary().text);
         new_fragments.append(suffix, &None);
 
@@ -1495,6 +1522,24 @@ impl Buffer {
         self.history.push_transaction(transaction, now);
     }
 
+    /// Differs from `push_transaction` in that it does not clear the redo stack.
+    /// The caller responsible for
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+        self.history
+            .push_empty_transaction(self.version.clone(), now, &mut self.lamport_clock)
+    }
+
     pub fn edited_ranges_for_transaction_id<D>(
         &self,
         transaction_id: TransactionId,
@@ -1521,7 +1566,7 @@ impl Buffer {
             .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
             .filter_map(move |fragment_id| {
-                cursor.seek_forward(&Some(fragment_id), Bias::Left, &None);
+                cursor.seek_forward(&Some(fragment_id), Bias::Left);
                 let fragment = cursor.item()?;
                 let start_offset = cursor.start().1;
                 let end_offset = start_offset + if fragment.visible { fragment.len } else { 0 };
@@ -1743,7 +1788,7 @@ impl Buffer {
 
         let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>(&None);
         for insertion_fragment in self.snapshot.insertions.cursor::<()>(&()) {
-            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left);
             let fragment = cursor.item().unwrap();
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
             assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
@@ -1862,7 +1907,7 @@ impl BufferSnapshot {
             .filter::<_, FragmentTextSummary>(&None, move |summary| {
                 !version.observed_all(&summary.max_version)
             });
-        cursor.next(&None);
+        cursor.next();
 
         let mut visible_cursor = self.visible_text.cursor(0);
         let mut deleted_cursor = self.deleted_text.cursor(0);
@@ -1875,18 +1920,18 @@ impl BufferSnapshot {
 
             if fragment.was_visible(version, &self.undo_map) {
                 if fragment.visible {
-                    let text = visible_cursor.slice(cursor.end(&None).visible);
+                    let text = visible_cursor.slice(cursor.end().visible);
                     rope.append(text);
                 } else {
                     deleted_cursor.seek_forward(cursor.start().deleted);
-                    let text = deleted_cursor.slice(cursor.end(&None).deleted);
+                    let text = deleted_cursor.slice(cursor.end().deleted);
                     rope.append(text);
                 }
             } else if fragment.visible {
-                visible_cursor.seek_forward(cursor.end(&None).visible);
+                visible_cursor.seek_forward(cursor.end().visible);
             }
 
-            cursor.next(&None);
+            cursor.next();
         }
 
         if cursor.start().visible > visible_cursor.offset() {
@@ -2202,7 +2247,7 @@ impl BufferSnapshot {
                 timestamp: anchor.timestamp,
                 split_offset: anchor.offset,
             };
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2210,15 +2255,15 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
             assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
-            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
+            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
@@ -2249,7 +2294,7 @@ impl BufferSnapshot {
                 split_offset: anchor.offset,
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2257,10 +2302,10 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
 
             let Some(insertion) = insertion_cursor
@@ -2274,7 +2319,7 @@ impl BufferSnapshot {
             };
 
             let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
-            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
+            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
@@ -2295,7 +2340,7 @@ impl BufferSnapshot {
                 split_offset: anchor.offset,
             };
             let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            insertion_cursor.seek(&anchor_key, anchor.bias);
             if let Some(insertion) = insertion_cursor.item() {
                 let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
                 if comparison == Ordering::Greater
@@ -2303,10 +2348,10 @@ impl BufferSnapshot {
                         && comparison == Ordering::Equal
                         && anchor.offset > 0)
                 {
-                    insertion_cursor.prev(&());
+                    insertion_cursor.prev();
                 }
             } else {
-                insertion_cursor.prev(&());
+                insertion_cursor.prev();
             }
 
             let Some(insertion) = insertion_cursor.item().filter(|insertion| {
@@ -2345,7 +2390,7 @@ impl BufferSnapshot {
             Anchor::MAX
         } else {
             let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
-            fragment_cursor.seek(&offset, bias, &None);
+            fragment_cursor.seek(&offset, bias);
             let fragment = fragment_cursor.item().unwrap();
             let overshoot = offset - *fragment_cursor.start();
             Anchor {
@@ -2425,7 +2470,7 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             Some(cursor)
         };
         let mut cursor = self
@@ -2433,7 +2478,7 @@ impl BufferSnapshot {
             .cursor::<(Option<&Locator>, FragmentTextSummary)>(&None);
 
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
-        cursor.seek(&Some(start_fragment_id), Bias::Left, &None);
+        cursor.seek(&Some(start_fragment_id), Bias::Left);
         let mut visible_start = cursor.start().1.visible;
         let mut deleted_start = cursor.start().1.deleted;
         if let Some(fragment) = cursor.item() {
@@ -2466,7 +2511,7 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             while let Some(fragment) = cursor.item() {
                 if fragment.id > *end_fragment_id {
                     break;
@@ -2478,7 +2523,7 @@ impl BufferSnapshot {
                         return true;
                     }
                 }
-                cursor.next(&None);
+                cursor.next();
             }
         }
         false
@@ -2489,14 +2534,14 @@ impl BufferSnapshot {
             let mut cursor = self.fragments.filter::<_, usize>(&None, move |summary| {
                 !since.observed_all(&summary.max_version)
             });
-            cursor.next(&None);
+            cursor.next();
             while let Some(fragment) = cursor.item() {
                 let was_visible = fragment.was_visible(since, &self.undo_map);
                 let is_visible = fragment.visible;
                 if was_visible != is_visible {
                     return true;
                 }
-                cursor.next(&None);
+                cursor.next();
             }
         }
         false
@@ -2601,7 +2646,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
         while let Some(fragment) = cursor.item() {
             if fragment.id < *self.range.start.0 {
-                cursor.next(&None);
+                cursor.next();
                 continue;
             } else if fragment.id > *self.range.end.0 {
                 break;
@@ -2634,7 +2679,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
             };
 
             if !fragment.was_visible(self.since, self.undos) && fragment.visible {
-                let mut visible_end = cursor.end(&None).visible;
+                let mut visible_end = cursor.end().visible;
                 if fragment.id == *self.range.end.0 {
                     visible_end = cmp::min(
                         visible_end,
@@ -2660,7 +2705,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
 
                 self.new_end = new_end;
             } else if fragment.was_visible(self.since, self.undos) && !fragment.visible {
-                let mut deleted_end = cursor.end(&None).deleted;
+                let mut deleted_end = cursor.end().deleted;
                 if fragment.id == *self.range.end.0 {
                     deleted_end = cmp::min(
                         deleted_end,
@@ -2690,7 +2735,7 @@ impl<D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Ed
                 self.old_end = old_end;
             }
 
-            cursor.next(&None);
+            cursor.next();
         }
 
         pending_edit

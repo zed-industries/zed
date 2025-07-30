@@ -1,6 +1,6 @@
 use gpui::{AnyView, ClickEvent};
 
-use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, prelude::*};
+use crate::{ButtonLike, ButtonLikeRounding, ElevationIndex, TintColor, prelude::*};
 
 /// The position of a [`ToggleButton`] within a group of buttons.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -286,6 +286,580 @@ impl Component for ToggleButton {
                         ],
                     ),
                 ])
+                .into_any_element(),
+        )
+    }
+}
+
+pub struct ButtonConfiguration {
+    label: SharedString,
+    icon: Option<IconName>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+}
+
+mod private {
+    pub trait ToggleButtonStyle {}
+}
+
+pub trait ButtonBuilder: 'static + private::ToggleButtonStyle {
+    fn into_configuration(self) -> ButtonConfiguration;
+}
+
+pub struct ToggleButtonSimple {
+    label: SharedString,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+}
+
+impl ToggleButtonSimple {
+    pub fn new(
+        label: impl Into<SharedString>,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            on_click: Box::new(on_click),
+        }
+    }
+}
+
+impl private::ToggleButtonStyle for ToggleButtonSimple {}
+
+impl ButtonBuilder for ToggleButtonSimple {
+    fn into_configuration(self) -> ButtonConfiguration {
+        ButtonConfiguration {
+            label: self.label,
+            icon: None,
+            on_click: self.on_click,
+        }
+    }
+}
+
+pub struct ToggleButtonWithIcon {
+    label: SharedString,
+    icon: IconName,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+}
+
+impl ToggleButtonWithIcon {
+    pub fn new(
+        label: impl Into<SharedString>,
+        icon: IconName,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            icon,
+            on_click: Box::new(on_click),
+        }
+    }
+}
+
+impl private::ToggleButtonStyle for ToggleButtonWithIcon {}
+
+impl ButtonBuilder for ToggleButtonWithIcon {
+    fn into_configuration(self) -> ButtonConfiguration {
+        ButtonConfiguration {
+            label: self.label,
+            icon: Some(self.icon),
+            on_click: self.on_click,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ToggleButtonGroupStyle {
+    Transparent,
+    Filled,
+    Outlined,
+}
+
+#[derive(IntoElement)]
+pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
+where
+    T: ButtonBuilder,
+{
+    group_name: &'static str,
+    rows: [[T; COLS]; ROWS],
+    style: ToggleButtonGroupStyle,
+    button_width: Rems,
+    selected_index: usize,
+}
+
+impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
+    pub fn single_row(group_name: &'static str, buttons: [T; COLS]) -> Self {
+        Self {
+            group_name,
+            rows: [buttons],
+            style: ToggleButtonGroupStyle::Transparent,
+            button_width: rems_from_px(100.),
+            selected_index: 0,
+        }
+    }
+}
+
+impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
+    pub fn two_rows(group_name: &'static str, first_row: [T; COLS], second_row: [T; COLS]) -> Self {
+        Self {
+            group_name,
+            rows: [first_row, second_row],
+            style: ToggleButtonGroupStyle::Transparent,
+            button_width: rems_from_px(100.),
+            selected_index: 0,
+        }
+    }
+}
+
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
+    pub fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    pub fn button_width(mut self, button_width: Rems) -> Self {
+        self.button_width = button_width;
+        self
+    }
+
+    pub fn selected_index(mut self, index: usize) -> Self {
+        self.selected_index = index;
+        self
+    }
+}
+
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
+    for ToggleButtonGroup<T, COLS, ROWS>
+{
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let entries = self.rows.into_iter().enumerate().map(|(row_index, row)| {
+            row.into_iter().enumerate().map(move |(index, button)| {
+                let ButtonConfiguration {
+                    label,
+                    icon,
+                    on_click,
+                } = button.into_configuration();
+
+                ButtonLike::new((self.group_name, row_index * COLS + index))
+                    .when(index == self.selected_index, |this| {
+                        this.toggle_state(true)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    })
+                    .rounding(None)
+                    .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
+                        button.style(ButtonStyle::Filled)
+                    })
+                    .child(
+                        h_flex()
+                            .min_w(self.button_width)
+                            .gap_1p5()
+                            .justify_center()
+                            .when_some(icon, |this, icon| {
+                                this.child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
+                                    if index == self.selected_index {
+                                        this.color(Color::Accent)
+                                    } else {
+                                        this.color(Color::Muted)
+                                    }
+                                }))
+                            })
+                            .child(
+                                Label::new(label).when(index == self.selected_index, |this| {
+                                    this.color(Color::Accent)
+                                }),
+                            ),
+                    )
+                    .on_click(on_click)
+                    .into_any_element()
+            })
+        });
+
+        let border_color = cx.theme().colors().border.opacity(0.6);
+        let is_outlined_or_filled = self.style == ToggleButtonGroupStyle::Outlined
+            || self.style == ToggleButtonGroupStyle::Filled;
+        let is_transparent = self.style == ToggleButtonGroupStyle::Transparent;
+
+        v_flex()
+            .rounded_md()
+            .overflow_hidden()
+            .map(|this| {
+                if is_transparent {
+                    this.gap_px()
+                } else {
+                    this.border_1().border_color(border_color)
+                }
+            })
+            .children(entries.enumerate().map(|(row_index, row)| {
+                let last_row = row_index == ROWS - 1;
+                h_flex()
+                    .when(!is_outlined_or_filled, |this| this.gap_px())
+                    .when(is_outlined_or_filled && !last_row, |this| {
+                        this.border_b_1().border_color(border_color)
+                    })
+                    .children(row.enumerate().map(|(item_index, item)| {
+                        let last_item = item_index == COLS - 1;
+                        div()
+                            .when(is_outlined_or_filled && !last_item, |this| {
+                                this.border_r_1().border_color(border_color)
+                            })
+                            .child(item)
+                    }))
+            }))
+    }
+}
+
+fn register_toggle_button_group() {
+    component::register_component::<ToggleButtonGroup<ToggleButtonSimple>>();
+}
+
+component::__private::inventory::submit! {
+    component::ComponentFn::new(register_toggle_button_group)
+}
+
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
+    for ToggleButtonGroup<T, COLS, ROWS>
+{
+    fn name() -> &'static str {
+        "ToggleButtonGroup"
+    }
+
+    fn scope() -> ComponentScope {
+        ComponentScope::Input
+    }
+
+    fn sort_name() -> &'static str {
+        "ButtonG"
+    }
+
+    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+        Some(
+            v_flex()
+                .gap_6()
+                .children(vec![example_group_with_title(
+                    "Transparent Variant",
+                    vec![
+                        single_example(
+                            "Single Row Group",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(1)
+                            .button_width(rems_from_px(100.))
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Single Row Group with icons",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test_icon",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(1)
+                            .button_width(rems_from_px(100.))
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                                [
+                                    ToggleButtonSimple::new("Fourth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Fifth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Sixth", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group with Icons",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test_icons",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "Fourth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Fifth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Sixth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .into_any_element(),
+                        ),
+                    ],
+                )])
+                .children(vec![example_group_with_title(
+                    "Outlined Variant",
+                    vec![
+                        single_example(
+                            "Single Row Group",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test_outline",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(1)
+                            .style(ToggleButtonGroupStyle::Outlined)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Single Row Group with icons",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test_icon_outlined",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(1)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Outlined)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                                [
+                                    ToggleButtonSimple::new("Fourth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Fifth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Sixth", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Outlined)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group with Icons",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "Fourth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Fifth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Sixth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Outlined)
+                            .into_any_element(),
+                        ),
+                    ],
+                )])
+                .children(vec![example_group_with_title(
+                    "Filled Variant",
+                    vec![
+                        single_example(
+                            "Single Row Group",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test_outline",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(2)
+                            .style(ToggleButtonGroupStyle::Filled)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Single Row Group with icons",
+                            ToggleButtonGroup::single_row(
+                                "single_row_test_icon_outlined",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(1)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Filled)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test",
+                                [
+                                    ToggleButtonSimple::new("First", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Second", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Third", |_, _, _| {}),
+                                ],
+                                [
+                                    ToggleButtonSimple::new("Fourth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Fifth", |_, _, _| {}),
+                                    ToggleButtonSimple::new("Sixth", |_, _, _| {}),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Filled)
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Multiple Row Group with Icons",
+                            ToggleButtonGroup::two_rows(
+                                "multiple_row_test",
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "First",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Second",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Third",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                                [
+                                    ToggleButtonWithIcon::new(
+                                        "Fourth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Fifth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                    ToggleButtonWithIcon::new(
+                                        "Sixth",
+                                        IconName::AiZed,
+                                        |_, _, _| {},
+                                    ),
+                                ],
+                            )
+                            .selected_index(3)
+                            .button_width(rems_from_px(100.))
+                            .style(ToggleButtonGroupStyle::Filled)
+                            .into_any_element(),
+                        ),
+                    ],
+                )])
                 .into_any_element(),
         )
     }

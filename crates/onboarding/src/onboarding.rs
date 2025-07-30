@@ -1,3 +1,4 @@
+use crate::welcome::{ShowWelcome, WelcomePage};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -10,10 +11,8 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use theme::{ThemeMode, ThemeSettings};
 use ui::{
-    ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider, FluentBuilder,
-    Headline, InteractiveElement, KeyBinding, Label, LabelCommon, ParentElement as _,
-    StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector, VectorName, div,
-    h_flex, rems, v_container, v_flex,
+    Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
+    ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -21,6 +20,9 @@ use workspace::{
     item::{Item, ItemEvent},
     open_new, with_active_or_new_workspace,
 };
+
+mod editing_page;
+mod welcome;
 
 pub struct OnBoardingFeatureFlag {}
 
@@ -65,12 +67,43 @@ pub fn init(cx: &mut App) {
                 .detach();
         });
     });
+
+    cx.on_action(|_: &ShowWelcome, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            workspace
+                .with_local_workspace(window, cx, |workspace, window, cx| {
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<WelcomePage>());
+
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let settings_page = WelcomePage::new(cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(settings_page),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .detach();
+        });
+    });
+
     cx.observe_new::<Workspace>(|_, window, cx| {
         let Some(window) = window else {
             return;
         };
 
-        let onboarding_actions = [std::any::TypeId::of::<OpenOnboarding>()];
+        let onboarding_actions = [
+            std::any::TypeId::of::<OpenOnboarding>(),
+            std::any::TypeId::of::<ShowWelcome>(),
+        ];
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&onboarding_actions);
@@ -214,7 +247,9 @@ impl Onboarding {
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
             SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
-            SelectedPage::Editing => self.render_editing_page(window, cx).into_any_element(),
+            SelectedPage::Editing => {
+                crate::editing_page::render_editing_page(window, cx).into_any_element()
+            }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
     }
@@ -222,45 +257,31 @@ impl Onboarding {
     fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme_mode = read_theme_selection(cx);
 
-        v_container().child(
-            h_flex()
-                .items_center()
-                .justify_between()
-                .child(Label::new("Theme"))
-                .child(
-                    h_flex()
-                        .rounded_md()
-                        .child(
-                            ToggleButton::new("light", "Light")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Light)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Light, cx))
-                                .first(),
-                        )
-                        .child(
-                            ToggleButton::new("dark", "Dark")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Dark)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Dark, cx))
-                                .last(),
-                        )
-                        .child(
-                            ToggleButton::new("system", "System")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::System)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::System, cx))
-                                .middle(),
-                        ),
-                ),
+        v_flex().child(
+            h_flex().justify_between().child(Label::new("Theme")).child(
+                ToggleButtonGroup::single_row(
+                    "theme-selector-onboarding",
+                    [
+                        ToggleButtonSimple::new("Light", |_, _, cx| {
+                            write_theme_selection(ThemeMode::Light, cx)
+                        }),
+                        ToggleButtonSimple::new("Dark", |_, _, cx| {
+                            write_theme_selection(ThemeMode::Dark, cx)
+                        }),
+                        ToggleButtonSimple::new("System", |_, _, cx| {
+                            write_theme_selection(ThemeMode::System, cx)
+                        }),
+                    ],
+                )
+                .selected_index(match theme_mode {
+                    ThemeMode::Light => 0,
+                    ThemeMode::Dark => 1,
+                    ThemeMode::System => 2,
+                })
+                .style(ui::ToggleButtonGroupStyle::Outlined)
+                .button_width(rems_from_px(64.)),
+            ),
         )
-    }
-
-    fn render_editing_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // div().child("editing page")
-        "Right"
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {

@@ -1,6 +1,10 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
+use cloud_llm_client::{
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 use collections::{HashMap, HashSet, hash_map::Entry};
 use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
@@ -17,10 +21,6 @@ use std::{
 };
 use text::ReplicaId;
 use util::{TryFutureExt as _, maybe};
-use zed_llm_client::{
-    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
-    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
-};
 
 pub type UserId = u64;
 
@@ -765,12 +765,14 @@ impl UserStore {
 
     pub fn current_plan(&self) -> Option<proto::Plan> {
         #[cfg(debug_assertions)]
-        if let Ok(plan) = std::env::var("ZED_SIMULATE_ZED_PRO_PLAN").as_ref() {
+        if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
             return match plan.as_str() {
                 "free" => Some(proto::Plan::Free),
                 "trial" => Some(proto::Plan::ZedProTrial),
                 "pro" => Some(proto::Plan::ZedPro),
-                _ => None,
+                _ => {
+                    panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
+                }
             };
         }
 

@@ -3239,27 +3239,36 @@ impl Pane {
                         split_direction = None;
                     }
 
-                    if let Ok(open_task) = workspace.update_in(cx, |workspace, window, cx| {
-                        if let Some(split_direction) = split_direction {
-                            to_pane = workspace.split_pane(to_pane, split_direction, window, cx);
-                        }
-                        workspace.open_paths(
-                            paths,
-                            OpenOptions {
-                                visible: Some(OpenVisible::OnlyDirectories),
-                                ..Default::default()
-                            },
-                            Some(to_pane.downgrade()),
-                            window,
-                            cx,
-                        )
-                    }) {
+                    if let Ok((open_task, to_pane)) =
+                        workspace.update_in(cx, |workspace, window, cx| {
+                            if let Some(split_direction) = split_direction {
+                                to_pane =
+                                    workspace.split_pane(to_pane, split_direction, window, cx);
+                            }
+                            (
+                                workspace.open_paths(
+                                    paths,
+                                    OpenOptions {
+                                        visible: Some(OpenVisible::OnlyDirectories),
+                                        ..Default::default()
+                                    },
+                                    Some(to_pane.downgrade()),
+                                    window,
+                                    cx,
+                                ),
+                                to_pane,
+                            )
+                        })
+                    {
                         let opened_items: Vec<_> = open_task.await;
-                        _ = workspace.update(cx, |workspace, cx| {
+                        _ = workspace.update_in(cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(&e, cx);
                                 }
+                            }
+                            if to_pane.read(cx).items_len() == 0 {
+                                workspace.remove_pane(to_pane, None, window, cx);
                             }
                         });
                     }

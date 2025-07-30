@@ -1,13 +1,15 @@
 pub mod wit;
 
 use crate::ExtensionManifest;
+use crate::capability_granter::CapabilityGranter;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
+    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -50,6 +52,8 @@ pub struct WasmHost {
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
+    /// The capabilities granted to extensions running on the host.
+    pub(crate) granted_capabilities: Vec<ExtensionCapability>,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -486,6 +490,7 @@ pub struct WasmState {
     pub table: ResourceTable,
     ctx: wasi::WasiCtx,
     pub host: Arc<WasmHost>,
+    pub(crate) capability_granter: CapabilityGranter,
 }
 
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
@@ -571,6 +576,19 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
+            granted_capabilities: vec![
+                ExtensionCapability::ProcessExec(ProcessExecCapability {
+                    command: "*".to_string(),
+                    args: vec!["**".to_string()],
+                }),
+                ExtensionCapability::DownloadFile(DownloadFileCapability {
+                    host: "*".to_string(),
+                    path: vec!["**".to_string()],
+                }),
+                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
+                    package: "*".to_string(),
+                }),
+            ],
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })
@@ -597,6 +615,10 @@ impl WasmHost {
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
+                    capability_granter: CapabilityGranter::new(
+                        this.granted_capabilities.clone(),
+                        manifest.clone(),
+                    ),
                 },
             );
             // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
@@ -755,8 +777,18 @@ impl WasmExtension {
                 }
                 .boxed()
             }))
-            .expect("wasm extension channel should not be closed yet");
-        return_rx.await.expect("wasm extension channel")
+            .unwrap_or_else(|_| {
+                panic!(
+                    "wasm extension channel should not be closed yet, extension {} (id {})",
+                    self.manifest.name, self.manifest.id,
+                )
+            });
+        return_rx.await.unwrap_or_else(|_| {
+            panic!(
+                "wasm extension channel, extension {} (id {})",
+                self.manifest.name, self.manifest.id,
+            )
+        })
     }
 }
 
@@ -777,8 +809,19 @@ impl WasmState {
                 }
                 .boxed_local()
             }))
-            .expect("main thread message channel should not be closed yet");
-        async move { return_rx.await.expect("main thread message channel") }
+            .unwrap_or_else(|_| {
+                panic!(
+                    "main thread message channel should not be closed yet, extension {} (id {})",
+                    self.manifest.name, self.manifest.id,
+                )
+            });
+        let name = self.manifest.name.clone();
+        let id = self.manifest.id.clone();
+        async move {
+            return_rx.await.unwrap_or_else(|_| {
+                panic!("main thread message channel, extension {name} (id {id})")
+            })
+        }
     }
 
     fn work_dir(&self) -> PathBuf {

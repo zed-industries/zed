@@ -495,7 +495,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
-      "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-|": "editor::MoveToEnclosingBracket",
       "ctrl-{": "editor::Fold",
       "ctrl-}": "editor::UnfoldLines",
@@ -872,8 +872,6 @@
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
-      "ctrl-enter": "git::Commit",
-      "ctrl-shift-enter": "git::Amend",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -910,7 +908,9 @@
       "ctrl-g backspace": "git::RestoreTrackedFiles",
       "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
       "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll"
+      "ctrl-shift-space": "git::UnstageAll",
+      "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend"
     }
   },
   {
@@ -975,9 +975,14 @@
     "context": "CollabPanel && not_editing",
     "bindings": {
       "ctrl-backspace": "collab_panel::Remove",
-      "space": "menu::Confirm",
-      "ctrl-up": "collab_panel::MoveChannelUp",
-      "ctrl-down": "collab_panel::MoveChannelDown"
+      "space": "menu::Confirm"
+    }
+  },
+  {
+    "context": "CollabPanel",
+    "bindings": {
+      "alt-up": "collab_panel::MoveChannelUp",
+      "alt-down": "collab_panel::MoveChannelDown"
     }
   },
   {
@@ -1132,7 +1137,10 @@
       "alt-ctrl-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
-      "alt-enter": "keymap_editor::CreateBinding"
+      "alt-enter": "keymap_editor::CreateBinding",
+      "ctrl-c": "keymap_editor::CopyAction",
+      "ctrl-shift-c": "keymap_editor::CopyContext",
+      "ctrl-t": "keymap_editor::ShowMatchingKeybinds"
     }
   },
   {
