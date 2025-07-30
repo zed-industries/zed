@@ -22,7 +22,7 @@ use futures::{
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
     blame::Blame,
-    commit::{CommitDetails, CommitSummary, ParsedCommitMessage},
+    commit::{CommitDetails, CommitSummary},
     parse_git_remote_url,
     repository::{
         Branch, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions, GitRepository,

@@ -2,10 +2,9 @@ use crate::Editor;
 use anyhow::Result;
 use collections::HashMap;
 use git::{
-    GitHostingProviderRegistry, GitRemote, Oid,
+    GitHostingProviderRegistry, Oid,
     blame::{Blame, BlameEntry},
     commit::ParsedCommitMessage,
-    parse_git_remote_url,
 };
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, Hsla, ScrollHandle, Subscription, Task,
