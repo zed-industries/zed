@@ -5,7 +5,13 @@ use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
+use std::{
+    cell::{Ref, RefCell},
+    error::Error,
+    fmt,
+    path::Path,
+    rc::Rc,
+};
 use ui::App;
 
 use crate::{AcpThread, AgentConnection};
@@ -364,6 +370,7 @@ pub struct OldAcpAgentConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
+    pub agent_state: Rc<RefCell<acp::AgentState>>,
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -397,7 +404,11 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn state(&self) -> Ref<'_, acp::AgentState> {
+        self.agent_state.borrow()
+    }
+
+    fn authenticate(&self, _method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
         let task = self
             .connection
             .request_any(acp_old::AuthenticateParams.into_any());

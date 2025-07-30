@@ -216,6 +216,15 @@ impl AcpThreadView {
                 }
             };
 
+            if connection.state().needs_authentication {
+                this.update(cx, |this, cx| {
+                    this.thread_state = ThreadState::Unauthenticated { connection };
+                    cx.notify();
+                })
+                .ok();
+                return;
+            }
+
             let result = match connection
                 .clone()
                 .new_thread(project.clone(), &root_dir, cx)
@@ -223,6 +232,7 @@ impl AcpThreadView {
             {
                 Err(e) => {
                     let mut cx = cx.clone();
+                    // todo! remove duplication
                     if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
                         this.update(&mut cx, |this, cx| {
                             this.thread_state = ThreadState::Unauthenticated { connection };
@@ -640,13 +650,18 @@ impl AcpThreadView {
         Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
     }
 
-    fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn authenticate(
+        &mut self,
+        method: acp::AuthMethodId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
             return;
         };
 
         self.last_error.take();
-        let authenticate = connection.authenticate(cx);
+        let authenticate = connection.authenticate(method, cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
             let agent = self.agent.clone();
@@ -2197,22 +2212,26 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { .. } => {
-                    v_flex()
-                        .p_2()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .child(self.render_pending_auth_state())
-                        .child(
-                            h_flex().mt_1p5().justify_center().child(
-                                Button::new("sign-in", format!("Sign in to {}", self.agent.name()))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.authenticate(window, cx)
-                                    })),
-                            ),
-                        )
-                }
+                ThreadState::Unauthenticated { connection } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_pending_auth_state())
+                    .child(h_flex().mt_1p5().justify_center().children(
+                        connection.state().auth_methods.iter().map(|method| {
+                            Button::new(
+                                SharedString::from(method.id.0.clone()),
+                                method.label.clone(),
+                            )
+                            .on_click({
+                                let method_id = method.id.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.authenticate(method_id.clone(), window, cx)
+                                })
+                            })
+                        }),
+                    )),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()

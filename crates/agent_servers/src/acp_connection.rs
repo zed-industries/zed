@@ -7,10 +7,10 @@ use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use futures::channel::{mpsc, oneshot};
 use project::Project;
 use smol::stream::StreamExt as _;
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 use std::{path::Path, sync::Arc};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 use anyhow::{Context, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
@@ -20,10 +20,12 @@ use crate::{AgentServerCommand, mcp_server};
 use acp_thread::{AcpThread, AgentConnection};
 
 pub struct AcpConnection {
+    agent_state: Rc<RefCell<acp::AgentState>>,
     server_name: &'static str,
     client: Arc<context_server::ContextServer>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    _notification_handler_task: Task<()>,
+    _agent_state_task: Task<()>,
+    _session_update_task: Task<()>,
 }
 
 impl AcpConnection {
@@ -43,29 +45,55 @@ impl AcpConnection {
         .into();
         ContextServer::start(client.clone(), cx).await?;
 
-        let (notification_tx, mut notification_rx) = mpsc::unbounded();
-        client
-            .client()
-            .context("Failed to subscribe")?
-            .on_notification(acp::AGENT_METHODS.session_update, {
-                move |notification, _cx| {
-                    let notification_tx = notification_tx.clone();
-                    log::trace!(
-                        "ACP Notification: {}",
-                        serde_json::to_string_pretty(&notification).unwrap()
-                    );
+        let (mut state_tx, mut state_rx) = watch::channel(acp::AgentState::default());
+        let mcp_client = client.client().context("Failed to subscribe")?;
 
-                    if let Some(notification) =
-                        serde_json::from_value::<acp::SessionNotification>(notification).log_err()
-                    {
-                        notification_tx.unbounded_send(notification).ok();
-                    }
+        mcp_client.on_notification(acp::AGENT_METHODS.agent_state, {
+            move |notification, _cx| {
+                log::trace!(
+                    "ACP Notification: {}",
+                    serde_json::to_string_pretty(&notification).unwrap()
+                );
+
+                if let Some(state) =
+                    serde_json::from_value::<acp::AgentState>(notification).log_err()
+                {
+                    state_tx.send(state).log_err();
                 }
-            });
+            }
+        });
+
+        let (notification_tx, mut notification_rx) = mpsc::unbounded();
+        mcp_client.on_notification(acp::AGENT_METHODS.session_update, {
+            move |notification, _cx| {
+                let notification_tx = notification_tx.clone();
+                log::trace!(
+                    "ACP Notification: {}",
+                    serde_json::to_string_pretty(&notification).unwrap()
+                );
+
+                if let Some(notification) =
+                    serde_json::from_value::<acp::SessionNotification>(notification).log_err()
+                {
+                    notification_tx.unbounded_send(notification).ok();
+                }
+            }
+        });
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        let initial_state = state_rx.recv().await?;
+        let agent_state = Rc::new(RefCell::new(initial_state));
 
-        let notification_handler_task = cx.spawn({
+        let agent_state_task = cx.foreground_executor().spawn({
+            let agent_state = agent_state.clone();
+            async move {
+                while let Some(state) = state_rx.recv().log_err().await {
+                    agent_state.replace(state);
+                }
+            }
+        });
+
+        let session_update_handler_task = cx.spawn({
             let sessions = sessions.clone();
             async move |cx| {
                 while let Some(notification) = notification_rx.next().await {
@@ -78,7 +106,9 @@ impl AcpConnection {
             server_name,
             client,
             sessions,
-            _notification_handler_task: notification_handler_task,
+            agent_state,
+            _agent_state_task: agent_state_task,
+            _session_update_task: session_update_handler_task,
         })
     }
 
@@ -185,8 +215,30 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!("Authentication not supported")))
+    fn state(&self) -> Ref<'_, acp::AgentState> {
+        self.agent_state.borrow()
+    }
+
+    fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
+        let client = self.client.client();
+        cx.foreground_executor().spawn(async move {
+            let params = acp::AuthenticateArguments { method_id };
+
+            let response = client
+                .context("MCP server is not initialized yet")?
+                .request::<requests::CallTool>(context_server::types::CallToolParams {
+                    name: acp::AGENT_METHODS.authenticate.into(),
+                    arguments: Some(serde_json::to_value(params)?),
+                    meta: None,
+                })
+                .await?;
+
+            if response.is_error.unwrap_or_default() {
+                Err(anyhow!(response.text_contents()))
+            } else {
+                Ok(())
+            }
+        })
     }
 
     fn prompt(

@@ -139,8 +139,6 @@ dependencies = [
 [[package]]
 name = "agent-client-protocol"
 version = "0.0.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4255a06cc2414033d1fe4baf1968bcc8f16d7e5814f272b97779b5806d129142"
 dependencies = [
  "schemars",
  "serde",

@@ -958,10 +958,6 @@ impl AcpThread {
         cx.notify();
     }
 
-    pub fn authenticate(&self, cx: &mut App) -> impl use<> + Future<Output = Result<()>> {
-        self.connection.authenticate(cx)
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,

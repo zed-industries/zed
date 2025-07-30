@@ -1,6 +1,6 @@
-use std::{path::Path, rc::Rc};
+use std::{cell::Ref, path::Path, rc::Rc};
 
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use gpui::{AsyncApp, Entity, Task};
 use project::Project;
@@ -16,7 +16,9 @@ pub trait AgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>>;
+    fn state(&self) -> Ref<'_, acp::AgentState>;
+
+    fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
     fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>>;
 
