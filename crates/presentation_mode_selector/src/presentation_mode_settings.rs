@@ -41,23 +41,26 @@ impl PresentationMode {
 /// Settings configuration for presentation mode
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct PresentationModeConfiguration {
-    /// The font family to use for buffer text in presentation mode.
-    pub buffer_font_family: Option<FontFamilyName>,
+    /// The font size to use for agent-related text in presentation mode.
+    pub agent_font_size: Option<Pixels>,
     /// The font size to use for buffer text in presentation mode.
     pub buffer_font_size: Option<Pixels>,
-    /// The theme to use in presentation mode.
-    pub theme: Option<String>,
     /// Whether to enable full screen when using this presentation mode.
     pub full_screen: Option<bool>,
+    /// The theme to use in presentation mode.
+    pub theme: Option<String>,
+    /// The font size to use for UI elements in presentation mode.
+    pub ui_font_size: Option<Pixels>,
 }
 
 impl Default for PresentationModeConfiguration {
     fn default() -> Self {
         Self {
-            buffer_font_family: None,
+            agent_font_size: None,
             buffer_font_size: None,
-            theme: None,
             full_screen: None,
+            theme: None,
+            ui_font_size: None,
         }
     }
 }
@@ -79,11 +82,10 @@ impl Settings for PresentationModeSettings {
     fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut Self::FileContent) {}
 }
 
-/// Global state for the currently active presentation mode
 #[derive(Clone, Debug, PartialEq)]
-pub struct ActivePresentationMode {
-    pub presentation_mode: PresentationMode,
-    pub disabled_mode_is_in_full_screen: bool,
+pub struct PresentationModeState {
+    pub disabled: PresentationMode,
+    pub selected: Option<PresentationMode>,
 }
 
-impl Global for ActivePresentationMode {}
+impl Global for PresentationModeState {}
