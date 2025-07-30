@@ -90,6 +90,7 @@ dependencies = [
  "assistant_tools",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "component",
  "context_server",
@@ -132,7 +133,6 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
- "zed_llm_client",
  "zstd",
 ]
 
@@ -189,6 +189,7 @@ name = "agent_settings"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cloud_llm_client",
  "collections",
  "fs",
  "gpui",
@@ -200,7 +201,6 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -223,6 +223,7 @@ dependencies = [
  "buffer_diff",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "command_palette_hooks",
  "component",
@@ -294,7 +295,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -687,6 +687,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_llm_client",
  "collections",
  "context_server",
  "fs",
@@ -720,7 +721,6 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -828,6 +828,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_llm_client",
  "collections",
  "component",
  "derive_more 0.99.19",
@@ -881,7 +882,6 @@ dependencies = [
  "which 6.0.3",
  "workspace",
  "workspace-hack",
- "zed_llm_client",
  "zlog",
 ]
 
@@ -2976,6 +2976,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clock",
+ "cloud_llm_client",
  "cocoa 0.26.0",
  "collections",
  "credentials_provider",
@@ -3018,7 +3019,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -3028,6 +3028,19 @@ dependencies = [
  "parking_lot",
  "serde",
  "smallvec",
+ "workspace-hack",
+]
+
+[[package]]
+name = "cloud_llm_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "strum 0.27.1",
+ "uuid",
  "workspace-hack",
 ]
 
@@ -3157,6 +3170,7 @@ dependencies = [
  "chrono",
  "client",
  "clock",
+ "cloud_llm_client",
  "collab_ui",
  "collections",
  "command_palette_hooks",
@@ -3243,7 +3257,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
- "zed_llm_client",
  "zlog",
 ]
 
@@ -4758,7 +4771,6 @@ name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "command_palette",
  "gpui",
  "mdbook",
@@ -4769,6 +4781,7 @@ dependencies = [
  "util",
  "workspace-hack",
  "zed",
+ "zlog",
 ]
 
 [[package]]
@@ -5229,6 +5242,7 @@ dependencies = [
  "chrono",
  "clap",
  "client",
+ "cloud_llm_client",
  "collections",
  "debug_adapter_extension",
  "dirs 4.0.0",
@@ -5268,7 +5282,6 @@ dependencies = [
  "uuid",
  "watch",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -6350,6 +6363,7 @@ dependencies = [
  "call",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "command_palette_hooks",
  "component",
@@ -6392,7 +6406,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
- "zed_llm_client",
  "zlog",
 ]
 
@@ -8352,6 +8365,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_llm_client",
  "copilot",
  "editor",
  "feature_flags",
@@ -8374,7 +8388,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
- "zed_llm_client",
  "zeta",
 ]
 
@@ -9056,6 +9069,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "client",
+ "cloud_llm_client",
  "collections",
  "futures 0.3.31",
  "gpui",
@@ -9073,7 +9087,6 @@ dependencies = [
  "thiserror 2.0.12",
  "util",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -9089,6 +9102,7 @@ dependencies = [
  "bedrock",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "component",
  "convert_case 0.8.0",
@@ -9130,7 +9144,6 @@ dependencies = [
  "vercel",
  "workspace-hack",
  "x_ai",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -10941,9 +10954,12 @@ dependencies = [
  "anyhow",
  "command_palette_hooks",
  "db",
+ "editor",
  "feature_flags",
  "fs",
  "gpui",
+ "language",
+ "project",
  "settings",
  "theme",
  "ui",
@@ -18489,11 +18505,11 @@ name = "web_search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "cloud_llm_client",
  "collections",
  "gpui",
  "serde",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -18502,6 +18518,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "cloud_llm_client",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -18510,7 +18527,6 @@ dependencies = [
  "serde_json",
  "web_search",
  "workspace-hack",
- "zed_llm_client",
 ]
 
 [[package]]
@@ -20177,7 +20193,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.198.0"
+version = "0.199.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -20338,7 +20354,7 @@ dependencies = [
 
 [[package]]
 name = "zed_emmet"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20375,19 +20391,6 @@ name = "zed_html"
 version = "0.2.1"
 dependencies = [
  "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_llm_client"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6607f74dee2a18a9ce0f091844944a0e59881359ab62e0768fb0618f55d4c1dc"
-dependencies = [
- "anyhow",
- "serde",
- "serde_json",
- "strum 0.27.1",
- "uuid",
 ]
 
 [[package]]
@@ -20569,6 +20572,7 @@ dependencies = [
  "call",
  "client",
  "clock",
+ "cloud_llm_client",
  "collections",
  "command_palette_hooks",
  "copilot",
@@ -20610,7 +20614,6 @@ dependencies = [
  "workspace-hack",
  "worktree",
  "zed_actions",
- "zed_llm_client",
  "zlog",
 ]
 

@@ -421,14 +421,14 @@ impl LanguageServer {
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(async move |_| {
+                cx.background_spawn(async move {
                     Self::handle_stderr(stderr, io_handlers, stderr_captures)
                         .log_err()
                         .await
                 })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(async move |_| {
+        let input_task = cx.background_spawn(async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
@@ -846,7 +846,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             let response = self
                 .request::<request::Initialize>(params)
                 .await
