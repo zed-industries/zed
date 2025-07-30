@@ -1,5 +1,4 @@
 use anyhow::Context as _;
-use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{App, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
@@ -53,11 +52,11 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         ))
     });
 
-struct BasedPyrightFeatureFlag;
+// struct BasedPyrightFeatureFlag;
 
-impl FeatureFlag for BasedPyrightFeatureFlag {
-    const NAME: &'static str = "basedpyright";
-}
+// impl FeatureFlag for BasedPyrightFeatureFlag {
+//     const NAME: &'static str = "basedpyright";
+// }
 
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
@@ -173,7 +172,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![python_lsp_adapter.clone(), py_lsp_adapter.clone()],
+            adapters: vec![basedpyright_lsp_adapter.clone(), py_lsp_adapter.clone()],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
         },
@@ -236,19 +235,19 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         );
     }
 
-    let mut basedpyright_lsp_adapter = Some(basedpyright_lsp_adapter);
-    cx.observe_flag::<BasedPyrightFeatureFlag, _>({
-        let languages = languages.clone();
-        move |enabled, _| {
-            if enabled {
-                if let Some(adapter) = basedpyright_lsp_adapter.take() {
-                    languages
-                        .register_available_lsp_adapter(adapter.name(), move || adapter.clone());
-                }
-            }
-        }
-    })
-    .detach();
+    // let mut basedpyright_lsp_adapter = Some(basedpyright_lsp_adapter);
+    // cx.observe_flag::<BasedPyrightFeatureFlag, _>({
+    //     let languages = languages.clone();
+    //     move |enabled, _| {
+    //         if enabled {
+    //             if let Some(adapter) = basedpyright_lsp_adapter.take() {
+    //                 languages
+    //                     .register_available_lsp_adapter(adapter.name(), move || adapter.clone());
+    //             }
+    //         }
+    //     }
+    // })
+    // .detach();
 
     // Register globally available language servers.
     //
@@ -286,6 +285,9 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             move || adapter.clone()
         },
     );
+    languages.register_available_lsp_adapter(python_lsp_adapter.name(), move || {
+        python_lsp_adapter.clone()
+    });
 
     // Register Tailwind for the existing languages that should have it by default.
     //
