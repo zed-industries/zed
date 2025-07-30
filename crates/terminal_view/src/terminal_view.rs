@@ -1042,43 +1042,48 @@ fn subscribe_for_terminal_events(
                 }
 
                 Event::NewNavigationTarget(maybe_navigation_target) => {
-                    let cur_hovered_word =
-                        terminal.read(cx).last_content.last_hovered_word.as_ref();
-                    let prev_hovered_word = terminal_view
-                        .hover
+                    match maybe_navigation_target
                         .as_ref()
-                        .map(|hover| &hover.hovered_word);
-
-                    if cur_hovered_word == prev_hovered_word {
-                        return;
+                        .zip(terminal.read(cx).last_content.last_hovered_word.as_ref())
+                    {
+                        Some((MaybeNavigationTarget::Url(url), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                terminal_view.hover = Some(HoverTarget {
+                                    tooltip: url.clone(),
+                                    hovered_word: hovered_word.clone(),
+                                });
+                                terminal_view.hover_tooltip_update = Task::ready(());
+                                cx.notify();
+                            }
+                        }
+                        Some((MaybeNavigationTarget::PathLike(path_like_target), hovered_word)) => {
+                            if Some(hovered_word)
+                                != terminal_view
+                                    .hover
+                                    .as_ref()
+                                    .map(|hover| &hover.hovered_word)
+                            {
+                                terminal_view.hover = None;
+                                terminal_view.hover_tooltip_update = hover_path_like_target(
+                                    &workspace,
+                                    hovered_word.clone(),
+                                    path_like_target,
+                                    cx,
+                                );
+                                cx.notify();
+                            }
+                        }
+                        None => {
+                            terminal_view.hover = None;
+                            terminal_view.hover_tooltip_update = Task::ready(());
+                            cx.notify();
+                        }
                     }
-
-                    let (Some(hovered_word), Some(maybe_navigation_target)) =
-                        (cur_hovered_word.cloned(), maybe_navigation_target)
-                    else {
-                        terminal_view.hover = None;
-                        terminal_view.hover_tooltip_update = Task::ready(());
-                        cx.notify();
-                        return;
-                    };
-
-                    let (hover, hover_tooltip_update) = match maybe_navigation_target {
-                        MaybeNavigationTarget::Url(url) => (
-                            Some(HoverTarget {
-                                tooltip: url.clone(),
-                                hovered_word,
-                            }),
-                            Task::ready(()),
-                        ),
-                        MaybeNavigationTarget::PathLike(path_like_target) => (
-                            None,
-                            hover_path_like_target(&workspace, hovered_word, path_like_target, cx),
-                        ),
-                    };
-
-                    terminal_view.hover = hover;
-                    terminal_view.hover_tooltip_update = hover_tooltip_update;
-                    cx.notify();
                 }
 
                 Event::Open(maybe_navigation_target) => match maybe_navigation_target {
