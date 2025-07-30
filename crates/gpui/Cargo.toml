@@ -72,7 +72,6 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
-enable-renderdoc = []
 
 [lib]
 path = "src/gpui.rs"
