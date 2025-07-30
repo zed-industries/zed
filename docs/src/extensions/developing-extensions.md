@@ -21,7 +21,14 @@ When developing an extension, you can use it in Zed without needing to publish i
 
 From the extensions page, click the `Install Dev Extension` button and select the directory containing your extension.
 
+To debug the installation, run with the `--foreground` flag.
+
 If you already have a published extension with the same name installed, your dev extension will override it.
+
+After installing the `Extensions` page will indiciate that that the upstream extension is "Overridden by dev extension".
+
+Pre-installed extensions with the same name have to be uninstalled before installing the dev extension.
+
 
 ## Directory Structure of a Zed Extension
 
