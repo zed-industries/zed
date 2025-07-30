@@ -447,6 +447,8 @@ impl Tiling {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct RequestFrameOptions {
     pub(crate) require_presentation: bool,
+    /// Force refresh of all rendering states when true
+    pub(crate) force_render: bool,
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {

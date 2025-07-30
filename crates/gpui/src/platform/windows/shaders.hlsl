@@ -873,67 +873,105 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
 
 /*
 **
-**              Paths
+**              Path Rasterization
 **
 */
 
-struct PathVertex {
-    float2 xy_position: POSITION;
-    Bounds content_mask: TEXCOORD;
-    uint idx: GLOBALIDX;
+struct PathRasterizationSprite {
+    float2 xy_position;
+    float2 st_position;
+    Background color;
+    Bounds bounds;
 };
 
-struct PathSprite {
-    Bounds bounds;
-    Background color;
-};
+StructuredBuffer<PathRasterizationSprite> path_rasterization_sprites: register(t1);
 
 struct PathVertexOutput {
     float4 position: SV_Position;
-    nointerpolation uint sprite_id: TEXCOORD0;
-    nointerpolation float4 solid_color: COLOR0;
-    nointerpolation float4 color0: COLOR1;
-    nointerpolation float4 color1: COLOR2;
+    float2 st_position: TEXCOORD0;
+    nointerpolation uint vertex_id: TEXCOORD1;
     float4 clip_distance: SV_ClipDistance;
 };
 
 struct PathFragmentInput {
     float4 position: SV_Position;
-    nointerpolation uint sprite_id: TEXCOORD0;
-    nointerpolation float4 solid_color: COLOR0;
-    nointerpolation float4 color0: COLOR1;
-    nointerpolation float4 color1: COLOR2;
+    float2 st_position: TEXCOORD0;
+    nointerpolation uint vertex_id: TEXCOORD1;
+};
+
+PathVertexOutput path_rasterization_vertex(uint vertex_id: SV_VertexID) {
+    PathRasterizationSprite sprite = path_rasterization_sprites[vertex_id];
+
+    PathVertexOutput output;
+    output.position = to_device_position_impl(sprite.xy_position);
+    output.st_position = sprite.st_position;
+    output.vertex_id = vertex_id;
+    output.clip_distance = distance_from_clip_rect_impl(sprite.xy_position, sprite.bounds);
+
+    return output;
+}
+
+float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
+    float2 dx = ddx(input.st_position);
+    float2 dy = ddy(input.st_position);
+    PathRasterizationSprite sprite = path_rasterization_sprites[input.vertex_id];
+    
+    Background background = sprite.color;
+    Bounds bounds = sprite.bounds;
+
+    float alpha;
+    if (length(float2(dx.x, dy.x))) {
+        alpha = 1.0;
+    } else {
+        float2 gradient = 2.0 * input.st_position.xx * float2(dx.x, dy.x) - float2(dx.y, dy.y);
+        float f = input.st_position.x * input.st_position.x - input.st_position.y;
+        float distance = f / length(gradient);
+        alpha = saturate(0.5 - distance);
+    }
+
+    GradientColor gradient = prepare_gradient_color(
+        background.tag, background.color_space, background.solid, background.colors);
+
+    float4 color = gradient_color(background, input.position.xy, bounds,
+        gradient.solid, gradient.color0, gradient.color1);
+    return float4(color.rgb * color.a * alpha, alpha * color.a);
+}
+
+/*
+**
+**              Path Sprites
+**
+*/
+
+struct PathSprite {
+    Bounds bounds;
+};
+
+struct PathSpriteVertexOutput {
+    float4 position: SV_Position;
+    float2 texture_coords: TEXCOORD0;
 };
 
 StructuredBuffer<PathSprite> path_sprites: register(t1);
 
-PathVertexOutput paths_vertex(PathVertex input) {
-    PathSprite sprite = path_sprites[input.idx];
+PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint sprite_id: SV_InstanceID) {
+    float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
+    PathSprite sprite = path_sprites[sprite_id];
 
-    PathVertexOutput output;
-    output.position = to_device_position_impl(input.xy_position);
-    output.clip_distance = distance_from_clip_rect_impl(input.xy_position, input.content_mask);
-    output.sprite_id = input.idx;
+    // Don't apply content mask because it was already accounted for when rasterizing the path
+    float4 device_position = to_device_position(unit_vertex, sprite.bounds);
 
-    GradientColor gradient = prepare_gradient_color(
-        sprite.color.tag,
-        sprite.color.color_space,
-        sprite.color.solid,
-        sprite.color.colors
-    );
+    float2 screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+    float2 texture_coords = screen_position / global_viewport_size;
 
-    output.solid_color = gradient.solid;
-    output.color0 = gradient.color0;
-    output.color1 = gradient.color1;
+    PathSpriteVertexOutput output;
+    output.position = device_position;
+    output.texture_coords = texture_coords;
     return output;
 }
 
-float4 paths_fragment(PathFragmentInput input): SV_Target {
-    PathSprite sprite = path_sprites[input.sprite_id];
-    Background background = sprite.color;
-    float4 color = gradient_color(background, input.position.xy, sprite.bounds,
-        input.solid_color, input.color0, input.color1);
-    return color;
+float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
+    return t_sprite.Sample(s_sprite, input.texture_coords);
 }
 
 /*

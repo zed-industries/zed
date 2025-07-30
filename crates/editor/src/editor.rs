@@ -1774,7 +1774,7 @@ impl Editor {
     ) -> Self {
         debug_assert!(
             display_map.is_none() || mode.is_minimap(),
-            "Providing a display map for a new editor is only intended for the minimap and might have unindended side effects otherwise!"
+            "Providing a display map for a new editor is only intended for the minimap and might have unintended side effects otherwise!"
         );
 
         let full_mode = mode.is_full();
@@ -8235,8 +8235,7 @@ impl Editor {
             return;
         };
 
-        // Try to find a closest, enclosing node using tree-sitter that has a
-        // task
+        // Try to find a closest, enclosing node using tree-sitter that has a task
         let Some((buffer, buffer_row, tasks)) = self
             .find_enclosing_node_task(cx)
             // Or find the task that's closest in row-distance.

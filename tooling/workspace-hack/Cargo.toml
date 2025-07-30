@@ -564,7 +564,6 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
 scopeguard = { version = "1" }
@@ -588,7 +587,6 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }

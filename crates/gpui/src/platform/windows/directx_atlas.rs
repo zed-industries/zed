@@ -142,7 +142,7 @@ impl DirectXAtlasState {
             }
         }
 
-        let texture = self.push_texture(size, texture_kind);
+        let texture = self.push_texture(size, texture_kind)?;
         texture.allocate(size)
     }
 
@@ -150,7 +150,7 @@ impl DirectXAtlasState {
         &mut self,
         min_size: Size<DevicePixels>,
         kind: AtlasTextureKind,
-    ) -> &mut DirectXAtlasTexture {
+    ) -> Option<&mut DirectXAtlasTexture> {
         const DEFAULT_ATLAS_SIZE: Size<DevicePixels> = Size {
             width: DevicePixels(1024),
             height: DevicePixels(1024),
@@ -194,9 +194,11 @@ impl DirectXAtlasState {
         };
         let mut texture: Option<ID3D11Texture2D> = None;
         unsafe {
+            // This only returns None if the device is lost, which we will recreate later.
+            // So it's ok to return None here.
             self.device
                 .CreateTexture2D(&texture_desc, None, Some(&mut texture))
-                .unwrap();
+                .ok()?;
         }
         let texture = texture.unwrap();
 
@@ -209,7 +211,7 @@ impl DirectXAtlasState {
             let mut view = None;
             self.device
                 .CreateShaderResourceView(&texture, None, Some(&mut view))
-                .unwrap();
+                .ok()?;
             [view]
         };
         let atlas_texture = DirectXAtlasTexture {
@@ -225,10 +227,10 @@ impl DirectXAtlasState {
         };
         if let Some(ix) = index {
             texture_list.textures[ix] = Some(atlas_texture);
-            texture_list.textures.get_mut(ix).unwrap().as_mut().unwrap()
+            texture_list.textures.get_mut(ix).unwrap().as_mut()
         } else {
             texture_list.textures.push(Some(atlas_texture));
-            texture_list.textures.last_mut().unwrap().as_mut().unwrap()
+            texture_list.textures.last_mut().unwrap().as_mut()
         }
     }
 
@@ -236,7 +238,6 @@ impl DirectXAtlasState {
         let textures = match id.kind {
             crate::AtlasTextureKind::Monochrome => &self.monochrome_textures,
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
-            // crate::AtlasTextureKind::Path => &self.path_textures,
         };
         textures[id.index as usize].as_ref().unwrap()
     }

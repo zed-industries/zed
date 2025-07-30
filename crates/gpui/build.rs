@@ -11,7 +11,7 @@ fn main() {
 
     #[cfg(any(
         not(any(target_os = "macos", target_os = "windows")),
-        feature = "macos-blade"
+        all(target_os = "macos", feature = "macos-blade")
     ))]
     check_wgsl_shaders();
 
@@ -28,7 +28,10 @@ fn main() {
     };
 }
 
-#[allow(dead_code)]
+#[cfg(any(
+    not(any(target_os = "macos", target_os = "windows")),
+    all(target_os = "macos", feature = "macos-blade")
+))]
 fn check_wgsl_shaders() {
     use std::path::PathBuf;
     use std::process;
@@ -286,7 +289,8 @@ mod windows {
         let modules = [
             "quad",
             "shadow",
-            "paths",
+            "path_rasterization",
+            "path_sprite",
             "underline",
             "monochrome_sprite",
             "polychrome_sprite",
@@ -330,7 +334,11 @@ mod windows {
         }
 
         // Try to find in PATH
-        if let Ok(output) = std::process::Command::new("where").arg("fxc.exe").output() {
+        // NOTE: This has to be `where.exe` on Windows, not `where`, it must be ended with `.exe`
+        if let Ok(output) = std::process::Command::new("where.exe")
+            .arg("fxc.exe")
+            .output()
+        {
             if output.status.success() {
                 let path = String::from_utf8_lossy(&output.stdout);
                 return path.trim().to_string();
@@ -364,7 +372,7 @@ mod windows {
             &output_file,
             &const_name,
             shader_path,
-            "vs_5_0",
+            "vs_4_1",
         );
         generate_rust_binding(&const_name, &output_file, &rust_binding_path);
 
@@ -377,7 +385,7 @@ mod windows {
             &output_file,
             &const_name,
             shader_path,
-            "ps_5_0",
+            "ps_4_1",
         );
         generate_rust_binding(&const_name, &output_file, &rust_binding_path);
     }
@@ -411,7 +419,7 @@ mod windows {
                     return;
                 }
                 eprintln!(
-                    "Pixel shader compilation failed for {}:\n{}",
+                    "Shader compilation failed for {}:\n{}",
                     entry_point,
                     String::from_utf8_lossy(&result.stderr)
                 );

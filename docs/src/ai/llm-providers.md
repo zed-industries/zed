@@ -2,13 +2,13 @@
 
 To use AI in Zed, you need to have at least one large language model provider set up.
 
-You can do that by either subscribing to [one of Zed's plans](./subscription.md), or by using API keys you already have for the supported providers.
+You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.md), or by using API keys you already have for the supported providers.
 
 ## Use Your Own Keys {#use-your-own-keys}
 
 If you already have an API key for an existing LLM provider—say Anthropic or OpenAI, for example—you can insert them in Zed and use the Agent Panel **_for free_**.
 
-You can add your API key to a given provider either via the Agent Panel's settings UI or the `settings.json` directly, through the `language_models` key.
+You can add your API key to a given provider either via the Agent Panel's settings UI or directly via the `settings.json` through the `language_models` key.
 
 ## Supported Providers
 
@@ -25,7 +25,7 @@ Here's all the supported LLM providers for which you can use your own API keys:
 | [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
 | [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
 | [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
-| [OpenAI API Compatible](#openai-api-compatible) | 🚫                                                                                                                                                                          |
+| [OpenAI API Compatible](#openai-api-compatible) | ✅                                                                                                                                                                          |
 | [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
 | [Vercel](#vercel-v0)                            | ✅                                                                                                                                                                          |
 | [xAI](#xai)                                     | ✅                                                                                                                                                                          |

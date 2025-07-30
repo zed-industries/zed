@@ -84,6 +84,7 @@ impl WindowsWindowState {
         display: WindowsDisplay,
         min_size: Option<Size<Pixels>>,
         appearance: WindowAppearance,
+        disable_direct_composition: bool,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -100,7 +101,8 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd)?;
+        let renderer = DirectXRenderer::new(hwnd, disable_direct_composition)
+            .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -208,6 +210,7 @@ impl WindowsWindowStatePtr {
             context.display,
             context.min_size,
             context.appearance,
+            context.disable_direct_composition,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -339,6 +342,7 @@ struct WindowCreateContext {
     main_receiver: flume::Receiver<Runnable>,
     main_thread_id_win32: u32,
     appearance: WindowAppearance,
+    disable_direct_composition: bool,
 }
 
 impl WindowsWindow {
@@ -371,17 +375,20 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
-            (
-                WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP,
-                WINDOW_STYLE(0x0),
-            )
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
+
+        let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+            (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
-                WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP,
+                WS_EX_APPWINDOW,
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+        if !disable_direct_composition {
+            dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
+        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -406,6 +413,7 @@ impl WindowsWindow {
             main_receiver,
             main_thread_id_win32,
             appearance,
+            disable_direct_composition,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {

@@ -437,8 +437,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(handle, options, self.generate_creation_info())
-            .inspect_err(|err| show_error("Failed to open new window", err.to_string()))?;
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 

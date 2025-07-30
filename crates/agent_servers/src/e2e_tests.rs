@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::{AgentServer, AgentServerSettings, AllAgentServersSettings};
 use acp_thread::{AcpThread, AgentThreadEntry, ToolCall, ToolCallStatus};
@@ -79,21 +83,28 @@ pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut Tes
         .unwrap();
 
     thread.read_with(cx, |thread, cx| {
-        assert_eq!(thread.entries().len(), 3);
         assert!(matches!(
             thread.entries()[0],
             AgentThreadEntry::UserMessage(_)
         ));
-        assert!(matches!(thread.entries()[1], AgentThreadEntry::ToolCall(_)));
-        let AgentThreadEntry::AssistantMessage(assistant_message) = &thread.entries()[2] else {
-            panic!("Expected AssistantMessage")
-        };
+        let assistant_message = &thread
+            .entries()
+            .iter()
+            .rev()
+            .find_map(|entry| match entry {
+                AgentThreadEntry::AssistantMessage(msg) => Some(msg),
+                _ => None,
+            })
+            .unwrap();
+
         assert!(
             assistant_message.to_markdown(cx).contains("Hello, world!"),
             "unexpected assistant message: {:?}",
             assistant_message.to_markdown(cx)
         );
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
@@ -136,6 +147,7 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
 
 pub async fn test_tool_call_with_confirmation(
     server: impl AgentServer + 'static,
+    allow_option_id: acp::PermissionOptionId,
     cx: &mut TestAppContext,
 ) {
     let fs = init_test(cx).await;
@@ -186,7 +198,7 @@ pub async fn test_tool_call_with_confirmation(
     thread.update(cx, |thread, cx| {
         thread.authorize_tool_call(
             tool_call_id,
-            acp::PermissionOptionId("0".into()),
+            allow_option_id,
             acp::PermissionOptionKind::AllowOnce,
             cx,
         );
@@ -294,7 +306,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 
 #[macro_export]
 macro_rules! common_e2e_tests {
-    ($server:expr) => {
+    ($server:expr, allow_option_id = $allow_option_id:expr) => {
         mod common_e2e {
             use super::*;
 
@@ -319,7 +331,12 @@ macro_rules! common_e2e_tests {
             #[::gpui::test]
             #[cfg_attr(not(feature = "e2e"), ignore)]
             async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
-                $crate::e2e_tests::test_tool_call_with_confirmation($server, cx).await;
+                $crate::e2e_tests::test_tool_call_with_confirmation(
+                    $server,
+                    ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
+                    cx,
+                )
+                .await;
             }
 
             #[::gpui::test]
@@ -350,6 +367,9 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 }),
                 gemini: Some(AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
+                }),
+                codex: Some(AgentServerSettings {
+                    command: crate::codex::tests::local_command(),
                 }),
             },
             cx,
@@ -408,4 +428,25 @@ pub async fn run_until_first_tool_call(
             ix.unwrap()
         }
     }
+}
+
+pub fn get_zed_path() -> PathBuf {
+    let mut zed_path = std::env::current_exe().unwrap();
+
+    while zed_path
+        .file_name()
+        .map_or(true, |name| name.to_string_lossy() != "debug")
+    {
+        if !zed_path.pop() {
+            panic!("Could not find target directory");
+        }
+    }
+
+    zed_path.push("zed");
+
+    if !zed_path.exists() {
+        panic!("\n🚨 Run `cargo build` at least once before running e2e tests\n\n");
+    }
+
+    zed_path
 }
