@@ -1878,5 +1878,5 @@
     "dock": "bottom",
     "button": true
   },
-  "presentation_modes": []
+  "profiles": []
 }

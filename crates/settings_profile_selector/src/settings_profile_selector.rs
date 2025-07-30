@@ -127,12 +127,8 @@ impl SettingsProfileSelectorDelegate {
         &self,
         cx: &mut Context<Picker<SettingsProfileSelectorDelegate>>,
     ) -> Option<String> {
-        let Some(mat) = self.matches.get(self.selected_index) else {
-            return None;
-        };
-
+        let mat = self.matches.get(self.selected_index)?;
         let profile_name = self.profile_names.get(mat.candidate_id)?;
-
         return Self::update_active_profile_name_global(profile_name.clone(), cx);
     }
 

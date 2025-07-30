@@ -122,7 +122,7 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
-    /// The active user profile settings.
+    /// The settings associated with an enabled settings profile
     pub profile: Option<&'a T>,
     /// The server's settings.
     pub server: Option<&'a T>,
@@ -423,13 +423,6 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &Value {
         &self.raw_user_settings
-    }
-
-    /// Get the currently active profile name, if any.
-    pub fn active_setting_profile(&self) -> Option<&str> {
-        self.raw_user_settings
-            .get("active_profile")
-            .and_then(|v| v.as_str())
     }
 
     /// Get the configured settings profile names.
@@ -1081,13 +1074,9 @@ impl SettingsStore {
                         "nightly": zed_settings_override_ref,
                         "stable": zed_settings_override_ref,
                         "preview": zed_settings_override_ref,
-                        "active_profile": {
-                            "type": "string",
-                            "description": "The name of the active profile to use"
-                        },
                         "profiles": {
                             "type": "object",
-                            "description": "Named collections of settings that can be activated",
+                            "description": "Settings configurations that can be toggled on and off temporarily",
                             "additionalProperties": zed_settings_override_ref
                         }
                     }
