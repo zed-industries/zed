@@ -376,7 +376,7 @@ impl Render for Onboarding {
                             ),
                     )
                     .p_1()
-                    .child(Divider::horizontal_dashed())
+                    .child(Divider::horizontal())
                     .child(
                         v_flex().gap_1().children([
                             self.render_page_nav(SelectedPage::Basics, window, cx)
@@ -388,7 +388,7 @@ impl Render for Onboarding {
                         ]),
                     ),
             )
-            // .child(Divider::vertical_dashed())
+            .child(div().child(Divider::vertical()).h_full())
             .child(div().w_2_3().h_full().child(self.render_page(window, cx)))
     }
 }
