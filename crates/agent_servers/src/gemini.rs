@@ -14,7 +14,7 @@ use crate::AllAgentServersSettings;
 #[derive(Clone)]
 pub struct Gemini;
 
-const ACP_ARG: &str = "--experimental-acp";
+const MCP_ARG: &str = "--experimental-mcp";
 
 impl AgentServer for Gemini {
     fn name(&self) -> &'static str {
@@ -48,7 +48,7 @@ impl AgentServer for Gemini {
             })?;
 
             let Some(command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
+                AgentServerCommand::resolve("gemini", &[MCP_ARG], settings, &project, cx).await
             else {
                 anyhow::bail!("Failed to find gemini binary");
             };
