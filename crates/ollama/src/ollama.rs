@@ -498,6 +498,10 @@ pub mod fake {
             "FakeHttpClient"
         }
 
+        fn user_agent(&self) -> Option<&http::HeaderValue> {
+            None
+        }
+
         fn proxy(&self) -> Option<&Url> {
             None
         }
