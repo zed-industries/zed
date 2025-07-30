@@ -44,12 +44,7 @@ pub(super) fn hover_path_like_target(
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
 ) -> Task<()> {
-    let file_to_open_task = possible_open_target(
-        &workspace,
-        &path_like_target.terminal_dir,
-        &path_like_target.maybe_path,
-        cx,
-    );
+    let file_to_open_task = possible_open_target(&workspace, &path_like_target, cx);
     cx.spawn(async move |terminal_view, cx| {
         let file_to_open = file_to_open_task.await;
         terminal_view
@@ -70,8 +65,7 @@ pub(super) fn hover_path_like_target(
 
 fn possible_open_target(
     workspace: &WeakEntity<Workspace>,
-    cwd: &Option<PathBuf>,
-    maybe_path: &str,
+    path_like_target: &PathLikeTarget,
     cx: &App,
 ) -> Task<Option<OpenTarget>> {
     let Some(workspace) = workspace.upgrade() else {
@@ -80,6 +74,8 @@ fn possible_open_target(
     // We have to check for both paths, as on Unix, certain paths with positions are valid file paths too.
     // We can be on FS remote part, without real FS, so cannot canonicalize or check for existence the path right away.
     let mut potential_paths = Vec::new();
+    let cwd = path_like_target.terminal_dir.as_ref();
+    let maybe_path = &path_like_target.maybe_path;
     let original_path = PathWithPosition::from_path(PathBuf::from(maybe_path));
     let path_with_position = PathWithPosition::parse_str(maybe_path);
     let worktree_candidates = workspace
@@ -87,10 +83,7 @@ fn possible_open_target(
         .worktrees(cx)
         .sorted_by_key(|worktree| {
             let worktree_root = worktree.read(cx).abs_path();
-            match cwd
-                .as_ref()
-                .and_then(|cwd| worktree_root.strip_prefix(cwd).ok())
-            {
+            match cwd.and_then(|cwd| worktree_root.strip_prefix(cwd).ok()) {
                 Some(cwd_child) => cwd_child.components().count(),
                 None => usize::MAX,
             }
@@ -301,12 +294,7 @@ fn possibly_open_target(
     cx.spawn_in(window, async move |terminal_view, cx| {
         let Some(open_target) = terminal_view
             .update(cx, |_, cx| {
-                possible_open_target(
-                    &workspace,
-                    &path_like_target.terminal_dir,
-                    &path_like_target.maybe_path,
-                    cx,
-                )
+                possible_open_target(&workspace, &path_like_target, cx)
             })?
             .await
         else {
