@@ -7445,7 +7445,7 @@ impl LspStore {
     ) {
         maybe!(async move {
             let mut refreshed_servers = HashSet::default();
-            let (servers, toolchain_store) = lsp_store
+            let servers = lsp_store
                 .update(cx, |lsp_store, cx| {
                     let local = lsp_store.as_local()?;
                     let toolchain_store = local.toolchain_store();
@@ -7506,7 +7506,7 @@ impl LspStore {
                         })
                         .collect::<Vec<_>>();
 
-                    Some((servers, local.toolchain_store().clone()))
+                    Some(servers)
                 })
                 .ok()
                 .flatten()?;
