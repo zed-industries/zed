@@ -143,7 +143,8 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
+    fn show(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDetails>> {
+        let _ = cx;
         async {
             Ok(CommitDetails {
                 sha: commit.into(),

@@ -1182,11 +1182,9 @@ impl RenderOnce for ProjectDiffEmptyState {
 }
 
 mod preview {
-    use git::repository::{
-        Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus,
-    };
-    use ui::prelude::*;
     use git::commit::CommitSummary;
+    use git::repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus};
+    use ui::prelude::*;
 
     use super::ProjectDiffEmptyState;
 

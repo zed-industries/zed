@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects};
-use git::repository::{CommitDiff, RepoPath};
 use git::commit::{CommitDetails, CommitSummary};
+use git::repository::{CommitDiff, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
@@ -424,13 +424,23 @@ impl Item for CommitView {
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         let short_sha = self.commit.sha.get(0..7).unwrap_or(&*self.commit.sha);
-        let subject = self.commit.message.as_ref().map(|m| truncate_and_trailoff(m.split('\n').next().unwrap(), 20)).unwrap_or_else(|| "".into());
+        let subject = self
+            .commit
+            .message
+            .as_ref()
+            .map(|m| truncate_and_trailoff(m.split('\n').next().unwrap(), 20))
+            .unwrap_or_else(|| "".into());
         format!("{short_sha} - {subject}").into()
     }
 
     fn tab_tooltip_text(&self, _: &App) -> Option<ui::SharedString> {
         let short_sha = self.commit.sha.get(0..16).unwrap_or(&*self.commit.sha);
-        let subject = self.commit.message.as_ref().and_then(|m| m.split('\n').next()).unwrap_or("");
+        let subject = self
+            .commit
+            .message
+            .as_ref()
+            .and_then(|m| m.split('\n').next())
+            .unwrap_or("");
         Some(format!("{short_sha} - {subject}").into())
     }
 

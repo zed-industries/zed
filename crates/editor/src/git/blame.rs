@@ -573,42 +573,16 @@ async fn parse_commit_messages(
 ) -> HashMap<Oid, ParsedCommitMessage> {
     let mut commit_details = HashMap::default();
 
-    let parsed_remote_url = remote_url
-        .as_deref()
-        .and_then(|remote_url| parse_git_remote_url(provider_registry, remote_url));
-
     for (oid, message) in messages {
-        let permalink = if let Some((provider, git_remote)) = parsed_remote_url.as_ref() {
-            Some(provider.build_commit_permalink(
-                git_remote,
-                git::BuildCommitPermalinkParams {
-                    sha: oid.to_string().as_str(),
-                },
-            ))
-        } else {
-            None
-        };
-
-        let remote = parsed_remote_url
-            .as_ref()
-            .map(|(provider, remote)| GitRemote {
-                host: provider.clone(),
-                owner: remote.owner.to_string(),
-                repo: remote.repo.to_string(),
-            });
-
-        let pull_request = parsed_remote_url
-            .as_ref()
-            .and_then(|(provider, remote)| provider.extract_pull_request(remote, &message));
-
         commit_details.insert(
             oid,
-            ParsedCommitMessage {
-                message: message.into(),
-                permalink,
-                remote,
-                pull_request,
-            },
+            ParsedCommitMessage::parse_commit_message(
+                oid,
+                message,
+                remote_url.as_deref(),
+                provider_registry.clone(),
+            )
+            .await,
         );
     }
 

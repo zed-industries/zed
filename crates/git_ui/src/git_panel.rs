@@ -19,13 +19,12 @@ use editor::{
     scroll::ScrollbarAutoHide,
 };
 use futures::StreamExt as _;
-use git::commit::ParsedCommitMessage;
-use git::repository::{
-    Branch, CommitOptions, DiffType, FetchOptions, GitCommitter,
-    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
-    UpstreamTrackingStatus, get_git_committer,
-};
 use git::commit::{CommitDetails, CommitSummary};
+use git::repository::{
+    Branch, CommitOptions, DiffType, FetchOptions, GitCommitter, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    get_git_committer,
+};
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
@@ -424,7 +423,6 @@ impl GitPanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
-        let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
 
@@ -531,7 +529,7 @@ impl GitPanel {
                 generate_commit_message_task: None,
                 entries: Vec::new(),
                 focus_handle: cx.focus_handle(),
-                fs,
+                fs: app_state.fs.clone(),
                 new_count: 0,
                 new_staged_count: 0,
                 pending: Vec::new(),
@@ -1601,7 +1599,16 @@ impl GitPanel {
                     this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                         let start = buffer.anchor_before(0);
                         let end = buffer.anchor_after(buffer.len());
-                        buffer.edit([(start..end, message.and_then(|msg| Some(msg.message)).unwrap_or_default())], None, cx);
+                        buffer.edit(
+                            [(
+                                start..end,
+                                message
+                                    .and_then(|msg| Some(msg.message))
+                                    .unwrap_or_default(),
+                            )],
+                            None,
+                            cx,
+                        );
                     });
                 })
                 .log_err();
@@ -1771,7 +1778,14 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(prior_commit.message.and_then(|msg| Some(msg.message)).unwrap_or_default(), window, cx)
+                            editor.set_text(
+                                prior_commit
+                                    .message
+                                    .and_then(|msg| Some(msg.message))
+                                    .unwrap_or_default(),
+                                window,
+                                cx,
+                            )
                         });
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
@@ -4606,10 +4620,7 @@ impl GitPanelMessageTooltip {
                     author_name: details.author_name.clone(),
                     author_email: details.author_email.clone(),
                     commit_timestamp: details.commit_timestamp,
-                    message: Some(ParsedCommitMessage {
-                        message: details.message.unwrap_or_default().message,
-                        ..Default::default()
-                    }),
+                    message: details.message,
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {

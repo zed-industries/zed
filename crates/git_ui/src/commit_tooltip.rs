@@ -2,8 +2,8 @@ use crate::commit_view::CommitView;
 use editor::hover_markdown_style;
 use futures::Future;
 use git::GitRemote;
-use git::commit::{ParsedCommitMessage, CommitSummary, CommitDetails};
 use git::blame::BlameEntry;
+use git::commit::{CommitDetails, CommitSummary, ParsedCommitMessage};
 
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
@@ -175,7 +175,8 @@ impl Render for CommitTooltip {
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string().clone();
         let absolute_timestamp = format_local_timestamp(
-            OffsetDateTime::from_unix_timestamp(self.commit.commit_timestamp).unwrap_or_else(|_| OffsetDateTime::now_utc()),
+            OffsetDateTime::from_unix_timestamp(self.commit.commit_timestamp)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
@@ -220,9 +221,11 @@ impl Render for CommitTooltip {
                         .to_string()
                         .into()
                 }),
-            commit_timestamp: time::OffsetDateTime::from_unix_timestamp(self.commit.commit_timestamp)
-                .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
-                .unix_timestamp(),
+            commit_timestamp: time::OffsetDateTime::from_unix_timestamp(
+                self.commit.commit_timestamp,
+            )
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .unix_timestamp(),
             has_parent: false,
         };
 

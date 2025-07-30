@@ -4,8 +4,8 @@ use crate::{
 };
 use editor::{BlameRenderer, Editor, hover_markdown_style};
 use git::{
-    blame::{BlameEntry},
-    commit::{ParsedCommitMessage, CommitSummary, CommitDetails},
+    blame::BlameEntry,
+    commit::{CommitDetails, CommitSummary, ParsedCommitMessage},
 };
 use gpui::{
     ClipboardItem, Entity, Hsla, MouseButton, ScrollHandle, Subscription, TextStyle, WeakEntity,
@@ -188,7 +188,8 @@ impl BlameRenderer for GitBlameRenderer {
             .unwrap_or_else(|| commit_details.sha.clone());
         let full_sha = commit_details.sha.to_string().clone();
         let absolute_timestamp = format_local_timestamp(
-            time::OffsetDateTime::from_unix_timestamp(commit_details.commit_timestamp).unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+            time::OffsetDateTime::from_unix_timestamp(commit_details.commit_timestamp)
+                .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
