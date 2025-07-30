@@ -94,23 +94,18 @@ impl PresentationModeSelectorDelegate {
         // TODO: Should these be non-optional and the disabled state stored here?
         configurations.insert(0, None);
 
+        let theme_settings = ThemeSettings::get_global(cx);
         let state = match cx.try_global::<PresentationModeState>() {
             Some(state) => state.clone(),
             None => PresentationModeState {
                 disabled: PresentationMode {
                     name: PresentationMode::display_name(&None),
                     settings: PresentationModeConfiguration {
-                        agent_font_size: Some(ThemeSettings::get_global(cx).agent_font_size(cx)),
-                        buffer_font_size: Some(ThemeSettings::get_global(cx).buffer_font_size(cx)),
+                        agent_font_size: Some(theme_settings.agent_font_size(cx)),
+                        buffer_font_size: Some(theme_settings.buffer_font_size(cx)),
                         full_screen: Some(window.is_fullscreen()),
-                        theme: Some(
-                            ThemeSettings::get_global(cx)
-                                .active_theme
-                                .name
-                                .clone()
-                                .into(),
-                        ),
-                        ui_font_size: Some(ThemeSettings::get_global(cx).ui_font_size(cx)),
+                        theme: Some(cx.theme().name.clone().into()),
+                        ui_font_size: Some(theme_settings.ui_font_size(cx)),
                     },
                 },
                 selected: None,
@@ -374,6 +369,7 @@ fn apply_theme_settings(
                     theme_settings.apply_theme_overrides();
                     store.override_global(theme_settings);
                 });
+                // theme::adjust_theme(&x, cx)
             }
             Err(_) => log::warn!("Theme not found: {}", theme),
         }

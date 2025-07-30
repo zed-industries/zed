@@ -884,6 +884,7 @@ impl settings::Settings for ThemeSettings {
             .user
             .into_iter()
             .chain(sources.release_channel)
+            .chain(sources.profile)
             .chain(sources.server)
         {
             if let Some(value) = value.ui_density {
