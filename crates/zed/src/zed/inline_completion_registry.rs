@@ -1,4 +1,4 @@
-use client::{Client, UserStore};
+use client::{Client, DisableAiSettings, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
@@ -7,7 +7,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
 use ollama::{OllamaCompletionProvider, OllamaService};
-use settings::{Settings, SettingsStore};
+use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -213,16 +213,18 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
             },
         ))
         .detach();
-    editor
-        .register_action(cx.listener(
-            |editor,
-             _: &editor::actions::AcceptPartialCopilotSuggestion,
-             window: &mut Window,
-             cx: &mut Context<Editor>| {
-                editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            },
-        ))
-        .detach();
+    if !DisableAiSettings::get_global(cx).disable_ai {
+        editor
+            .register_action(cx.listener(
+                |editor,
+                 _: &editor::actions::AcceptPartialCopilotSuggestion,
+                 window: &mut Window,
+                 cx: &mut Context<Editor>| {
+                    editor.accept_partial_inline_completion(&Default::default(), window, cx);
+                },
+            ))
+            .detach();
+    }
 }
 
 fn assign_edit_prediction_provider(

@@ -21,7 +21,7 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
+use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, http};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -31,7 +31,6 @@ use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::pin::Pin;
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -45,6 +44,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -78,7 +78,7 @@ pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
-pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
+pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(
@@ -727,11 +727,10 @@ impl Client {
                                 },
                                 &cx,
                             );
-                            cx.background_executor().timer(delay).await;
-                            delay = delay
-                                .mul_f32(rng.gen_range(0.5..=2.5))
-                                .max(INITIAL_RECONNECTION_DELAY)
-                                .min(MAX_RECONNECTION_DELAY);
+                            let jitter =
+                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            cx.background_executor().timer(delay + jitter).await;
+                            delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
                             break;
                         }
@@ -1138,7 +1137,7 @@ impl Client {
                 .to_str()
                 .map_err(EstablishConnectionError::other)?
                 .to_string();
-            Url::parse(&collab_url).with_context(|| format!("parsing colab rpc url {collab_url}"))
+            Url::parse(&collab_url).with_context(|| format!("parsing collab rpc url {collab_url}"))
         }
     }
 
@@ -1158,6 +1157,7 @@ impl Client {
 
         let http = self.http.clone();
         let proxy = http.proxy().cloned();
+        let user_agent = http.user_agent().cloned();
         let credentials = credentials.clone();
         let rpc_url = self.rpc_url(http, release_channel);
         let system_id = self.telemetry.system_id();
@@ -1209,7 +1209,7 @@ impl Client {
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
             request_headers.insert(
-                "Authorization",
+                http::header::AUTHORIZATION,
                 HeaderValue::from_str(&credentials.authorization_header())?,
             );
             request_headers.insert(
@@ -1221,6 +1221,9 @@ impl Client {
                 "x-zed-release-channel",
                 HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
             );
+            if let Some(user_agent) = user_agent {
+                request_headers.insert(http::header::USER_AGENT, user_agent);
+            }
             if let Some(system_id) = system_id {
                 request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
             }
