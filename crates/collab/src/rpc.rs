@@ -42,7 +42,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::proto::split_repository_update;
+use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -374,7 +374,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
+            .add_request_handler(multi_lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -2327,6 +2327,15 @@ where
         .await?;
     response.send(payload)?;
     Ok(())
+}
+
+async fn multi_lsp_query(
+    request: MultiLspQuery,
+    response: Response<MultiLspQuery>,
+    session: Session,
+) -> Result<()> {
+    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    forward_mutating_project_request(request, response, session).await
 }
 
 /// Notify other participants that a new buffer has been created
