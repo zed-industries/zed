@@ -291,14 +291,18 @@ impl Component for ToggleButton {
     }
 }
 
-mod private {
-    pub trait Sealed {}
+pub struct ButtonConfiguration {
+    label: SharedString,
+    icon: Option<IconName>,
+    on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
 }
 
-pub trait ButtonBuilder: 'static + private::Sealed {
-    fn label(&self) -> impl Into<SharedString>;
-    fn icon(&self) -> Option<IconName>;
-    fn on_click(self) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+mod private {
+    pub trait ToggleButtonStyle {}
+}
+
+pub trait ButtonBuilder: 'static + private::ToggleButtonStyle {
+    fn into_configuration(self) -> ButtonConfiguration;
 }
 
 pub struct ToggleButtonSimple {
@@ -318,19 +322,15 @@ impl ToggleButtonSimple {
     }
 }
 
-impl private::Sealed for ToggleButtonSimple {}
+impl private::ToggleButtonStyle for ToggleButtonSimple {}
 
 impl ButtonBuilder for ToggleButtonSimple {
-    fn label(&self) -> impl Into<SharedString> {
-        self.label.clone()
-    }
-
-    fn icon(&self) -> Option<IconName> {
-        None
-    }
-
-    fn on_click(self) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
-        self.on_click
+    fn into_configuration(self) -> ButtonConfiguration {
+        ButtonConfiguration {
+            label: self.label,
+            icon: None,
+            on_click: self.on_click,
+        }
     }
 }
 
@@ -354,58 +354,14 @@ impl ToggleButtonWithIcon {
     }
 }
 
-impl private::Sealed for ToggleButtonWithIcon {}
+impl private::ToggleButtonStyle for ToggleButtonWithIcon {}
 
 impl ButtonBuilder for ToggleButtonWithIcon {
-    fn label(&self) -> impl Into<SharedString> {
-        self.label.clone()
-    }
-
-    fn icon(&self) -> Option<IconName> {
-        Some(self.icon)
-    }
-
-    fn on_click(self) -> Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static> {
-        self.on_click
-    }
-}
-
-struct ToggleButtonRow<T: ButtonBuilder> {
-    items: Vec<T>,
-    index_offset: usize,
-    last_item_idx: usize,
-    is_last_row: bool,
-}
-
-impl<T: ButtonBuilder> ToggleButtonRow<T> {
-    fn new(items: Vec<T>, index_offset: usize, is_last_row: bool) -> Self {
-        Self {
-            index_offset,
-            last_item_idx: index_offset + items.len() - 1,
-            is_last_row,
-            items,
-        }
-    }
-}
-
-enum ToggleButtonGroupRows<T: ButtonBuilder> {
-    Single(Vec<T>),
-    Multiple(Vec<T>, Vec<T>),
-}
-
-impl<T: ButtonBuilder> ToggleButtonGroupRows<T> {
-    fn items(self) -> impl IntoIterator<Item = ToggleButtonRow<T>> {
-        match self {
-            ToggleButtonGroupRows::Single(items) => {
-                vec![ToggleButtonRow::new(items, 0, true)]
-            }
-            ToggleButtonGroupRows::Multiple(first_row, second_row) => {
-                let row_len = first_row.len();
-                vec![
-                    ToggleButtonRow::new(first_row, 0, false),
-                    ToggleButtonRow::new(second_row, row_len, true),
-                ]
-            }
+    fn into_configuration(self) -> ButtonConfiguration {
+        ButtonConfiguration {
+            label: self.label,
+            icon: Some(self.icon),
+            on_click: self.on_click,
         }
     }
 }
@@ -418,48 +374,42 @@ pub enum ToggleButtonGroupStyle {
 }
 
 #[derive(IntoElement)]
-pub struct ToggleButtonGroup<T>
+pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
 where
     T: ButtonBuilder,
 {
-    group_name: SharedString,
-    rows: ToggleButtonGroupRows<T>,
+    group_name: &'static str,
+    rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
     button_width: Rems,
     selected_index: usize,
 }
 
-impl<T: ButtonBuilder> ToggleButtonGroup<T> {
-    pub fn single_row(
-        group_name: impl Into<SharedString>,
-        buttons: impl IntoIterator<Item = T>,
-    ) -> Self {
+impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
+    pub fn single_row(group_name: &'static str, buttons: [T; COLS]) -> Self {
         Self {
-            group_name: group_name.into(),
-            rows: ToggleButtonGroupRows::Single(Vec::from_iter(buttons)),
+            group_name,
+            rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
             button_width: rems_from_px(100.),
             selected_index: 0,
         }
     }
+}
 
-    pub fn multiple_rows<const ROWS: usize>(
-        group_name: impl Into<SharedString>,
-        first_row: [T; ROWS],
-        second_row: [T; ROWS],
-    ) -> Self {
+impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
+    pub fn two_rows(group_name: &'static str, first_row: [T; COLS], second_row: [T; COLS]) -> Self {
         Self {
-            group_name: group_name.into(),
-            rows: ToggleButtonGroupRows::Multiple(
-                Vec::from_iter(first_row),
-                Vec::from_iter(second_row),
-            ),
+            group_name,
+            rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
             button_width: rems_from_px(100.),
             selected_index: 0,
         }
     }
+}
 
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
     pub fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
         self.style = style;
         self
@@ -476,60 +426,56 @@ impl<T: ButtonBuilder> ToggleButtonGroup<T> {
     }
 }
 
-impl<T: ButtonBuilder> RenderOnce for ToggleButtonGroup<T> {
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
+    for ToggleButtonGroup<T, COLS, ROWS>
+{
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let rows = self.rows.items().into_iter().map(|row| {
-            (
-                row.items
-                    .into_iter()
-                    .enumerate()
-                    .map(move |(index, item)| (index + row.index_offset, row.last_item_idx, item))
-                    .map(|(index, last_item_idx, item)| {
-                        (
-                            ButtonLike::new((self.group_name.clone(), index))
-                                .when(index == self.selected_index, |this| {
-                                    this.toggle_state(true)
-                                        .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                                })
-                                .rounding(None)
-                                .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
-                                    button.style(ButtonStyle::Filled)
-                                })
-                                .child(
-                                    h_flex()
-                                        .min_w(self.button_width)
-                                        .gap_1p5()
-                                        .justify_center()
-                                        .when_some(item.icon(), |this, icon| {
-                                            this.child(Icon::new(icon).size(IconSize::XSmall).map(
-                                                |this| {
-                                                    if index == self.selected_index {
-                                                        this.color(Color::Accent)
-                                                    } else {
-                                                        this.color(Color::Muted)
-                                                    }
-                                                },
-                                            ))
-                                        })
-                                        .child(
-                                            Label::new(item.label())
-                                                .when(index == self.selected_index, |this| {
-                                                    this.color(Color::Accent)
-                                                }),
-                                        ),
-                                )
-                                .on_click(item.on_click()),
-                            index == last_item_idx,
-                        )
-                    }),
-                row.is_last_row,
-            )
+        let entries = self.rows.into_iter().enumerate().map(|(row_index, row)| {
+            row.into_iter().enumerate().map(move |(index, button)| {
+                let ButtonConfiguration {
+                    label,
+                    icon,
+                    on_click,
+                } = button.into_configuration();
+
+                ButtonLike::new((self.group_name, row_index * COLS + index))
+                    .when(index == self.selected_index, |this| {
+                        this.toggle_state(true)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                    })
+                    .rounding(None)
+                    .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
+                        button.style(ButtonStyle::Filled)
+                    })
+                    .child(
+                        h_flex()
+                            .min_w(self.button_width)
+                            .gap_1p5()
+                            .justify_center()
+                            .when_some(icon, |this, icon| {
+                                this.child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
+                                    if index == self.selected_index {
+                                        this.color(Color::Accent)
+                                    } else {
+                                        this.color(Color::Muted)
+                                    }
+                                }))
+                            })
+                            .child(
+                                Label::new(label).when(index == self.selected_index, |this| {
+                                    this.color(Color::Accent)
+                                }),
+                            ),
+                    )
+                    .on_click(on_click)
+                    .into_any_element()
+            })
         });
 
+        let border_color = cx.theme().colors().border.opacity(0.6);
         let is_outlined_or_filled = self.style == ToggleButtonGroupStyle::Outlined
             || self.style == ToggleButtonGroupStyle::Filled;
         let is_transparent = self.style == ToggleButtonGroupStyle::Transparent;
-        let border_color = cx.theme().colors().border.opacity(0.6);
 
         v_flex()
             .rounded_md()
@@ -541,13 +487,15 @@ impl<T: ButtonBuilder> RenderOnce for ToggleButtonGroup<T> {
                     this.border_1().border_color(border_color)
                 }
             })
-            .children(rows.map(|(items, last_row)| {
+            .children(entries.enumerate().map(|(row_index, row)| {
+                let last_row = row_index == ROWS - 1;
                 h_flex()
                     .when(!is_outlined_or_filled, |this| this.gap_px())
                     .when(is_outlined_or_filled && !last_row, |this| {
                         this.border_b_1().border_color(border_color)
                     })
-                    .children(items.map(|(item, last_item)| {
+                    .children(row.enumerate().map(|(item_index, item)| {
+                        let last_item = item_index == COLS - 1;
                         div()
                             .when(is_outlined_or_filled && !last_item, |this| {
                                 this.border_r_1().border_color(border_color)
@@ -566,7 +514,9 @@ component::__private::inventory::submit! {
     component::ComponentFn::new(register_toggle_button_group)
 }
 
-impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
+impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> Component
+    for ToggleButtonGroup<T, COLS, ROWS>
+{
     fn name() -> &'static str {
         "ToggleButtonGroup"
     }
@@ -628,7 +578,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test",
                                 [
                                     ToggleButtonSimple::new("First", |_, _, _| {}),
@@ -647,7 +597,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group with Icons",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test_icons",
                                 [
                                     ToggleButtonWithIcon::new(
@@ -736,7 +686,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test",
                                 [
                                     ToggleButtonSimple::new("First", |_, _, _| {}),
@@ -756,7 +706,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group with Icons",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test",
                                 [
                                     ToggleButtonWithIcon::new(
@@ -846,7 +796,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test",
                                 [
                                     ToggleButtonSimple::new("First", |_, _, _| {}),
@@ -866,7 +816,7 @@ impl<T: ButtonBuilder> Component for ToggleButtonGroup<T> {
                         ),
                         single_example(
                             "Multiple Row Group with Icons",
-                            ToggleButtonGroup::multiple_rows(
+                            ToggleButtonGroup::two_rows(
                                 "multiple_row_test",
                                 [
                                     ToggleButtonWithIcon::new(

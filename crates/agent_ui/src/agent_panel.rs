@@ -44,6 +44,7 @@ use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{DisableAiSettings, UserStore, zed_urls};
+use cloud_llm_client::{CompletionIntent, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -80,7 +81,6 @@ use zed_actions::{
     agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding, ToggleModelSelector},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
-use zed_llm_client::{CompletionIntent, UsageLimit};
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 

@@ -23,6 +23,7 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
     body::Body,
@@ -750,6 +751,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
@@ -762,9 +764,14 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
+            user_agent=field::Empty,
             geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(user_agent) = user_agent {
+            span.record("user_agent", user_agent);
+        }
+
         if let Some(country_code) = geoip_country_code.as_ref() {
             span.record("geoip_country_code", country_code);
         }
@@ -1172,6 +1179,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     system_id_header: Option<TypedHeader<SystemIdHeader>>,
     ws: WebSocketUpgrade,
@@ -1227,6 +1235,7 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
                     None,
@@ -2859,12 +2868,12 @@ async fn make_update_user_plan_message(
 }
 
 fn model_requests_limit(
-    plan: zed_llm_client::Plan,
+    plan: cloud_llm_client::Plan,
     feature_flags: &Vec<String>,
-) -> zed_llm_client::UsageLimit {
+) -> cloud_llm_client::UsageLimit {
     match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == zed_llm_client::Plan::ZedProTrial
+        cloud_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
                 && feature_flags
                     .iter()
                     .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
@@ -2874,9 +2883,9 @@ fn model_requests_limit(
                 limit
             };
 
-            zed_llm_client::UsageLimit::Limited(limit)
+            cloud_llm_client::UsageLimit::Limited(limit)
         }
-        zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
+        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
     }
 }
 
@@ -2886,21 +2895,21 @@ fn subscription_usage_to_proto(
     feature_flags: &Vec<String>,
 ) -> proto::SubscriptionUsage {
     let plan = match plan {
-        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
     };
 
     proto::SubscriptionUsage {
         model_requests_usage_amount: usage.model_requests as u32,
         model_requests_usage_limit: Some(proto::UsageLimit {
             variant: Some(match model_requests_limit(plan, feature_flags) {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2908,12 +2917,12 @@ fn subscription_usage_to_proto(
         edit_predictions_usage_amount: usage.edit_predictions as u32,
         edit_predictions_usage_limit: Some(proto::UsageLimit {
             variant: Some(match plan.edit_predictions_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2926,21 +2935,21 @@ fn make_default_subscription_usage(
     feature_flags: &Vec<String>,
 ) -> proto::SubscriptionUsage {
     let plan = match plan {
-        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
     };
 
     proto::SubscriptionUsage {
         model_requests_usage_amount: 0,
         model_requests_usage_limit: Some(proto::UsageLimit {
             variant: Some(match model_requests_limit(plan, feature_flags) {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2948,12 +2957,12 @@ fn make_default_subscription_usage(
         edit_predictions_usage_amount: 0,
         edit_predictions_usage_limit: Some(proto::UsageLimit {
             variant: Some(match plan.edit_predictions_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),

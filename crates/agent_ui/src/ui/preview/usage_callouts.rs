@@ -1,8 +1,8 @@
 use client::{ModelRequestUsage, RequestUsage, zed_urls};
+use cloud_llm_client::{Plan, UsageLimit};
 use component::{empty_example, example_group_with_title, single_example};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Callout, prelude::*};
-use zed_llm_client::{Plan, UsageLimit};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct UsageCallout {

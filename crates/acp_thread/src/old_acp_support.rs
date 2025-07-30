@@ -13,6 +13,7 @@ use std::{
     rc::Rc,
 };
 use ui::App;
+use util::ResultExt as _;
 
 use crate::{AcpThread, AgentConnection};
 
@@ -52,7 +53,7 @@ impl acp_old::Client for OldAcpClientDelegate {
                         thread.push_assistant_content_block(thought.into(), true, cx)
                     }
                 })
-                .ok();
+                .log_err();
         })?;
 
         Ok(())
@@ -371,6 +372,7 @@ pub struct OldAcpAgentConnection {
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
     pub agent_state: Rc<RefCell<acp::AgentState>>,
+    pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -386,6 +388,7 @@ impl AgentConnection for OldAcpAgentConnection {
             }
             .into_any(),
         );
+        let current_thread = self.current_thread.clone();
         cx.spawn(async move |cx| {
             let result = task.await?;
             let result = acp_old::InitializeParams::response_from_any(result)?;
@@ -399,6 +402,7 @@ impl AgentConnection for OldAcpAgentConnection {
                     let session_id = acp::SessionId("acp-old-no-id".into());
                     AcpThread::new("Gemini", self.clone(), project, session_id, cx)
                 });
+                current_thread.replace(thread.downgrade());
                 thread
             })
         })

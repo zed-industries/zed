@@ -41,6 +41,7 @@ impl AgentServer for Gemini {
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let project = project.clone();
         let server_name = self.name();
+        let working_directory = project.read(cx).active_project_directory(cx);
         cx.spawn(async move |cx| {
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).gemini.clone()
@@ -53,7 +54,7 @@ impl AgentServer for Gemini {
             };
             // todo! check supported version
 
-            let conn = AcpConnection::stdio(server_name, command, cx).await?;
+            let conn = AcpConnection::stdio(server_name, command, working_directory, cx).await?;
             Ok(Rc::new(conn) as _)
         })
     }

@@ -32,6 +32,7 @@ impl AcpConnection {
     pub async fn stdio(
         server_name: &'static str,
         command: AgentServerCommand,
+        working_directory: Option<Arc<Path>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let client: Arc<ContextServer> = ContextServer::stdio(
@@ -41,6 +42,7 @@ impl AcpConnection {
                 args: command.args,
                 env: command.env,
             },
+            working_directory,
         )
         .into();
         ContextServer::start(client.clone(), cx).await?;
