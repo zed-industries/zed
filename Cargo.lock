@@ -14759,6 +14759,7 @@ dependencies = [
 name = "settings_profile_selector"
 version = "0.1.0"
 dependencies = [
+ "client",
  "editor",
  "fuzzy",
  "gpui",
@@ -14768,6 +14769,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "theme",
  "ui",
  "workspace",
  "workspace-hack",
