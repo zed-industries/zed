@@ -175,10 +175,7 @@ impl DirectXRenderer {
     }
 
     fn pre_draw(&self) -> Result<()> {
-        #[cfg(not(feature = "enable-renderdoc"))]
         let premultiplied_alpha = 1;
-        #[cfg(feature = "enable-renderdoc")]
-        let premultiplied_alpha = 0;
 
         update_buffer(
             &self.devices.device_context,

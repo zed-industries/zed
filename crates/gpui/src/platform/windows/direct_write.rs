@@ -54,13 +54,7 @@ struct GPUState {
     pixel_shader: ID3D11PixelShader,
 }
 
-struct Syncer<T>(T);
-unsafe impl<T> Send for Syncer<T> {}
-unsafe impl<T> Sync for Syncer<T> {}
-
 struct DirectWriteState {
-    // #[cfg(feature = "enable-renderdoc")]
-    // renderdoc: Syncer<Arc<RwLock<renderdoc::RenderDoc<renderdoc::V141>>>>,
     components: DirectWriteComponent,
     system_ui_font_name: SharedString,
     system_font_collection: IDWriteFontCollection1,
@@ -236,8 +230,6 @@ impl DirectWriteTextSystem {
         let system_ui_font_name = get_system_ui_font_name();
 
         Ok(Self(RwLock::new(DirectWriteState {
-            // #[cfg(feature = "enable-renderdoc")]
-            // renderdoc: Syncer(Arc::new(RwLock::new(renderdoc::RenderDoc::new().unwrap()))),
             components,
             system_ui_font_name,
             system_font_collection,
@@ -1156,12 +1148,6 @@ impl DirectWriteState {
             texture.unwrap()
         };
 
-        // #[cfg(feature = "enable-renderdoc")]
-        // self.renderdoc
-        //     .0
-        //     .write()
-        //     .start_frame_capture(std::ptr::null(), std::ptr::null());
-
         let device_context = &gpu_state.device_context;
         unsafe { device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP) };
         unsafe { device_context.VSSetShader(&gpu_state.vertex_shader, None) };
@@ -1238,14 +1224,6 @@ impl DirectWriteState {
                 )
             };
         }
-
-        // #[cfg(feature = "enable-renderdoc")]
-        // self.renderdoc
-        //     .0
-        //     .write()
-        //     .end_frame_capture(std::ptr::null(), std::ptr::null());
-
-        println!("render finished");
 
         Ok(rasterized)
     }
@@ -1891,11 +1869,6 @@ fn get_name(string: IDWriteLocalizedStrings, locale: &str) -> Result<String> {
     }
 
     Ok(String::from_utf16_lossy(&name_vec[..name_length]))
-}
-
-#[inline]
-fn translate_color(color: &DWRITE_COLOR_F) -> [f32; 4] {
-    [color.r, color.g, color.b, color.a]
 }
 
 fn get_system_ui_font_name() -> SharedString {

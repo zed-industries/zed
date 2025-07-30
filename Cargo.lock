@@ -5727,9 +5727,6 @@ name = "float-cmp"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
-dependencies = [
- "num-traits",
-]
 
 [[package]]
 name = "float-ord"
@@ -7361,7 +7358,6 @@ dependencies = [
  "rand 0.8.5",
  "raw-window-handle",
  "refineable",
- "renderdoc",
  "reqwest_client",
  "resvg",
  "scap",
@@ -13467,27 +13463,6 @@ checksum = "71fe3824f5629716b1589be05dacd749f6aa084c87e00e016714a8cdfccc997c"
 dependencies = [
  "bytecheck",
 ]
-
-[[package]]
-name = "renderdoc"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac633a08f39bf3268714799bd8c4a1a19c19c203d817d3448bb8b91c97817cf0"
-dependencies = [
- "bitflags 2.9.0",
- "float-cmp",
- "libloading",
- "once_cell",
- "renderdoc-sys",
- "winapi",
- "wio",
-]
-
-[[package]]
-name = "renderdoc-sys"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "repl"
