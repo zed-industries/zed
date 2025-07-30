@@ -22,7 +22,7 @@ use crate::{
     *,
 };
 
-const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
+pub(crate) const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
@@ -113,9 +113,7 @@ impl DirectXDevices {
 }
 
 impl DirectXRenderer {
-    pub(crate) fn new(hwnd: HWND) -> Result<Self> {
-        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
-            .is_ok_and(|value| value == "true" || value == "1");
+    pub(crate) fn new(hwnd: HWND, disable_direct_composition: bool) -> Result<Self> {
         if disable_direct_composition {
             log::info!("Direct Composition is disabled.");
         }
@@ -198,6 +196,9 @@ impl DirectXRenderer {
     }
 
     fn handle_device_lost(&mut self) -> Result<()> {
+        // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+        // If we don't wait, the final drawing result will be blank.
+        std::thread::sleep(std::time::Duration::from_millis(300));
         let disable_direct_composition = self.direct_composition.is_none();
 
         unsafe {
@@ -323,6 +324,8 @@ impl DirectXRenderer {
                             "DirectX device removed or reset when resizing. Reason: {:?}",
                             reason
                         );
+                        self.resources.width = width;
+                        self.resources.height = height;
                         self.handle_device_lost()?;
                         return Ok(());
                     }
