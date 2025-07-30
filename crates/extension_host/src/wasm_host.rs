@@ -106,7 +106,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_initialization_options(
@@ -131,7 +131,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_workspace_configuration(
@@ -154,7 +154,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_additional_initialization_options(
@@ -179,7 +179,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_additional_workspace_configuration(
@@ -204,7 +204,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn labels_for_completions(
@@ -230,7 +230,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn labels_for_symbols(
@@ -256,7 +256,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn complete_slash_command_argument(
@@ -275,7 +275,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn run_slash_command(
@@ -301,7 +301,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn context_server_command(
@@ -320,7 +320,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn context_server_configuration(
@@ -347,7 +347,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {
@@ -362,7 +362,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn index_docs(
@@ -388,7 +388,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn get_dap_binary(
@@ -410,7 +410,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
     async fn dap_request_kind(
         &self,
@@ -427,7 +427,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
@@ -441,7 +441,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn dap_locator_create_scenario(
@@ -465,7 +465,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
     async fn run_dap_locator(
         &self,
@@ -481,7 +481,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 }
 
@@ -761,7 +761,7 @@ impl WasmExtension {
             .with_context(|| format!("failed to load wasm extension {}", manifest.id))
     }
 
-    pub async fn call<T, Fn>(&self, f: Fn) -> T
+    pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>
     where
         T: 'static + Send,
         Fn: 'static
@@ -777,14 +777,15 @@ impl WasmExtension {
                 }
                 .boxed()
             }))
-            .unwrap_or_else(|_| {
-                panic!(
+            .map_err(|_| {
+                anyhow!(
                     "wasm extension channel should not be closed yet, extension {} (id {})",
-                    self.manifest.name, self.manifest.id,
+                    self.manifest.name,
+                    self.manifest.id,
                 )
-            });
-        return_rx.await.unwrap_or_else(|_| {
-            panic!(
+            })?;
+        return_rx.await.with_context(|| {
+            format!(
                 "wasm extension channel, extension {} (id {})",
                 self.manifest.name, self.manifest.id,
             )
