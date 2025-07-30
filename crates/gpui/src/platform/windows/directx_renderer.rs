@@ -2,16 +2,18 @@ use std::{mem::ManuallyDrop, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::{Context, Result};
-use windows::Win32::{
-    Foundation::{HMODULE, HWND},
-    Graphics::{
-        Direct3D::*,
-        Direct3D11::*,
-        Dxgi::{Common::*, *},
+use windows::{
+    Win32::{
+        Foundation::{HMODULE, HWND},
+        Graphics::{
+            Direct3D::*,
+            Direct3D11::*,
+            DirectComposition::*,
+            Dxgi::{Common::*, *},
+        },
     },
+    core::Interface,
 };
-#[cfg(not(feature = "enable-renderdoc"))]
-use windows::{Win32::Graphics::DirectComposition::*, core::Interface};
 
 use crate::{
     platform::windows::directx_renderer::shader_resources::{
@@ -20,6 +22,7 @@ use crate::{
     *,
 };
 
+const DISABLE_DIRECT_COMPOSITION: &str = "GPUI_DISABLE_DIRECT_COMPOSITION";
 const RENDER_TARGET_FORMAT: DXGI_FORMAT = DXGI_FORMAT_B8G8R8A8_UNORM;
 // This configuration is used for MSAA rendering on paths only, and it's guaranteed to be supported by DirectX 11.
 const PATH_MULTISAMPLE_COUNT: u32 = 4;
@@ -31,8 +34,7 @@ pub(crate) struct DirectXRenderer {
     resources: ManuallyDrop<DirectXResources>,
     globals: DirectXGlobalElements,
     pipelines: DirectXRenderPipelines,
-    #[cfg(not(feature = "enable-renderdoc"))]
-    _direct_composition: ManuallyDrop<DirectComposition>,
+    direct_composition: Option<DirectComposition>,
 }
 
 /// Direct3D objects
@@ -40,10 +42,9 @@ pub(crate) struct DirectXRenderer {
 pub(crate) struct DirectXDevices {
     adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
-    #[cfg(not(feature = "enable-renderdoc"))]
-    dxgi_device: IDXGIDevice,
     device: ID3D11Device,
     device_context: ID3D11DeviceContext,
+    dxgi_device: Option<IDXGIDevice>,
 }
 
 struct DirectXResources {
@@ -79,7 +80,6 @@ struct DirectXGlobalElements {
     sampler: [Option<ID3D11SamplerState>; 1],
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
 struct DirectComposition {
     comp_device: IDCompositionDevice,
     comp_target: IDCompositionTarget,
@@ -87,7 +87,7 @@ struct DirectComposition {
 }
 
 impl DirectXDevices {
-    pub(crate) fn new() -> Result<Self> {
+    pub(crate) fn new(disable_direct_composition: bool) -> Result<Self> {
         let dxgi_factory = get_dxgi_factory()?;
         let adapter = get_adapter(&dxgi_factory)?;
         let (device, device_context) = {
@@ -96,13 +96,15 @@ impl DirectXDevices {
             get_device(&adapter, Some(&mut device), Some(&mut context))?;
             (device.unwrap(), context.unwrap())
         };
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let dxgi_device: IDXGIDevice = device.cast()?;
+        let dxgi_device = if disable_direct_composition {
+            None
+        } else {
+            Some(device.cast()?)
+        };
 
         Ok(Self {
             adapter,
             dxgi_factory,
-            #[cfg(not(feature = "enable-renderdoc"))]
             dxgi_device,
             device,
             device_context,
@@ -112,21 +114,28 @@ impl DirectXDevices {
 
 impl DirectXRenderer {
     pub(crate) fn new(hwnd: HWND) -> Result<Self> {
-        let devices = ManuallyDrop::new(DirectXDevices::new().context("Creating DirectX devices")?);
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
+        if disable_direct_composition {
+            log::info!("Direct Composition is disabled.");
+        }
+
+        let devices = ManuallyDrop::new(
+            DirectXDevices::new(disable_direct_composition).context("Creating DirectX devices")?,
+        );
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let resources = DirectXResources::new(&devices, 1, 1)?;
-        #[cfg(feature = "enable-renderdoc")]
-        let resources = DirectXResources::new(&devices, 1, 1, hwnd)?;
-
+        let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)?;
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
 
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, hwnd)?;
-        #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition.set_swap_chain(&resources.swap_chain)?;
+        let direct_composition = if disable_direct_composition {
+            None
+        } else {
+            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)?;
+            composition.set_swap_chain(&resources.swap_chain)?;
+            Some(composition)
+        };
 
         Ok(DirectXRenderer {
             hwnd,
@@ -135,8 +144,7 @@ impl DirectXRenderer {
             resources,
             globals,
             pipelines,
-            #[cfg(not(feature = "enable-renderdoc"))]
-            _direct_composition: direct_composition,
+            direct_composition,
         })
     }
 
@@ -190,6 +198,8 @@ impl DirectXRenderer {
     }
 
     fn handle_device_lost(&mut self) -> Result<()> {
+        let disable_direct_composition = self.direct_composition.is_none();
+
         unsafe {
             #[cfg(debug_assertions)]
             report_live_objects(&self.devices.device)
@@ -206,30 +216,32 @@ impl DirectXRenderer {
                 .context("Failed to report live objects after device lost")
                 .log_err();
 
+            drop(self.direct_composition.take());
             ManuallyDrop::drop(&mut self.devices);
-            #[cfg(not(feature = "enable-renderdoc"))]
-            ManuallyDrop::drop(&mut self._direct_composition);
         }
 
-        let devices =
-            ManuallyDrop::new(DirectXDevices::new().context("Recreating DirectX devices")?);
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let resources =
-            DirectXResources::new(&devices, self.resources.width, self.resources.height)?;
-        #[cfg(feature = "enable-renderdoc")]
+        let devices = ManuallyDrop::new(
+            DirectXDevices::new(disable_direct_composition)
+                .context("Recreating DirectX devices")?,
+        );
         let resources = DirectXResources::new(
             &devices,
             self.resources.width,
             self.resources.height,
             self.hwnd,
+            disable_direct_composition,
         )?;
         let globals = DirectXGlobalElements::new(&devices.device)?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)?;
 
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let direct_composition = DirectComposition::new(&devices.dxgi_device, self.hwnd)?;
-        #[cfg(not(feature = "enable-renderdoc"))]
-        direct_composition.set_swap_chain(&resources.swap_chain)?;
+        let direct_composition = if disable_direct_composition {
+            None
+        } else {
+            let composition =
+                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), self.hwnd)?;
+            composition.set_swap_chain(&resources.swap_chain)?;
+            Some(composition)
+        };
 
         self.atlas
             .handle_device_lost(&devices.device, &devices.device_context);
@@ -237,10 +249,8 @@ impl DirectXRenderer {
         self.resources = resources;
         self.globals = globals;
         self.pipelines = pipelines;
-        #[cfg(not(feature = "enable-renderdoc"))]
-        {
-            self._direct_composition = direct_composition;
-        }
+        self.direct_composition = direct_composition;
+
         unsafe {
             self.devices
                 .device_context
@@ -584,13 +594,19 @@ impl DirectXResources {
         devices: &DirectXDevices,
         width: u32,
         height: u32,
-        #[cfg(feature = "enable-renderdoc")] hwnd: HWND,
+        hwnd: HWND,
+        disable_direct_composition: bool,
     ) -> Result<ManuallyDrop<Self>> {
-        #[cfg(not(feature = "enable-renderdoc"))]
-        let swap_chain = create_swap_chain(&devices.dxgi_factory, &devices.device, width, height)?;
-        #[cfg(feature = "enable-renderdoc")]
-        let swap_chain =
-            create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?;
+        let swap_chain = if disable_direct_composition {
+            create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?
+        } else {
+            create_swap_chain_for_composition(
+                &devices.dxgi_factory,
+                &devices.device,
+                width,
+                height,
+            )?
+        };
 
         let (
             render_target,
@@ -710,18 +726,17 @@ impl DirectXRenderPipelines {
     }
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
 impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<ManuallyDrop<Self>> {
+    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
         let comp_device = get_comp_device(&dxgi_device)?;
         let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
-        Ok(ManuallyDrop::new(Self {
+        Ok(Self {
             comp_device,
             comp_target,
             comp_visual,
-        }))
+        })
     }
 
     pub fn set_swap_chain(&self, swap_chain: &IDXGISwapChain1) -> Result<()> {
@@ -923,8 +938,6 @@ impl Drop for DirectXRenderer {
         unsafe {
             ManuallyDrop::drop(&mut self.devices);
             ManuallyDrop::drop(&mut self.resources);
-            #[cfg(not(feature = "enable-renderdoc"))]
-            ManuallyDrop::drop(&mut self._direct_composition);
         }
     }
 }
@@ -995,13 +1008,12 @@ fn get_device(
     Ok(())
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
+#[inline]
 fn get_comp_device(dxgi_device: &IDXGIDevice) -> Result<IDCompositionDevice> {
     Ok(unsafe { DCompositionCreateDevice(dxgi_device)? })
 }
 
-#[cfg(not(feature = "enable-renderdoc"))]
-fn create_swap_chain(
+fn create_swap_chain_for_composition(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
     width: u32,
@@ -1027,7 +1039,6 @@ fn create_swap_chain(
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
 }
 
-#[cfg(feature = "enable-renderdoc")]
 fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
@@ -1364,8 +1375,6 @@ fn set_pipeline_state(
 
 #[cfg(debug_assertions)]
 fn report_live_objects(device: &ID3D11Device) -> Result<()> {
-    use windows::core::Interface;
-
     let debug_device: ID3D11Debug = device.cast()?;
     unsafe {
         debug_device.ReportLiveDeviceObjects(D3D11_RLDO_DETAIL)?;
