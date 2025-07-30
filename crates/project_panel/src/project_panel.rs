@@ -4226,10 +4226,7 @@ impl ProjectPanel {
                         this.marked_entries.clear();
                         if is_sticky {
                             if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                                let strategy = sticky_index
-                                    .map(ScrollStrategy::ToPosition)
-                                    .unwrap_or(ScrollStrategy::Top);
-                                this.scroll_handle.scroll_to_item(index, strategy);
+                                this.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
