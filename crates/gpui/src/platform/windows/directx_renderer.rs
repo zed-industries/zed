@@ -88,8 +88,8 @@ struct DirectComposition {
 
 impl DirectXDevices {
     pub(crate) fn new(disable_direct_composition: bool) -> Result<Self> {
-        let dxgi_factory = get_dxgi_factory()?;
-        let adapter = get_adapter(&dxgi_factory)?;
+        let dxgi_factory = get_dxgi_factory().context("Creating DXGI factory")?;
+        let adapter = get_adapter(&dxgi_factory).context("Getting DXGI adapter")?;
         let (device, device_context) = {
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
@@ -99,7 +99,8 @@ impl DirectXDevices {
                 Some(&mut device),
                 Some(&mut context),
                 Some(&mut feature_level),
-            )?;
+            )
+            .context("Creating Direct3D device")?;
             match feature_level {
                 D3D_FEATURE_LEVEL_11_1 => {
                     log::info!("Created device with Direct3D 11.1 feature level.")
@@ -117,7 +118,7 @@ impl DirectXDevices {
         let dxgi_device = if disable_direct_composition {
             None
         } else {
-            Some(device.cast()?)
+            Some(device.cast().context("Creating DXGI device")?)
         };
 
         Ok(Self {

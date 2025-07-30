@@ -101,7 +101,8 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, disable_direct_composition)?;
+        let renderer = DirectXRenderer::new(hwnd, disable_direct_composition)
+            .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
