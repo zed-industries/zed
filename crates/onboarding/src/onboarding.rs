@@ -4,10 +4,13 @@ use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
+    Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription, Task, WeakEntity,
+    Window, actions,
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
 use std::sync::Arc;
 use theme::{ThemeMode, ThemeSettings};
 use ui::{
@@ -28,6 +31,24 @@ pub struct OnBoardingFeatureFlag {}
 
 impl FeatureFlag for OnBoardingFeatureFlag {
     const NAME: &'static str = "onboarding";
+}
+
+/// Imports settings from Visual Studio Code.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ImportVsCodeSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+/// Imports settings from Cursor editor.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ImportCursorSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
 }
 
 pub const FIRST_OPEN: &str = "first_open";
@@ -94,6 +115,43 @@ pub fn init(cx: &mut App) {
                 .detach();
         });
     });
+
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_workspace, action: &ImportVsCodeSettings, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let action = *action;
+
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::VsCode,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
+                })
+                .detach();
+        });
+
+        workspace.register_action(|_workspace, action: &ImportCursorSettings, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let action = *action;
+
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::Cursor,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
+                })
+                .detach();
+        });
+    })
+    .detach();
 
     cx.observe_new::<Workspace>(|_, window, cx| {
         let Some(window) = window else {
@@ -370,4 +428,55 @@ impl Item for Onboarding {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
+}
+
+pub async fn handle_import_vscode_settings(
+    source: VsCodeSettingsSource,
+    skip_prompt: bool,
+    fs: Arc<dyn Fs>,
+    cx: &mut AsyncWindowContext,
+) {
+    use util::truncate_and_remove_front;
+
+    let vscode_settings =
+        match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
+            Ok(vscode_settings) => vscode_settings,
+            Err(err) => {
+                zlog::error!("{err}");
+                let _ = cx.prompt(
+                    gpui::PromptLevel::Info,
+                    &format!("Could not find or load a {source} settings file"),
+                    None,
+                    &["Ok"],
+                );
+                return;
+            }
+        };
+
+    if !skip_prompt {
+        let prompt = cx.prompt(
+            gpui::PromptLevel::Warning,
+            &format!(
+                "Importing {} settings may overwrite your existing settings. \
+                Will import settings from {}",
+                vscode_settings.source,
+                truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
+            ),
+            None,
+            &["Ok", "Cancel"],
+        );
+        let result = cx.spawn(async move |_| prompt.await.ok()).await;
+        if result != Some(0) {
+            return;
+        }
+    };
+
+    cx.update(|_, cx| {
+        let source = vscode_settings.source;
+        let path = vscode_settings.path.clone();
+        cx.global::<SettingsStore>()
+            .import_vscode_settings(fs, vscode_settings);
+        zlog::info!("Imported {source} settings from {}", path.display());
+    })
+    .ok();
 }

@@ -1,15 +1,18 @@
 use editor::{EditorSettings, ShowMinimap};
 use fs::Fs;
-use gpui::{App, IntoElement, Pixels, Window};
+use gpui::{Action, App, IntoElement, Pixels, Window};
 use language::language_settings::AllLanguageSettings;
 use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ContextMenu, DropdownMenu, IconButton, Label, LabelCommon, LabelSize, NumericStepper,
-    ParentElement, SharedString, Styled, SwitchColor, SwitchField, ToggleButtonGroup,
-    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, div, h_flex, px, v_flex,
+    Clickable, ContextMenu, DropdownMenu, IconButton, Label, LabelCommon, LabelSize,
+    NumericStepper, ParentElement, SharedString, Styled, SwitchColor, SwitchField,
+    ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, div, h_flex, px,
+    v_flex,
 };
+
+use crate::{ImportCursorSettings, ImportVsCodeSettings};
 
 fn read_show_mini_map(cx: &App) -> ShowMinimap {
     editor::EditorSettings::get_global(cx).minimap.show
@@ -110,14 +113,22 @@ pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl Int
         )
         .child(
             h_flex()
-                .child(IconButton::new(
-                    "import-vs-code-settings",
-                    ui::IconName::Code,
-                ))
-                .child(IconButton::new(
-                    "import-cursor-settings",
-                    ui::IconName::CursorIBeam,
-                )),
+                .child(
+                    IconButton::new("import-vs-code-settings", ui::IconName::Code).on_click(
+                        |_, window, cx| {
+                            window
+                                .dispatch_action(ImportVsCodeSettings::default().boxed_clone(), cx)
+                        },
+                    ),
+                )
+                .child(
+                    IconButton::new("import-cursor-settings", ui::IconName::CursorIBeam).on_click(
+                        |_, window, cx| {
+                            window
+                                .dispatch_action(ImportCursorSettings::default().boxed_clone(), cx)
+                        },
+                    ),
+                ),
         )
         .child(Label::new("Popular Settings").size(LabelSize::Large))
         .child(

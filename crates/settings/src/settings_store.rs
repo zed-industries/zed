@@ -532,7 +532,9 @@ impl SettingsStore {
             }))
             .ok();
     }
+}
 
+impl SettingsStore {
     /// Updates the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
     pub fn new_text_for_update<T: Settings>(
