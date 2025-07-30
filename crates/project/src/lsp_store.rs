@@ -7392,13 +7392,13 @@ impl LspStore {
         None
     }
 
-    // TODO kb holds onto extensions' adapters that were shut down already
     pub(crate) async fn refresh_workspace_configurations(
         lsp_store: &WeakEntity<Self>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) {
         maybe!(async move {
+            let mut refreshed_servers = HashSet::default();
             let servers = lsp_store
                 .update(cx, |lsp_store, cx| {
                     let toolchain_store = lsp_store.toolchain_store(cx);
@@ -7440,6 +7440,7 @@ impl LspStore {
                                         let toolchain_store = toolchain_store.clone();
                                         let adapter = adapter.clone();
                                         let server = server.clone();
+                                        refreshed_servers.insert(server.name());
                                         Some(cx.spawn(async move |_, cx| {
                                             let settings =
                                                 LocalLspStore::workspace_configuration_for_adapter(
@@ -7466,6 +7467,11 @@ impl LspStore {
                 })
                 .ok()?;
 
+            log::info!("Refreshing workspace configurations for servers {refreshed_servers:?}");
+            // TODO this asynchronous job runs concurrently with extension (de)registration and may take enough time for a certain extension
+            // to stop and unregister its language server wrapper.
+            // This is racy : an extension might have already removed all `local.language_servers` state, but here we `.clone()` and hold onto it anyway.
+            // This now causes errors in the logs, we should find a way to remove such servers from the processing everywhere.
             let _: Vec<Option<()>> = join_all(servers).await;
             Some(())
         })
