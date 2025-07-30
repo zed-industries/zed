@@ -264,6 +264,7 @@ impl DirectXAtlasTexture {
         bounds: Bounds<DevicePixels>,
         bytes: &[u8],
     ) {
+        println!("{:?}", bounds);
         unsafe {
             device_context.UpdateSubresource(
                 &self.texture,

@@ -59,8 +59,8 @@ unsafe impl<T> Send for Syncer<T> {}
 unsafe impl<T> Sync for Syncer<T> {}
 
 struct DirectWriteState {
-    #[cfg(feature = "enable-renderdoc")]
-    renderdoc: Syncer<Arc<RwLock<renderdoc::RenderDoc<renderdoc::V141>>>>,
+    // #[cfg(feature = "enable-renderdoc")]
+    // renderdoc: Syncer<Arc<RwLock<renderdoc::RenderDoc<renderdoc::V141>>>>,
     components: DirectWriteComponent,
     system_ui_font_name: SharedString,
     system_font_collection: IDWriteFontCollection1,
@@ -236,8 +236,8 @@ impl DirectWriteTextSystem {
         let system_ui_font_name = get_system_ui_font_name();
 
         Ok(Self(RwLock::new(DirectWriteState {
-            #[cfg(feature = "enable-renderdoc")]
-            renderdoc: Syncer(Arc::new(RwLock::new(renderdoc::RenderDoc::new().unwrap()))),
+            // #[cfg(feature = "enable-renderdoc")]
+            // renderdoc: Syncer(Arc::new(RwLock::new(renderdoc::RenderDoc::new().unwrap()))),
             components,
             system_ui_font_name,
             system_font_collection,
@@ -965,11 +965,10 @@ impl DirectWriteState {
                     let bitmap_idx = bitmap_y * bitmap_size.width.0 as usize + bitmap_x;
 
                     if texture_idx + 2 < alpha_data.len() && bitmap_idx < bitmap_data.len() {
-                        let avg = (alpha_data[texture_idx] as u32
-                            + alpha_data[texture_idx + 1] as u32
-                            + alpha_data[texture_idx + 2] as u32)
-                            / 3;
-                        bitmap_data[bitmap_idx] = avg as u8;
+                        let max_value = alpha_data[texture_idx]
+                            .max(alpha_data[texture_idx + 1])
+                            .max(alpha_data[texture_idx + 2]);
+                        bitmap_data[bitmap_idx] = max_value;
                     }
                 }
             }
@@ -1157,11 +1156,11 @@ impl DirectWriteState {
             texture.unwrap()
         };
 
-        #[cfg(feature = "enable-renderdoc")]
-        self.renderdoc
-            .0
-            .write()
-            .start_frame_capture(std::ptr::null(), std::ptr::null());
+        // #[cfg(feature = "enable-renderdoc")]
+        // self.renderdoc
+        //     .0
+        //     .write()
+        //     .start_frame_capture(std::ptr::null(), std::ptr::null());
 
         let device_context = &gpu_state.device_context;
         unsafe { device_context.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP) };
@@ -1240,11 +1239,11 @@ impl DirectWriteState {
             };
         }
 
-        #[cfg(feature = "enable-renderdoc")]
-        self.renderdoc
-            .0
-            .write()
-            .end_frame_capture(std::ptr::null(), std::ptr::null());
+        // #[cfg(feature = "enable-renderdoc")]
+        // self.renderdoc
+        //     .0
+        //     .write()
+        //     .end_frame_capture(std::ptr::null(), std::ptr::null());
 
         println!("render finished");
 
