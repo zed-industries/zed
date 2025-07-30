@@ -1769,14 +1769,21 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
-                if let Some(focus_handle) = &self.tracked_focus_handle {
-                    if let Some(focus_trap) = window.focus_trap_stack.last() {
+                if let Some(focus_handle) = self.tracked_focus_handle.clone() {
+                    if self.focus_trap {
+                        // Let self's tracked_focus_handle into self's focus trap
                         window
                             .next_frame
                             .tab_handles
-                            .insert(focus_handle.clone().focus_trap(focus_trap));
+                            .insert(focus_handle.focus_trap(&window.focus_trap_id()));
+                    } else if let Some(focus_trap) = window.focus_trap_stack.last() {
+                        // Let tracked_focus_handle into the parent element's focus trap
+                        window
+                            .next_frame
+                            .tab_handles
+                            .insert(focus_handle.focus_trap(focus_trap));
                     } else {
-                        window.next_frame.tab_handles.insert(focus_handle.clone());
+                        window.next_frame.tab_handles.insert(focus_handle);
                     }
                 }
 

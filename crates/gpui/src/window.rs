@@ -4324,14 +4324,16 @@ impl Window {
         f(&mut None, self)
     }
 
+    /// Creates a new focus trap ID based on the current element ID stack.
+    pub(crate) fn focus_trap_id(&self) -> FocusTrapId {
+        FocusTrapId(Arc::new(GlobalElementId(self.element_id_stack.clone())))
+    }
+
     /// Acquire a focus_trap.
     /// Only valid for the duration of the provided closure.
     pub(crate) fn with_focus_trap<R>(&mut self, enable: bool, f: impl FnOnce(&mut Self) -> R) -> R {
         if enable {
-            self.focus_trap_stack
-                .push(FocusTrapId(Arc::new(GlobalElementId(
-                    self.element_id_stack.clone(),
-                ))));
+            self.focus_trap_stack.push(self.focus_trap_id());
         }
         let result = f(self);
         if enable {
