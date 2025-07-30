@@ -1878,5 +1878,7 @@
     "dock": "bottom",
     "button": true
   },
+  // Configures any number of settings profiles that are temporarily applied
+  // when selected from `settings profile selector: toggle`.
   "profiles": []
 }
