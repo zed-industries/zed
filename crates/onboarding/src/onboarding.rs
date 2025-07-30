@@ -1,4 +1,7 @@
-use crate::welcome::{ShowWelcome, WelcomePage};
+use crate::{
+    ai_setup_page::AiConfigurationPage,
+    welcome::{ShowWelcome, WelcomePage},
+};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -176,15 +179,19 @@ struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
+    ai_configuration_page: Entity<AiConfigurationPage>,
     _settings_subscription: Subscription,
 }
 
 impl Onboarding {
     fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Entity<Self> {
+        let ai_configuration_page = cx.new(|_| AiConfigurationPage::new(workspace.clone()));
+
         cx.new(|cx| Self {
             workspace,
             focus_handle: cx.focus_handle(),
             selected_page: SelectedPage::Basics,
+            ai_configuration_page,
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -251,9 +258,7 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => {
-                crate::ai_setup_page::render_ai_setup_page(window, cx).into_any_element()
-            }
+            SelectedPage::AiSetup => self.ai_configuration_page.clone().into_any_element(),
         }
     }
 
