@@ -108,11 +108,6 @@ impl CommitTooltip {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // let commit_time = blame
-        //     .committer_time
-        //     .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
-        //     .unwrap_or(OffsetDateTime::now_utc());
-
         Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
