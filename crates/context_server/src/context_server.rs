@@ -34,6 +34,8 @@ pub struct ContextServerCommand {
     pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub working_directory: Option<PathBuf>,
 }
 
 impl std::fmt::Debug for ContextServerCommand {
@@ -48,6 +50,7 @@ impl std::fmt::Debug for ContextServerCommand {
             .field("path", &self.path)
             .field("args", &self.args)
             .field("env", &filtered_env)
+            .field("working_directory", &self.working_directory)
             .finish()
     }
 }
@@ -97,16 +100,34 @@ impl ContextServer {
 
     pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
         let client = match &self.configuration {
-            ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
-                client::ContextServerId(self.id.0.clone()),
-                client::ModelContextServerBinary {
-                    executable: Path::new(&command.path).to_path_buf(),
-                    args: command.args.clone(),
-                    env: command.env.clone(),
-                },
-                working_directory,
-                cx.clone(),
-            )?,
+            ContextServerTransport::Stdio(command, root_working_directory) => {
+                let working_directory =
+                    if let Some(configured_dir) = command.working_directory.as_ref() {
+                        if configured_dir.is_relative() {
+                            root_working_directory
+                                .as_ref()
+                                .map(|root| root.join(configured_dir))
+                        } else {
+                            Some(configured_dir.clone())
+                        }
+                    } else {
+                        root_working_directory.clone()
+                    };
+                println!(
+                    "[cx-server] configured working_directory: {:?}",
+                    &working_directory
+                );
+                Client::stdio(
+                    client::ContextServerId(self.id.0.clone()),
+                    client::ModelContextServerBinary {
+                        executable: Path::new(&command.path).to_path_buf(),
+                        args: command.args.clone(),
+                        env: command.env.clone(),
+                    },
+                    &working_directory,
+                    cx.clone(),
+                )?
+            }
             ContextServerTransport::Custom(transport) => Client::new(
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
