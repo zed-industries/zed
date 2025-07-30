@@ -116,7 +116,6 @@ pub struct ProjectPanel {
     hover_expand_task: Option<Task<()>>,
     previous_drag_position: Option<Point<Pixels>>,
     sticky_items_count: usize,
-    selected_file_for_compare: Option<(WorktreeId, ProjectEntryId, PathBuf)>,
 }
 
 struct DragTargetEntry {
@@ -282,10 +281,8 @@ actions!(
         SelectNextDirectory,
         /// Selects the previous directory.
         SelectPrevDirectory,
-        /// Selects the file for compare.
-        SelectForCompare,
-        /// Compares previously selected file with the currently selected file.
-        CompareWithSelected,
+        /// Opens a diff view to compare two selected files.
+        CompareSelectedFiles,
     ]
 );
 
@@ -626,7 +623,6 @@ impl ProjectPanel {
                 hover_expand_task: None,
                 previous_drag_position: None,
                 sticky_items_count: 0,
-                selected_file_for_compare: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -894,6 +890,8 @@ impl ProjectPanel {
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
+            let selected_files_count = self.collect_selected_files(cx).len();
+            let should_show_compare = !is_dir && selected_files_count >= 2;
 
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -925,15 +923,11 @@ impl ProjectPanel {
                             .when(is_foldable, |menu| {
                                 menu.action("Fold Directory", Box::new(FoldDirectory))
                             })
-                            .when(!is_dir, |menu| {
-                                menu.separator()
-                                    .action("Select For Compare", Box::new(SelectForCompare))
-                                    .when(self.selected_file_for_compare.is_some(), |menu| {
-                                        menu.action(
-                                            "Compare with Selected",
-                                            Box::new(CompareWithSelected),
-                                        )
-                                    })
+                            .when(should_show_compare, |menu| {
+                                menu.separator().action(
+                                    "Compare selected files",
+                                    Box::new(CompareSelectedFiles),
+                                )
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -2589,48 +2583,43 @@ impl ProjectPanel {
         }
     }
 
-    fn select_for_compare(
-        &mut self,
-        _: &SelectForCompare,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            if !entry.is_file() {
-                return;
-            }
-            let worktree_id = worktree.read(cx).id();
-            let abs_path = worktree.read(cx).absolutize(&entry.path).ok();
-            if let Some(path) = abs_path {
-                self.selected_file_for_compare = Some((worktree_id, entry.id, path));
-            }
-            cx.notify();
-        }
+    fn collect_selected_files(&self, cx: &Context<Self>) -> Vec<(Entity<Worktree>, PathBuf)> {
+        self.effective_entries()
+            .iter()
+            .filter_map(|entry| {
+                let project = self.project.read(cx);
+                let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                let entry_info = worktree.read(cx).entry_for_id(entry.entry_id)?;
+                entry_info
+                    .is_file()
+                    .then_some((worktree, entry_info.path.to_path_buf()))
+            })
+            .collect()
     }
 
-    fn compare_with_selected(
+    fn compare_selected_files(
         &mut self,
-        _: &CompareWithSelected,
+        _: &CompareSelectedFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            if !entry.is_file() {
-                return;
-            }
-            let Some((_, _, selected_path)) = &self.selected_file_for_compare else {
-                return;
-            };
-            let Some(current_path) = worktree.read(cx).absolutize(&entry.path).log_err() else {
-                return;
-            };
+        let selected_files: Vec<_> = self.collect_selected_files(cx);
+        if selected_files.len() < 2 {
+            return;
+        }
+
+        let (worktree1, path1) = &selected_files[0];
+        let (worktree2, path2) = &selected_files[1];
+        let abs_path1 = worktree1.read(cx).absolutize(path1).ok();
+        let abs_path2 = worktree2.read(cx).absolutize(path2).ok();
+        if let (Some(file_path1), Some(file_path2)) = (abs_path1, abs_path2) {
             self.workspace
                 .update(cx, |workspace, cx| {
-                    FileDiffView::open(selected_path.clone(), current_path, workspace, window, cx)
+                    FileDiffView::open(file_path1, file_path2, workspace, window, cx)
                         .detach_and_log_err(cx);
                 })
                 .log_err();
-        };
+        }
     }
 
     fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut Context<Self>) {
@@ -5231,8 +5220,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
-                .on_action(cx.listener(Self::select_for_compare))
-                .on_action(cx.listener(Self::compare_with_selected))
+                .on_action(cx.listener(Self::compare_selected_files))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
