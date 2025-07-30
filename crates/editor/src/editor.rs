@@ -4042,12 +4042,21 @@ impl Editor {
                             }
                         }
 
-                        if let Some(region) = autoclose_region {
+                        // #include ""
+                        // snippet autocomplete:
+                        // #include "AGL/^
+                        // #include "AGL/"(!!!! panic: assumes that there's a pairing symbol for the new `"`)
+                        // ~~~~#include "AGL/""^   // <--- assumed new selection
+
+                        // TODO kb something does not work well for C here, there's a region
+                        if let Some(region) = dbg!(autoclose_region) {
                             // If the selection is followed by an auto-inserted closing bracket,
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
                             let should_skip = selection.end == region.range.end.to_point(&snapshot)
-                                && text.as_ref() == region.pair.end.as_str();
+                                && text.as_ref() == region.pair.end.as_str()
+                                && snapshot.contains_str_at(region.range.end, text.as_ref());
+                            dbg!((&text, &selection, should_skip));
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
                                 new_selections
@@ -4233,6 +4242,7 @@ impl Editor {
                         }
                     }
                 }
+                dbg!(&pair);
                 this.autoclose_regions.insert(
                     i,
                     AutocloseRegion {
@@ -4951,6 +4961,7 @@ impl Editor {
     ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
         let mut i = 0;
         let mut regions = self.autoclose_regions.as_slice();
+        dbg!(&regions);
         selections.into_iter().map(move |selection| {
             let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
 
@@ -9590,6 +9601,7 @@ impl Editor {
                         if autoclose_enabled {
                             let start = snapshot.anchor_after(selection_head);
                             let end = snapshot.anchor_after(selection_head);
+                            dbg!((selection_head, &pair));
                             self.autoclose_regions.push(AutocloseRegion {
                                 selection_id: selection.id,
                                 range: start..end,
