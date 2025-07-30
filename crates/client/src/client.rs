@@ -1,6 +1,7 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod cloud;
 mod proxy;
 pub mod telemetry;
 pub mod user;
@@ -52,6 +53,7 @@ use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
+pub use cloud::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -619,6 +621,10 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
+    }
+
+    pub fn cloud_client(&self) -> Arc<CloudApiClient> {
+        self.cloud_client.clone()
     }
 
     pub fn set_id(&self, id: u64) -> &Self {

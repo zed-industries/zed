@@ -24,6 +24,10 @@ impl CloudApiClient {
         }
     }
 
+    pub fn has_credentials(&self) -> bool {
+        self.credentials.read().is_some()
+    }
+
     pub fn set_credentials(&self, user_id: u32, access_token: String) {
         *self.credentials.write() = Some(Credentials {
             user_id,
@@ -43,7 +47,7 @@ impl CloudApiClient {
         ))
     }
 
-    pub async fn get_authenticated_user(&self) -> Result<AuthenticatedUser> {
+    pub async fn get_authenticated_user(&self) -> Result<GetAuthenticatedUserResponse> {
         let request = Request::builder()
             .method(Method::GET)
             .uri(
@@ -69,8 +73,7 @@ impl CloudApiClient {
 
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
-        let response: GetAuthenticatedUserResponse = serde_json::from_str(&body)?;
 
-        Ok(response.user)
+        Ok(serde_json::from_str(&body)?)
     }
 }
