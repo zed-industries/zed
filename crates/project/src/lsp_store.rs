@@ -2501,11 +2501,7 @@ impl LocalLspStore {
                 }
 
                 let server_id = server_node.server_id_or_init(|disposition| {
-                    let LaunchDisposition {
-                        server_name,
-                        path,
-                        settings,
-                    } = &**disposition;
+                    let path = &disposition.path;
                     let server_id = {
                         let uri =
                             Url::from_file_path(worktree.read(cx).abs_path().join(&path.path));
