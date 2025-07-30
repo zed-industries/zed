@@ -93,7 +93,25 @@ impl DirectXDevices {
         let (device, device_context) = {
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
-            get_device(&adapter, Some(&mut device), Some(&mut context))?;
+            let mut feature_level = D3D_FEATURE_LEVEL::default();
+            get_device(
+                &adapter,
+                Some(&mut device),
+                Some(&mut context),
+                Some(&mut feature_level),
+            )?;
+            match feature_level {
+                D3D_FEATURE_LEVEL_11_1 => {
+                    log::info!("Created device with Direct3D 11.1 feature level.")
+                }
+                D3D_FEATURE_LEVEL_11_0 => {
+                    log::info!("Created device with Direct3D 11.0 feature level.")
+                }
+                D3D_FEATURE_LEVEL_10_1 => {
+                    log::info!("Created device with Direct3D 10.1 feature level.")
+                }
+                _ => unreachable!(),
+            }
             (device.unwrap(), context.unwrap())
         };
         let dxgi_device = if disable_direct_composition {
@@ -976,7 +994,7 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
         }
         // Check to see whether the adapter supports Direct3D 11, but don't
         // create the actual device yet.
-        if get_device(&adapter, None, None).log_err().is_some() {
+        if get_device(&adapter, None, None, None).log_err().is_some() {
             return Ok(adapter);
         }
     }
@@ -988,6 +1006,7 @@ fn get_device(
     adapter: &IDXGIAdapter1,
     device: Option<*mut Option<ID3D11Device>>,
     context: Option<*mut Option<ID3D11DeviceContext>>,
+    feature_level: Option<*mut D3D_FEATURE_LEVEL>,
 ) -> Result<()> {
     #[cfg(debug_assertions)]
     let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
@@ -1007,7 +1026,7 @@ fn get_device(
             ]),
             D3D11_SDK_VERSION,
             device,
-            None,
+            feature_level,
             context,
         )?;
     }
