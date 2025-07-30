@@ -2,7 +2,6 @@ mod headless;
 
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
-use client::Client;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
@@ -302,7 +301,7 @@ fn main() {
                 } => {
                     cx.spawn(async move |cx| {
                         let connection_result =
-                            Client::authenticate_and_connect(&app_state.client, true, cx).await;
+                            app_state.client.authenticate_and_connect(true, cx).await;
                         match connection_result {
                             ConnectionResult::Timeout => {
                                 return Err(anyhow!("Timeout while connecting"));
