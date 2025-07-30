@@ -1216,7 +1216,6 @@ fn set_rasterizer_state(device: &ID3D11Device, device_context: &ID3D11DeviceCont
         SlopeScaledDepthBias: 0.0,
         DepthClipEnable: true.into(),
         ScissorEnable: false.into(),
-        // MultisampleEnable: false.into(),
         MultisampleEnable: true.into(),
         AntialiasedLineEnable: false.into(),
     };
