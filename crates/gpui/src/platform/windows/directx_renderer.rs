@@ -346,9 +346,10 @@ impl DirectXRenderer {
                         self.resources.height = height;
                         self.handle_device_lost()?;
                         return Ok(());
+                    } else {
+                        log::error!("Failed to resize swap chain: {:?}", e);
+                        return Err(e.into());
                     }
-                    log::error!("Failed to resize swap chain: {:?}", e);
-                    return Err(e.into());
                 }
             }
 
