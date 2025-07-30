@@ -4,8 +4,7 @@
 //!
 //! ## RPC
 //! LSP Tree is transparent to RPC peers; when clients ask host to spawn a new language server, the host will perform LSP Tree lookup for provided path; it may decide
-//! to reuse existing language server. The client maintains it's own LSP Tree that is a subset of host LSP Tree. Done this way, the client does not need to
-//! ask about suitable language server for each path it interacts with; it can resolve most of the queries locally.
+//! to reuse existing language server.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -165,6 +164,9 @@ impl LanguageServerTree {
             }
         };
         self.get_with_adapters(path, adapters, delegate, cx)
+        // /Cargo.toml
+        // /src/main.rs
+        // /src/.zed/settings.json ("Rust": {"language_servers" ["!rust_analyzer"]})
     }
 
     fn get_with_adapters<'a>(

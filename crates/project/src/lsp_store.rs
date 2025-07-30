@@ -1,3 +1,14 @@
+//! LSP store provides unified access to the language server protocol.
+//! The consumers of LSP store can interact with language servers without knowing exactly which language server they're interacting with.
+//!
+//! # Local/Remote LSP Stores
+//! This module is split up into three distinct parts:
+//! - [`LocalLspStore`], which is ran on the host machine (either project host or SSH host), that manages the lifecycle of language servers.
+//! - [`RemoteLspStore`], which is ran on the remote machine (project guests) which is mostly about passing through the requests via RPC.
+//!     The remote stores don't really care about which language server they're running against - they don't usually get to decide which language server is going to responsible for handling their request.
+//! - [`LspStore`], which unifies the two under one consistent interface for interacting with language servers.
+//!
+//! Most of the interesting work happens at the local layer, as bulk of the complexity is with managing the lifecycle of language servers. The actual implementation of the LSP protocol is handled by [`lsp`] crate.
 pub mod clangd_ext;
 pub mod json_language_server_ext;
 pub mod lsp_ext_command;
@@ -4630,7 +4641,7 @@ impl LspStore {
             }
         }
 
-        self.refresh_server_tree(cx);
+        self.request_workspace_config_refresh();
 
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
             prettier_store.update(cx, |prettier_store, cx| {
@@ -4641,7 +4652,15 @@ impl LspStore {
         cx.notify();
     }
 
-    fn refresh_server_tree(&mut self, cx: &mut Context<Self>) {
+    // fn get_workspace_configurations(&self, cx: &mut Context<Self>) -> Task<()> {
+    //     self.lsp_tree.read(cx).
+    // }
+
+    fn refresh_server_tree(
+        &mut self,
+        workspace_configs: HashMap<(ProjectPath, LanguageServerName), serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
         let buffer_store = self.buffer_store.clone();
         if let Some(local) = self.as_local_mut() {
             let mut adapters = BTreeMap::default();
@@ -7438,7 +7457,7 @@ impl LspStore {
         None
     }
 
-    pub(crate) async fn refresh_workspace_configurations(
+    async fn refresh_workspace_configurations(
         lsp_store: &WeakEntity<Self>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
@@ -7537,8 +7556,18 @@ impl LspStore {
 
         let mut joint_future =
             futures::stream::select(settings_changed_rx, external_refresh_requests);
+        // Multiple things can happen when a workspace environment (selected toolchain + settings) change:
+        // - We might shut down a language server if it's no longer enabled for a given language (and there are no buffers using it otherwise).
+        // - We might also shut it down when the workspace configuration of all of the users of a given language server converges onto that of the other.
+        // - In the same vein, we might also decide to start a new language server if the workspace configuration *diverges* from the other.
+        // - In the easiest case (where we're not wrangling the lifetime of a language server anyhow), if none of the roots of a single language server diverge in their configuration,
+        // but it is still different to what we had before, we're gonna send out a workspace configuration update.
         cx.spawn(async move |this, cx| {
             while let Some(()) = joint_future.next().await {
+                this.update(cx, |this, cx| {
+                    this.refresh_server_tree(cx);
+                });
+
                 Self::refresh_workspace_configurations(&this, fs.clone(), cx).await;
             }
 
