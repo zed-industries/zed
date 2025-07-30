@@ -3032,6 +3032,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud_api_client"
+version = "0.1.0"
+dependencies = [
+ "cloud_api_types",
+]
+
+[[package]]
+name = "cloud_api_types"
+version = "0.1.0"
+
+[[package]]
 name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
