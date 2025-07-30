@@ -17,7 +17,7 @@ use settings::WorktreeId;
 use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
-#[derive(Clone, Hash, Debug)]
+#[derive(Clone, Debug)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
