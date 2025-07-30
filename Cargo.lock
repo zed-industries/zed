@@ -9227,7 +9227,6 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
