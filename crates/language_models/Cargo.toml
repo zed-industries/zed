@@ -65,7 +65,7 @@ util.workspace = true
 workspace-hack.workspace = true
 zed_llm_client.workspace = true
 language.workspace = true
-mistralrs = { path = "../../../mistral.rs/mistralrs", features = [] }
+mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs", tag = "v0.6.0", features = [] }
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
