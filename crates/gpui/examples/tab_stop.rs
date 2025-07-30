@@ -11,10 +11,6 @@ struct Example {
     items: Vec<FocusHandle>,
     modal_items: Vec<FocusHandle>,
     message: SharedString,
-    modal1_focus_handle: FocusHandle,
-    modal1_open: Entity<bool>,
-    modal2_focus_handle: FocusHandle,
-    modal2_open: Entity<bool>,
     last_focused: Option<FocusHandle>,
 }
 
@@ -40,10 +36,6 @@ impl Example {
             items,
             modal_items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
-            modal1_focus_handle: cx.focus_handle(),
-            modal1_open: cx.new(|_| false),
-            modal2_focus_handle: cx.focus_handle().tab_stop(true),
-            modal2_open: cx.new(|_| false),
             last_focused: None,
         }
     }
@@ -67,7 +59,7 @@ fn button(id: impl Into<ElementId>) -> Stateful<Div> {
         .flex()
         .justify_center()
         .items_center()
-        .border_2()
+        .border_3()
         .border_color(gpui::black())
         .rounded_md()
         .bg(gpui::black())
@@ -155,6 +147,24 @@ where
 
 impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let modal1_open = window
+            .use_keyed_state("modal1-open", cx, |_, cx| cx.new(|_| false))
+            .read(cx)
+            .clone();
+        let modal1_focus_handle = window
+            .use_keyed_state("modal1-focus-handle", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+
+        let modal2_open = window
+            .use_keyed_state("modal2-open", cx, |_, cx| cx.new(|_| false))
+            .read(cx)
+            .clone();
+        let modal2_focus_handle = window
+            .use_keyed_state("modal2-focus-handle", cx, |_, cx| cx.focus_handle())
+            .read(cx)
+            .clone();
+
         div()
             .id("app")
             .track_focus(&self.focus_handle)
@@ -185,9 +195,10 @@ impl Render for Example {
                     .child(button("el2").tab_index(5).child("Button 2"))
                     .child(button("open-modal1").child("Open Modal...").on_click({
                         let first_handle = self.modal_items.first().cloned();
+                        let modal1_open = modal1_open.clone();
                         cx.listener(move |this, _, window, cx| {
                             this.last_focused = window.focused(cx);
-                            this.modal1_open.update(cx, |open, _| {
+                            modal1_open.update(cx, |open, _| {
                                 *open = true;
                             });
                             if let Some(handle) = first_handle.as_ref() {
@@ -197,40 +208,42 @@ impl Render for Example {
                         })
                     }))
                     .child(button("open-modal2").child("Other Modal...").on_click({
+                        let modal2_focus_handle = modal2_focus_handle.clone();
+                        let modal2_open = modal2_open.clone();
                         cx.listener(move |this, _, window, cx| {
                             this.last_focused = window.focused(cx);
-                            this.modal2_focus_handle.focus(window);
-                            this.modal2_open.update(cx, |open, _| {
+                            modal2_focus_handle.focus(window);
+                            modal2_open.update(cx, |open, _| {
                                 *open = true;
                             });
                             cx.notify();
                         })
                     })),
             )
-            .when(*self.modal1_open.read(cx), |this| {
+            .when(*modal1_open.read(cx), |this| {
                 this.child(
                     modal(
                         "modal1",
                         "Focus cycle in Modal",
-                        self.modal1_open.clone(),
+                        modal1_open.clone(),
                         self.modal_items.clone().into_iter().enumerate().map(
                             |(ix, item_handle)| input(("modal-input", ix), &item_handle, window),
                         ),
                         cx,
                     )
-                    .track_focus(&self.modal1_focus_handle),
+                    .track_focus(&modal1_focus_handle),
                 )
             })
-            .when(*self.modal2_open.read(cx), |this| {
+            .when(*modal2_open.read(cx), |this| {
                 this.child(
                     modal(
                         "modal2",
                         "Empty Modal will block focus",
-                        self.modal2_open.clone(),
+                        modal2_open.clone(),
                         vec![div().child("This is a empty modal.")],
                         cx,
                     )
-                    .track_focus(&self.modal2_focus_handle),
+                    .track_focus(&modal2_focus_handle),
                 )
             })
     }
