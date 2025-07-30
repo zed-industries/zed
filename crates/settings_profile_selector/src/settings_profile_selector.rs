@@ -292,10 +292,10 @@ mod tests {
     use workspace::{self, AppState};
     use zed_actions::settings_profile_selector;
 
-    async fn init_test<'a>(
+    async fn init_test(
         profiles_json: serde_json::Value,
-        cx: &'a mut TestAppContext,
-    ) -> (Entity<Workspace>, &'a mut VisualTestContext) {
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workspace>, &mut VisualTestContext) {
         cx.update(|cx| {
             let state = AppState::test(cx);
             language::init(cx);
