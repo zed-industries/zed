@@ -14717,18 +14717,13 @@ dependencies = [
 name = "settings_profile_selector"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "fuzzy",
  "gpui",
  "language",
- "log",
  "menu",
  "picker",
  "project",
- "schemars",
- "serde",
- "serde_derive",
  "settings",
  "ui",
  "workspace",
@@ -20356,7 +20351,6 @@ dependencies = [
  "gpui",
  "schemars",
  "serde",
- "theme",
  "uuid",
  "workspace-hack",
 ]
