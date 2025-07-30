@@ -29,6 +29,8 @@ members = [
     "crates/cli",
     "crates/client",
     "crates/clock",
+    "crates/cloud_api_client",
+    "crates/cloud_api_types",
     "crates/cloud_llm_client",
     "crates/collab",
     "crates/collab_ui",
@@ -251,6 +253,8 @@ channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
+cloud_api_client = { path = "crates/cloud_api_client" }
+cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
