@@ -1,5 +1,5 @@
 [package]
-name = "presentation_mode_selector"
+name = "settings_profile_selector"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/presentation_mode_selector.rs"
+path = "src/settings_profile_selector.rs"
 doctest = false
 
 [dependencies]
@@ -22,7 +22,6 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 settings.workspace = true
-theme.workspace = true
 ui.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true

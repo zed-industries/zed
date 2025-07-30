@@ -26,8 +26,8 @@ use util::{
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings, WorktreeId,
-    parse_json_with_comments, update_value_in_json_text,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings,
+    WorktreeId, parse_json_with_comments, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
@@ -285,6 +285,14 @@ impl SettingsStore {
         }
     }
 
+    pub fn observe_active_settings_profile(cx: &mut App) -> gpui::Subscription {
+        cx.observe_global::<ActiveSettingsProfileName>(|cx| {
+            Self::update_global(cx, |store, cx| {
+                store.recompute_values(None, cx).log_err();
+            });
+        })
+    }
+
     pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
     where
         C: BorrowAppContext,
@@ -325,14 +333,12 @@ impl SettingsStore {
             }
 
             let mut profile_value = None;
-            if let Some(active_profile) = self.raw_user_settings.get("active_profile") {
-                if let Some(active_profile) = active_profile.as_str() {
-                    if let Some(profiles) = self.raw_user_settings.get("profiles") {
-                        if let Some(profile_settings) = profiles.get(active_profile) {
-                            profile_value = setting_value
-                                .deserialize_setting(profile_settings)
-                                .log_err();
-                        }
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_settings) = profiles.get(&active_profile.0) {
+                        profile_value = setting_value
+                            .deserialize_setting(profile_settings)
+                            .log_err();
                     }
                 }
             }
@@ -435,31 +441,6 @@ impl SettingsStore {
             .flat_map(|obj| obj.keys())
             .map(|s| s.as_str())
     }
-
-    // /// Set the active profile. Pass None to deactivate profiles.
-    // pub fn set_active_profile(&mut self, profile_name: Option<String>, cx: &mut App) -> Result<()> {
-    //     if let Some(ref name) = profile_name {
-    //         let has_profile = self
-    //             .raw_user_settings
-    //             .get("profiles")
-    //             .and_then(|v| v.as_object())
-    //             .map(|obj| obj.contains_key(name))
-    //             .unwrap_or(false);
-
-    //         anyhow::ensure!(has_profile, "Profile '{}' does not exist", name);
-    //     }
-
-    //     if let Some(obj) = self.raw_user_settings.as_object_mut() {
-    //         if let Some(name) = profile_name {
-    //             obj.insert("active_profile".to_string(), Value::String(name));
-    //         } else {
-    //             obj.remove("active_profile");
-    //         }
-    //     }
-
-    //     self.recompute_values(None, cx)?;
-    //     Ok(())
-    // }
 
     /// Access the raw JSON value of the global settings.
     pub fn raw_global_settings(&self) -> Option<&Value> {
@@ -1168,25 +1149,11 @@ impl SettingsStore {
             }
 
             let mut profile_settings = None;
-            if let Some(active_profile) = self.raw_user_settings.get("active_profile") {
-                if let Some(active_profile_str) = active_profile.as_str() {
-                    log::info!("Found active profile: {}", active_profile_str);
-                    if let Some(profiles) = self.raw_user_settings.get("profiles") {
-                        if let Some(profile_json) = profiles.get(active_profile_str) {
-                            log::info!(
-                                "Loading profile '{}' for setting type: {}",
-                                active_profile_str,
-                                setting_value.setting_type_name()
-                            );
-                            profile_settings = setting_value.deserialize_setting(profile_json).ok();
-                            if profile_settings.is_some() {
-                                log::info!(
-                                    "Successfully loaded profile '{}' for {}",
-                                    active_profile_str,
-                                    setting_value.setting_type_name()
-                                );
-                            }
-                        }
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_json) = profiles.get(&active_profile.0) {
+                        profile_settings =
+                            setting_value.deserialize_setting(profile_json).log_err();
                     }
                 }
             }
@@ -1209,12 +1176,6 @@ impl SettingsStore {
                     )
                     .log_err()
                 {
-                    if profile_settings.is_some() {
-                        log::info!(
-                            "recompute_values: Applied profile settings for {}",
-                            setting_value.setting_type_name()
-                        );
-                    }
                     setting_value.set_global_value(value);
                 }
             }
