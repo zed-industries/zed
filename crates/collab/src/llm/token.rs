@@ -4,12 +4,12 @@ use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEA
 use crate::{Config, db::billing_preference};
 use anyhow::{Context as _, Result};
 use chrono::{NaiveDateTime, Utc};
+use cloud_llm_client::Plan;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
-use zed_llm_client::Plan;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -6,11 +6,11 @@ mod tables;
 #[cfg(test)]
 mod tests;
 
+use cloud_llm_client::LanguageModelProvider;
 use collections::HashMap;
 pub use ids::*;
 pub use seed::*;
 pub use tables::*;
-use zed_llm_client::LanguageModelProvider;
 
 #[cfg(test)]
 pub use tests::TestLlmDb;

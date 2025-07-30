@@ -1,11 +1,11 @@
 use anyhow::{Context as _, bail};
 use chrono::{DateTime, Utc};
+use cloud_llm_client::LanguageModelProvider;
 use collections::{HashMap, HashSet};
 use sea_orm::ActiveValue;
 use std::{sync::Arc, time::Duration};
 use stripe::{CancellationDetailsReason, EventObject, EventType, ListEvents, SubscriptionStatus};
 use util::{ResultExt, maybe};
-use zed_llm_client::LanguageModelProvider;
 
 use crate::AppState;
 use crate::db::billing_subscription::{

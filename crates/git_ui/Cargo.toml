@@ -24,6 +24,7 @@ buffer_diff.workspace = true
 call.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -62,7 +63,6 @@ watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-zed_llm_client.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
