@@ -2,7 +2,7 @@ use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
-use text::{Bias, SelectionGoal};
+use text::{Bias, Point, SelectionGoal};
 
 use crate::{
     Vim,
@@ -19,6 +19,8 @@ actions!(
         HelixInsert,
         /// Appends at the end of the selection.
         HelixAppend,
+        /// Selects the current line.
+        HelixSelectLine,
     ]
 );
 
@@ -26,6 +28,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
+    Vim::action(editor, cx, Vim::helix_select_line);
 }
 
 impl Vim {
@@ -338,6 +341,46 @@ impl Vim {
                     };
                     selection.collapse_to(point, SelectionGoal::None);
                 });
+            });
+        });
+    }
+
+    fn helix_select_line(
+        &mut self,
+        _: &HelixSelectLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let mut selections = editor.selections.all::<Point>(cx);
+            let max_point = display_map.buffer_snapshot.max_point();
+
+            for selection in &mut selections {
+                // Check if this is already a complete line selection
+                let is_line_selection = selection.start.column == 0
+                    && selection.end.column == selection.head().column
+                    && selection.end.row > selection.start.row;
+
+                let (start_row, end_row) = if is_line_selection {
+                    // Extend existing line selection by count more lines
+                    let end_row = selection.end.row + count as u32;
+                    (selection.start.row, std::cmp::min(max_point.row, end_row))
+                } else {
+                    // Start new line selection from cursor position
+                    let cursor_row = selection.head().row;
+                    let end_row = cursor_row + count as u32;
+                    (cursor_row, std::cmp::min(max_point.row, end_row))
+                };
+
+                selection.start = Point::new(start_row, 0);
+                selection.end = std::cmp::min(max_point, Point::new(end_row, 0));
+            }
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(selections);
             });
         });
     }
@@ -702,5 +745,293 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_basic(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test basic single line selection
+        cx.set_state(
+            indoc! {"
+                The quick brown
+                fox ˇjumps over
+                the lazy dog
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+                The quick brown
+                «fox jumps over
+                ˇ»the lazy dog
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_basic_beginning(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test basic single line selection
+        cx.set_state(
+            indoc! {"
+                ˇThe quick brown
+                fox jumps over
+                the lazy dog
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+                «The quick brown
+                ˇ»fox jumps over
+                the lazy dog
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test count-based selection (3x should select 3 lines)
+        cx.set_state(
+            indoc! {"
+                   The ˇquick brown
+                   fox jumps over
+                   the lazy dog
+                   another line
+                   final line
+               "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("3 x");
+
+        cx.assert_state(
+            indoc! {"
+                   «The quick brown
+                   fox jumps over
+                   the lazy dog
+                   ˇ»another line
+                   final line
+               "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_extend_existing(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test extending existing line selection
+        cx.set_state(
+            indoc! {"
+                   «The quick brown
+                   fox jumps over
+                   ˇ»the lazy dog
+                   another line
+               "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+                   «The quick brown
+                   fox jumps over
+                   the lazy dog
+                   ˇ»another line
+               "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_extend_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test extending with count
+        cx.set_state(
+            indoc! {"
+                   «The quick brown
+                   fox jumps overˇ»
+                   the lazy dog
+                   another line
+                   final line
+               "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("2 x");
+
+        cx.assert_state(
+            indoc! {"
+                   «The quick brown
+                   fox jumps over
+                   the lazy dog
+                   ˇ»another line
+                   final line
+               "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_end_of_file(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test selection at end of file
+        cx.set_state(
+            indoc! {"
+                   first line
+                   second line
+                   third ˇline
+               "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("5 x"); // Try to select more lines than available
+
+        cx.assert_state(
+            indoc! {"
+                   first line
+                   second line
+                   «third line
+                   ˇ»"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_empty_lines(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test selection with empty lines
+        cx.set_state(
+            indoc! {"
+                   first line
+                   ˇ
+                   third line
+               "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("2 x");
+
+        cx.assert_state(
+            indoc! {"
+                   first line
+                   «
+                   third line
+                   ˇ»"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_multiple_cursors(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Set up multiple cursors on different lines
+        cx.set_state(
+            indoc! {"
+                first ˇline
+                second line
+                third ˇline
+                fourth line
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+                «first line
+                ˇ»second line
+                «third line
+                ˇ»fourth line
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_multiple_cursors_with_count(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test multiple cursors with count
+        cx.set_state(
+            indoc! {"
+                first ˇline
+                second line
+                third line
+                fourth ˇline
+                fifth line
+                sixth line
+                seventh line
+            "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("2 x");
+
+        cx.assert_state(
+            indoc! {"
+                «first line
+                second line
+                ˇ»third line
+                «fourth line
+                fifth line
+                ˇ»sixth line
+                seventh line
+            "},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_line_overlapping_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test multiple cursors with count
+        cx.set_state(
+            indoc! {"
+                        first ˇline
+                        second line
+                        third line
+                        fourth ˇline
+                        fifth line
+                        sixth line
+                        seventh line
+                    "},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("3 x");
+
+        cx.assert_state(
+            indoc! {"
+                        «first line
+                        second line
+                        third line
+                        fourth line
+                        fifth line
+                        sixth line
+                        ˇ»seventh line
+                    "},
+            Mode::HelixNormal,
+        );
     }
 }

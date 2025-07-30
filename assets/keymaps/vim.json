@@ -426,8 +426,8 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
 
-      "x": "editor::SelectLine",
-      "shift-x": "editor::SelectLine",
+      "x": "vim::HelixSelectLine",
+      "shift-x": "vim::HelixSelectLine",
       "%": "editor::SelectAll",
       // Window mode
       "space w h": "workspace::ActivatePaneLeft",
