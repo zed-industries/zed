@@ -7,7 +7,7 @@ use gpui::{Context, Task};
 use util::{ResultExt as _, maybe};
 
 pub struct CloudUserStore {
-    authenticated_user: Option<AuthenticatedUser>,
+    authenticated_user: Option<Arc<AuthenticatedUser>>,
     _fetch_authenticated_user_task: Task<()>,
 }
 
@@ -29,7 +29,7 @@ impl CloudUserStore {
 
                     let response = cloud_client.get_authenticated_user().await?;
                     this.update(cx, |this, _cx| {
-                        this.authenticated_user = Some(response.user);
+                        this.authenticated_user = Some(Arc::new(response.user));
                     })
                 })
                 .await
@@ -37,5 +37,17 @@ impl CloudUserStore {
                 .log_err();
             }),
         }
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        self.authenticated_user.is_some()
+    }
+
+    pub fn authenticated_user(&self) -> Option<Arc<AuthenticatedUser>> {
+        self.authenticated_user.clone()
+    }
+
+    pub fn clear_authenticated_user(&mut self) {
+        self.authenticated_user = None;
     }
 }

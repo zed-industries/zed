@@ -289,7 +289,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            cloud_user_store,
+            cloud_user_store: cloud_user_store.clone(),
             workspace_store,
             languages: language_registry,
             fs: fs.clone(),
@@ -303,7 +303,7 @@ impl TestServer {
         cx.update(|cx| {
             theme::init(theme::LoadThemes::JustBase, cx);
             Project::init(&client, cx);
-            client::init(&client, cx);
+            client::init(&client, cloud_user_store.downgrade(), cx);
             language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);

@@ -35,6 +35,10 @@ impl CloudApiClient {
         });
     }
 
+    pub fn clear_credentials(&self) {
+        *self.credentials.write() = None;
+    }
+
     fn authorization_header(&self) -> Result<String> {
         let guard = self.credentials.read();
         let credentials = guard
