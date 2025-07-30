@@ -108,7 +108,7 @@ Specify a custom temperature for a provider and/or model:
 
 ## Agent Panel Settings {#agent-panel-settings}
 
-Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open configuration` action or by the dropdown menu on the top-right corner of the panel.
+Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
 
 ### Default View
 
