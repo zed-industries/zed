@@ -1305,6 +1305,7 @@ impl Default for SelectionHistoryMode {
 ///
 /// Similarly, you might want to disable scrolling if you don't want the viewport to
 /// move.
+#[derive(Clone)]
 pub struct SelectionEffects {
     nav_history: Option<bool>,
     completions: bool,
@@ -4042,20 +4043,15 @@ impl Editor {
                             }
                         }
 
-                        // #include ""
-                        // snippet autocomplete:
-                        // #include "AGL/^
-                        // #include "AGL/"(!!!! panic: assumes that there's a pairing symbol for the new `"`)
-                        // ~~~~#include "AGL/""^   // <--- assumed new selection
-
                         // TODO kb something does not work well for C here, there's a region
                         if let Some(region) = dbg!(autoclose_region) {
                             // If the selection is followed by an auto-inserted closing bracket,
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
                             let should_skip = selection.end == region.range.end.to_point(&snapshot)
-                                && text.as_ref() == region.pair.end.as_str()
-                                && snapshot.contains_str_at(region.range.end, text.as_ref());
+                                && text.as_ref() == region.pair.end.as_str();
+                            // TODO kb revert, it's still useful
+                            // && snapshot.contains_str_at(region.range.end, text.as_ref());
                             dbg!((&text, &selection, should_skip));
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
@@ -4242,7 +4238,7 @@ impl Editor {
                         }
                     }
                 }
-                dbg!(&pair);
+                dbg!("@@@@@@@@@@@@@@@@", &pair);
                 this.autoclose_regions.insert(
                     i,
                     AutocloseRegion {
@@ -5903,6 +5899,7 @@ impl Editor {
         });
 
         self.transact(window, cx, |this, window, cx| {
+            let old_cursor_position = this.selections.newest_anchor().head();
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
                 this.insert_snippet(&ranges, snippet, window, cx).log_err();
@@ -5913,8 +5910,28 @@ impl Editor {
                         _ => this.autoindent_mode.clone(),
                     };
                     let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
-                    buffer.edit(edits, auto_indent, cx);
+                    buffer.edit(dbg!(edits), auto_indent, cx);
                 });
+
+                // TODO kb try
+                if let Some(selection_state) = this.deferred_selection_effects_state.as_ref() {
+                    this.selections_did_change(
+                        true,
+                        &old_cursor_position,
+                        selection_state.effects.clone(),
+                        window,
+                        cx,
+                    );
+                } else {
+                    let old_cursor_position = this.selections.newest_anchor().head();
+                    this.selections_did_change(
+                        true,
+                        &old_cursor_position,
+                        SelectionEffects::default(),
+                        window,
+                        cx,
+                    );
+                }
             }
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
@@ -9573,14 +9590,17 @@ impl Editor {
             // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                for selection in &mut self.selections.all::<Point>(cx) {
+                let mut all_selections = self.selections.all::<Point>(cx);
+                for selection in &mut all_selections {
                     let selection_head = selection.head();
                     let Some(scope) = snapshot.language_scope_at(selection_head) else {
                         continue;
                     };
 
                     let mut bracket_pair = None;
+                    // TODO kb huge memory usage, avoid
                     let next_chars = snapshot.chars_at(selection_head).collect::<String>();
+                    // TODO kb huge memory usage, avoid
                     let prev_chars = snapshot
                         .reversed_chars_at(selection_head)
                         .collect::<String>();
@@ -9601,7 +9621,6 @@ impl Editor {
                         if autoclose_enabled {
                             let start = snapshot.anchor_after(selection_head);
                             let end = snapshot.anchor_after(selection_head);
-                            dbg!((selection_head, &pair));
                             self.autoclose_regions.push(AutocloseRegion {
                                 selection_id: selection.id,
                                 range: start..end,
