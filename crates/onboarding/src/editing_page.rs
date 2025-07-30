@@ -18,6 +18,14 @@ fn read_show_mini_map(cx: &App) -> ShowMinimap {
 fn write_show_mini_map(show: ShowMinimap, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
+    // This is used to speed up the UI
+    // the UI reads the current values to get what toggle state to show on buttons
+    // there's a slight delay if we just call update_settings_file so we manually set
+    // the value here then call update_settings file to get around the delay
+    let mut curr_settings = EditorSettings::get_global(cx).clone();
+    curr_settings.minimap.show = show;
+    EditorSettings::override_global(curr_settings, cx);
+
     update_settings_file::<EditorSettings>(fs, cx, move |editor_settings, _| {
         editor_settings.minimap.get_or_insert_default().show = Some(show);
     });
@@ -32,6 +40,10 @@ fn read_inlay_hints(cx: &App) -> bool {
 
 fn write_inlay_hints(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
+
+    let mut curr_settings = AllLanguageSettings::get_global(cx).clone();
+    curr_settings.defaults.inlay_hints.enabled = enabled;
+    AllLanguageSettings::override_global(curr_settings, cx);
 
     update_settings_file::<AllLanguageSettings>(fs, cx, move |all_language_settings, cx| {
         all_language_settings
@@ -53,6 +65,14 @@ fn read_git_blame(cx: &App) -> bool {
 
 fn set_git_blame(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
+
+    let mut curr_settings = ProjectSettings::get_global(cx).clone();
+    curr_settings
+        .git
+        .inline_blame
+        .get_or_insert_default()
+        .enabled = enabled;
+    ProjectSettings::override_global(curr_settings, cx);
 
     update_settings_file::<ProjectSettings>(fs, cx, move |project_settings, _| {
         project_settings
@@ -160,16 +180,19 @@ pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl Int
                                         menu
                                     }),
                                 )))
-                                .child(NumericStepper::new(
-                                    "ui-font-size",
-                                    ui_font_size.to_string(),
-                                    move |_, _, cx| {
-                                        write_ui_font_size(ui_font_size - px(1.), cx);
-                                    },
-                                    move |_, _, cx| {
-                                        write_ui_font_size(ui_font_size + px(1.), cx);
-                                    },
-                                )),
+                                .child(
+                                    NumericStepper::new(
+                                        "ui-font-size",
+                                        ui_font_size.to_string(),
+                                        move |_, _, cx| {
+                                            write_ui_font_size(ui_font_size - px(1.), cx);
+                                        },
+                                        move |_, _, cx| {
+                                            write_ui_font_size(ui_font_size + px(1.), cx);
+                                        },
+                                    )
+                                    .border(),
+                                ),
                         ),
                 )
                 .child(
@@ -211,16 +234,19 @@ pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl Int
                                         menu
                                     }),
                                 ))
-                                .child(NumericStepper::new(
-                                    "buffer-font-size",
-                                    buffer_font_size.to_string(),
-                                    move |_, _, cx| {
-                                        write_buffer_font_size(buffer_font_size - px(1.), cx);
-                                    },
-                                    move |_, _, cx| {
-                                        write_buffer_font_size(buffer_font_size + px(1.), cx);
-                                    },
-                                )),
+                                .child(
+                                    NumericStepper::new(
+                                        "buffer-font-size",
+                                        buffer_font_size.to_string(),
+                                        move |_, _, cx| {
+                                            write_buffer_font_size(buffer_font_size - px(1.), cx);
+                                        },
+                                        move |_, _, cx| {
+                                            write_buffer_font_size(buffer_font_size + px(1.), cx);
+                                        },
+                                    )
+                                    .border(),
+                                ),
                         ),
                 ),
         )

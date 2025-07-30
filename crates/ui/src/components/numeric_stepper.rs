@@ -1,6 +1,6 @@
 use gpui::ClickEvent;
 
-use crate::{IconButtonShape, prelude::*};
+use crate::{Divider, IconButtonShape, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct NumericStepper {
@@ -11,6 +11,7 @@ pub struct NumericStepper {
     /// Whether to reserve space for the reset button.
     reserve_space_for_reset: bool,
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    border: bool,
 }
 
 impl NumericStepper {
@@ -25,6 +26,7 @@ impl NumericStepper {
             value: value.into(),
             on_decrement: Box::new(on_decrement),
             on_increment: Box::new(on_increment),
+            border: false,
             reserve_space_for_reset: false,
             on_reset: None,
         }
@@ -40,6 +42,11 @@ impl NumericStepper {
         on_reset: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_reset = Some(Box::new(on_reset));
+        self
+    }
+
+    pub fn border(mut self) -> Self {
+        self.border = true;
         self
     }
 }
@@ -74,8 +81,11 @@ impl RenderOnce for NumericStepper {
             .child(
                 h_flex()
                     .gap_1()
+                    .when(self.border, |this| {
+                        this.border_1().border_color(cx.theme().colors().border)
+                    })
                     .px_1()
-                    .rounded_xs()
+                    .rounded_sm()
                     .bg(cx.theme().colors().editor_background)
                     .child(
                         IconButton::new("decrement", IconName::Dash)
@@ -83,7 +93,13 @@ impl RenderOnce for NumericStepper {
                             .icon_size(icon_size)
                             .on_click(self.on_decrement),
                     )
+                    .when(self.border, |this| {
+                        this.child(Divider::vertical().color(super::DividerColor::Border))
+                    })
                     .child(Label::new(self.value))
+                    .when(self.border, |this| {
+                        this.child(Divider::vertical().color(super::DividerColor::Border))
+                    })
                     .child(
                         IconButton::new("increment", IconName::Plus)
                             .shape(shape)
@@ -113,12 +129,27 @@ impl Component for NumericStepper {
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
-            div()
-                .child(NumericStepper::new(
-                    "numeric-stepper-component-preview",
-                    "10",
-                    move |_, _, _| {},
-                    move |_, _, _| {},
+            v_flex()
+                .child(single_example(
+                    "Borderless",
+                    NumericStepper::new(
+                        "numeric-stepper-component-preview",
+                        "10",
+                        move |_, _, _| {},
+                        move |_, _, _| {},
+                    )
+                    .into_any_element(),
+                ))
+                .child(single_example(
+                    "Border",
+                    NumericStepper::new(
+                        "numeric-stepper-with-border-component-preview",
+                        "10",
+                        move |_, _, _| {},
+                        move |_, _, _| {},
+                    )
+                    .border()
+                    .into_any_element(),
                 ))
                 .into_any_element(),
         )
