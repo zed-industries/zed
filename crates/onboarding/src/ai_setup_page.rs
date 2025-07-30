@@ -81,7 +81,7 @@ impl Render for AiConfigurationPage {
                                             )
                                             .child(Label::new(provider.name().0)),
                                     )
-                                    // TODO: Change this element when the provider is confgured
+                                    // TODO: Change this element when the provider is configured
                                     .child(
                                         h_flex()
                                             .visible_on_hover(group_name)
