@@ -128,14 +128,20 @@ impl PresentationModeSelectorDelegate {
             })
             .collect();
 
-        Self {
+        let mut this = Self {
             presentation_modes: configurations,
             matches,
             selected_index: 0,
             selection_completed: false,
             selector,
-            state,
+            state: state.clone(),
+        };
+
+        if let Some(selected) = &state.selected {
+            this.select_if_matching(&selected.name);
         }
+
+        this
     }
 
     /// Previews a presentation mode by temporarily applying only its non-window
@@ -162,6 +168,14 @@ impl PresentationModeSelectorDelegate {
         apply_theme_settings(mode, cx);
 
         presentation_mode.clone()
+    }
+
+    fn select_if_matching(&mut self, presentation_mode_name: &str) {
+        self.selected_index = self
+            .matches
+            .iter()
+            .position(|mat| mat.string == presentation_mode_name)
+            .unwrap_or(self.selected_index);
     }
 }
 
