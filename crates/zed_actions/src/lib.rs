@@ -260,6 +260,16 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod settings_profile_selector {
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = settings_profile_selector)]
+    pub struct Toggle;
+}
+
 pub mod agent {
     use gpui::actions;
 
