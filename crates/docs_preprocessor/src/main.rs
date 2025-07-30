@@ -387,7 +387,35 @@ fn handle_postprocessing() -> Result<()> {
         });
         let meta_title = format!("{} | {}", page_title, meta_title);
         zlog::trace!(logger => "Updating {:?}", pretty_path(&file, &root_dir));
-        let contents = contents.replace("#description#", meta_description);
+
+        let mut fixed_contents = contents.to_string();
+        let pretty_file_path = pretty_path(&file, &root_dir);
+        let depth = pretty_file_path.components().count().saturating_sub(1);
+
+        if depth > 0 {
+            let mut relative_prefix = String::new();
+            for _ in 0..depth {
+                relative_prefix.push_str("../");
+            }
+
+            let link_regex = Regex::new(r#"href="([^"]*)""#).unwrap();
+            fixed_contents = link_regex
+                .replace_all(&fixed_contents, |caps: &regex::Captures| {
+                    let href = &caps[1];
+                    if href.starts_with("http")
+                        || href.starts_with('#')
+                        || href.starts_with("../")
+                        || href.starts_with('/')
+                    {
+                        caps[0].to_string()
+                    } else {
+                        format!("href=\"{}{}\"", &relative_prefix, href)
+                    }
+                })
+                .to_string();
+        }
+
+        let contents = fixed_contents.replace("#description#", meta_description);
         let contents = TITLE_REGEX
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
