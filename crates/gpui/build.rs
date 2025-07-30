@@ -360,7 +360,7 @@ mod windows {
             &output_file,
             &const_name,
             shader_path,
-            "vs_5_0",
+            "vs_4_1",
         );
         generate_rust_binding(&const_name, &output_file, &rust_binding_path);
 
@@ -373,7 +373,7 @@ mod windows {
             &output_file,
             &const_name,
             shader_path,
-            "ps_5_0",
+            "ps_4_1",
         );
         generate_rust_binding(&const_name, &output_file, &rust_binding_path);
     }

@@ -1000,8 +1000,11 @@ fn get_device(
             HMODULE::default(),
             device_flags,
             // 4x MSAA is required for Direct3D Feature Level 10.1 or better
-            // 8x MSAA is required for Direct3D Feature Level 11.0 or better
-            Some(&[D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1]),
+            Some(&[
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0,
+                D3D_FEATURE_LEVEL_10_1,
+            ]),
             D3D11_SDK_VERSION,
             device,
             None,
@@ -1493,8 +1496,8 @@ mod shader_resources {
                 }
             );
             let target = match target {
-                ShaderTarget::Vertex => "vs_5_0\0",
-                ShaderTarget::Fragment => "ps_5_0\0",
+                ShaderTarget::Vertex => "vs_4_1\0",
+                ShaderTarget::Fragment => "ps_4_1\0",
             };
 
             let mut compile_blob = None;
