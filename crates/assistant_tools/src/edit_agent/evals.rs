@@ -1696,7 +1696,8 @@ async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> 
                         }
                     }
                     LanguageModelCompletionError::ApiReadResponseError { .. }
-                    | LanguageModelCompletionError::ApiInternalServerError { .. } => {
+                    | LanguageModelCompletionError::ApiInternalServerError { .. }
+                    | LanguageModelCompletionError::HttpSend { .. } => {
                         // Exponential backoff for transient I/O and internal server errors
                         Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
                     }
