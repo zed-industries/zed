@@ -977,21 +977,30 @@ impl Drop for DirectXResources {
 }
 
 #[inline]
-fn get_dxgi_factory() -> Result<IDXGIFactory6> {
+fn check_debug_layer_available() -> bool {
     #[cfg(debug_assertions)]
-    let factory_flag = if unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
-        .log_err()
-        .is_some()
     {
+        unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
+            .log_err()
+            .is_some()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+#[inline]
+fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
+    let factory_flag = if debug_layer_available {
         DXGI_CREATE_FACTORY_DEBUG
     } else {
+        #[cfg(debug_assertions)]
         log::warn!(
             "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
         );
         DXGI_CREATE_FACTORY_FLAGS::default()
     };
-    #[cfg(not(debug_assertions))]
-    let factory_flag = DXGI_CREATE_FACTORY_FLAGS::default();
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
