@@ -51,6 +51,7 @@ impl Vim {
                                     ignore_punctuation,
                                     &text_layout_details,
                                     motion == Motion::NextSubwordStart { ignore_punctuation },
+                                    !matches!(motion, Motion::NextWordStart { .. }),
                                 )
                             }
                             _ => {
@@ -148,6 +149,7 @@ fn expand_changed_word_selection(
     ignore_punctuation: bool,
     text_layout_details: &TextLayoutDetails,
     use_subword: bool,
+    always_advance: bool,
 ) -> Option<MotionKind> {
     let is_in_word = || {
         let classifier = map
@@ -173,8 +175,14 @@ fn expand_changed_word_selection(
                     selection.end =
                         motion::next_subword_end(map, selection.end, ignore_punctuation, 1, false);
                 } else {
-                    selection.end =
-                        motion::next_word_end(map, selection.end, ignore_punctuation, 1, false);
+                    selection.end = motion::next_word_end(
+                        map,
+                        selection.end,
+                        ignore_punctuation,
+                        1,
+                        false,
+                        always_advance,
+                    );
                 }
                 selection.end = motion::next_char(map, selection.end, false);
             }
@@ -271,6 +279,10 @@ mod test {
         cx.simulate("c shift-w", "Test teˇst-test test")
             .await
             .assert_matches();
+
+        // on last character of word, `cw` doesn't eat subsequent punctuation
+        // see https://github.com/zed-industries/zed/issues/35269
+        cx.simulate("c w", "tesˇt-test").await.assert_matches();
     }
 
     #[gpui::test]

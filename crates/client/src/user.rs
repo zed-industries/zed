@@ -145,6 +145,7 @@ pub enum Event {
     ShowContacts,
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
+    PlanUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -388,6 +389,7 @@ impl UserStore {
                     .map(EditPredictionUsage);
             }
 
+            cx.emit(Event::PlanUpdated);
             cx.notify();
         })?;
         Ok(())

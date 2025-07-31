@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
-    prelude::*,
+    AnyElement, AnyView, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, Styled, Window,
+    div, hsla, prelude::*,
 };
 use std::sync::Arc;
 
@@ -609,6 +609,9 @@ impl RenderOnce for SwitchField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(SharedString::from(format!("{}-container", self.id)))
+            .when(!self.disabled, |this| {
+                this.hover(|this| this.cursor(CursorStyle::PointingHand))
+            })
             .w_full()
             .gap_4()
             .justify_between()
