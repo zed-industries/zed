@@ -5069,6 +5069,7 @@ impl LspStore {
                     local
                         .language_servers_for_buffer(buffer, cx)
                         .filter(|(_, server)| {
+                            // TODO kb bad, need to use the project with automatic caps checks
                             server
                                 .capabilities()
                                 .linked_editing_range_provider

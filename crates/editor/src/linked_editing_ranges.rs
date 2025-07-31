@@ -54,7 +54,9 @@ pub(super) fn refresh_linked_ranges(
     let project = editor.project.as_ref()?.downgrade();
 
     editor.linked_editing_range_task = Some(cx.spawn_in(window, async move |editor, cx| {
-        cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+        cx.background_executor()
+            .timer(Duration::from_millis(200))
+            .await;
 
         let mut applicable_selections = Vec::new();
         editor
@@ -89,12 +91,18 @@ pub(super) fn refresh_linked_ranges(
 
         let highlights = project
             .update(cx, |project, cx| {
-                let mut linked_edits_tasks = vec![];
+                let mut linked_edits_tasks = Vec::new();
 
                 for (buffer, start, end) in &applicable_selections {
                     let snapshot = buffer.read(cx).snapshot();
                     let buffer_id = buffer.read(cx).remote_id();
 
+                    // TODO kb need a large debounce (like now, 200ms) (make configurable??).
+                    // But that alone will produce unreliable results, hence for the same buffer version, store the edits keyed by `*start` (and buffer + LSP id).
+                    // Should that be awaited before editing?
+                    //
+                    // TODO kb change the handler to practice the new multi lsp query?
+                    dbg!(("@@@@@@@@@@@", start.to_point(&snapshot)));
                     let linked_edits_task = project.linked_edit(buffer, *start, cx);
                     let highlights = move || async move {
                         let edits = linked_edits_task.await.log_err()?;
