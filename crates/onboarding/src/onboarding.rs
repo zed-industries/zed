@@ -399,7 +399,7 @@ impl Onboarding {
                         .gap_2()
                         .child(
                             ToggleButtonGroup::single_row(
-                                "theme-selector-onboarding",
+                                "theme-selector-onboarding-dark-light",
                                 [
                                     ToggleButtonSimple::new("Light", {
                                         let appearance_state = appearance_state.clone();
@@ -428,15 +428,18 @@ impl Onboarding {
                             .button_width(rems_from_px(64.)),
                         )
                         .child(
-                            ToggleButton::new("System", "System")
-                                .style(ButtonStyle::Outlined)
-                                .width(rems_from_px(64.).into())
-                                .on_click({
+                            ToggleButtonGroup::single_row(
+                                "theme-selector-onboarding-system",
+                                [ToggleButtonSimple::new("System", {
                                     let theme = theme_selection.clone();
                                     move |_, _, cx| {
                                         toggle_system_theme_mode(theme.clone(), appearance, cx);
                                     }
-                                }),
+                                })],
+                            )
+                            .selected_index((theme_mode != Some(ThemeMode::System)) as usize)
+                            .style(ui::ToggleButtonGroupStyle::Outlined)
+                            .button_width(rems_from_px(64.)),
                         ),
                 ),
             )
