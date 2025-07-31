@@ -5,12 +5,9 @@ use smol::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
 };
-use std::{
-    path::PathBuf,
-    process::Stdio,
-};
+use std::{path::PathBuf, process::Stdio};
 
-use crate::search::{SearchQuery, SearchInputs};
+use crate::search::{SearchInputs, SearchQuery};
 
 /// Search results streamed from ripgrep
 #[derive(Debug, Clone)]
@@ -28,9 +25,7 @@ pub enum RipgrepSearchResult {
         matches_found: usize,
     },
     /// Search completed
-    Complete {
-        total_matches: usize,
-    },
+    Complete { total_matches: usize },
     /// Error occurred
     Error(String),
 }
@@ -57,13 +52,13 @@ impl RipgrepSearcher {
         self.cancel_search().await;
 
         let (tx, rx) = smol::channel::unbounded();
-        
+
         // Build ripgrep command
         let cmd = self.build_ripgrep_command(query, search_paths)?;
-        
+
         // Spawn the process
         let mut child = Command::from(cmd)
-            .stdout(std::process::Stdio::piped())  // Make sure stdout is piped
+            .stdout(std::process::Stdio::piped()) // Make sure stdout is piped
             .spawn()
             .context("Failed to spawn ripgrep process")?;
 
@@ -75,7 +70,8 @@ impl RipgrepSearcher {
                 let tx_clone = tx.clone();
                 smol::spawn(async move {
                     Self::process_ripgrep_output(stdout, tx_clone).await;
-                }).detach();
+                })
+                .detach();
             }
         }
 
@@ -90,20 +86,24 @@ impl RipgrepSearcher {
     }
 
     /// Build the ripgrep command based on the search query
-    fn build_ripgrep_command(&self, query: &SearchQuery, search_paths: &[PathBuf]) -> Result<std::process::Command> {
+    fn build_ripgrep_command(
+        &self,
+        query: &SearchQuery,
+        search_paths: &[PathBuf],
+    ) -> Result<std::process::Command> {
         let mut cmd = std::process::Command::new("rg");
-        
+
         // Basic options for structured output
-        cmd.arg("--line-number")     // Include line numbers
-           .arg("--column")          // Include column numbers  
-           .arg("--no-heading")      // Don't group by file
-           .arg("--with-filename")   // Always include filename
-           .arg("--color=never")     // No color codes
-           .stdout(Stdio::piped())
-           .stderr(Stdio::null());   // Suppress error output
-        
+        cmd.arg("--line-number") // Include line numbers
+            .arg("--column") // Include column numbers
+            .arg("--no-heading") // Don't group by file
+            .arg("--with-filename") // Always include filename
+            .arg("--color=never") // No color codes
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()); // Suppress error output
+
         match query {
-            SearchQuery::Text { 
+            SearchQuery::Text {
                 whole_word,
                 case_sensitive,
                 include_ignored,
@@ -112,24 +112,23 @@ impl RipgrepSearcher {
             } => {
                 // Add the search pattern
                 cmd.arg(inner.as_str());
-                
+
                 // Apply search options
                 if *whole_word {
                     cmd.arg("--word-regexp");
                 }
-                
+
                 if !case_sensitive {
                     cmd.arg("--ignore-case");
                 }
-                
+
                 if *include_ignored {
-                    cmd.arg("--no-ignore")
-                       .arg("--hidden");
+                    cmd.arg("--no-ignore").arg("--hidden");
                 }
-                
-                // Add include/exclude patterns  
+
+                // Add include/exclude patterns
                 self.add_path_filters(&mut cmd, inner)?;
-            },
+            }
             SearchQuery::Regex {
                 regex,
                 whole_word,
@@ -141,35 +140,34 @@ impl RipgrepSearcher {
             } => {
                 // Add the regex pattern
                 cmd.arg(regex.as_str());
-                
+
                 // Apply search options
                 if *whole_word {
                     cmd.arg("--word-regexp");
                 }
-                
+
                 if !case_sensitive {
                     cmd.arg("--ignore-case");
                 }
-                
+
                 if *include_ignored {
-                    cmd.arg("--no-ignore")
-                       .arg("--hidden");
+                    cmd.arg("--no-ignore").arg("--hidden");
                 }
-                
+
                 if *multiline {
                     cmd.arg("--multiline");
                 }
-                
+
                 // Add include/exclude patterns
                 self.add_path_filters(&mut cmd, inner)?;
             }
         }
-        
+
         // Add search paths
         for path in search_paths {
             cmd.arg(path);
         }
-        
+
         // Limit to reasonable number of matches
         cmd.arg("--max-count=1000");
 
@@ -177,7 +175,11 @@ impl RipgrepSearcher {
     }
 
     /// Add include/exclude path filters to the ripgrep command
-    fn add_path_filters(&self, cmd: &mut std::process::Command, inner: &SearchInputs) -> Result<()> {
+    fn add_path_filters(
+        &self,
+        cmd: &mut std::process::Command,
+        inner: &SearchInputs,
+    ) -> Result<()> {
         // Add include patterns
         for pattern in inner.files_to_include().sources() {
             if !pattern.is_empty() {
@@ -185,7 +187,7 @@ impl RipgrepSearcher {
                 cmd.arg(pattern);
             }
         }
-        
+
         // Add exclude patterns
         for pattern in inner.files_to_exclude().sources() {
             if !pattern.is_empty() {
@@ -193,7 +195,7 @@ impl RipgrepSearcher {
                 cmd.arg(format!("!{}", pattern));
             }
         }
-        
+
         Ok(())
     }
 
@@ -204,11 +206,11 @@ impl RipgrepSearcher {
     ) {
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
-        
+
         let mut total_matches = 0;
         let mut total_files = 0;
         let mut current_file: Option<String> = None;
-        
+
         while let Some(line) = lines.next().await {
             let line = match line {
                 Ok(line) => line,
@@ -217,7 +219,7 @@ impl RipgrepSearcher {
             if line.trim().is_empty() {
                 continue;
             }
-            
+
             // Parse ripgrep output format: filename:line:column:content
             if let Some(result) = Self::parse_ripgrep_line(&line) {
                 // Check if we've moved to a new file
@@ -229,31 +231,29 @@ impl RipgrepSearcher {
                     current_file = Some(file_str);
                     total_files += 1;
                 }
-                
+
                 total_matches += 1;
-                
+
                 if tx.send(result).await.is_err() {
                     break; // Receiver dropped
                 }
-                
+
                 // Send periodic progress updates
                 if total_matches % 50 == 0 {
                     let progress = RipgrepSearchResult::Progress {
                         files_searched: total_files,
                         matches_found: total_matches,
                     };
-                    
+
                     if tx.send(progress).await.is_err() {
                         break;
                     }
                 }
             }
         }
-        
+
         // Send completion
-        let complete = RipgrepSearchResult::Complete {
-            total_matches,
-        };
+        let complete = RipgrepSearchResult::Complete { total_matches };
         let _ = tx.send(complete).await;
     }
 
@@ -263,16 +263,16 @@ impl RipgrepSearcher {
         if parts.len() < 4 {
             return None;
         }
-        
+
         let path = PathBuf::from(parts[0]);
         let line_number: u32 = parts[1].parse().ok()?;
         let column: u32 = parts[2].parse().ok()?;
         let content = parts[3].to_string();
-        
+
         // For now, create a simple range from the column position
         // In a full implementation, we'd need to extract all match positions
         let ranges = vec![(column, column + 1)];
-        
+
         Some(RipgrepSearchResult::Match {
             path,
             line_number,
@@ -299,19 +299,20 @@ impl Drop for RipgrepSearcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use util::paths::PathMatcher;
     use std::path::Path;
+    use util::paths::PathMatcher;
 
     fn create_test_query(pattern: &str) -> SearchQuery {
         SearchQuery::text(
             pattern,
-            false, // whole_word
-            false, // case_sensitive
-            false, // include_ignored
+            false,                                     // whole_word
+            false,                                     // case_sensitive
+            false,                                     // include_ignored
             PathMatcher::new(&[] as &[&str]).unwrap(), // files_to_include
             PathMatcher::new(&[] as &[&str]).unwrap(), // files_to_exclude
-            None, // buffers
-        ).unwrap()
+            None,                                      // buffers
+        )
+        .unwrap()
     }
 
     #[test]
@@ -326,14 +327,19 @@ mod tests {
     fn test_parse_ripgrep_line() {
         let line = "src/main.rs:42:15:    fn test() {";
         let result = RipgrepSearcher::parse_ripgrep_line(line).unwrap();
-        
+
         match result {
-            RipgrepSearchResult::Match { path, line_number, ranges, line_content } => {
+            RipgrepSearchResult::Match {
+                path,
+                line_number,
+                ranges,
+                line_content,
+            } => {
                 assert_eq!(path, PathBuf::from("src/main.rs"));
                 assert_eq!(line_number, 42);
                 assert_eq!(ranges, vec![(15, 16)]);
                 assert_eq!(line_content, "    fn test() {");
-            },
+            }
             _ => panic!("Expected Match result"),
         }
     }
@@ -343,10 +349,12 @@ mod tests {
         let searcher = RipgrepSearcher::new();
         let query = create_test_query("test");
         let search_paths = vec![PathBuf::from("/tmp")];
-        
-        let cmd = searcher.build_ripgrep_command(&query, &search_paths).unwrap();
+
+        let cmd = searcher
+            .build_ripgrep_command(&query, &search_paths)
+            .unwrap();
         let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-        
+
         // Should contain basic ripgrep arguments
         assert!(args.contains(&std::ffi::OsStr::new("--line-number")));
         assert!(args.contains(&std::ffi::OsStr::new("--column")));

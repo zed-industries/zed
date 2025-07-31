@@ -3,7 +3,6 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
 };
-use util::ResultExt;
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -38,6 +37,7 @@ use ui::{
     Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
     Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
 };
+use util::ResultExt;
 use util::paths::PathMatcher;
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -258,7 +258,7 @@ impl ProjectSearch {
             // Use the new ripgrep-based search
             project.search_with_ripgrep(query.clone(), cx)
         });
-        
+
         // The rest is identical to search_fallback since we use the same interface
         self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;

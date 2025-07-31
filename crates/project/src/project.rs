@@ -3616,22 +3616,28 @@ impl Project {
     }
 
     /// Search using ripgrep with same interface as regular search
-    pub fn search_with_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+    pub fn search_with_ripgrep(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
-        
+
         // Only support local projects for now, and not fake filesystems used in tests
         if !self.is_local() {
             // Fall back to regular search for remote projects
             return self.search(query, cx);
         }
-        
+
         if self.fs.is_fake() {
             // Fall back to regular search for fake filesystems (tests)
             return self.search(query, cx);
         }
 
         // Get the search paths from worktrees
-        let search_paths: Vec<std::path::PathBuf> = self.worktree_store.read(cx)
+        let search_paths: Vec<std::path::PathBuf> = self
+            .worktree_store
+            .read(cx)
             .visible_worktrees(cx)
             .map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -3643,7 +3649,7 @@ impl Project {
             // No worktrees found - fall back to regular search implementation
             // We need to call the original search method directly to avoid recursion
             let (result_tx, result_rx) = smol::channel::unbounded();
-            
+
             let matching_buffers_rx = if query.is_opened_only() {
                 self.sort_search_candidates(&query, cx)
             } else {
@@ -3709,116 +3715,180 @@ impl Project {
 
         // Clone what we need for the async task
         let project = cx.entity().downgrade();
-        
+
         cx.spawn(async move |_, async_cx| {
             // Use the ripgrep searcher
             let mut searcher = crate::ripgrep_search::RipgrepSearcher::new();
-            
+
             match searcher.search_paths(&query, &search_paths).await {
                 Ok(ripgrep_rx) => {
                     let mut total_matches = 0;
-                    
+
                     // Process ripgrep results and convert to SearchResult format
                     while let Ok(ripgrep_result) = ripgrep_rx.recv().await {
                         match ripgrep_result {
-                            crate::ripgrep_search::RipgrepSearchResult::Match { path, line_number, ranges, line_content: _ } => {
+                            crate::ripgrep_search::RipgrepSearchResult::Match {
+                                path,
+                                line_number,
+                                ranges,
+                                line_content: _,
+                            } => {
                                 // Debug: Log that we found a match
-                                log::info!("Ripgrep found match in {:?} at line {}", path, line_number);
+                                log::info!(
+                                    "Ripgrep found match in {:?} at line {}",
+                                    path,
+                                    line_number
+                                );
                                 // Try to get/open the buffer for this file
                                 if let Some(project_handle) = project.upgrade() {
-                                    if let Some(buffer_task) = project_handle.update(async_cx, |project, cx| -> Option<gpui::Task<Result<gpui::Entity<language::Buffer>, anyhow::Error>>> {
-                                        // Convert path to ProjectPath - use the first worktree for now
-                                        let worktree_info = project.worktree_store.read(cx).visible_worktrees(cx).next().map(|wt| {
-                                            let wt = wt.read(cx);
-                                            (wt.id(), wt.abs_path().to_path_buf())
-                                        });
-                                        
-                                        if let Some((worktree_id, worktree_abs_path)) = worktree_info {
-                                            if let Some(relative_path) = path.strip_prefix(&worktree_abs_path).ok() {
-                                                let project_path = ProjectPath {
-                                                    worktree_id,
-                                                    path: relative_path.into(),
-                                                };
-                                                Some(project.open_buffer(project_path, cx))
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    }).log_err().flatten() {
+                                    if let Some(buffer_task) = project_handle
+                                        .update(
+                                            async_cx,
+                                            |project,
+                                             cx|
+                                             -> Option<
+                                                gpui::Task<
+                                                    Result<
+                                                        gpui::Entity<language::Buffer>,
+                                                        anyhow::Error,
+                                                    >,
+                                                >,
+                                            > {
+                                                // Convert path to ProjectPath - use the first worktree for now
+                                                let worktree_info = project
+                                                    .worktree_store
+                                                    .read(cx)
+                                                    .visible_worktrees(cx)
+                                                    .next()
+                                                    .map(|wt| {
+                                                        let wt = wt.read(cx);
+                                                        (wt.id(), wt.abs_path().to_path_buf())
+                                                    });
+
+                                                if let Some((worktree_id, worktree_abs_path)) =
+                                                    worktree_info
+                                                {
+                                                    if let Some(relative_path) =
+                                                        path.strip_prefix(&worktree_abs_path).ok()
+                                                    {
+                                                        let project_path = ProjectPath {
+                                                            worktree_id,
+                                                            path: relative_path.into(),
+                                                        };
+                                                        Some(project.open_buffer(project_path, cx))
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            },
+                                        )
+                                        .log_err()
+                                        .flatten()
+                                    {
                                         if let Ok(buffer) = buffer_task.await {
                                             // Convert ripgrep ranges to Anchor ranges
-                                            let anchor_ranges = buffer.read_with(async_cx, |buffer, _| {
-                                                let snapshot = buffer.snapshot();
-                                                ranges.into_iter().filter_map(|(start_col, end_col)| {
-                                                    // Convert line_number (1-based) to 0-based
-                                                    let line_idx = (line_number as u32).saturating_sub(1);
-                                                    
-                                                    // Get the line start point - clip_point returns Point, not Option
-                                                    let _line_start = snapshot.clip_point(text::Point::new(line_idx, 0), text::Bias::Left);
-                                                    // Calculate the actual start and end points
-                                                    let start_point = text::Point::new(line_idx, start_col.saturating_sub(1));
-                                                    let end_point = text::Point::new(line_idx, end_col.saturating_sub(1));
-                                                    
-                                                    let start_anchor = snapshot.anchor_before(start_point);
-                                                    let end_anchor = snapshot.anchor_after(end_point);
-                                                    
-                                                    Some(start_anchor..end_anchor)
-                                                }).collect::<Vec<_>>()
-                                            }).unwrap_or_default();
-                                            
+                                            let anchor_ranges = buffer
+                                                .read_with(async_cx, |buffer, _| {
+                                                    let snapshot = buffer.snapshot();
+                                                    ranges
+                                                        .into_iter()
+                                                        .filter_map(|(start_col, end_col)| {
+                                                            // Convert line_number (1-based) to 0-based
+                                                            let line_idx = (line_number as u32)
+                                                                .saturating_sub(1);
+
+                                                            // Get the line start point - clip_point returns Point, not Option
+                                                            let _line_start = snapshot.clip_point(
+                                                                text::Point::new(line_idx, 0),
+                                                                text::Bias::Left,
+                                                            );
+                                                            // Calculate the actual start and end points
+                                                            let start_point = text::Point::new(
+                                                                line_idx,
+                                                                start_col.saturating_sub(1),
+                                                            );
+                                                            let end_point = text::Point::new(
+                                                                line_idx,
+                                                                end_col.saturating_sub(1),
+                                                            );
+
+                                                            let start_anchor =
+                                                                snapshot.anchor_before(start_point);
+                                                            let end_anchor =
+                                                                snapshot.anchor_after(end_point);
+
+                                                            Some(start_anchor..end_anchor)
+                                                        })
+                                                        .collect::<Vec<_>>()
+                                                })
+                                                .unwrap_or_default();
+
                                             if !anchor_ranges.is_empty() {
                                                 total_matches += anchor_ranges.len();
-                                                let _ = result_tx.send(SearchResult::Buffer {
-                                                    buffer,
-                                                    ranges: anchor_ranges,
-                                                }).await;
-                                                
+                                                let _ = result_tx
+                                                    .send(SearchResult::Buffer {
+                                                        buffer,
+                                                        ranges: anchor_ranges,
+                                                    })
+                                                    .await;
+
                                                 // Check if we've hit the limit
                                                 if total_matches > MAX_SEARCH_RESULT_RANGES {
-                                                    let _ = result_tx.send(SearchResult::LimitReached).await;
+                                                    let _ = result_tx
+                                                        .send(SearchResult::LimitReached)
+                                                        .await;
                                                     break;
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            },
+                            }
                             crate::ripgrep_search::RipgrepSearchResult::Complete { .. } => {
                                 break;
-                            },
+                            }
                             crate::ripgrep_search::RipgrepSearchResult::Error(_) => {
                                 break;
-                            },
+                            }
                             crate::ripgrep_search::RipgrepSearchResult::Progress { .. } => {
                                 // Just continue processing
                             }
                         }
                     }
-                },
+                }
                 Err(_) => {
                     // Ripgrep failed, but we already returned the receiver so just close it
                 }
             }
-            
+
             anyhow::Ok(())
-        }).detach();
+        })
+        .detach();
 
         result_rx
     }
 
     /// Fast search using ripgrep with streaming results
-    pub fn search_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Task<Result<Receiver<crate::ripgrep_search::RipgrepSearchResult>, anyhow::Error>> {
+    pub fn search_ripgrep(
+        &mut self,
+        query: SearchQuery,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Receiver<crate::ripgrep_search::RipgrepSearchResult>, anyhow::Error>> {
         use crate::ripgrep_search::RipgrepSearcher;
-        
+
         // Only support local projects for now
         if !self.is_local() {
-            return Task::ready(Err(anyhow::anyhow!("Ripgrep search only supported for local projects")));
+            return Task::ready(Err(anyhow::anyhow!(
+                "Ripgrep search only supported for local projects"
+            )));
         }
 
         // Get the search paths from worktrees
-        let search_paths: Vec<PathBuf> = self.worktree_store.read(cx)
+        let search_paths: Vec<PathBuf> = self
+            .worktree_store
+            .read(cx)
             .visible_worktrees(cx)
             .filter_map(|tree| {
                 let tree = tree.read(cx);
