@@ -290,6 +290,32 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Item Opening Behavior
+
+- Description: Controls which center pane new items and tool windows open in
+- Setting: `item_opening_behavior`
+- Default: `"active_pane"`
+
+**Options**
+
+1. Open items in the last active center pane
+
+```json
+{
+  "item_opening_behavior": "active_pane"
+}
+```
+
+2. Open items in the leftmost center pane
+
+```json
+{
+  "item_opening_behavior": "leftmost_pane"
+}
+```
+
+When set to `"leftmost_pane"`, new items and tool windows will consistently open in the leftmost center pane instead of whichever pane was last active. This provides predictable behavior regardless of which pane was previously focused.
+
 ## Buffer Font Family
 
 - Description: The name of a font to use for rendering text in the editor.
