@@ -25,7 +25,7 @@ pub struct AuthenticatedUser {
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
     pub plan: cloud_llm_client::Plan,
-    pub subscription_period: SubscriptionPeriod,
+    pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
     pub is_usage_based_billing_enabled: bool,
