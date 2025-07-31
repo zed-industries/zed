@@ -9598,22 +9598,38 @@ impl Editor {
                     };
 
                     let mut bracket_pair = None;
-                    // TODO kb huge memory usage, avoid
-                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
-                    // TODO kb huge memory usage, avoid
-                    let prev_chars = snapshot
-                        .reversed_chars_at(selection_head)
-                        .collect::<String>();
-                    for (pair, enabled) in scope.brackets() {
-                        if enabled
-                            && pair.close
-                            && prev_chars.starts_with(pair.start.as_str())
-                            && next_chars.starts_with(pair.end.as_str())
-                        {
-                            bracket_pair = Some(pair.clone());
-                            break;
+                    let max_lookup_length = scope
+                        .brackets()
+                        .map(|(pair, _)| {
+                            pair.start
+                                .as_str()
+                                .chars()
+                                .count()
+                                .max(pair.end.as_str().chars().count())
+                        })
+                        .max();
+                    if let Some(max_lookup_length) = max_lookup_length {
+                        let next_text = snapshot
+                            .chars_at(selection_head)
+                            .take(max_lookup_length)
+                            .collect::<String>();
+                        let prev_text = snapshot
+                            .reversed_chars_at(selection_head)
+                            .take(max_lookup_length)
+                            .collect::<String>();
+
+                        for (pair, enabled) in scope.brackets() {
+                            if enabled
+                                && pair.close
+                                && prev_text.starts_with(pair.start.as_str())
+                                && next_text.starts_with(pair.end.as_str())
+                            {
+                                bracket_pair = Some(pair.clone());
+                                break;
+                            }
                         }
                     }
+
                     if let Some(pair) = bracket_pair {
                         let snapshot_settings = snapshot.language_settings_at(selection_head, cx);
                         let autoclose_enabled =
