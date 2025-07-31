@@ -636,6 +636,8 @@ mod tests {
 
         // https://github.com/zed-industries/zed/issues/28407
         // Note, #28407 is marked as closed, but three of the below cases are still failing.
+        // See https://github.com/zed-industries/zed/issues/34027
+        // See https://github.com/zed-industries/zed/issues/33498
         #[gpui::test]
         #[should_panic(expected = "Tooltips mismatch")]
         async fn issue_28407_nesting(cx: &mut TestAppContext) {
