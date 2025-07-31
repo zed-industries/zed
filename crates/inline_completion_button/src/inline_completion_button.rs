@@ -941,9 +941,8 @@ impl InlineCompletionButton {
 
                 // Add refresh models option
                 menu.separator().entry("Refresh Models", None, {
-                    let fs = fs.clone();
                     move |_window, cx| {
-                        Self::refresh_ollama_models(fs.clone(), cx);
+                        Self::refresh_ollama_models(cx);
                     }
                 })
             } else {
@@ -956,9 +955,8 @@ impl InlineCompletionButton {
                         }
                     })
                     .entry("Refresh Models", None, {
-                        let fs = fs.clone();
                         move |_window, cx| {
-                            Self::refresh_ollama_models(fs.clone(), cx);
+                            Self::refresh_ollama_models(cx);
                         }
                     })
             };
@@ -1079,33 +1077,10 @@ impl InlineCompletionButton {
         });
     }
 
-    fn refresh_ollama_models(fs: Arc<dyn Fs>, cx: &mut App) {
+    fn refresh_ollama_models(cx: &mut App) {
         if let Some(service) = ollama::OllamaService::global(cx) {
             service.update(cx, |service, cx| {
                 service.refresh_models(cx);
-            });
-
-            // Also clean up unavailable models from settings
-            Self::cleanup_unavailable_models_from_settings(fs, cx);
-        }
-    }
-
-    fn cleanup_unavailable_models_from_settings(fs: Arc<dyn Fs>, cx: &mut App) {
-        if let Some(service) = ollama::OllamaService::global(cx) {
-            let discovered_model_names: std::collections::HashSet<String> = service
-                .read(cx)
-                .available_models()
-                .iter()
-                .map(|model| model.name.clone())
-                .collect();
-
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _cx| {
-                if let Some(ollama_settings) = &mut settings.ollama {
-                    if let Some(models) = &mut ollama_settings.available_models {
-                        // Remove models that are no longer available in Ollama
-                        models.retain(|model| discovered_model_names.contains(&model.name));
-                    }
-                }
             });
         }
     }
@@ -1647,9 +1622,8 @@ mod tests {
         fake_http_client.set_response("/api/tags", updated_response.to_string());
 
         // Simulate clicking "Refresh Models" button
-        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn fs::Fs>;
         cx.update(|cx| {
-            InlineCompletionButton::refresh_ollama_models(fs, cx);
+            InlineCompletionButton::refresh_ollama_models(cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -1977,133 +1951,5 @@ mod tests {
 
         // Allow any async operations to complete
         cx.background_executor.run_until_parked();
-    }
-
-    #[gpui::test]
-    async fn test_refresh_removes_unavailable_models_from_settings(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Create fake HTTP client
-        let fake_http_client = Arc::new(FakeHttpClient::new());
-
-        // Initially return two models
-        let initial_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "model-1:latest",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "abc123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
-                    "name": "model-2:latest",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 2000000,
-                    "digest": "def456",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "13B",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", initial_response.to_string());
-        fake_http_client.set_response(
-            "/api/show",
-            serde_json::json!({"capabilities": []}).to_string(),
-        );
-
-        // Create and set global service
-        let service = cx.update(|cx| {
-            OllamaService::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            OllamaService::set_global(service.clone(), cx);
-        });
-
-        cx.background_executor.run_until_parked();
-
-        // Simulate adding both models to settings
-        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn fs::Fs>;
-        cx.update(|cx| {
-            InlineCompletionButton::switch_ollama_model(
-                fs.clone(),
-                "model-1:latest".to_string(),
-                cx,
-            );
-        });
-        cx.background_executor.run_until_parked();
-
-        cx.update(|cx| {
-            InlineCompletionButton::switch_ollama_model(
-                fs.clone(),
-                "model-2:latest".to_string(),
-                cx,
-            );
-        });
-        cx.background_executor.run_until_parked();
-
-        // Update fake client to return only one model (model-2 removed)
-        let updated_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "model-1:latest",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "abc123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", updated_response.to_string());
-
-        // Simulate refresh which should remove model-2 from settings
-        cx.update(|cx| {
-            InlineCompletionButton::refresh_ollama_models(fs, cx);
-        });
-
-        cx.background_executor.run_until_parked();
-
-        // Wait for async settings update
-        cx.background_executor
-            .advance_clock(std::time::Duration::from_millis(100));
-        cx.background_executor.run_until_parked();
-
-        // Verify that the discovered models list only has model-1
-        cx.update(|cx| {
-            if let Some(service) = OllamaService::global(cx) {
-                let discovered_models = service.read(cx).available_models();
-                assert_eq!(discovered_models.len(), 1);
-                assert_eq!(discovered_models[0].name, "model-1:latest");
-            }
-        });
-
-        // Note: In a test environment with FakeFs, the settings file cleanup may not
-        // be immediately visible in the global settings, but the cleanup function
-        // should execute without errors. The actual file system persistence behavior
-        // would work correctly in a real environment.
     }
 }
