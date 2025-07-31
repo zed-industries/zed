@@ -88,7 +88,7 @@ pub(crate) fn render_basics_page(_: &mut Window, cx: &mut App) -> impl IntoEleme
                         ToggleButtonWithIcon::new("Cursor (Beta)", IconName::AiZed, |_, _, _| {}),
                     ],
                 )
-                .button_width(rems_from_px(200.))
+                .button_width(rems_from_px(230.))
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
