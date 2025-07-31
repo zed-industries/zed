@@ -1,5 +1,7 @@
 use acp_thread::{AgentConnection, Plan};
 use agent_servers::AgentServer;
+use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
+use audio::{Audio, Sound};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -18,10 +20,10 @@ use editor::{
 use file_icons::FileIcons;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, SharedString, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity,
-    Window, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
-    pulsating_between,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, PlatformDisplay, SharedString,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
+    UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop, linear_gradient,
+    list, percentage, point, prelude::*, pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
@@ -45,7 +47,10 @@ use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSe
 use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
 use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
-use crate::{AgentDiffPane, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll};
+use crate::ui::{AgentNotification, AgentNotificationEvent};
+use crate::{
+    AgentDiffPane, AgentPanel, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, RejectAll,
+};
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
@@ -59,6 +64,8 @@ pub struct AcpThreadView {
     message_set_from_history: bool,
     _message_editor_subscription: Subscription,
     mention_set: Arc<Mutex<MentionSet>>,
+    notifications: Vec<WindowHandle<AgentNotification>>,
+    notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
     auth_task: Option<Task<()>>,
@@ -174,6 +181,8 @@ impl AcpThreadView {
             message_set_from_history: false,
             _message_editor_subscription: message_editor_subscription,
             mention_set,
+            notifications: Vec::new(),
+            notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
             list_state: list_state,
             last_error: None,
@@ -381,7 +390,9 @@ impl AcpThreadView {
             return;
         }
 
-        let Some(thread) = self.thread() else { return };
+        let Some(thread) = self.thread() else {
+            return;
+        };
         let task = thread.update(cx, |thread, cx| thread.send(chunks.clone(), cx));
 
         cx.spawn(async move |this, cx| {
@@ -563,6 +574,28 @@ impl AcpThreadView {
                 let index = *index;
                 self.sync_thread_entry_view(index, window, cx);
                 self.list_state.splice(index..index + 1, 1);
+            }
+            AcpThreadEvent::ToolAuthorizationRequired => todo!(),
+            AcpThreadEvent::Stopped => {
+                let used_tools = thread.read(cx).used_tools_since_last_user_message();
+                self.notify_with_sound(
+                    if used_tools {
+                        "Finished running tools"
+                    } else {
+                        "New message"
+                    },
+                    IconName::ZedAssistant,
+                    window,
+                    cx,
+                );
+            }
+            AcpThreadEvent::Error => {
+                self.notify_with_sound(
+                    "Agent stopped due to an error",
+                    IconName::Warning,
+                    window,
+                    cx,
+                );
             }
         }
         cx.notify();
@@ -2160,6 +2193,154 @@ impl AcpThreadView {
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
     }
+
+    fn notify_with_sound(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.play_notification_sound(window, cx);
+        self.show_notification(caption, icon, window, cx);
+    }
+
+    fn play_notification_sound(&self, window: &Window, cx: &mut App) {
+        let settings = AgentSettings::get_global(cx);
+        if settings.play_sound_when_agent_done && !window.is_window_active() {
+            Audio::play_sound(Sound::AgentDone, cx);
+        }
+    }
+
+    fn show_notification(
+        &mut self,
+        caption: impl Into<SharedString>,
+        icon: IconName,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if window.is_window_active() || !self.notifications.is_empty() {
+            return;
+        }
+
+        let title = self.title(cx);
+
+        match AgentSettings::get_global(cx).notify_when_agent_waiting {
+            NotifyWhenAgentWaiting::PrimaryScreen => {
+                if let Some(primary) = cx.primary_display() {
+                    self.pop_up(icon, caption.into(), title, window, primary, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::AllScreens => {
+                let caption = caption.into();
+                for screen in cx.displays() {
+                    self.pop_up(icon, caption.clone(), title.clone(), window, screen, cx);
+                }
+            }
+            NotifyWhenAgentWaiting::Never => {
+                // Don't show anything
+            }
+        }
+    }
+
+    fn pop_up(
+        &mut self,
+        icon: IconName,
+        caption: SharedString,
+        title: SharedString,
+        window: &mut Window,
+        screen: Rc<dyn PlatformDisplay>,
+        cx: &mut Context<Self>,
+    ) {
+        let options = AgentNotification::window_options(screen, cx);
+
+        let project_name = self.workspace.upgrade().and_then(|workspace| {
+            workspace
+                .read(cx)
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).root_name().to_string())
+        });
+
+        if let Some(screen_window) = cx
+            .open_window(options, |_, cx| {
+                cx.new(|_| {
+                    AgentNotification::new(title.clone(), caption.clone(), icon, project_name)
+                })
+            })
+            .log_err()
+        {
+            if let Some(pop_up) = screen_window.entity(cx).log_err() {
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push(cx.subscribe_in(&pop_up, window, {
+                        |this, _, event, window, cx| match event {
+                            AgentNotificationEvent::Accepted => {
+                                let handle = window.window_handle();
+                                cx.activate(true);
+
+                                let workspace_handle = this.workspace.clone();
+
+                                // If there are multiple Zed windows, activate the correct one.
+                                cx.defer(move |cx| {
+                                    handle
+                                        .update(cx, |_view, window, _cx| {
+                                            window.activate_window();
+
+                                            if let Some(workspace) = workspace_handle.upgrade() {
+                                                workspace.update(_cx, |workspace, cx| {
+                                                    workspace.focus_panel::<AgentPanel>(window, cx);
+                                                });
+                                            }
+                                        })
+                                        .log_err();
+                                });
+
+                                this.dismiss_notifications(cx);
+                            }
+                            AgentNotificationEvent::Dismissed => {
+                                this.dismiss_notifications(cx);
+                            }
+                        }
+                    }));
+
+                self.notifications.push(screen_window);
+
+                // If the user manually refocuses the original window, dismiss the popup.
+                self.notification_subscriptions
+                    .entry(screen_window)
+                    .or_insert_with(Vec::new)
+                    .push({
+                        let pop_up_weak = pop_up.downgrade();
+
+                        cx.observe_window_activation(window, move |_, window, cx| {
+                            if window.is_window_active() {
+                                if let Some(pop_up) = pop_up_weak.upgrade() {
+                                    pop_up.update(cx, |_, cx| {
+                                        cx.emit(AgentNotificationEvent::Dismissed);
+                                    });
+                                }
+                            }
+                        })
+                    });
+            }
+        }
+    }
+
+    fn dismiss_notifications(&mut self, cx: &mut Context<Self>) {
+        for window in self.notifications.drain(..) {
+            window
+                .update(cx, |_, window, _| {
+                    window.remove_window();
+                })
+                .ok();
+
+            self.notification_subscriptions.remove(&window);
+        }
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -2439,5 +2620,230 @@ fn plan_label_markdown_style(
             ..default_md_style.base_text_style
         },
         ..default_md_style
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_client_protocol::SessionId;
+    use editor::EditorSettings;
+    use fs::FakeFs;
+    use gpui::{SemanticVersion, TestAppContext};
+    use settings::SettingsStore;
+
+    use super::*;
+
+    #[gpui::test]
+    async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::default()),
+                    workspace.downgrade(),
+                    project,
+                    Rc::new(RefCell::new(MessageHistory::default())),
+                    1,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.chat(&Chat, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_for_error(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(StubAgentServer::new(SabatourAgentConnection)),
+                    workspace.downgrade(),
+                    project,
+                    Rc::new(RefCell::new(MessageHistory::default())),
+                    1,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.chat(&Chat, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    struct StubAgentServer<C> {
+        connection: C,
+    }
+
+    impl<C> StubAgentServer<C> {
+        fn new(connection: C) -> Self {
+            Self { connection }
+        }
+    }
+
+    impl StubAgentServer<StubAgentConnection> {
+        fn default() -> Self {
+            Self::new(StubAgentConnection)
+        }
+    }
+
+    impl<C> AgentServer for StubAgentServer<C>
+    where
+        C: 'static + AgentConnection + Send + Clone,
+    {
+        fn logo(&self) -> ui::IconName {
+            unimplemented!()
+        }
+
+        fn name(&self) -> &'static str {
+            unimplemented!()
+        }
+
+        fn empty_state_headline(&self) -> &'static str {
+            unimplemented!()
+        }
+
+        fn empty_state_message(&self) -> &'static str {
+            unimplemented!()
+        }
+
+        fn connect(
+            &self,
+            _root_dir: &Path,
+            _project: &Entity<Project>,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<Rc<dyn AgentConnection>>> {
+            Task::ready(Ok(Rc::new(self.connection.clone())))
+        }
+    }
+
+    #[derive(Clone)]
+    struct StubAgentConnection;
+
+    impl AgentConnection for StubAgentConnection {
+        fn name(&self) -> &'static str {
+            "StubAgentConnection"
+        }
+
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::AsyncApp,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx
+                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
+                .unwrap()))
+        }
+
+        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
+
+        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
+            Task::ready(Ok(()))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
+    }
+
+    #[derive(Clone)]
+    struct SabatourAgentConnection;
+
+    impl AgentConnection for SabatourAgentConnection {
+        fn name(&self) -> &'static str {
+            "SabatourAgentConnection"
+        }
+
+        fn new_thread(
+            self: Rc<Self>,
+            project: Entity<Project>,
+            _cwd: &Path,
+            cx: &mut gpui::AsyncApp,
+        ) -> Task<gpui::Result<Entity<AcpThread>>> {
+            Task::ready(Ok(cx
+                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
+                .unwrap()))
+        }
+
+        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+            unimplemented!()
+        }
+
+        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
+            Task::ready(Err(anyhow::anyhow!("Error prompting")))
+        }
+
+        fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
+            unimplemented!()
+        }
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+            AgentSettings::register(cx);
+            workspace::init_settings(cx);
+            ThemeSettings::register(cx);
+            release_channel::init(SemanticVersion::default(), cx);
+            EditorSettings::register(cx);
+        });
     }
 }
