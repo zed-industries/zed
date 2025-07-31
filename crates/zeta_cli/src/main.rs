@@ -338,7 +338,7 @@ fn main() {
                             })
                             .await?;
 
-                        Ok(serde_json::to_string_pretty(&response).unwrap())
+                        Ok(response.output_excerpt)
                     })
                     .await
                 }
