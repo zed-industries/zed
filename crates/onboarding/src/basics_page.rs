@@ -1,6 +1,6 @@
 use fs::Fs;
 use gpui::{App, IntoElement};
-use settings::{Settings, update_settings_file};
+use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{Appearance, SystemAppearance, ThemeMode, ThemeSettings};
 use ui::{
     SwitchField, ThemePreviewTile, ToggleButtonGroup, ToggleButtonSimple, ToggleButtonWithIcon,
@@ -26,6 +26,14 @@ fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
 
     update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
         settings.set_mode(theme_mode);
+    });
+}
+
+fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
+    let fs = <dyn Fs>::global(cx);
+
+    update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
+        *setting = Some(keymap_base);
     });
 }
 
@@ -86,6 +94,16 @@ pub(crate) fn render_basics_page(onboarding: &Onboarding, cx: &mut App) -> impl 
         },
     };
 
+    let base_keymap = match BaseKeymap::get_global(cx) {
+        BaseKeymap::VSCode => Some(0),
+        BaseKeymap::JetBrains => Some(1),
+        BaseKeymap::SublimeText => Some(2),
+        BaseKeymap::Atom => Some(3),
+        BaseKeymap::Emacs => Some(4),
+        BaseKeymap::Cursor => Some(5),
+        BaseKeymap::TextMate | BaseKeymap::None => None,
+    };
+
     v_flex()
         .gap_6()
         .child(render_theme_section(theme_mode))
@@ -109,16 +127,29 @@ pub(crate) fn render_basics_page(onboarding: &Onboarding, cx: &mut App) -> impl 
                 ToggleButtonGroup::two_rows(
                     "multiple_row_test",
                     [
-                        ToggleButtonWithIcon::new("VS Code", IconName::AiZed, |_, _, _| {}),
-                        ToggleButtonWithIcon::new("Jetbrains", IconName::AiZed, |_, _, _| {}),
-                        ToggleButtonWithIcon::new("Sublime Text", IconName::AiZed, |_, _, _| {}),
+                        ToggleButtonWithIcon::new("VS Code", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::VSCode, cx);
+                        }),
+                        ToggleButtonWithIcon::new("Jetbrains", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::JetBrains, cx);
+                        }),
+                        ToggleButtonWithIcon::new("Sublime Text", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::SublimeText, cx);
+                        }),
                     ],
                     [
-                        ToggleButtonWithIcon::new("Atom", IconName::AiZed, |_, _, _| {}),
-                        ToggleButtonWithIcon::new("Emacs", IconName::AiZed, |_, _, _| {}),
-                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::AiZed, |_, _, _| {}),
+                        ToggleButtonWithIcon::new("Atom", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::Atom, cx);
+                        }),
+                        ToggleButtonWithIcon::new("Emacs", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::Emacs, cx);
+                        }),
+                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::AiZed, |_, _, cx| {
+                            write_keymap_base(BaseKeymap::Cursor, cx);
+                        }),
                     ],
                 )
+                .when_some(base_keymap, |this, base_keymap| this.selected_index(base_keymap))
                 .button_width(rems_from_px(230.))
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),

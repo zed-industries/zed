@@ -205,6 +205,7 @@ impl RenderOnce for ThemePreviewTile {
             .when(self.selected, |this| {
                 this.border_color(color.border_selected)
             })
+            .hover(|this| this.border_color(color.border_selected))
             .child(
                 div()
                     .size_full()
