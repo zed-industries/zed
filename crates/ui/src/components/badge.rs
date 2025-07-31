@@ -2,8 +2,7 @@ use crate::Divider;
 use crate::DividerColor;
 use crate::component_prelude::*;
 use crate::prelude::*;
-use crate::tooltip_container;
-use gpui::{AnyElement, Context, FontWeight, IntoElement, Render, SharedString, Window};
+use gpui::{AnyElement, IntoElement, SharedString, Window};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct Badge {
