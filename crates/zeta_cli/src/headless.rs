@@ -2,7 +2,7 @@ use client::{Client, ProxySettings, UserStore};
 use extension::ExtensionHostProxy;
 use fs::RealFs;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Entity, SemanticVersion};
+use gpui::{App, AppContext, Entity};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_extension::LspAccess;
@@ -27,7 +27,8 @@ pub struct ZetaCliAppState {
 
 // TODO: dedupe with crates/eval/src/eval.rs
 pub fn init(cx: &mut App) -> ZetaCliAppState {
-    release_channel::init(SemanticVersion::default(), cx);
+    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+    release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
     let mut settings_store = SettingsStore::new(cx);
@@ -36,8 +37,6 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
         .unwrap();
     cx.set_global(settings_store);
     client::init_settings(cx);
-
-    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
