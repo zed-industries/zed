@@ -283,7 +283,7 @@ impl TestServer {
 
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), client.clone(), cx));
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));

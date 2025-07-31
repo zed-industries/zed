@@ -914,7 +914,7 @@ impl AppState {
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), client.clone(), cx));
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
@@ -5740,7 +5740,7 @@ impl Workspace {
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
         let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), client.clone(), cx));
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
 
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
