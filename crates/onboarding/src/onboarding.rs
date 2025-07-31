@@ -307,15 +307,15 @@ impl Onboarding {
     ) -> impl IntoElement {
         // todo! implementing the following logic:
         // - [x] when system toggled, either set to system, or dark/light based on system appearance
-        // - [*] style system like group buttons
-        // - [ ] When selecting in light or dark
-        // - [ ] if system selected
-        // - [ ]  -> light selects light theme
-        // - [ ]  -> dark selects dark theme
-        // - [ ] else:
-        // - [ ]  -> light sets mode to light and sets light variant
-        // - [ ]  -> dark sets mode to dark and sets dark variant
-        // - [ ] abastract updates into function
+        // - [x] style system like group buttons
+        // - [x] When selecting in light or dark
+        // - [x] if system selected
+        // - [x]  -> light selects light theme
+        // - [x]  -> dark selects dark theme
+        // - [x] else:
+        // - [x]  -> light sets mode to light and sets light variant
+        // - [x]  -> dark sets mode to dark and sets dark variant
+        // - [x] abastract updates into function
 
         let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
         let system_appearance = theme::SystemAppearance::global(cx);
@@ -369,7 +369,6 @@ impl Onboarding {
                 .id(name.clone())
                 .on_click({
                     let theme_name = theme.name.clone();
-                    let appearance = appearance.clone();
                     move |_, window, cx| {
                         let fs = <dyn Fs>::global(cx);
                         let theme_name = theme_name.clone();
