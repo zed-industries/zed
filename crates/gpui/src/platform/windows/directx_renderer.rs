@@ -1077,7 +1077,7 @@ fn create_swap_chain_for_composition(
         // Composition SwapChains only support the DXGI_SCALING_STRETCH Scaling.
         Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
-        AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+        AlphaMode: DXGI_ALPHA_MODE_PREMULTIPLIED,
         Flags: 0,
     };
     Ok(unsafe { dxgi_factory.CreateSwapChainForComposition(device, &desc, None)? })
