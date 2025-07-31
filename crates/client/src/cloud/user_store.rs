@@ -2,12 +2,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use cloud_api_client::{AuthenticatedUser, CloudApiClient};
+use chrono::{DateTime, Utc};
+use cloud_api_client::{AuthenticatedUser, CloudApiClient, PlanInfo};
+use cloud_llm_client::Plan;
 use gpui::{Context, Task};
 use util::{ResultExt as _, maybe};
 
 pub struct CloudUserStore {
     authenticated_user: Option<Arc<AuthenticatedUser>>,
+    plan_info: Option<Arc<PlanInfo>>,
     _maintain_authenticated_user_task: Task<()>,
 }
 
@@ -15,6 +18,7 @@ impl CloudUserStore {
     pub fn new(cloud_client: Arc<CloudApiClient>, cx: &mut Context<Self>) -> Self {
         Self {
             authenticated_user: None,
+            plan_info: None,
             _maintain_authenticated_user_task: cx.spawn(async move |this, cx| {
                 maybe!(async move {
                     loop {
@@ -37,13 +41,15 @@ impl CloudUserStore {
                                 if let Some(response) = authenticated_user_result.log_err() {
                                     this.update(cx, |this, _cx| {
                                         this.authenticated_user = Some(Arc::new(response.user));
+                                        this.plan_info = Some(Arc::new(response.plan));
                                     })
                                     .ok();
                                 }
                             }
                         } else {
                             this.update(cx, |this, _cx| {
-                                this.authenticated_user = None;
+                                this.authenticated_user.take();
+                                this.plan_info.take();
                             })
                             .ok();
                         }
@@ -65,5 +71,21 @@ impl CloudUserStore {
 
     pub fn authenticated_user(&self) -> Option<Arc<AuthenticatedUser>> {
         self.authenticated_user.clone()
+    }
+
+    pub fn plan(&self) -> Option<Plan> {
+        self.plan_info.as_ref().map(|plan| plan.plan)
+    }
+
+    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.subscription_period)
+            .map(|subscription_period| {
+                (
+                    subscription_period.started_at.0,
+                    subscription_period.ended_at.0,
+                )
+            })
     }
 }
