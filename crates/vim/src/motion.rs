@@ -987,7 +987,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, *ignore_punctuation, times, true),
+                next_word_end(map, point, *ignore_punctuation, times, true, true),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
@@ -1723,14 +1723,19 @@ pub(crate) fn next_word_end(
     ignore_punctuation: bool,
     times: usize,
     allow_cross_newline: bool,
+    always_advance: bool,
 ) -> DisplayPoint {
     let classifier = map
         .buffer_snapshot
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
-        let new_point = next_char(map, point, allow_cross_newline);
         let mut need_next_char = false;
+        let new_point = if always_advance {
+            next_char(map, point, allow_cross_newline)
+        } else {
+            point
+        };
         let new_point = movement::find_boundary_exclusive(
             map,
             new_point,
