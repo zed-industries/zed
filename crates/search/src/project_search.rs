@@ -3,6 +3,7 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord, buffer_search::Deploy,
 };
+use util::ResultExt;
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -237,7 +238,97 @@ impl ProjectSearch {
         }
     }
 
+    fn search_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        let search = self.project.update(cx, |project, cx| {
+            project
+                .search_history_mut(SearchInputKind::Query)
+                .add(&mut self.search_history_cursor, query.as_str().to_string());
+            let included = query.as_inner().files_to_include().sources().join(",");
+            if !included.is_empty() {
+                project
+                    .search_history_mut(SearchInputKind::Include)
+                    .add(&mut self.search_included_history_cursor, included);
+            }
+            let excluded = query.as_inner().files_to_exclude().sources().join(",");
+            if !excluded.is_empty() {
+                project
+                    .search_history_mut(SearchInputKind::Exclude)
+                    .add(&mut self.search_excluded_history_cursor, excluded);
+            }
+            // Use the new ripgrep-based search
+            project.search_with_ripgrep(query.clone(), cx)
+        });
+        
+        // The rest is identical to search_fallback since we use the same interface
+        self.last_search_query_text = Some(query.as_str().to_string());
+        self.search_id += 1;
+        self.active_query = Some(query);
+        self.match_ranges.clear();
+        self.pending_search = Some(cx.spawn(async move |this, cx| {
+            let mut matches = pin!(search.ready_chunks(1024));
+            let this = this.upgrade()?;
+            this.update(cx, |this, cx| {
+                this.match_ranges.clear();
+                this.excerpts.update(cx, |this, cx| this.clear(cx));
+                this.no_results = Some(true);
+                this.limit_reached = false;
+            })
+            .ok()?;
+
+            let mut limit_reached = false;
+            while let Some(results) = matches.next().await {
+                let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                for result in results {
+                    match result {
+                        project::search::SearchResult::Buffer { buffer, ranges } => {
+                            buffers_with_ranges.push((buffer, ranges));
+                        }
+                        project::search::SearchResult::LimitReached => {
+                            limit_reached = true;
+                        }
+                    }
+                }
+
+                let match_ranges = this
+                    .update(cx, |this, cx| {
+                        this.excerpts.update(cx, |excerpts, cx| {
+                            excerpts.push_multiple_excerpts_with_context_lines(
+                                buffers_with_ranges,
+                                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                cx,
+                            )
+                        })
+                    })
+                    .ok()?
+                    .await;
+
+                this.update(cx, |this, cx| {
+                    this.match_ranges.extend(match_ranges);
+                    cx.notify();
+                })
+                .ok()?;
+            }
+
+            this.update(cx, |this, cx| {
+                if !this.match_ranges.is_empty() {
+                    this.no_results = Some(false);
+                }
+                this.limit_reached = limit_reached;
+                this.pending_search.take();
+                cx.notify();
+            })
+            .ok()?;
+
+            None
+        }));
+    }
+
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        // Use ripgrep search by default
+        self.search_ripgrep(query, cx);
+    }
+
+    fn search_fallback(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)

@@ -10,6 +10,7 @@ pub mod lsp_store;
 mod manifest_tree;
 pub mod prettier_store;
 pub mod project_settings;
+pub mod ripgrep_search;
 pub mod search;
 mod task_inventory;
 pub mod task_store;
@@ -3612,6 +3613,227 @@ impl Project {
         .detach();
 
         result_rx
+    }
+
+    /// Search using ripgrep with same interface as regular search
+    pub fn search_with_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
+        let (result_tx, result_rx) = smol::channel::unbounded();
+        
+        // Only support local projects for now, and not fake filesystems used in tests
+        if !self.is_local() {
+            // Fall back to regular search for remote projects
+            return self.search(query, cx);
+        }
+        
+        if self.fs.is_fake() {
+            // Fall back to regular search for fake filesystems (tests)
+            return self.search(query, cx);
+        }
+
+        // Get the search paths from worktrees
+        let search_paths: Vec<std::path::PathBuf> = self.worktree_store.read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
+                let worktree = worktree.read(cx);
+                worktree.abs_path().to_path_buf()
+            })
+            .collect();
+
+        if search_paths.is_empty() {
+            // No worktrees found - fall back to regular search implementation
+            // We need to call the original search method directly to avoid recursion
+            let (result_tx, result_rx) = smol::channel::unbounded();
+            
+            let matching_buffers_rx = if query.is_opened_only() {
+                self.sort_search_candidates(&query, cx)
+            } else {
+                self.find_search_candidate_buffers(&query, MAX_SEARCH_RESULT_FILES + 1, cx)
+            };
+
+            cx.spawn(async move |_, cx| {
+                let mut range_count = 0;
+                let mut buffer_count = 0;
+                let mut limit_reached = false;
+                let query = Arc::new(query);
+                let mut chunks = matching_buffers_rx.ready_chunks(64);
+
+                let mut chunks = pin!(chunks);
+                'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
+                    let mut chunk_results = Vec::new();
+                    for buffer in matching_buffer_chunk {
+                        let buffer = buffer.clone();
+                        let query = query.clone();
+                        let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
+                        chunk_results.push(cx.background_spawn(async move {
+                            let ranges = query
+                                .search(&snapshot, None)
+                                .await
+                                .iter()
+                                .map(|range| {
+                                    snapshot.anchor_before(range.start)
+                                        ..snapshot.anchor_after(range.end)
+                                })
+                                .collect::<Vec<_>>();
+                            anyhow::Ok((buffer, ranges))
+                        }));
+                    }
+
+                    let chunk_results = futures::future::join_all(chunk_results).await;
+                    for result in chunk_results {
+                        if let Some((buffer, ranges)) = result.log_err() {
+                            range_count += ranges.len();
+                            buffer_count += 1;
+                            result_tx
+                                .send(SearchResult::Buffer { buffer, ranges })
+                                .await?;
+                            if buffer_count > MAX_SEARCH_RESULT_FILES
+                                || range_count > MAX_SEARCH_RESULT_RANGES
+                            {
+                                limit_reached = true;
+                                break 'outer;
+                            }
+                        }
+                    }
+                }
+
+                if limit_reached {
+                    result_tx.send(SearchResult::LimitReached).await?;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach();
+
+            return result_rx;
+        }
+
+        // Clone what we need for the async task
+        let project = cx.entity().downgrade();
+        
+        cx.spawn(async move |_, async_cx| {
+            // Use the ripgrep searcher
+            let mut searcher = crate::ripgrep_search::RipgrepSearcher::new();
+            
+            match searcher.search_paths(&query, &search_paths).await {
+                Ok(ripgrep_rx) => {
+                    let mut total_matches = 0;
+                    
+                    // Process ripgrep results and convert to SearchResult format
+                    while let Ok(ripgrep_result) = ripgrep_rx.recv().await {
+                        match ripgrep_result {
+                            crate::ripgrep_search::RipgrepSearchResult::Match { path, line_number, ranges, line_content: _ } => {
+                                // Debug: Log that we found a match
+                                log::info!("Ripgrep found match in {:?} at line {}", path, line_number);
+                                // Try to get/open the buffer for this file
+                                if let Some(project_handle) = project.upgrade() {
+                                    if let Some(buffer_task) = project_handle.update(async_cx, |project, cx| -> Option<gpui::Task<Result<gpui::Entity<language::Buffer>, anyhow::Error>>> {
+                                        // Convert path to ProjectPath - use the first worktree for now
+                                        let worktree_info = project.worktree_store.read(cx).visible_worktrees(cx).next().map(|wt| {
+                                            let wt = wt.read(cx);
+                                            (wt.id(), wt.abs_path().to_path_buf())
+                                        });
+                                        
+                                        if let Some((worktree_id, worktree_abs_path)) = worktree_info {
+                                            if let Some(relative_path) = path.strip_prefix(&worktree_abs_path).ok() {
+                                                let project_path = ProjectPath {
+                                                    worktree_id,
+                                                    path: relative_path.into(),
+                                                };
+                                                Some(project.open_buffer(project_path, cx))
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    }).log_err().flatten() {
+                                        if let Ok(buffer) = buffer_task.await {
+                                            // Convert ripgrep ranges to Anchor ranges
+                                            let anchor_ranges = buffer.read_with(async_cx, |buffer, _| {
+                                                let snapshot = buffer.snapshot();
+                                                ranges.into_iter().filter_map(|(start_col, end_col)| {
+                                                    // Convert line_number (1-based) to 0-based
+                                                    let line_idx = (line_number as u32).saturating_sub(1);
+                                                    
+                                                    // Get the line start point - clip_point returns Point, not Option
+                                                    let _line_start = snapshot.clip_point(text::Point::new(line_idx, 0), text::Bias::Left);
+                                                    // Calculate the actual start and end points
+                                                    let start_point = text::Point::new(line_idx, start_col.saturating_sub(1));
+                                                    let end_point = text::Point::new(line_idx, end_col.saturating_sub(1));
+                                                    
+                                                    let start_anchor = snapshot.anchor_before(start_point);
+                                                    let end_anchor = snapshot.anchor_after(end_point);
+                                                    
+                                                    Some(start_anchor..end_anchor)
+                                                }).collect::<Vec<_>>()
+                                            }).unwrap_or_default();
+                                            
+                                            if !anchor_ranges.is_empty() {
+                                                total_matches += anchor_ranges.len();
+                                                let _ = result_tx.send(SearchResult::Buffer {
+                                                    buffer,
+                                                    ranges: anchor_ranges,
+                                                }).await;
+                                                
+                                                // Check if we've hit the limit
+                                                if total_matches > MAX_SEARCH_RESULT_RANGES {
+                                                    let _ = result_tx.send(SearchResult::LimitReached).await;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            crate::ripgrep_search::RipgrepSearchResult::Complete { .. } => {
+                                break;
+                            },
+                            crate::ripgrep_search::RipgrepSearchResult::Error(_) => {
+                                break;
+                            },
+                            crate::ripgrep_search::RipgrepSearchResult::Progress { .. } => {
+                                // Just continue processing
+                            }
+                        }
+                    }
+                },
+                Err(_) => {
+                    // Ripgrep failed, but we already returned the receiver so just close it
+                }
+            }
+            
+            anyhow::Ok(())
+        }).detach();
+
+        result_rx
+    }
+
+    /// Fast search using ripgrep with streaming results
+    pub fn search_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Task<Result<Receiver<crate::ripgrep_search::RipgrepSearchResult>, anyhow::Error>> {
+        use crate::ripgrep_search::RipgrepSearcher;
+        
+        // Only support local projects for now
+        if !self.is_local() {
+            return Task::ready(Err(anyhow::anyhow!("Ripgrep search only supported for local projects")));
+        }
+
+        // Get the search paths from worktrees
+        let search_paths: Vec<PathBuf> = self.worktree_store.read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|tree| {
+                let tree = tree.read(cx);
+                tree.as_local().map(|local| local.abs_path().to_path_buf())
+            })
+            .collect();
+
+        if search_paths.is_empty() {
+            return Task::ready(Err(anyhow::anyhow!("No local worktrees found for search")));
+        }
+
+        cx.spawn(async move |_this, _cx| {
+            let mut searcher = RipgrepSearcher::new();
+            searcher.search_paths(&query, &search_paths).await
+        })
     }
 
     fn find_search_candidate_buffers(
