@@ -10,8 +10,12 @@ use windows::{
         Foundation::*,
         Globalization::GetUserDefaultLocaleName,
         Graphics::{
-            Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP, Direct3D11::*, DirectWrite::*,
-            Dxgi::Common::*, Gdi::LOGFONTW, Imaging::*,
+            Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            Direct3D11::*,
+            DirectWrite::*,
+            Dxgi::Common::*,
+            Gdi::{IsRectEmpty, LOGFONTW},
+            Imaging::*,
         },
         System::SystemServices::LOCALE_NAME_MAX_LENGTH,
         UI::WindowsAndMessaging::*,
@@ -41,7 +45,7 @@ struct DirectWriteComponent {
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
 
-    render_params: IDWriteRenderingParams3,
+    render_params: IDWriteRenderingParams,
     gpu_state: GPUState,
 }
 
@@ -88,25 +92,7 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let render_params = {
-                let default_params: IDWriteRenderingParams3 =
-                    factory.CreateRenderingParams()?.cast()?;
-                let gamma = default_params.GetGamma();
-                let enhanced_contrast = default_params.GetEnhancedContrast();
-                let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
-                let cleartype_level = default_params.GetClearTypeLevel();
-                let grid_fit_mode = default_params.GetGridFitMode();
-
-                factory.CreateCustomRenderingParams(
-                    gamma,
-                    enhanced_contrast,
-                    gray_contrast,
-                    cleartype_level,
-                    DWRITE_PIXEL_GEOMETRY_RGB,
-                    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
-                    grid_fit_mode,
-                )?
-            };
+            let render_params = factory.CreateRenderingParams()?;
 
             let gpu_state = GPUState::new(gpu_context)?;
 
@@ -737,8 +723,6 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
 
-        let rendering_mode = DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC;
-        let measuring_mode = DWRITE_MEASURING_MODE_NATURAL;
         let baseline_origin_x = 0.0;
         let baseline_origin_y = 0.0;
 
@@ -751,21 +735,58 @@ impl DirectWriteState {
             dy: 0.0,
         };
 
+        let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
+        let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
+        unsafe {
+            font.font_face.GetRecommendedRenderingMode(
+                params.font_size.0,
+                // Is this correct?
+                1.0,
+                1.0,
+                Some(&transform),
+                false,
+                DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
+                DWRITE_MEASURING_MODE_NATURAL,
+                &self.components.render_params,
+                &mut rendering_mode,
+                &mut grid_fit_mode,
+            )?;
+        }
+
+        let antialias_mode = if params.is_emoji {
+            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
+        } else {
+            DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE
+        };
+
         let glyph_analysis = unsafe {
             self.components.factory.CreateGlyphRunAnalysis(
                 &glyph_run,
                 Some(&transform),
                 rendering_mode,
-                measuring_mode,
-                DWRITE_GRID_FIT_MODE_DEFAULT,
-                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                DWRITE_MEASURING_MODE_NATURAL,
+                grid_fit_mode,
+                antialias_mode,
                 baseline_origin_x,
                 baseline_origin_y,
             )?
         };
 
-        let texture_type = DWRITE_TEXTURE_CLEARTYPE_3x1;
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(texture_type)? };
+        if params.is_emoji {
+            let bounds =
+                unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
+            if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
+                return Ok(Bounds {
+                    origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
+                    size: size(
+                        (bounds.right - bounds.left).into(),
+                        (bounds.bottom - bounds.top).into(),
+                    ),
+                });
+            }
+        }
+
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
 
         if bounds.right < bounds.left {
             Ok(Bounds {
