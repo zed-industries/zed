@@ -13401,6 +13401,178 @@ async fn test_as_is_completions(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_panic_during_c_completions(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let language =
+        Arc::try_unwrap(languages::language("c", tree_sitter_c::LANGUAGE.into())).unwrap();
+    let mut cx = EditorLspTestContext::new(
+        language,
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                ..lsp::CompletionOptions::default()
+            }),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        "#ifndef BAR_H
+#define BAR_H
+
+#include <stdbool.h>
+
+int fn_branch(bool do_branch1, bool do_branch2);
+
+#endif // BAR_H
+ˇ",
+    );
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("#", window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("i", window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("n", window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        "#ifndef BAR_H
+#define BAR_H
+
+#include <stdbool.h>
+
+int fn_branch(bool do_branch1, bool do_branch2);
+
+#endif // BAR_H
+#inˇ",
+    );
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                is_incomplete: false,
+                item_defaults: None,
+                items: vec![lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::SNIPPET),
+                    label_details: Some(lsp::CompletionItemLabelDetails {
+                        detail: Some("header".to_string()),
+                        description: None,
+                    }),
+                    label: " include".to_string(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 8,
+                                character: 1,
+                            },
+                            end: lsp::Position {
+                                line: 8,
+                                character: 1,
+                            },
+                        },
+                        new_text: "include \"$0\"".to_string(),
+                    })),
+                    sort_text: Some("40b67681include".to_string()),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    filter_text: Some("include".to_string()),
+                    insert_text: Some("include \"$0\"".to_string()),
+                    ..lsp::CompletionItem::default()
+                }],
+            })))
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        "#ifndef BAR_H
+#define BAR_H
+
+#include <stdbool.h>
+
+int fn_branch(bool do_branch1, bool do_branch2);
+
+#endif // BAR_H
+#include \"ˇ\"",
+    );
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::List(lsp::CompletionList {
+                is_incomplete: true,
+                item_defaults: None,
+                items: vec![lsp::CompletionItem {
+                    kind: Some(lsp::CompletionItemKind::FILE),
+                    label: "AGL/".to_string(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: 8,
+                                character: 10,
+                            },
+                            end: lsp::Position {
+                                line: 8,
+                                character: 11,
+                            },
+                        },
+                        new_text: "AGL/".to_string(),
+                    })),
+                    sort_text: Some("40b67681AGL/".to_string()),
+                    insert_text_format: Some(lsp::InsertTextFormat::PLAIN_TEXT),
+                    filter_text: Some("AGL/".to_string()),
+                    insert_text: Some("AGL/".to_string()),
+                    ..lsp::CompletionItem::default()
+                }],
+            })))
+        });
+    cx.update_editor(|editor, window, cx| {
+        editor.show_completions(&ShowCompletions { trigger: None }, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        editor.confirm_completion(&ConfirmCompletion::default(), window, cx)
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        r##"#ifndef BAR_H
+#define BAR_H
+
+#include <stdbool.h>
+
+int fn_branch(bool do_branch1, bool do_branch2);
+
+#endif // BAR_H
+#include "AGL/ˇ"##,
+    );
+
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("\"", window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.assert_editor_state(
+        r##"#ifndef BAR_H
+#define BAR_H
+
+#include <stdbool.h>
+
+int fn_branch(bool do_branch1, bool do_branch2);
+
+#endif // BAR_H
+#include "AGL/"ˇ"##,
+    );
+}
+
+#[gpui::test]
 async fn test_no_duplicated_completion_requests(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

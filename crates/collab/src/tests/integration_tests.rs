@@ -842,7 +842,7 @@ async fn test_client_disconnecting_from_room(
 
     // Allow user A to reconnect to the server.
     server.allow_connections();
-    executor.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
 
     // Call user B again from client A.
     active_call_a
@@ -1358,7 +1358,7 @@ async fn test_calls_on_multiple_connections(
 
     // User A reconnects automatically, then calls user B again.
     server.allow_connections();
-    executor.advance_clock(RECEIVE_TIMEOUT);
+    executor.advance_clock(RECONNECT_TIMEOUT);
     active_call_a
         .update(cx_a, |call, cx| {
             call.invite(client_b1.user_id().unwrap(), None, cx)
