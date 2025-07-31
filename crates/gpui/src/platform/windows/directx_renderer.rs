@@ -203,7 +203,7 @@ impl DirectXRenderer {
 
     fn present(&mut self) -> Result<()> {
         unsafe {
-            let result = self.resources.swap_chain.Present(1, DXGI_PRESENT(0));
+            let result = self.resources.swap_chain.Present(0, DXGI_PRESENT(0));
             // Presenting the swap chain can fail if the DirectX device was removed or reset.
             if result == DXGI_ERROR_DEVICE_REMOVED || result == DXGI_ERROR_DEVICE_RESET {
                 let reason = self.devices.device.GetDeviceRemovedReason();

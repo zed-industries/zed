@@ -340,11 +340,27 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            if self.handle_events() {
-                break;
+        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
+        begin_vsync(*vsync_event);
+        'a: loop {
+            let wait_result = unsafe {
+                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
+            };
+
+            match wait_result {
+                // compositor clock ticked so we should draw a frame
+                WAIT_EVENT(0) => self.redraw_all(),
+                // Windows thread messages are posted
+                WAIT_EVENT(1) => {
+                    if self.handle_events() {
+                        break 'a;
+                    }
+                }
+                _ => {
+                    log::error!("Something went wrong while waiting {:?}", wait_result);
+                    break;
+                }
             }
-            self.redraw_all();
         }
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
@@ -820,6 +836,16 @@ fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<P
         string
     };
     Ok(Some(PathBuf::from(file_path_string)))
+}
+
+fn begin_vsync(vsync_event: HANDLE) {
+    let event: SafeHandle = vsync_event.into();
+    std::thread::spawn(move || unsafe {
+        loop {
+            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
+            SetEvent(*event).log_err();
+        }
+    });
 }
 
 fn load_icon() -> Result<HICON> {
