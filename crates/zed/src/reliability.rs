@@ -3,11 +3,9 @@ use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{TelemetrySettings, telemetry};
-use crash_handler::CrashHandler;
 use db::kvp::KEY_VALUE_STORE;
-use gpui::{App, AppContext as _, Application, SemanticVersion};
+use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
-use minidumper::{Client, LoopAction, MinidumpBinary};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
@@ -20,10 +18,9 @@ use std::{
     panic,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicU32, Ordering},
     },
     thread,
-    time::Duration,
 };
 use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
@@ -31,68 +28,6 @@ use util::ResultExt;
 use zlog::info;
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
-static CRASH_HANDLER: AtomicBool = AtomicBool::new(false);
-static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
-
-pub fn init_crash_handler(app: &Application) {
-    let exe = std::env::current_exe().expect("unable to find ourselves");
-    let zed_pid = std::process::id();
-    // FIXME: on mac and windows this isn't an abstract name, need to pick a path...
-    // what's the equivilant of `/var/run` on windows?
-    let socket_name = format!("zed-crash-handler-{zed_pid}");
-    #[allow(unused)]
-    let server_pid = std::process::Command::new(exe)
-        .arg("--crash-handler")
-        .arg(&socket_name)
-        .spawn()
-        .expect("unable to spawn server process")
-        .id();
-    info!("spawning server process");
-
-    app.background_executor()
-        .spawn(async move {
-            let mut elapsed = Duration::ZERO;
-            let retry_frequency = Duration::from_millis(100);
-            let mut maybe_client = None;
-            while maybe_client.is_none() {
-                if let Ok(client) = Client::with_name(&socket_name) {
-                    maybe_client = Some(client);
-                    info!("connected to crash handler process after {elapsed:?}");
-                }
-                elapsed += retry_frequency;
-                smol::Timer::after(retry_frequency).await;
-            }
-            let client = maybe_client.unwrap();
-            let handler = crash_handler::CrashHandler::attach(unsafe {
-                crash_handler::make_crash_event(
-                    move |crash_context: &crash_handler::CrashContext| {
-                        // only request a minidump once
-                        let res = if REQUESTED_MINIDUMP
-                            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-                            .is_ok()
-                        {
-                            client.send_message(2, "mistakes were made").unwrap();
-                            client.ping().unwrap();
-                            client.request_dump(crash_context).is_ok()
-                        } else {
-                            true
-                        };
-                        crash_handler::CrashEventResult::Handled(res)
-                    },
-                )
-            })
-            .expect("failed to attach signal handler");
-
-            #[cfg(target_os = "linux")]
-            {
-                handler.set_ptracer(Some(server_pid));
-            }
-            CRASH_HANDLER.store(true, Ordering::Release);
-            std::mem::forget(handler);
-            info!("crash handler registered");
-        })
-        .detach();
-}
 
 pub fn init_panic_hook(
     app_version: SemanticVersion,
@@ -111,17 +46,7 @@ pub fn init_panic_hook(
                 std::thread::yield_now();
             }
         }
-        // wait 500ms for the crash handler process to start up
-        // if it's still not there just write panic info and no minidump
-        let retry_frequency = Duration::from_millis(100);
-        for _ in 0..5 {
-            if CRASH_HANDLER.load(Ordering::Acquire) {
-                log::error!("triggering a crash to generate a minidump...");
-                CrashHandler.simulate_exception(None);
-                break;
-            }
-            thread::sleep(retry_frequency);
-        }
+        crashes::handle_panic();
 
         let thread = thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
@@ -524,57 +449,6 @@ pub fn monitor_main_thread_hangs(
             }
         })
         .detach()
-}
-
-pub struct CrashServer;
-
-impl minidumper::ServerHandler for CrashServer {
-    fn create_minidump_file(&self) -> Result<(std::fs::File, std::path::PathBuf), std::io::Error> {
-        let dump_path = paths::logs_dir()
-            .join(uuid::Uuid::new_v4().to_string())
-            .with_extension("dmp");
-        let file = std::fs::File::create(&dump_path)?;
-        Ok((file, dump_path))
-    }
-
-    fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
-        match result {
-            Ok(mut md_bin) => {
-                use std::io::Write;
-                let _ = md_bin.file.flush();
-                info!("wrote minidump to disk {:?}", md_bin.path);
-            }
-            Err(e) => {
-                info!("failed to write minidump: {:#}", e);
-            }
-        }
-
-        LoopAction::Exit
-    }
-
-    fn on_message(&self, kind: u32, buffer: Vec<u8>) {
-        info!(
-            "kind: {kind}, message: {}",
-            String::from_utf8(buffer).unwrap()
-        );
-    }
-
-    fn on_client_disconnected(&self, clients: usize) -> LoopAction {
-        dbg!("disconnected", clients);
-        if clients == 0 {
-            LoopAction::Exit
-        } else {
-            LoopAction::Continue
-        }
-    }
-}
-
-pub fn crash_server(socket: &str) {
-    let mut server = minidumper::Server::with_name(socket).expect("failed to create server");
-    let ab = std::sync::atomic::AtomicBool::new(false);
-    server
-        .run(Box::new(CrashServer), &ab, None) // TODO: set timeout and ping it to keep alive
-        .expect("failed to run server");
 }
 
 fn upload_panics_and_crashes(

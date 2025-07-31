@@ -111,6 +111,7 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
 
 fn init_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
+        crashes::handle_panic();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
@@ -409,6 +410,8 @@ pub fn execute_run(
         ControlFlow::Continue(_) => {}
     }
 
+    let app = gpui::Application::headless();
+    app.background_executor().spawn(crashes::init()).detach();
     init_panic_hook();
     let log_rx = init_logging_server(log_file)?;
     log::info!(
@@ -425,7 +428,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    gpui::Application::headless().run(move |cx| {
+    app.run(move |cx| {
         settings::init(cx);
         let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);

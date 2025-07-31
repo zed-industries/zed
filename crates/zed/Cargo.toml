@@ -45,7 +45,7 @@ collections.workspace = true
 command_palette.workspace = true
 component.workspace = true
 copilot.workspace = true
-crash-handler.workspace = true
+crashes.workspace = true
 dap_adapters.workspace = true
 db.workspace = true
 debug_adapter_extension.workspace = true
@@ -97,7 +97,6 @@ svg_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }
-minidumper.workspace = true
 nc.workspace = true
 nix = { workspace = true, features = ["pthread", "signal"] }
 node_runtime.workspace = true

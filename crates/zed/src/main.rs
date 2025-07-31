@@ -174,7 +174,7 @@ pub fn main() {
 
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
-        reliability::crash_server(socket);
+        crashes::crash_server(socket.as_path());
         return;
     }
 
@@ -270,7 +270,7 @@ pub fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
 
-    reliability::init_crash_handler(&app);
+    app.background_executor().spawn(crashes::init()).detach();
     reliability::init_panic_hook(
         app_version,
         app_commit_sha.clone(),
@@ -1195,7 +1195,7 @@ struct Args {
     /// Used for recording minidumps on crashes by having Zed run a separate
     /// process communicating over a socket.
     #[arg(long, hide = true)]
-    crash_handler: Option<String>,
+    crash_handler: Option<PathBuf>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]
