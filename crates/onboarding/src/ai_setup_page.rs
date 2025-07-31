@@ -141,11 +141,7 @@ impl AiConfigurationPage {
             .child(self.render_llm_provider_card(window, cx))
     }
 
-    fn render_privacy_card(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_privacy_card(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .relative()
             .pt_2()
@@ -167,7 +163,7 @@ impl AiConfigurationPage {
                         Button::new("learn_more", "Learn More")
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::XSmall)
-                            .color(Color::Muted),
+                            .icon_color(Color::Muted),
                     ),
             )
             .child(
@@ -184,14 +180,19 @@ impl Render for AiConfigurationPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .gap_4()
-            .child(SwitchField::new(
-                "enable_ai",
-                "Enable AI features",
-                None,
-                ui::ToggleState::Selected,
-                |_, _, _| {},
-            ))
-            .child(self.render_privacy_card(window, cx))
+            .child(
+                v_flex()
+                    .justify_center()
+                    .child(div().h_0().child("hack").invisible())
+                    .child(SwitchField::new(
+                        "enable_ai",
+                        "Enable AI features",
+                        None,
+                        ui::ToggleState::Selected,
+                        |_, _, _| {},
+                    )),
+            )
+            .child(self.render_privacy_card(cx))
             .child(AiUpsellCard {
                 sign_in_status: SignInStatus::SignedIn,
                 sign_in: Arc::new(|_, _| {}),

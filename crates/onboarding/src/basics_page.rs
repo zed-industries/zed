@@ -92,12 +92,17 @@ pub(crate) fn render_basics_page(_: &mut Window, cx: &mut App) -> impl IntoEleme
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
-        .child(v_flex().justify_center().child(div().h_0().child("hack").invisible()).child(SwitchField::new(
-            "vim_mode",
-            "Vim Mode",
-            Some("Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.".into()),
-            ui::ToggleState::Selected,
-            |_, _, _| {},
-        )))
+        .child(
+            v_flex()
+                .justify_center()
+                .child(div().h_0().child("hack").invisible())
+                .child(SwitchField::new(
+                    "vim_mode",
+                    "Vim Mode",
+                    Some("Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.".into()),
+                    ui::ToggleState::Selected,
+                    |_, _, _| {},
+                ))
+        )
         .child(render_telemetry_section())
 }
