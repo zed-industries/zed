@@ -36,7 +36,7 @@ enum Commands {
     Context(ContextArgs),
     Predict {
         #[arg(long)]
-        predict_edits_body_file: Option<PathBuf>,
+        predict_edits_body: Option<PathBuf>,
         #[clap(flatten)]
         context_args: Option<ContextArgs>,
     },
@@ -296,7 +296,7 @@ fn main() {
                     .await
                     .map(|output| serde_json::to_string_pretty(&output.body).unwrap()),
                 Commands::Predict {
-                    predict_edits_body_file,
+                    predict_edits_body: predict_edits_body_file,
                     context_args,
                 } => {
                     cx.spawn(async move |cx| {
