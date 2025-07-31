@@ -158,6 +158,7 @@ impl Client {
     pub fn stdio(
         server_id: ContextServerId,
         binary: ModelContextServerBinary,
+        working_directory: &Option<PathBuf>,
         cx: AsyncApp,
     ) -> Result<Self> {
         log::info!(
@@ -172,7 +173,7 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
-        let transport = Arc::new(StdioTransport::new(binary, &cx)?);
+        let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
         Self::new(server_id, server_name.into(), transport, cx)
     }
 
@@ -330,23 +331,16 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_impl(method, params, None).await
+        self.request_with(method, params, None, Some(REQUEST_TIMEOUT))
+            .await
     }
 
-    pub async fn cancellable_request<T: DeserializeOwned>(
-        &self,
-        method: &str,
-        params: impl Serialize,
-        cancel_rx: oneshot::Receiver<()>,
-    ) -> Result<T> {
-        self.request_impl(method, params, Some(cancel_rx)).await
-    }
-
-    pub async fn request_impl<T: DeserializeOwned>(
+    pub async fn request_with<T: DeserializeOwned>(
         &self,
         method: &str,
         params: impl Serialize,
         cancel_rx: Option<oneshot::Receiver<()>>,
+        timeout: Option<Duration>,
     ) -> Result<T> {
         let id = self.next_id.fetch_add(1, SeqCst);
         let request = serde_json::to_string(&Request {
@@ -382,7 +376,13 @@ impl Client {
         handle_response?;
         send?;
 
-        let mut timeout = executor.timer(REQUEST_TIMEOUT).fuse();
+        let mut timeout_fut = pin!(
+            match timeout {
+                Some(timeout) => future::Either::Left(executor.timer(timeout)),
+                None => future::Either::Right(future::pending()),
+            }
+            .fuse()
+        );
         let mut cancel_fut = pin!(
             match cancel_rx {
                 Some(rx) => future::Either::Left(async {
@@ -419,10 +419,10 @@ impl Client {
                         reason: None
                     })
                 ).log_err();
-                anyhow::bail!("Request cancelled")
+                anyhow::bail!(RequestCanceled)
             }
-            _ = timeout => {
-                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", REQUEST_TIMEOUT);
+            _ = timeout_fut => {
+                log::error!("cancelled csp request task for {method:?} id {id} which took over {:?}", timeout.unwrap());
                 anyhow::bail!("Context server request timeout");
             }
         }
@@ -449,6 +449,17 @@ impl Client {
         self.notification_handlers
             .lock()
             .insert(method, Box::new(f));
+    }
+}
+
+#[derive(Debug)]
+pub struct RequestCanceled;
+
+impl std::error::Error for RequestCanceled {}
+
+impl std::fmt::Display for RequestCanceled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Context server request was canceled")
     }
 }
 

@@ -1,20 +1,18 @@
+use crate::welcome::{ShowWelcome, WelcomePage};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Subscription, Task, WeakEntity, Window, actions,
+    Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription, Task, WeakEntity,
+    Window, actions,
 };
-use settings::{Settings, SettingsStore, update_settings_file};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use theme::{ThemeMode, ThemeSettings};
-use ui::{
-    ButtonCommon as _, ButtonSize, ButtonStyle, Clickable as _, Color, Divider, FluentBuilder,
-    Headline, InteractiveElement, KeyBinding, Label, LabelCommon, ParentElement as _,
-    StatefulInteractiveElement, Styled, ToggleButton, Toggleable as _, Vector, VectorName, div,
-    h_flex, rems, v_container, v_flex,
-};
+use ui::{FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -22,10 +20,32 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod basics_page;
+mod editing_page;
+mod welcome;
+
 pub struct OnBoardingFeatureFlag {}
 
 impl FeatureFlag for OnBoardingFeatureFlag {
     const NAME: &'static str = "onboarding";
+}
+
+/// Imports settings from Visual Studio Code.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ImportVsCodeSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
+}
+
+/// Imports settings from Cursor editor.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct ImportCursorSettings {
+    #[serde(default)]
+    pub skip_prompt: bool,
 }
 
 pub const FIRST_OPEN: &str = "first_open";
@@ -65,12 +85,80 @@ pub fn init(cx: &mut App) {
                 .detach();
         });
     });
+
+    cx.on_action(|_: &ShowWelcome, cx| {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            workspace
+                .with_local_workspace(window, cx, |workspace, window, cx| {
+                    let existing = workspace
+                        .active_pane()
+                        .read(cx)
+                        .items()
+                        .find_map(|item| item.downcast::<WelcomePage>());
+
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let settings_page = WelcomePage::new(window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(settings_page),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .detach();
+        });
+    });
+
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_workspace, action: &ImportVsCodeSettings, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let action = *action;
+
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::VsCode,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
+                })
+                .detach();
+        });
+
+        workspace.register_action(|_workspace, action: &ImportCursorSettings, window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let action = *action;
+
+            window
+                .spawn(cx, async move |cx: &mut AsyncWindowContext| {
+                    handle_import_vscode_settings(
+                        VsCodeSettingsSource::Cursor,
+                        action.skip_prompt,
+                        fs,
+                        cx,
+                    )
+                    .await
+                })
+                .detach();
+        });
+    })
+    .detach();
+
     cx.observe_new::<Workspace>(|_, window, cx| {
         let Some(window) = window else {
             return;
         };
 
-        let onboarding_actions = [std::any::TypeId::of::<OpenOnboarding>()];
+        let onboarding_actions = [
+            std::any::TypeId::of::<OpenOnboarding>(),
+            std::any::TypeId::of::<ShowWelcome>(),
+        ];
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&onboarding_actions);
@@ -114,23 +202,6 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
     )
 }
 
-fn read_theme_selection(cx: &App) -> ThemeMode {
-    let settings = ThemeSettings::get_global(cx);
-    settings
-        .theme_selection
-        .as_ref()
-        .and_then(|selection| selection.mode())
-        .unwrap_or_default()
-}
-
-fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
-    let fs = <dyn Fs>::global(cx);
-
-    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-        settings.set_mode(theme_mode);
-    });
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedPage {
     Basics,
@@ -155,7 +226,7 @@ impl Onboarding {
         })
     }
 
-    fn render_page_nav(
+    fn render_nav_button(
         &mut self,
         page: SelectedPage,
         _: &mut Window,
@@ -166,101 +237,124 @@ impl Onboarding {
             SelectedPage::Editing => "Editing",
             SelectedPage::AiSetup => "AI Setup",
         };
+
         let binding = match page {
             SelectedPage::Basics => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-1").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::Editing => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-2").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::AiSetup => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-3").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
         };
+
         let selected = self.selected_page == page;
+
         h_flex()
             .id(text)
-            .rounded_sm()
-            .child(text)
-            .child(binding)
-            .h_8()
+            .relative()
+            .w_full()
             .gap_2()
             .px_2()
             .py_0p5()
-            .w_full()
             .justify_between()
-            .map(|this| {
-                if selected {
-                    this.bg(Color::Selected.color(cx))
-                        .border_l_1()
-                        .border_color(Color::Accent.color(cx))
-                } else {
-                    this.text_color(Color::Muted.color(cx))
-                }
+            .rounded_sm()
+            .when(selected, |this| {
+                this.child(
+                    div()
+                        .h_4()
+                        .w_px()
+                        .bg(cx.theme().colors().text_accent)
+                        .absolute()
+                        .left_0(),
+                )
             })
-            .hover(|style| {
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(Label::new(text).map(|this| {
                 if selected {
-                    style.bg(Color::Selected.color(cx).opacity(0.6))
+                    this.color(Color::Default)
                 } else {
-                    style.bg(Color::Selected.color(cx).opacity(0.3))
+                    this.color(Color::Muted)
                 }
-            })
+            }))
+            .child(binding)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_page = page;
                 cx.notify();
             }))
     }
 
+    fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .w(rems_from_px(220.))
+            .flex_shrink_0()
+            .gap_4()
+            .justify_between()
+            .child(
+                v_flex()
+                    .gap_6()
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .gap_4()
+                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                            .child(
+                                v_flex()
+                                    .child(
+                                        Headline::new("Welcome to Zed").size(HeadlineSize::Small),
+                                    )
+                                    .child(
+                                        Label::new("The editor for what's next")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                            .italic(),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .child(
+                                v_flex()
+                                    .py_4()
+                                    .border_y_1()
+                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                                    .gap_1()
+                                    .children([
+                                        self.render_nav_button(SelectedPage::Basics, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::Editing, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::AiSetup, window, cx)
+                                            .into_element(),
+                                    ]),
+                            )
+                            .child(Button::new("skip_all", "Skip All")),
+                    ),
+            )
+            .child(
+                Button::new("sign_in", "Sign In")
+                    .style(ButtonStyle::Outlined)
+                    .full_width(),
+            )
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
-            SelectedPage::Editing => self.render_editing_page(window, cx).into_any_element(),
+            SelectedPage::Basics => {
+                crate::basics_page::render_basics_page(window, cx).into_any_element()
+            }
+            SelectedPage::Editing => {
+                crate::editing_page::render_editing_page(window, cx).into_any_element()
+            }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
-    }
-
-    fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_mode = read_theme_selection(cx);
-
-        v_container().child(
-            h_flex()
-                .items_center()
-                .justify_between()
-                .child(Label::new("Theme"))
-                .child(
-                    h_flex()
-                        .rounded_md()
-                        .child(
-                            ToggleButton::new("light", "Light")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Light)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Light, cx))
-                                .first(),
-                        )
-                        .child(
-                            ToggleButton::new("dark", "Dark")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::Dark)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::Dark, cx))
-                                .last(),
-                        )
-                        .child(
-                            ToggleButton::new("system", "System")
-                                .style(ButtonStyle::Filled)
-                                .size(ButtonSize::Large)
-                                .toggle_state(theme_mode == ThemeMode::System)
-                                .on_click(|_, _, cx| write_theme_selection(ThemeMode::System, cx))
-                                .middle(),
-                        ),
-                ),
-        )
-    }
-
-    fn render_editing_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // div().child("editing page")
-        "Right"
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -273,44 +367,27 @@ impl Render for Onboarding {
         h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context("onboarding-page")
-            .px_24()
-            .py_12()
-            .items_start()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(
-                v_flex()
-                    .w_1_3()
-                    .h_full()
+                h_flex()
+                    .max_w(rems_from_px(1100.))
+                    .size_full()
+                    .m_auto()
+                    .py_20()
+                    .px_12()
+                    .items_start()
+                    .gap_12()
+                    .child(self.render_nav(window, cx))
                     .child(
-                        h_flex()
-                            .pt_0p5()
-                            .child(Vector::square(VectorName::ZedLogo, rems(2.)))
-                            .child(
-                                v_flex()
-                                    .left_1()
-                                    .items_center()
-                                    .child(Headline::new("Welcome to Zed"))
-                                    .child(
-                                        Label::new("The editor for what's next")
-                                            .color(Color::Muted)
-                                            .italic(),
-                                    ),
-                            ),
-                    )
-                    .p_1()
-                    .child(Divider::horizontal_dashed())
-                    .child(
-                        v_flex().gap_1().children([
-                            self.render_page_nav(SelectedPage::Basics, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::Editing, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::AiSetup, window, cx)
-                                .into_element(),
-                        ]),
+                        div()
+                            .pl_12()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .size_full()
+                            .child(self.render_page(window, cx)),
                     ),
             )
-            // .child(Divider::vertical_dashed())
-            .child(div().w_2_3().h_full().child(self.render_page(window, cx)))
     }
 }
 
@@ -349,4 +426,55 @@ impl Item for Onboarding {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
+}
+
+pub async fn handle_import_vscode_settings(
+    source: VsCodeSettingsSource,
+    skip_prompt: bool,
+    fs: Arc<dyn Fs>,
+    cx: &mut AsyncWindowContext,
+) {
+    use util::truncate_and_remove_front;
+
+    let vscode_settings =
+        match settings::VsCodeSettings::load_user_settings(source, fs.clone()).await {
+            Ok(vscode_settings) => vscode_settings,
+            Err(err) => {
+                zlog::error!("{err}");
+                let _ = cx.prompt(
+                    gpui::PromptLevel::Info,
+                    &format!("Could not find or load a {source} settings file"),
+                    None,
+                    &["Ok"],
+                );
+                return;
+            }
+        };
+
+    if !skip_prompt {
+        let prompt = cx.prompt(
+            gpui::PromptLevel::Warning,
+            &format!(
+                "Importing {} settings may overwrite your existing settings. \
+                Will import settings from {}",
+                vscode_settings.source,
+                truncate_and_remove_front(&vscode_settings.path.to_string_lossy(), 128),
+            ),
+            None,
+            &["Ok", "Cancel"],
+        );
+        let result = cx.spawn(async move |_| prompt.await.ok()).await;
+        if result != Some(0) {
+            return;
+        }
+    };
+
+    cx.update(|_, cx| {
+        let source = vscode_settings.source;
+        let path = vscode_settings.path.clone();
+        cx.global::<SettingsStore>()
+            .import_vscode_settings(fs, vscode_settings);
+        zlog::info!("Imported {source} settings from {}", path.display());
+    })
+    .ok();
 }

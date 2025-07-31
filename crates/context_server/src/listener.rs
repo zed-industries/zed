@@ -419,7 +419,7 @@ pub struct ToolResponse<T> {
     pub structured_content: T,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct RawRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<RequestId>,

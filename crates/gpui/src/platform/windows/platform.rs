@@ -28,13 +28,12 @@ use windows::{
     core::*,
 };
 
-use crate::{platform::blade::BladeContext, *};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
-    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -111,13 +110,11 @@ impl WindowsPlatform {
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             state,
             raw_window_handles,
-            gpu_context,
             icon,
             main_receiver,
             background_executor,
@@ -343,27 +340,11 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
-        begin_vsync(*vsync_event);
-        'a: loop {
-            let wait_result = unsafe {
-                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
-            };
-
-            match wait_result {
-                // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => self.redraw_all(),
-                // Windows thread messages are posted
-                WAIT_EVENT(1) => {
-                    if self.handle_events() {
-                        break 'a;
-                    }
-                }
-                _ => {
-                    log::error!("Something went wrong while waiting {:?}", wait_result);
-                    break;
-                }
+        loop {
+            if self.handle_events() {
+                break;
             }
+            self.redraw_all();
         }
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
@@ -455,12 +436,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.generate_creation_info(),
-            &self.gpu_context,
-        )?;
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
@@ -844,16 +820,6 @@ fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<P
         string
     };
     Ok(Some(PathBuf::from(file_path_string)))
-}
-
-fn begin_vsync(vsync_event: HANDLE) {
-    let event: SafeHandle = vsync_event.into();
-    std::thread::spawn(move || unsafe {
-        loop {
-            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(*event).log_err();
-        }
-    });
 }
 
 fn load_icon() -> Result<HICON> {

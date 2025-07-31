@@ -321,11 +321,11 @@ pub enum CompletionMode {
     Burn,
 }
 
-impl From<CompletionMode> for zed_llm_client::CompletionMode {
+impl From<CompletionMode> for cloud_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
-            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
+            CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
         }
     }
 }

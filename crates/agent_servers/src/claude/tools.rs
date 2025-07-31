@@ -311,6 +311,7 @@ impl ClaudeTool {
             label: self.label(),
             content: self.content(),
             locations: self.locations(),
+            raw_input: None,
         }
     }
 }

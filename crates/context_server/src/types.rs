@@ -626,6 +626,7 @@ pub enum ClientNotification {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CancelledParams {
     pub request_id: RequestId,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -683,6 +684,18 @@ pub struct CallToolResponse {
     pub meta: Option<HashMap<String, serde_json::Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<serde_json::Value>,
+}
+
+impl CallToolResponse {
+    pub fn text_contents(&self) -> String {
+        let mut text = String::new();
+        for chunk in &self.content {
+            if let ToolResponseContent::Text { text: chunk } = chunk {
+                text.push_str(&chunk)
+            };
+        }
+        text
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

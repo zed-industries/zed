@@ -11,8 +11,8 @@ use gpui::{App, Task, Window, actions};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{
-    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, Facepile,
-    PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
+    Avatar, AvatarAudioStatusIndicator, ContextMenu, ContextMenuItem, Divider, DividerColor,
+    Facepile, PopoverMenu, SplitButton, SplitButtonStyle, TintColor, Tooltip, prelude::*,
 };
 use util::maybe;
 use workspace::notifications::DetachAndPromptErr;
@@ -343,6 +343,24 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
+        children.push(
+            h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("leave-call", IconName::Exit)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(Tooltip::text("Leave Call"))
+                        .icon_size(IconSize::Small)
+                        .on_click(move |_, _window, cx| {
+                            ActiveCall::global(cx)
+                                .update(cx, |call, cx| call.hang_up(cx))
+                                .detach_and_log_err(cx);
+                        }),
+                )
+                .child(Divider::vertical().color(DividerColor::Border))
+                .into_any_element(),
+        );
+
         if is_local && can_share_projects && !is_connecting_to_project {
             children.push(
                 Button::new(
@@ -369,32 +387,14 @@ impl TitleBar {
             );
         }
 
-        children.push(
-            div()
-                .pr_2()
-                .child(
-                    IconButton::new("leave-call", ui::IconName::Exit)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Leave call"))
-                        .icon_size(IconSize::Small)
-                        .on_click(move |_, _window, cx| {
-                            ActiveCall::global(cx)
-                                .update(cx, |call, cx| call.hang_up(cx))
-                                .detach_and_log_err(cx);
-                        }),
-                )
-                .child(Divider::vertical())
-                .into_any_element(),
-        );
-
         if can_use_microphone {
             children.push(
                 IconButton::new(
                     "mute-microphone",
                     if is_muted {
-                        ui::IconName::MicMute
+                        IconName::MicMute
                     } else {
-                        ui::IconName::Mic
+                        IconName::Mic
                     },
                 )
                 .tooltip(move |window, cx| {
@@ -429,9 +429,9 @@ impl TitleBar {
             IconButton::new(
                 "mute-sound",
                 if is_deafened {
-                    ui::IconName::AudioOff
+                    IconName::AudioOff
                 } else {
-                    ui::IconName::AudioOn
+                    IconName::AudioOn
                 },
             )
             .style(ButtonStyle::Subtle)
@@ -462,7 +462,7 @@ impl TitleBar {
         );
 
         if can_use_microphone && screen_sharing_supported {
-            let trigger = IconButton::new("screen-share", ui::IconName::Screen)
+            let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_screen_sharing)
@@ -498,7 +498,7 @@ impl TitleBar {
                     trigger.render(window, cx),
                     self.render_screen_list().into_any_element(),
                 )
-                .style(SplitButtonStyle::Outlined)
+                .style(SplitButtonStyle::Transparent)
                 .into_any_element(),
             );
         }
@@ -513,11 +513,11 @@ impl TitleBar {
             .with_handle(self.screen_share_popover_handle.clone())
             .trigger(
                 ui::ButtonLike::new_rounded_right("screen-share-screen-list-trigger")
-                    .layer(ui::ElevationIndex::ModalSurface)
-                    .size(ui::ButtonSize::None)
                     .child(
-                        div()
-                            .px_1()
+                        h_flex()
+                            .mx_neg_0p5()
+                            .h_full()
+                            .justify_center()
                             .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
                     )
                     .toggle_state(self.screen_share_popover_handle.is_deployed()),

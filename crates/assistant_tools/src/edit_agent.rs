@@ -7,6 +7,7 @@ mod streaming_fuzzy_matcher;
 use crate::{Template, Templates};
 use anyhow::Result;
 use assistant_tool::ActionLog;
+use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
 use edit_parser::{EditParser, EditParserEvent, EditParserMetrics};
@@ -29,7 +30,6 @@ use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 use util::debug_panic;
-use zed_llm_client::CompletionIntent;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
