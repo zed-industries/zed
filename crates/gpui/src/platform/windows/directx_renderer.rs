@@ -88,8 +88,11 @@ struct DirectComposition {
 
 impl DirectXDevices {
     pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
-        let dxgi_factory = get_dxgi_factory().context("Creating DXGI factory")?;
-        let adapter = get_adapter(&dxgi_factory).context("Getting DXGI adapter")?;
+        let debug_layer_available = check_debug_layer_available();
+        let dxgi_factory =
+            get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
+        let adapter =
+            get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
         let (device, device_context) = {
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
@@ -99,6 +102,7 @@ impl DirectXDevices {
                 Some(&mut device),
                 Some(&mut context),
                 Some(&mut feature_level),
+                debug_layer_available,
             )
             .context("Creating Direct3D device")?;
             match feature_level {
@@ -977,25 +981,34 @@ impl Drop for DirectXResources {
 }
 
 #[inline]
-fn get_dxgi_factory() -> Result<IDXGIFactory6> {
+fn check_debug_layer_available() -> bool {
     #[cfg(debug_assertions)]
-    let factory_flag = if unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
-        .log_err()
-        .is_some()
     {
+        unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
+            .log_err()
+            .is_some()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+#[inline]
+fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
+    let factory_flag = if debug_layer_available {
         DXGI_CREATE_FACTORY_DEBUG
     } else {
+        #[cfg(debug_assertions)]
         log::warn!(
             "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
         );
         DXGI_CREATE_FACTORY_FLAGS::default()
     };
-    #[cfg(not(debug_assertions))]
-    let factory_flag = DXGI_CREATE_FACTORY_FLAGS::default();
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
-fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
+fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe {
             dxgi_factory
@@ -1009,7 +1022,10 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
         }
         // Check to see whether the adapter supports Direct3D 11, but don't
         // create the actual device yet.
-        if get_device(&adapter, None, None, None).log_err().is_some() {
+        if get_device(&adapter, None, None, None, debug_layer_available)
+            .log_err()
+            .is_some()
+        {
             return Ok(adapter);
         }
     }
@@ -1022,11 +1038,13 @@ fn get_device(
     device: Option<*mut Option<ID3D11Device>>,
     context: Option<*mut Option<ID3D11DeviceContext>>,
     feature_level: Option<*mut D3D_FEATURE_LEVEL>,
+    debug_layer_available: bool,
 ) -> Result<()> {
-    #[cfg(debug_assertions)]
-    let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
-    #[cfg(not(debug_assertions))]
-    let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    let device_flags = if debug_layer_available {
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
+    } else {
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT
+    };
     unsafe {
         D3D11CreateDevice(
             adapter,

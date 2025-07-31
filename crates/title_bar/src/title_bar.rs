@@ -21,6 +21,7 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, CloudUserStore, UserStore, zed_urls};
+use cloud_llm_client::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
@@ -28,7 +29,6 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
-use rpc::proto;
 use settings::Settings as _;
 use settings_ui::keybindings;
 use std::sync::Arc;
@@ -634,8 +634,8 @@ impl TitleBar {
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
         let cloud_user_store = self.cloud_user_store.read(cx);
         if let Some(user) = cloud_user_store.authenticated_user() {
-            let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
-            let plan = self.user_store.read(cx).current_plan().filter(|_| {
+            let has_subscription_period = cloud_user_store.subscription_period().is_some();
+            let plan = cloud_user_store.plan().filter(|_| {
                 // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
                 has_subscription_period
             });
@@ -662,13 +662,9 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(proto::Plan::Free) => {
-                                ("Free", Color::Default, free_chip_bg)
-                            }
-                            Some(proto::Plan::ZedProTrial) => {
-                                ("Pro Trial", Color::Accent, pro_chip_bg)
-                            }
-                            Some(proto::Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                            None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                            Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                            Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
                         };
 
                         menu.custom_entry(
