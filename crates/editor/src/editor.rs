@@ -2956,7 +2956,7 @@ impl Editor {
                     cx,
                 )
             });
-        };
+        }
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
