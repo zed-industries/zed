@@ -7,7 +7,7 @@ mod settings_json;
 mod settings_store;
 mod vscode_import;
 
-use gpui::App;
+use gpui::{App, Global};
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
 use util::asset_str;
@@ -26,6 +26,11 @@ pub use settings_store::{
     SettingsStore,
 };
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ActiveSettingsProfileName(pub String);
+
+impl Global for ActiveSettingsProfileName {}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -74,6 +79,7 @@ pub fn init(cx: &mut App) {
         .unwrap();
     cx.set_global(settings);
     BaseKeymap::register(cx);
+    SettingsStore::observe_active_settings_profile_name(cx).detach();
 }
 
 pub fn default_settings() -> Cow<'static, str> {

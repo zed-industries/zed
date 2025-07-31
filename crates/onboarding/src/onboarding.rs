@@ -10,16 +10,11 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
-use std::{alloc::System, sync::Arc};
-use theme::{
-    Appearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings,
-    ThemeSettingsContent,
-};
+use settings::{SettingsStore, VsCodeSettingsSource};
+use std::sync::Arc;
 use ui::{
-    Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
-    ToggleButton, ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*,
-    rems_from_px,
+    FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement, Vector,
+    VectorName, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -28,6 +23,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod basics_page;
 mod editing_page;
 mod theme_preview;
 mod welcome;
@@ -234,7 +230,7 @@ impl Onboarding {
         })
     }
 
-    fn render_page_nav(
+    fn render_nav_button(
         &mut self,
         page: SelectedPage,
         _: &mut Window,
@@ -245,67 +241,124 @@ impl Onboarding {
             SelectedPage::Editing => "Editing",
             SelectedPage::AiSetup => "AI Setup",
         };
+
         let binding = match page {
             SelectedPage::Basics => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-1").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::Editing => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-2").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::AiSetup => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-3").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
         };
+
         let selected = self.selected_page == page;
+
         h_flex()
             .id(text)
-            .rounded_sm()
-            .child(text)
-            .child(binding)
-            .h_8()
+            .relative()
+            .w_full()
             .gap_2()
             .px_2()
             .py_0p5()
-            .w_full()
             .justify_between()
-            .map(|this| {
-                if selected {
-                    this.bg(Color::Selected.color(cx))
-                        .border_l_1()
-                        .border_color(Color::Accent.color(cx))
-                } else {
-                    this.text_color(Color::Muted.color(cx))
-                }
+            .rounded_sm()
+            .when(selected, |this| {
+                this.child(
+                    div()
+                        .h_4()
+                        .w_px()
+                        .bg(cx.theme().colors().text_accent)
+                        .absolute()
+                        .left_0(),
+                )
             })
-            .hover(|style| {
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(Label::new(text).map(|this| {
                 if selected {
-                    style.bg(Color::Selected.color(cx).opacity(0.6))
+                    this.color(Color::Default)
                 } else {
-                    style.bg(Color::Selected.color(cx).opacity(0.3))
+                    this.color(Color::Muted)
                 }
-            })
+            }))
+            .child(binding)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_page = page;
                 cx.notify();
             }))
     }
 
+    fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .w(rems_from_px(220.))
+            .flex_shrink_0()
+            .gap_4()
+            .justify_between()
+            .child(
+                v_flex()
+                    .gap_6()
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .gap_4()
+                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                            .child(
+                                v_flex()
+                                    .child(
+                                        Headline::new("Welcome to Zed").size(HeadlineSize::Small),
+                                    )
+                                    .child(
+                                        Label::new("The editor for what's next")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                            .italic(),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .child(
+                                v_flex()
+                                    .py_4()
+                                    .border_y_1()
+                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                                    .gap_1()
+                                    .children([
+                                        self.render_nav_button(SelectedPage::Basics, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::Editing, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::AiSetup, window, cx)
+                                            .into_element(),
+                                    ]),
+                            )
+                            .child(Button::new("skip_all", "Skip All")),
+                    ),
+            )
+            .child(
+                Button::new("sign_in", "Sign In")
+                    .style(ButtonStyle::Outlined)
+                    .full_width(),
+            )
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
+            SelectedPage::Basics => {
+                crate::basics_page::render_basics_page(window, cx).into_any_element()
+            }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
-    }
-
-    fn render_basics_page(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        return render_theme_selector(window, cx);
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -318,44 +371,27 @@ impl Render for Onboarding {
         h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context("onboarding-page")
-            .px_24()
-            .py_12()
-            .items_start()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(
-                v_flex()
-                    .w_1_3()
-                    .h_full()
+                h_flex()
+                    .max_w(rems_from_px(1100.))
+                    .size_full()
+                    .m_auto()
+                    .py_20()
+                    .px_12()
+                    .items_start()
+                    .gap_12()
+                    .child(self.render_nav(window, cx))
                     .child(
-                        h_flex()
-                            .pt_0p5()
-                            .child(Vector::square(VectorName::ZedLogo, rems(2.)))
-                            .child(
-                                v_flex()
-                                    .left_1()
-                                    .items_center()
-                                    .child(Headline::new("Welcome to Zed"))
-                                    .child(
-                                        Label::new("The editor for what's next")
-                                            .color(Color::Muted)
-                                            .italic(),
-                                    ),
-                            ),
-                    )
-                    .p_1()
-                    .child(Divider::horizontal())
-                    .child(
-                        v_flex().gap_1().children([
-                            self.render_page_nav(SelectedPage::Basics, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::Editing, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::AiSetup, window, cx)
-                                .into_element(),
-                        ]),
+                        div()
+                            .pl_12()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .size_full()
+                            .child(self.render_page(window, cx)),
                     ),
             )
-            .child(div().child(Divider::vertical()).h_full())
-            .child(div().w_2_3().h_full().child(self.render_page(window, cx)))
     }
 }
 
@@ -445,201 +481,4 @@ pub async fn handle_import_vscode_settings(
         zlog::info!("Imported {source} settings from {}", path.display());
     })
     .ok();
-}
-
-/// separates theme "mode" ("dark" | "light" | "system") into two separate states
-/// - appearance = "dark" | "light"
-/// - "system" true/false
-/// when system selected:
-///  - toggling between light and dark does not change theme.mode, just which variant will be changed
-/// when system not selected:
-///  - toggling between light and dark does change theme.mode
-/// selecting a theme preview will always change theme.["light" | "dark"] to the selected theme,
-///
-/// this allows for selecting a dark and light theme option regardless of whether the mode is set to system or not
-/// it does not support setting theme to a static value
-fn render_theme_selector(window: &mut Window, cx: &mut App) -> impl IntoElement {
-    let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
-    let system_appearance = theme::SystemAppearance::global(cx);
-    let appearance_state = window.use_state(cx, |_, cx| {
-        theme_selection
-            .as_ref()
-            .and_then(|selection| selection.mode())
-            .and_then(|mode| match mode {
-                ThemeMode::System => None,
-                ThemeMode::Light => Some(Appearance::Light),
-                ThemeMode::Dark => Some(Appearance::Dark),
-            })
-            .unwrap_or(*system_appearance)
-    });
-    let appearance = appearance_state.read(cx).clone();
-    let theme_selection = theme_selection.unwrap_or_else(|| ThemeSelection::Dynamic {
-        mode: match *system_appearance {
-            Appearance::Light => ThemeMode::Light,
-            Appearance::Dark => ThemeMode::Dark,
-        },
-        light: ThemeName("One Light".into()),
-        dark: ThemeName("One Dark".into()),
-    });
-    let theme_registry = ThemeRegistry::global(cx);
-
-    let current_theme_name = theme_selection.theme(appearance);
-    let theme_mode = theme_selection.mode();
-
-    let selected_index = match appearance {
-        Appearance::Light => 0,
-        Appearance::Dark => 1,
-    };
-
-    let theme_seed = 0xBEEF as f32;
-
-    const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-    const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
-
-    let theme_names = match appearance {
-        Appearance::Light => LIGHT_THEMES,
-        Appearance::Dark => DARK_THEMES,
-    };
-    let themes = theme_names
-        .map(|theme_name| theme_registry.get(theme_name))
-        .map(Result::unwrap);
-
-    let theme_previews = themes.map(|theme| {
-        let is_selected = theme.name == current_theme_name;
-        let name = theme.name.clone();
-        v_flex()
-            .id(name.clone())
-            .on_click({
-                let theme_name = theme.name.clone();
-                move |_, window, cx| {
-                    let fs = <dyn Fs>::global(cx);
-                    let theme_name = theme_name.clone();
-                    update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
-                        settings.set_theme(theme_name, appearance);
-                    });
-                }
-            })
-            .flex_1()
-            .child(theme_preview::ThemePreviewTile::new(
-                theme,
-                is_selected,
-                theme_seed,
-            ))
-            .child(
-                h_flex()
-                    .justify_center()
-                    .items_baseline()
-                    .child(Label::new(name).color(Color::Muted)),
-            )
-    });
-
-    return v_flex()
-        .child(
-            h_flex().justify_between().child(Label::new("Theme")).child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-dark-light",
-                            [
-                                ToggleButtonSimple::new("Light", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Light,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                                ToggleButtonSimple::new("Dark", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Dark,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                            ],
-                        )
-                        .selected_index(selected_index)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    )
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-system",
-                            [ToggleButtonSimple::new("System", {
-                                let theme = theme_selection.clone();
-                                move |_, _, cx| {
-                                    toggle_system_theme_mode(theme.clone(), appearance, cx);
-                                }
-                            })],
-                        )
-                        .selected_index((theme_mode != Some(ThemeMode::System)) as usize)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    ),
-            ),
-        )
-        .child(h_flex().justify_between().children(theme_previews));
-
-    fn write_appearance_change(
-        appearance_state: &Entity<Appearance>,
-        new_appearance: Appearance,
-        cx: &mut App,
-    ) {
-        appearance_state.update(cx, |appearance, cx| {
-            *appearance = new_appearance;
-        });
-        let fs = <dyn Fs>::global(cx);
-
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
-            if settings.theme.as_ref().and_then(ThemeSelection::mode) == Some(ThemeMode::System) {
-                return;
-            }
-            let new_mode = match new_appearance {
-                Appearance::Light => ThemeMode::Light,
-                Appearance::Dark => ThemeMode::Dark,
-            };
-            settings.set_mode(new_mode);
-        });
-    }
-
-    fn toggle_system_theme_mode(
-        theme_selection: ThemeSelection,
-        appearance: Appearance,
-        cx: &mut App,
-    ) {
-        let fs = <dyn Fs>::global(cx);
-
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
-            settings.theme = Some(match theme_selection {
-                ThemeSelection::Static(theme_name) => ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
-                    light: theme_name.clone(),
-                    dark: theme_name.clone(),
-                },
-                ThemeSelection::Dynamic { mode, light, dark } if mode == ThemeMode::System => {
-                    let mode = match appearance {
-                        Appearance::Light => ThemeMode::Light,
-                        Appearance::Dark => ThemeMode::Dark,
-                    };
-                    ThemeSelection::Dynamic { mode, light, dark }
-                }
-
-                ThemeSelection::Dynamic {
-                    mode: _,
-                    light,
-                    dark,
-                } => ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
-                    light,
-                    dark,
-                },
-            });
-        });
-    }
 }
