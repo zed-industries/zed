@@ -3621,10 +3621,12 @@ impl Project {
         query: SearchQuery,
         cx: &mut Context<Self>,
     ) -> Receiver<SearchResult> {
+        log::info!("Project::search_with_ripgrep called with query: {:?}", query.as_str());
         let (result_tx, result_rx) = smol::channel::unbounded();
 
         // Fall back for fake filesystems used in tests
         if self.fs.is_fake() {
+            log::info!("Using fake filesystem - falling back to regular search");
             // Fake filesystems (tests): files don't exist on disk for ripgrep to find
             return self.search(query, cx);
         }
@@ -3636,15 +3638,20 @@ impl Project {
         for worktree in self.worktree_store.read(cx).visible_worktrees(cx) {
             let worktree_read = worktree.read(cx);
             if let Some(local) = worktree_read.as_local() {
-                local_search_paths.push(local.abs_path().to_path_buf());
+                let path = local.abs_path().to_path_buf();
+                log::info!("Found local worktree: {:?}", path);
+                local_search_paths.push(path);
             } else if worktree_read.as_remote().is_some() {
+                let path = worktree_read.abs_path();
+                log::info!("Found remote worktree: {:?}", path);
                 remote_worktrees.push(worktree.clone());
             }
         }
         
         let search_paths = local_search_paths;
 
-        if search_paths.is_empty() {
+        if search_paths.is_empty() && remote_worktrees.is_empty() {
+            log::info!("No worktrees found - falling back to regular search");
             // No worktrees found - fall back to regular search implementation
             // We need to call the original search method directly to avoid recursion
             let (result_tx, result_rx) = smol::channel::unbounded();
@@ -3714,11 +3721,24 @@ impl Project {
 
         // Clone what we need for the async task
         let project = cx.entity().downgrade();
-        let client = self.client.clone();
-        let project_id = self.remote_id();
+        
+        // Get the appropriate client for remote operations
+        let (client, project_id) = if let Some(ssh_client) = &self.ssh_client {
+            log::info!("Using SSH client for remote search");
+            (ssh_client.read(cx).proto_client(), SSH_PROJECT_ID)
+        } else if let Some(remote_id) = self.remote_id() {
+            log::info!("Using collaboration client for remote search");
+            (self.client.clone().into(), remote_id)
+        } else {
+            log::info!("Using default client (local project)");
+            (self.client.clone().into(), 0)
+        };
 
         cx.spawn(async move |_, async_cx| {
             // Use the ripgrep searcher
+            if !search_paths.is_empty() {
+                log::info!("Starting ripgrep search on {} local paths", search_paths.len());
+            }
             let mut searcher = crate::ripgrep_search::RipgrepSearcher::new();
 
             match searcher.search_paths(&query, &search_paths).await {
@@ -3861,26 +3881,45 @@ impl Project {
 
                     // Now search remote worktrees via RPC
                     for remote_worktree in remote_worktrees {
-                        let worktree_id = remote_worktree.read_with(async_cx, |wt, _| wt.id()).ok();
-                        if let Some(worktree_id) = worktree_id {
-                            let search_paths = vec![format!("{}", usize::from(worktree_id))]; // Use worktree ID as path indicator
+                        let (worktree_id, worktree_path) = remote_worktree.read_with(async_cx, |wt, _| {
+                            (wt.id(), wt.abs_path().to_string_lossy().to_string())
+                        }).ok().unwrap_or((WorktreeId::from_usize(0), String::new()));
+                        
+                        if !worktree_path.is_empty() {
+                            log::info!("Starting remote ripgrep search via RPC for worktree: {:?}", worktree_path);
+                            let search_paths = vec![worktree_path.clone()]; // Use actual worktree path
                             
                             match client.request(proto::SearchWithRipgrep {
-                                project_id: project_id.unwrap_or(0),
+                                project_id,
                                 query: Some(query.to_proto()),
                                 search_paths,
                             }).await {
                                 Ok(response) => {
+                                    log::info!("Received response from remote ripgrep search");
                                     if let Some(result) = response.result {
                                         match result {
                                             proto::search_with_ripgrep_response::Result::Match(match_result) => {
+                                                log::info!("Remote match found: {:?}", match_result.path);
                                                 // Convert remote match to local format
                                                 if let Some(buffer_task) = project
                                                     .update(async_cx, |project, cx| {
-                                                        let path = std::path::PathBuf::from(&match_result.path);
+                                                        let full_path = std::path::PathBuf::from(&match_result.path);
+                                                        let worktree_root = std::path::PathBuf::from(&worktree_path);
+                                                        
+                                                        // Convert absolute path to relative path within worktree
+                                                        let relative_path = if let Ok(rel) = full_path.strip_prefix(&worktree_root) {
+                                                            rel.to_path_buf()
+                                                        } else {
+                                                            // If not under worktree, use the full path
+                                                            full_path.clone()
+                                                        };
+                                                        
+                                                        log::info!("Opening buffer for remote file: worktree_id={:?}, relative_path={:?}", 
+                                                                  worktree_id, relative_path);
+                                                        
                                                         let project_path = ProjectPath {
                                                             worktree_id,
-                                                            path: path.into(),
+                                                            path: relative_path.into(),
                                                         };
                                                         Some(project.open_buffer(project_path, cx))
                                                     })
@@ -3924,6 +3963,70 @@ impl Project {
                                                     }
                                                 }
                                             }
+                                            proto::search_with_ripgrep_response::Result::Matches(matches_result) => {
+                                                log::info!("Remote search returned {} matches", matches_result.matches.len());
+                                                // Process all matches
+                                                for match_result in matches_result.matches {
+                                                    if let Some(buffer_task) = project
+                                                        .update(async_cx, |project, cx| {
+                                                            let full_path = std::path::PathBuf::from(&match_result.path);
+                                                            let worktree_root = std::path::PathBuf::from(&worktree_path);
+                                                            
+                                                            // Convert absolute path to relative path within worktree
+                                                            let relative_path = if let Ok(rel) = full_path.strip_prefix(&worktree_root) {
+                                                                rel.to_path_buf()
+                                                            } else {
+                                                                // If not under worktree, use the full path
+                                                                full_path.clone()
+                                                            };
+                                                            
+                                                            let project_path = ProjectPath {
+                                                                worktree_id,
+                                                                path: relative_path.into(),
+                                                            };
+                                                            Some(project.open_buffer(project_path, cx))
+                                                        })
+                                                        .log_err()
+                                                        .flatten()
+                                                    {
+                                                        if let Ok(buffer) = buffer_task.await {
+                                                            // Convert ranges from remote format
+                                                            let anchor_ranges = buffer
+                                                                .read_with(async_cx, |buffer, _| {
+                                                                    let snapshot = buffer.snapshot();
+                                                                    match_result.ranges.into_iter()
+                                                                        .filter_map(|range| {
+                                                                            let line_idx = match_result.line_number.saturating_sub(1);
+                                                                            let start_point = text::Point::new(
+                                                                                line_idx,
+                                                                                range.start.saturating_sub(1),
+                                                                            );
+                                                                            let end_point = text::Point::new(
+                                                                                line_idx,
+                                                                                range.end.saturating_sub(1),
+                                                                            );
+                                                                            
+                                                                            let start_anchor = snapshot.anchor_before(start_point);
+                                                                            let end_anchor = snapshot.anchor_after(end_point);
+                                                                            Some(start_anchor..end_anchor)
+                                                                        })
+                                                                        .collect::<Vec<_>>()
+                                                                })
+                                                                .unwrap_or_default();
+
+                                                            if !anchor_ranges.is_empty() {
+                                                                total_matches += anchor_ranges.len();
+                                                                let _ = result_tx
+                                                                    .send(SearchResult::Buffer {
+                                                                        buffer,
+                                                                        ranges: anchor_ranges,
+                                                                    })
+                                                                    .await;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                             proto::search_with_ripgrep_response::Result::Complete(_) => {
                                                 // Remote search completed
                                             }
@@ -3933,14 +4036,16 @@ impl Project {
                                         }
                                     }
                                 }
-                                Err(_) => {
+                                Err(err) => {
+                                    log::error!("Remote ripgrep search failed: {:?}", err);
                                     // Remote search failed, continue with other worktrees
                                 }
                             }
                         }
                     }
                 }
-                Err(_) => {
+                Err(err) => {
+                    log::error!("Local ripgrep search failed: {:?}", err);
                     // Ripgrep failed, but we already returned the receiver so just close it
                 }
             }

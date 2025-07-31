@@ -48,6 +48,11 @@ impl RipgrepSearcher {
         query: &SearchQuery,
         search_paths: &[PathBuf],
     ) -> Result<Receiver<RipgrepSearchResult>> {
+        log::info!("RipgrepSearcher::search_paths called with {} paths", search_paths.len());
+        for path in search_paths {
+            log::info!("  Search path: {:?}", path);
+        }
+        
         // Cancel any existing search
         self.cancel_search().await;
 
@@ -55,6 +60,7 @@ impl RipgrepSearcher {
 
         // Build ripgrep command
         let cmd = self.build_ripgrep_command(query, search_paths)?;
+        log::info!("Built ripgrep command: {:?}", cmd);
 
         // Spawn the process
         let child = Command::from(cmd)

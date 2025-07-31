@@ -1374,7 +1374,12 @@ message SearchWithRipgrepResponse {
         RipgrepProgress progress = 2;
         RipgrepComplete complete = 3;
         RipgrepError error = 4;
+        RipgrepMatches matches = 5;
     }
+}
+
+message RipgrepMatches {
+    repeated RipgrepMatch matches = 1;
 }
 
 message RipgrepMatch {

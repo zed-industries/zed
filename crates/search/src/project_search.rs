@@ -10,6 +10,7 @@ use editor::{
     MultiBuffer, actions::SelectAll, items::active_match_index, scroll::Autoscroll,
 };
 use futures::StreamExt;
+use log;
 use gpui::{
     Action, AnyElement, AnyView, App, Axis, Context, Entity, EntityId, EventEmitter, FocusHandle,
     Focusable, Global, Hsla, InteractiveElement, IntoElement, KeyContext, ParentElement, Point,
@@ -37,7 +38,6 @@ use ui::{
     Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
     Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
 };
-use util::ResultExt;
 use util::paths::PathMatcher;
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -239,6 +239,7 @@ impl ProjectSearch {
     }
 
     fn search_ripgrep(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
+        log::info!("ProjectSearch::search_ripgrep called with query: {:?}", query.as_str());
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)

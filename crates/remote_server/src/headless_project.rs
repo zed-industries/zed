@@ -673,12 +673,14 @@ impl HeadlessProject {
         use smol::process::{Command, Stdio};
         use std::path::PathBuf;
 
+        log::info!("Remote server: handle_search_with_ripgrep called");
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
             message
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
+        log::info!("Remote server: query = {:?}, paths = {:?}", query.as_str(), message.search_paths);
 
         // Build ripgrep command
         let mut cmd = Command::new("rg");
@@ -760,8 +762,20 @@ impl HeadlessProject {
         }
 
         // Add search paths
+        if message.search_paths.is_empty() {
+            log::error!("Remote server: No search paths provided");
+            return Ok(proto::SearchWithRipgrepResponse {
+                result: Some(proto::search_with_ripgrep_response::Result::Error(
+                    proto::RipgrepError {
+                        message: "No search paths provided".to_string(),
+                    }
+                )),
+            });
+        }
+        
         for path_str in &message.search_paths {
             let path = PathBuf::from(path_str);
+            log::info!("Remote server: Adding search path: {:?}", path);
             cmd.arg(&path);
         }
 
@@ -769,16 +783,38 @@ impl HeadlessProject {
         cmd.arg("--max-count=1000");
 
         // Execute ripgrep and stream results
-        let mut child = cmd.spawn()?;
+        log::info!("Remote server: Executing ripgrep command");
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                log::error!("Remote server: Failed to spawn ripgrep: {:?}", e);
+                return Ok(proto::SearchWithRipgrepResponse {
+                    result: Some(proto::search_with_ripgrep_response::Result::Error(
+                        proto::RipgrepError {
+                            message: format!("Failed to spawn ripgrep: {}", e),
+                        }
+                    )),
+                });
+            }
+        };
         
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
+            let mut matches = Vec::new();
+            let max_matches = 1000; // Limit to prevent overwhelming the system
             
-            // For now, just return the first match to demonstrate the RPC works
-            // In a full implementation, we'd stream all results
+            log::info!("Remote server: Reading ripgrep output");
+            
             while let Some(line) = lines.next().await {
-                let line = line?;
+                let line = match line {
+                    Ok(l) => l,
+                    Err(e) => {
+                        log::error!("Remote server: Error reading ripgrep output: {:?}", e);
+                        continue;
+                    }
+                };
+                
                 if line.trim().is_empty() {
                     continue;
                 }
@@ -791,24 +827,38 @@ impl HeadlessProject {
                     let column: u32 = parts[2].parse().unwrap_or(0);
                     let content = parts[3].to_string();
                     
-                    return Ok(proto::SearchWithRipgrepResponse {
-                        result: Some(proto::search_with_ripgrep_response::Result::Match(
-                            proto::RipgrepMatch {
-                                path,
-                                line_number,
-                                line_content: content,
-                                ranges: vec![proto::RipgrepRange {
-                                    start: column,
-                                    end: column + 1,
-                                }],
-                            }
-                        )),
+                    matches.push(proto::RipgrepMatch {
+                        path,
+                        line_number,
+                        line_content: content,
+                        ranges: vec![proto::RipgrepRange {
+                            start: column,
+                            end: column + 1,
+                        }],
                     });
+                    
+                    if matches.len() >= max_matches {
+                        log::info!("Remote server: Reached maximum matches limit ({})", max_matches);
+                        break;
+                    }
                 }
             }
+            
+            log::info!("Remote server: Found {} matches", matches.len());
+            
+            if !matches.is_empty() {
+                return Ok(proto::SearchWithRipgrepResponse {
+                    result: Some(proto::search_with_ripgrep_response::Result::Matches(
+                        proto::RipgrepMatches { matches }
+                    )),
+                });
+            }
+        } else {
+            log::error!("Remote server: No stdout from ripgrep process");
         }
 
         // No results found
+        log::info!("Remote server: No matches found");
         Ok(proto::SearchWithRipgrepResponse {
             result: Some(proto::search_with_ripgrep_response::Result::Complete(
                 proto::RipgrepComplete { total_matches: 0 }

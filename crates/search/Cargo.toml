@@ -29,6 +29,7 @@ editor.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 menu.workspace = true
 project.workspace = true
 schemars.workspace = true
