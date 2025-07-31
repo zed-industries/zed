@@ -20591,7 +20591,6 @@ dependencies = [
  "menu",
  "postage",
  "project",
- "proto",
  "regex",
  "release_channel",
  "reqwest_client",
