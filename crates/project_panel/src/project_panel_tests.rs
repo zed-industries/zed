@@ -8,7 +8,7 @@ use settings::SettingsStore;
 use std::path::{Path, PathBuf};
 use util::path;
 use workspace::{
-    AppState, Pane,
+    AppState, ItemHandle, Pane,
     item::{Item, ProjectItem},
     register_project_item,
 };
@@ -3068,7 +3068,9 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         panel.update(cx, |this, cx| {
             let drag = DraggedSelection {
                 active_selection: this.selection.unwrap(),
-                marked_selections: Arc::new(this.marked_entries.clone()),
+                marked_selections: Arc::new(
+                    this.marked_entries.iter().cloned().collect::<BTreeSet<_>>(),
+                ),
             };
             let target_entry = this
                 .project
@@ -5864,12 +5866,17 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
                 .filter_map(|pane| pane.read(cx).active_item())
                 .collect::<Vec<_>>();
             assert_eq!(active_items.len(), 1);
-            active_items
+            let diff_view = active_items
                 .into_iter()
                 .next()
                 .unwrap()
                 .downcast::<FileDiffView>()
                 .expect("Open item should be an FileDiffView");
+            assert_eq!(diff_view.tab_content_text(0, cx), "file1.txt ↔ file2.txt");
+            assert_eq!(
+                diff_view.tab_tooltip_text(cx).unwrap(),
+                format!("{} ↔ {}", path!("root/file1.txt"), path!("root/file2.txt"))
+            );
         })
         .unwrap();
 }
@@ -5884,7 +5891,10 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
         json!({
             "file1.txt": "content of file1",
             "file2.txt": "content of file2",
-            "dir1": {}
+            "dir1": {},
+            "dir2": {
+                "file3.txt": "content of file3"
+            }
         }),
     )
     .await;
@@ -5897,25 +5907,60 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     // Test 1: When only one file is selected, there should be no compare option
     select_path(&panel, "root/file1.txt", cx);
 
-    let selected_files_count = panel.update(cx, |panel, cx| panel.collect_selected_files(cx).len());
-    assert_eq!(selected_files_count, 1, "Should only have 1 selected file when selecting a single file");
+    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    assert_eq!(
+        selected_files, None,
+        "Should not have compare option when only one file is selected"
+    );
 
     // Test 2: When multiple files are selected, there should be a compare option
-    cx.simulate_modifiers_change(gpui::Modifiers {
-        control: true,
-        ..Default::default()
-    });
     select_path_with_mark(&panel, "root/file1.txt", cx);
     select_path_with_mark(&panel, "root/file2.txt", cx);
 
-    let selected_files_count = panel.update(cx, |panel, cx| panel.collect_selected_files(cx).len());
-    assert_eq!(selected_files_count, 2, "Should have 2 selected files when multi-selecting");
+    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    assert!(
+        selected_files.is_some(),
+        "Should have files selected for comparison"
+    );
+    if let Some((file1, file2)) = selected_files {
+        assert!(
+            file1.to_string_lossy().ends_with("file1.txt")
+                && file2.to_string_lossy().ends_with("file2.txt"),
+            "Should have file1.txt and file2.txt as the selected files when multi-selecting"
+        );
+    }
 
     // Test case 3: Selecting a directory shouldn't count as a comparable file
     select_path_with_mark(&panel, "root/dir1", cx);
 
-    let selected_files_count = panel.update(cx, |panel, cx| panel.collect_selected_files(cx).len());
-    assert_eq!(selected_files_count, 2, "Selecting a directory should not affect the number of comparable files");
+    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    assert!(
+        selected_files.is_some(),
+        "Directory selection should not affect comparable files"
+    );
+    if let Some((file1, file2)) = selected_files {
+        assert!(
+            file1.to_string_lossy().ends_with("file1.txt")
+                && file2.to_string_lossy().ends_with("file2.txt"),
+            "Selecting a directory should not affect the number of comparable files"
+        );
+    }
+
+    // Test case 4: Selecting one more file
+    select_path_with_mark(&panel, "root/dir2/file3.txt", cx);
+
+    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    assert!(
+        selected_files.is_some(),
+        "Directory selection should not affect comparable files"
+    );
+    if let Some((file1, file2)) = selected_files {
+        assert!(
+            file1.to_string_lossy().ends_with("file2.txt")
+                && file2.to_string_lossy().ends_with("file3.txt"),
+            "Selecting a directory should not affect the number of comparable files"
+        );
+    }
 }
 
 fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
@@ -5952,7 +5997,7 @@ fn select_path_with_mark(
                     entry_id,
                 };
                 if !panel.marked_entries.contains(&entry) {
-                    panel.marked_entries.insert(entry);
+                    panel.marked_entries.push(entry);
                 }
                 panel.selection = Some(entry);
                 return;
