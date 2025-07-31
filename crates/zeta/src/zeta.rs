@@ -16,7 +16,7 @@ pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
-use client::{Client, EditPredictionUsage, UserStore};
+use client::{Client, CloudUserStore, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
@@ -226,12 +226,10 @@ pub struct Zeta {
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    /// Whether the terms of service have been accepted.
-    tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
+    cloud_user_store: Entity<CloudUserStore>,
     user_store: Entity<UserStore>,
-    _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
@@ -245,10 +243,12 @@ impl Zeta {
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
+            let entity =
+                cx.new(|cx| Self::new(workspace, client, user_store, cloud_user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -278,6 +278,7 @@ impl Zeta {
         workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
@@ -306,24 +307,10 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
-            tos_accepted: user_store
-                .read(cx)
-                .current_user_has_accepted_terms()
-                .unwrap_or(false),
             update_required: false,
-            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
-                match event {
-                    client::user::Event::PrivateUserInfoUpdated => {
-                        this.tos_accepted = user_store
-                            .read(cx)
-                            .current_user_has_accepted_terms()
-                            .unwrap_or(false);
-                    }
-                    _ => {}
-                }
-            }),
             license_detection_watchers: HashMap::default(),
             user_store,
+            cloud_user_store,
         }
     }
 
@@ -1573,7 +1560,12 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self.zeta.read(cx).tos_accepted
+        !self
+            .zeta
+            .read(cx)
+            .cloud_user_store
+            .read(cx)
+            .has_accepted_tos()
     }
 
     fn is_refreshing(&self) -> bool {
@@ -1588,7 +1580,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.zeta.read(cx).tos_accepted {
+        if self.needs_terms_acceptance(cx) {
             return;
         }
 
@@ -1599,9 +1591,9 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         if self
             .zeta
             .read(cx)
-            .user_store
-            .read_with(cx, |user_store, _| {
-                user_store.account_too_young() || user_store.has_overdue_invoices()
+            .cloud_user_store
+            .read_with(cx, |cloud_user_store, _cx| {
+                cloud_user_store.account_too_young() || cloud_user_store.has_overdue_invoices()
             })
         {
             return;
@@ -2048,7 +2040,9 @@ mod tests {
         });
         let server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
+        let cloud_user_store =
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cloud_user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2102,7 +2096,9 @@ mod tests {
         });
         let server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
+        let cloud_user_store =
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cloud_user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

@@ -102,6 +102,29 @@ impl CloudUserStore {
             })
     }
 
+    pub fn has_accepted_tos(&self) -> bool {
+        self.authenticated_user
+            .as_ref()
+            .map(|user| user.accepted_tos_at.is_some())
+            .unwrap_or_default()
+    }
+
+    /// Returns whether the user's account is too new to use the service.
+    pub fn account_too_young(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_account_too_young)
+            .unwrap_or_default()
+    }
+
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
+    pub fn has_overdue_invoices(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.has_overdue_invoices)
+            .unwrap_or_default()
+    }
+
     fn update_authenticated_user(&mut self, response: GetAuthenticatedUserResponse) {
         self.authenticated_user = Some(Arc::new(response.user));
         self.plan_info = Some(Arc::new(response.plan));

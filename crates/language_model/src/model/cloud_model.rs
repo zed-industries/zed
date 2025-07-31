@@ -64,9 +64,14 @@ impl LlmApiToken {
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
     ) -> Result<String> {
-        let response = client.request(proto::GetLlmToken {}).await?;
-        *lock = Some(response.token.clone());
-        Ok(response.token.clone())
+        let system_id = client
+            .telemetry()
+            .system_id()
+            .map(|system_id| system_id.to_string());
+
+        let response = client.cloud_client().create_llm_token(system_id).await?;
+        *lock = Some(response.token.0.clone());
+        Ok(response.token.0.clone())
     }
 }
 
