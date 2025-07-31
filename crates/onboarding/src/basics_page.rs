@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use client::TelemetrySettings;
 use fs::Fs;
 use gpui::{App, IntoElement};
 use settings::{BaseKeymap, Settings, update_settings_file};
@@ -6,6 +9,7 @@ use ui::{
     SwitchField, ThemePreviewTile, ToggleButtonGroup, ToggleButtonSimple, ToggleButtonWithIcon,
     prelude::*,
 };
+use vim_mode_setting::VimModeSetting;
 
 use crate::Onboarding;
 
@@ -63,23 +67,61 @@ fn render_theme_section(theme_mode: ThemeMode) -> impl IntoElement {
     )
 }
 
-fn render_telemetry_section() -> impl IntoElement {
+fn render_telemetry_section(fs: Arc<dyn Fs>, cx: &App) -> impl IntoElement {
     v_flex()
-        .gap_3()
+
+        .gap_4()
         .child(Label::new("Telemetry").size(LabelSize::Large))
         .child(SwitchField::new(
-            "vim_mode",
+            "onboarding-telemetry-metrics",
             "Help Improve Zed",
             "Sending anonymous usage data helps us build the right features and create the best experience.",
-            ui::ToggleState::Selected,
-            |_, _, _| {},
+            if TelemetrySettings::get_global(cx).metrics {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            {
+            let fs = fs.clone();
+            move |selection, _, cx| {
+                let enabled = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => { return; },
+                };
+
+                update_settings_file::<TelemetrySettings>(
+                    fs.clone(),
+                    cx,
+                    move |setting, _| setting.metrics = Some(enabled),
+                );
+            }},
         ))
         .child(SwitchField::new(
-            "vim_mode",
+            "onboarding-telemetry-crash-reports",
             "Help Fix Zed",
             "Send crash reports so we can fix critical issues fast.",
-            ui::ToggleState::Selected,
-            |_, _, _| {},
+            if TelemetrySettings::get_global(cx).diagnostics {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            {
+                let fs = fs.clone();
+                move |selection, _, cx| {
+                    let enabled = match selection {
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected => false,
+                        ToggleState::Indeterminate => { return; },
+                    };
+
+                    update_settings_file::<TelemetrySettings>(
+                        fs.clone(),
+                        cx,
+                        move |setting, _| setting.diagnostics = Some(enabled),
+                    );
+                }
+            }
         ))
 }
 
@@ -155,11 +197,30 @@ pub(crate) fn render_basics_page(onboarding: &Onboarding, cx: &mut App) -> impl 
             ),
         )
         .child(v_flex().justify_center().child(div().h_0().child("hack").invisible()).child(SwitchField::new(
-            "vim_mode",
+            "onboarding-vim-mode",
             "Vim Mode",
             "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.",
-            ui::ToggleState::Selected,
-            |_, _, _| {},
+            if VimModeSetting::get_global(cx).0 {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            {
+                let fs = onboarding.fs.clone();
+                move |selection, _, cx| {
+                    let enabled = match selection {
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected => false,
+                        ToggleState::Indeterminate => { return; },
+                    };
+
+                    update_settings_file::<VimModeSetting>(
+                        fs.clone(),
+                        cx,
+                        move |setting, _| *setting = Some(enabled),
+                    );
+                }
+            },
         )))
-        .child(render_telemetry_section())
+        .child(render_telemetry_section(onboarding.fs.clone(), cx))
 }
