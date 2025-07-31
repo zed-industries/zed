@@ -3,8 +3,6 @@ use std::{ffi::OsStr, path::Path, sync::Arc};
 
 #[derive(Clone, Debug)]
 pub struct IgnoreStack {
-    /// Rooted globs (like /foo or foo/bar) in the global core.excludesFile are matched against the nearest containing repository root,
-    /// so we
     pub repo_root: Option<Arc<Path>>,
     pub top: Arc<IgnoreStackEntry>,
 }
@@ -12,7 +10,6 @@ pub struct IgnoreStack {
 #[derive(Debug)]
 pub enum IgnoreStackEntry {
     None,
-    /// core.excludesFile
     Global {
         ignore: Arc<Gitignore>,
     },

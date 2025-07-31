@@ -517,6 +517,6 @@ pub fn global_gitignore_path() -> Option<PathBuf> {
 pub fn global_gitignore_path() -> Option<PathBuf> {
     static GLOBAL_GITIGNORE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
     GLOBAL_GITIGNORE_PATH
-        .get_or_init(|| ::ignore::gitignore::gitconfig_excludes_path())
+        .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
         .clone()
 }

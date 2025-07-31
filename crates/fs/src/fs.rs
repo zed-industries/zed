@@ -131,7 +131,6 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    // fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
     fn is_fake(&self) -> bool;
@@ -879,10 +878,6 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
-
-    // fn home_dir(&self) -> Option<PathBuf> {
-    //     Some(paths::home_dir().clone())
-    // }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -917,7 +912,6 @@ struct FakeFsState {
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
-    // home_dir: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1104,7 +1098,6 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
-                // home_dir: None,
             })),
         });
 
@@ -2360,10 +2353,6 @@ impl Fs for FakeFs {
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
     }
-
-    // fn home_dir(&self) -> Option<PathBuf> {
-    //     self.state.lock().home_dir.clone()
-    // }
 }
 
 fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {

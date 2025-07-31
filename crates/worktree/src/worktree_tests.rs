@@ -2127,8 +2127,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
         );
     });
 
-    // FIXME statuses are updated when .git added/removed
-
+    // Statuses are updated when .git added/removed
     fs.remove_dir(
         Path::new(path!("/home/zed/project/subrepo/.git")),
         RemoveOptions {

@@ -4180,7 +4180,6 @@ impl BackgroundScanner {
         let (prev_snapshot, ignore_stack, abs_path) = {
             let mut state = self.state.lock();
             state.snapshot.global_gitignore = ignore;
-            // FIXME is_dir (do we care?)
             let abs_path = state.snapshot.abs_path().clone();
             let ignore_stack =
                 state
@@ -4803,7 +4802,6 @@ impl BackgroundScanner {
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
 
-        // FIXME understand the bug that causes .git to not have a snapshot entry here in the test
         if let Ok(Some(metadata)) = smol::block_on(self.fs.metadata(&job.abs_path.join(*DOT_GIT)))
             && metadata.is_dir
         {
