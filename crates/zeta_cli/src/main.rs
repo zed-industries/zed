@@ -314,7 +314,6 @@ fn main() {
                         }
 
                         let app_version = cx.update(|cx| AppVersion::global(cx))?;
-                        dbg!(app_version);
                         let llm_token = LlmApiToken::default();
                         llm_token.refresh(&app_state.client).await?;
 

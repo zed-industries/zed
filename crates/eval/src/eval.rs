@@ -18,7 +18,7 @@ use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
