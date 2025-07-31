@@ -86,7 +86,7 @@ impl CloudApiClient {
         system_id: Option<String>,
     ) -> Result<CreateLlmTokenResponse> {
         let mut request_builder = Request::builder()
-            .method(Method::GET)
+            .method(Method::POST)
             .uri(
                 self.http_client
                     .build_zed_cloud_url("/client/llm_tokens", &[])?
