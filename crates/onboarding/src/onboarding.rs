@@ -10,13 +10,9 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
+use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use theme::{ThemeMode, ThemeSettings};
-use ui::{
-    FluentBuilder, KeyBinding, ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName,
-    prelude::*, rems_from_px,
-};
+use ui::{FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -24,6 +20,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod basics_page;
 mod editing_page;
 mod welcome;
 
@@ -205,23 +202,6 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
     )
 }
 
-fn read_theme_selection(cx: &App) -> ThemeMode {
-    let settings = ThemeSettings::get_global(cx);
-    settings
-        .theme_selection
-        .as_ref()
-        .and_then(|selection| selection.mode())
-        .unwrap_or_default()
-}
-
-fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
-    let fs = <dyn Fs>::global(cx);
-
-    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-        settings.set_mode(theme_mode);
-    });
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedPage {
     Basics,
@@ -366,42 +346,14 @@ impl Onboarding {
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
+            SelectedPage::Basics => {
+                crate::basics_page::render_basics_page(window, cx).into_any_element()
+            }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
-    }
-
-    fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_mode = read_theme_selection(cx);
-
-        v_flex().child(
-            h_flex().justify_between().child(Label::new("Theme")).child(
-                ToggleButtonGroup::single_row(
-                    "theme-selector-onboarding",
-                    [
-                        ToggleButtonSimple::new("Light", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Light, cx)
-                        }),
-                        ToggleButtonSimple::new("Dark", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Dark, cx)
-                        }),
-                        ToggleButtonSimple::new("System", |_, _, cx| {
-                            write_theme_selection(ThemeMode::System, cx)
-                        }),
-                    ],
-                )
-                .selected_index(match theme_mode {
-                    ThemeMode::Light => 0,
-                    ThemeMode::Dark => 1,
-                    ThemeMode::System => 2,
-                })
-                .style(ui::ToggleButtonGroupStyle::Outlined)
-                .button_width(rems_from_px(64.)),
-            ),
-        )
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
