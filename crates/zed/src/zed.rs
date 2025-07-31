@@ -4467,7 +4467,12 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             audio::init((), cx);
             channel::init(&app_state.client, app_state.user_store.clone(), cx);
-            call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+            call::init(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.cloud_user_store.clone(),
+                cx,
+            );
             notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             workspace::init(app_state.clone(), cx);
             Project::init_settings(cx);

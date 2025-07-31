@@ -136,6 +136,13 @@ impl CloudUserStore {
             .unwrap_or_default()
     }
 
+    pub fn is_usage_based_billing_enabled(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_usage_based_billing_enabled)
+            .unwrap_or_default()
+    }
+
     pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
         self.model_request_usage
     }
