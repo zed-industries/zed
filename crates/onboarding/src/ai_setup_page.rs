@@ -344,10 +344,12 @@ impl Render for AiConfigurationModal {
                                     Button::new("onboarding-closing-cancel", "Cancel")
                                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                                 )
-                                .child(
-                                    Button::new("save-btn", "Done")
-                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                                ),
+                                .child(Button::new("save-btn", "Done").on_click(cx.listener(
+                                    |_, _, window, cx| {
+                                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
+                                        cx.emit(DismissEvent);
+                                    },
+                                ))),
                         ),
                     ),
             )
