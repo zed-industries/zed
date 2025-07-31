@@ -1658,7 +1658,7 @@ impl EditAgentTest {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
-    const MAX_RETRIES: usize = 5;
+    const MAX_RETRIES: usize = 20;
     let mut attempt = 0;
 
     loop {
