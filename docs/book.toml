@@ -16,7 +16,7 @@ extra-watch-dirs = ["../crates/docs_preprocessor"]
 # The config is passed directly to the html renderer, so all config
 # options that apply to html apply to zed-html
 [output.zed-html]
-command = "cargo run -p docs_preprocessor -r -- postprocess"
+command = "cargo run -p docs_preprocessor --release -- postprocess"
 # Set here instead of above as we only use it replace the `#description#` we set in the template
 # when no front-matter is provided value
 default-description = "Learn how to use and customize Zed, the fast, collaborative code editor. Official docs on features, configuration, AI tools, and workflows."
