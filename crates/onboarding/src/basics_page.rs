@@ -71,10 +71,10 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             .id(name.clone())
             .on_click({
                 let theme_name = theme.name.clone();
-                move |_, window, cx| {
+                move |_, _, cx| {
                     let fs = <dyn Fs>::global(cx);
                     let theme_name = theme_name.clone();
-                    update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+                    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
                         settings.set_theme(theme_name, appearance);
                     });
                 }
@@ -182,7 +182,11 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     light: theme_name.clone(),
                     dark: theme_name.clone(),
                 },
-                ThemeSelection::Dynamic { mode, light, dark } if mode == ThemeMode::System => {
+                ThemeSelection::Dynamic {
+                    mode: ThemeMode::System,
+                    light,
+                    dark,
+                } => {
                     let mode = match appearance {
                         Appearance::Light => ThemeMode::Light,
                         Appearance::Dark => ThemeMode::Dark,
