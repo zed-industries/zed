@@ -2945,16 +2945,18 @@ impl Editor {
             }
         }
 
+        let selection_anchors = self.selections.disjoint_anchors();
+
         if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
-                    &self.selections.disjoint_anchors(),
+                    &selection_anchors,
                     self.selections.line_mode,
                     self.cursor_shape,
                     cx,
                 )
             });
-        }
+        };
         let display_map = self
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
@@ -2965,9 +2967,8 @@ impl Editor {
         self.select_next_state = None;
         self.select_prev_state = None;
         self.select_syntax_node_history.try_clear();
-        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
-        self.snippet_stack
-            .invalidate(&self.selections.disjoint_anchors(), buffer);
+        self.invalidate_autoclose_regions(&selection_anchors, buffer);
+        self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
 
         let newest_selection = self.selections.newest_anchor();
@@ -4043,8 +4044,7 @@ impl Editor {
                             }
                         }
 
-                        // TODO kb something does not work well for C here, there's a region
-                        if let Some(region) = dbg!(autoclose_region) {
+                        if let Some(region) = autoclose_region {
                             // If the selection is followed by an auto-inserted closing bracket,
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
@@ -4052,7 +4052,6 @@ impl Editor {
                                 && text.as_ref() == region.pair.end.as_str();
                             // TODO kb revert, it's still useful
                             // && snapshot.contains_str_at(region.range.end, text.as_ref());
-                            dbg!((&text, &selection, should_skip));
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
                                 new_selections
@@ -4238,7 +4237,6 @@ impl Editor {
                         }
                     }
                 }
-                dbg!("@@@@@@@@@@@@@@@@", &pair);
                 this.autoclose_regions.insert(
                     i,
                     AutocloseRegion {
@@ -4957,7 +4955,6 @@ impl Editor {
     ) -> impl Iterator<Item = (Selection<D>, Option<&'a AutocloseRegion>)> {
         let mut i = 0;
         let mut regions = self.autoclose_regions.as_slice();
-        dbg!(&regions);
         selections.into_iter().map(move |selection| {
             let range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
 
@@ -4980,13 +4977,17 @@ impl Editor {
         })
     }
 
-    /// Remove any autoclose regions that no longer contain their selection.
+    /// Remove any autoclose regions that no longer contain their selection or have invalid anchors in ranges.
     fn invalidate_autoclose_regions(
         &mut self,
         mut selections: &[Selection<Anchor>],
         buffer: &MultiBufferSnapshot,
     ) {
         self.autoclose_regions.retain(|state| {
+            if !state.range.start.is_valid(buffer) || !state.range.end.is_valid(buffer) {
+                return false;
+            }
+
             let mut i = 0;
             while let Some(selection) = selections.get(i) {
                 if selection.end.cmp(&state.range.start, buffer).is_lt() {
@@ -5898,40 +5899,21 @@ impl Editor {
             text: new_text[common_prefix_len..].into(),
         });
 
-        self.transact(window, cx, |this, window, cx| {
-            let old_cursor_position = this.selections.newest_anchor().head();
+        self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
-                this.insert_snippet(&ranges, snippet, window, cx).log_err();
+                editor
+                    .insert_snippet(&ranges, snippet, window, cx)
+                    .log_err();
             } else {
-                this.buffer.update(cx, |buffer, cx| {
+                editor.buffer.update(cx, |multi_buffer, cx| {
                     let auto_indent = match completion.insert_text_mode {
                         Some(InsertTextMode::AS_IS) => None,
-                        _ => this.autoindent_mode.clone(),
+                        _ => editor.autoindent_mode.clone(),
                     };
                     let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
-                    buffer.edit(dbg!(edits), auto_indent, cx);
+                    multi_buffer.edit(edits, auto_indent, cx);
                 });
-
-                // TODO kb try
-                if let Some(selection_state) = this.deferred_selection_effects_state.as_ref() {
-                    this.selections_did_change(
-                        true,
-                        &old_cursor_position,
-                        selection_state.effects.clone(),
-                        window,
-                        cx,
-                    );
-                } else {
-                    let old_cursor_position = this.selections.newest_anchor().head();
-                    this.selections_did_change(
-                        true,
-                        &old_cursor_position,
-                        SelectionEffects::default(),
-                        window,
-                        cx,
-                    );
-                }
             }
             for (buffer, edits) in linked_edits {
                 buffer.update(cx, |buffer, cx| {
@@ -5949,8 +5931,9 @@ impl Editor {
                 })
             }
 
-            this.refresh_inline_completion(true, false, window, cx);
+            editor.refresh_inline_completion(true, false, window, cx);
         });
+        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), &snapshot);
 
         let show_new_completions_on_confirm = completion
             .confirm

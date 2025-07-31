@@ -13555,7 +13555,6 @@ int fn_branch(bool do_branch1, bool do_branch2);
 #include "AGL/ˇ"##,
     );
 
-    dbg!("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~");
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("\"", window, cx);
     });
