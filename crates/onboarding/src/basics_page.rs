@@ -9,6 +9,8 @@ use ui::{
 };
 use vim_mode_setting::VimModeSetting;
 
+use crate::theme_preview::ThemePreviewTile;
+
 /// separates theme "mode" ("dark" | "light" | "system") into two separate states
 /// - appearance = "dark" | "light"
 /// - "system" true/false
@@ -69,6 +71,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_previews = themes.map(|theme| {
         let is_selected = theme.name == current_theme_name;
         let name = theme.name.clone();
+        let colors = cx.theme().colors();
         v_flex()
             .id(name.clone())
             .on_click({
@@ -82,11 +85,23 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 }
             })
             .flex_1()
-            .child(crate::theme_preview::ThemePreviewTile::new(
-                theme,
-                is_selected,
-                theme_seed,
-            ))
+            .child(
+                div()
+                    .border_2()
+                    .border_color(colors.border_transparent)
+                    .rounded(ThemePreviewTile::CORNER_RADIUS)
+                    .hover(|mut style| {
+                        if !is_selected {
+                            style.border_color = Some(colors.element_hover);
+                        }
+                        style
+                    })
+                    .when(is_selected, |this| {
+                        this.border_color(colors.border_selected)
+                    })
+                    .cursor_pointer()
+                    .child(ThemePreviewTile::new(theme, theme_seed)),
+            )
             .child(
                 h_flex()
                     .justify_center()
