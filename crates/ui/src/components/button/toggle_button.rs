@@ -431,15 +431,17 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let entries = self.rows.into_iter().enumerate().map(|(row_index, row)| {
-            row.into_iter().enumerate().map(move |(index, button)| {
+            row.into_iter().enumerate().map(move |(col_index, button)| {
                 let ButtonConfiguration {
                     label,
                     icon,
                     on_click,
                 } = button.into_configuration();
 
-                ButtonLike::new((self.group_name, row_index * COLS + index))
-                    .when(index == self.selected_index, |this| {
+                let entry_index = row_index * COLS + col_index;
+
+                ButtonLike::new((self.group_name, entry_index))
+                    .when(entry_index == self.selected_index, |this| {
                         this.toggle_state(true)
                             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                     })
@@ -451,10 +453,12 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                         h_flex()
                             .min_w(self.button_width)
                             .gap_1p5()
+                            .px_3()
+                            .py_1()
                             .justify_center()
                             .when_some(icon, |this, icon| {
                                 this.child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
-                                    if index == self.selected_index {
+                                    if entry_index == self.selected_index {
                                         this.color(Color::Accent)
                                     } else {
                                         this.color(Color::Muted)
@@ -462,9 +466,11 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                                 }))
                             })
                             .child(
-                                Label::new(label).when(index == self.selected_index, |this| {
-                                    this.color(Color::Accent)
-                                }),
+                                Label::new(label)
+                                    .size(LabelSize::Small)
+                                    .when(entry_index == self.selected_index, |this| {
+                                        this.color(Color::Accent)
+                                    }),
                             ),
                     )
                     .on_click(on_click)

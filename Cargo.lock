@@ -10923,6 +10923,7 @@ name = "onboarding"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "command_palette_hooks",
  "component",
  "db",
@@ -10939,6 +10940,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
