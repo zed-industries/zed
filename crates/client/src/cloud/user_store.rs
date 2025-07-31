@@ -23,16 +23,23 @@ impl CloudUserStore {
                         };
 
                         if cloud_client.has_credentials() {
-                            if let Some(response) = cloud_client
-                                .get_authenticated_user()
-                                .await
-                                .context("failed to fetch authenticated user")
-                                .log_err()
-                            {
-                                this.update(cx, |this, _cx| {
-                                    this.authenticated_user = Some(Arc::new(response.user));
-                                })
-                                .ok();
+                            let already_fetched_authenticated_user = this
+                                .read_with(cx, |this, _cx| this.authenticated_user().is_some())
+                                .unwrap_or(false);
+
+                            if already_fetched_authenticated_user {
+                                // We already fetched the authenticated user; nothing to do.
+                            } else {
+                                let authenticated_user_result = cloud_client
+                                    .get_authenticated_user()
+                                    .await
+                                    .context("failed to fetch authenticated user");
+                                if let Some(response) = authenticated_user_result.log_err() {
+                                    this.update(cx, |this, _cx| {
+                                        this.authenticated_user = Some(Arc::new(response.user));
+                                    })
+                                    .ok();
+                                }
                             }
                         } else {
                             this.update(cx, |this, _cx| {
