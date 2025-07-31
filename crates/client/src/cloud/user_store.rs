@@ -9,12 +9,13 @@ use gpui::{Context, Entity, Subscription, Task};
 use util::{ResultExt as _, maybe};
 
 use crate::user::Event as RpcUserStoreEvent;
-use crate::{EditPredictionUsage, RequestUsage, UserStore};
+use crate::{EditPredictionUsage, ModelRequestUsage, RequestUsage, UserStore};
 
 pub struct CloudUserStore {
     cloud_client: Arc<CloudApiClient>,
     authenticated_user: Option<Arc<AuthenticatedUser>>,
     plan_info: Option<Arc<PlanInfo>>,
+    model_request_usage: Option<ModelRequestUsage>,
     edit_prediction_usage: Option<EditPredictionUsage>,
     _maintain_authenticated_user_task: Task<()>,
     _rpc_plan_updated_subscription: Subscription,
@@ -33,6 +34,7 @@ impl CloudUserStore {
             cloud_client: cloud_client.clone(),
             authenticated_user: None,
             plan_info: None,
+            model_request_usage: None,
             edit_prediction_usage: None,
             _maintain_authenticated_user_task: cx.spawn(async move |this, cx| {
                 maybe!(async move {
@@ -134,6 +136,15 @@ impl CloudUserStore {
             .unwrap_or_default()
     }
 
+    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        self.model_request_usage
+    }
+
+    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
+        self.model_request_usage = Some(usage);
+        cx.notify();
+    }
+
     pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
         self.edit_prediction_usage
     }
@@ -149,6 +160,10 @@ impl CloudUserStore {
 
     fn update_authenticated_user(&mut self, response: GetAuthenticatedUserResponse) {
         self.authenticated_user = Some(Arc::new(response.user));
+        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
+            limit: response.plan.usage.model_requests.limit,
+            amount: response.plan.usage.model_requests.used as i32,
+        }));
         self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
             limit: response.plan.usage.edit_predictions.limit,
             amount: response.plan.usage.edit_predictions.used as i32,

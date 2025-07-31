@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use audio::{Audio, Sound};
+use client::CloudUserStore;
 use client::{
     ChannelId, Client, ParticipantIndex, TypedEnvelope, User, UserStore,
     proto::{self, PeerId},
@@ -78,6 +79,7 @@ pub struct Room {
     leave_when_empty: bool,
     client: Arc<Client>,
     user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     follows_by_leader_id_project_id: HashMap<(PeerId, u64), Vec<PeerId>>,
     client_subscriptions: Vec<client::Subscription>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -112,6 +114,7 @@ impl Room {
         livekit_connection_info: Option<proto::LiveKitConnectionInfo>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         spawn_room_connection(livekit_connection_info, cx);
@@ -152,6 +155,7 @@ impl Room {
             pending_room_update: None,
             client,
             user_store,
+            cloud_user_store,
             follows_by_leader_id_project_id: Default::default(),
             maintain_connection: Some(maintain_connection),
             room_update_completed_tx,
@@ -164,6 +168,7 @@ impl Room {
         initial_project: Option<Entity<Project>>,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         cx.spawn(async move |cx| {
@@ -176,6 +181,7 @@ impl Room {
                     response.live_kit_connection_info,
                     client,
                     user_store,
+                    cloud_user_store,
                     cx,
                 );
                 if let Some(participant) = room_proto.participants.first() {
@@ -212,6 +218,7 @@ impl Room {
         channel_id: ChannelId,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
@@ -222,6 +229,7 @@ impl Room {
                 .await?,
             client,
             user_store,
+            cloud_user_store,
             cx,
         )
     }
@@ -230,12 +238,14 @@ impl Room {
         room_id: u64,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         Self::from_join_response(
             client.request(proto::JoinRoom { id: room_id }).await?,
             client,
             user_store,
+            cloud_user_store,
             cx,
         )
     }
@@ -271,6 +281,7 @@ impl Room {
         response: proto::JoinRoomResponse,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         mut cx: AsyncApp,
     ) -> Result<Entity<Self>> {
         let room_proto = response.room.context("invalid room")?;
@@ -281,6 +292,7 @@ impl Room {
                 response.live_kit_connection_info,
                 client,
                 user_store,
+                cloud_user_store,
                 cx,
             )
         })?;
@@ -1139,10 +1151,19 @@ impl Room {
     ) -> Task<Result<Entity<Project>>> {
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let cloud_user_store = self.cloud_user_store.clone();
         cx.emit(Event::RemoteProjectJoined { project_id: id });
         cx.spawn(async move |this, cx| {
-            let project =
-                Project::in_room(id, client, user_store, language_registry, fs, cx.clone()).await?;
+            let project = Project::in_room(
+                id,
+                client,
+                user_store,
+                cloud_user_store,
+                language_registry,
+                fs,
+                cx.clone(),
+            )
+            .await?;
 
             this.update(cx, |this, cx| {
                 this.joined_projects.retain(|project| {

@@ -3256,15 +3256,17 @@ impl Thread {
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
         self.project.update(cx, |project, cx| {
-            project.user_store().update(cx, |user_store, cx| {
-                user_store.update_model_request_usage(
-                    ModelRequestUsage(RequestUsage {
-                        amount: amount as i32,
-                        limit,
-                    }),
-                    cx,
-                )
-            })
+            project
+                .cloud_user_store()
+                .update(cx, |cloud_user_store, cx| {
+                    cloud_user_store.update_model_request_usage(
+                        ModelRequestUsage(RequestUsage {
+                            amount: amount as i32,
+                            limit,
+                        }),
+                        cx,
+                    )
+                })
         });
     }
 

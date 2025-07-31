@@ -4,7 +4,9 @@ pub mod room;
 use crate::call_settings::CallSettings;
 use anyhow::{Context as _, Result, anyhow};
 use audio::Audio;
-use client::{ChannelId, Client, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto};
+use client::{
+    ChannelId, Client, CloudUserStore, TypedEnvelope, User, UserStore, ZED_ALWAYS_ACTIVE, proto,
+};
 use collections::HashSet;
 use futures::{Future, FutureExt, channel::oneshot, future::Shared};
 use gpui::{
@@ -25,10 +27,15 @@ struct GlobalActiveCall(Entity<ActiveCall>);
 
 impl Global for GlobalActiveCall {}
 
-pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+pub fn init(
+    client: Arc<Client>,
+    user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
+    cx: &mut App,
+) {
     CallSettings::register(cx);
 
-    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cx));
+    let active_call = cx.new(|cx| ActiveCall::new(client, user_store, cloud_user_store, cx));
     cx.set_global(GlobalActiveCall(active_call));
 }
 
@@ -84,13 +91,19 @@ pub struct ActiveCall {
     ),
     client: Arc<Client>,
     user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     _subscriptions: Vec<client::Subscription>,
 }
 
 impl EventEmitter<Event> for ActiveCall {}
 
 impl ActiveCall {
-    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+    fn new(
+        client: Arc<Client>,
+        user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             room: None,
             pending_room_creation: None,
@@ -104,6 +117,7 @@ impl ActiveCall {
             ],
             client,
             user_store,
+            cloud_user_store,
         }
     }
 
@@ -208,6 +222,7 @@ impl ActiveCall {
         } else {
             let client = self.client.clone();
             let user_store = self.user_store.clone();
+            let cloud_user_store = self.cloud_user_store.clone();
             let room = cx
                 .spawn(async move |this, cx| {
                     let create_room = async {
@@ -218,6 +233,7 @@ impl ActiveCall {
                                     initial_project,
                                     client,
                                     user_store,
+                                    cloud_user_store,
                                     cx,
                                 )
                             })?
@@ -305,9 +321,10 @@ impl ActiveCall {
         let room_id = call.room_id;
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let join = self
-            ._join_debouncer
-            .spawn(cx, move |cx| Room::join(room_id, client, user_store, cx));
+        let cloud_user_store = self.cloud_user_store.clone();
+        let join = self._join_debouncer.spawn(cx, move |cx| {
+            Room::join(room_id, client, user_store, cloud_user_store, cx)
+        });
 
         cx.spawn(async move |this, cx| {
             let room = join.await?;
@@ -353,8 +370,9 @@ impl ActiveCall {
 
         let client = self.client.clone();
         let user_store = self.user_store.clone();
+        let cloud_user_store = self.cloud_user_store.clone();
         let join = self._join_debouncer.spawn(cx, move |cx| async move {
-            Room::join_channel(channel_id, client, user_store, cx).await
+            Room::join_channel(channel_id, client, user_store, cloud_user_store, cx).await
         });
 
         cx.spawn(async move |this, cx| {
