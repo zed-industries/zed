@@ -3968,6 +3968,7 @@ dependencies = [
  "paths",
  "smol",
  "uuid",
+ "workspace-hack",
  "zlog",
 ]
 
@@ -19933,6 +19934,7 @@ dependencies = [
  "miniz_oxide",
  "mio 1.0.3",
  "naga",
+ "nix 0.28.0",
  "nix 0.29.0",
  "nom",
  "num-bigint",
