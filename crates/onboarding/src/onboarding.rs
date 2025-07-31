@@ -292,7 +292,8 @@ impl Onboarding {
     fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .h_full()
-            .w_1_3()
+            .w(rems_from_px(220.))
+            .flex_shrink_0()
             .gap_4()
             .justify_between()
             .child(
