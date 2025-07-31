@@ -1,0 +1,151 @@
+package zed:extension;
+
+world extension {
+    import github;
+    import http-client;
+    import platform;
+    import process;
+    import nodejs;
+
+    use common.{env-vars, range};
+    use lsp.{completion, symbol};
+    use process.{command};
+    use slash-command.{slash-command, slash-command-argument-completion, slash-command-output};
+
+    /// Initializes the extension.
+    export init-extension: func();
+
+    /// The type of a downloaded file.
+    enum downloaded-file-type {
+        /// A gzipped file (`.gz`).
+        gzip,
+        /// A gzipped tar archive (`.tar.gz`).
+        gzip-tar,
+        /// A ZIP file (`.zip`).
+        zip,
+        /// An uncompressed file.
+        uncompressed,
+    }
+
+    /// The installation status for a language server.
+    variant language-server-installation-status {
+        /// The language server has no installation status.
+        none,
+        /// The language server is being downloaded.
+        downloading,
+        /// The language server is checking for updates.
+        checking-for-update,
+        /// The language server installation failed for specified reason.
+        failed(string),
+    }
+
+    record settings-location {
+        worktree-id: u64,
+        path: string,
+    }
+
+    import get-settings: func(path: option<settings-location>, category: string, key: option<string>) -> result<string, string>;
+
+    /// Downloads a file from the given URL and saves it to the given path within the extension's
+    /// working directory.
+    ///
+    /// The file will be extracted according to the given file type.
+    import download-file: func(url: string, file-path: string, file-type: downloaded-file-type) -> result<_, string>;
+
+    /// Makes the file at the given path executable.
+    import make-file-executable: func(filepath: string) -> result<_, string>;
+
+    /// Updates the installation status for the given language server.
+    import set-language-server-installation-status: func(language-server-name: string, status: language-server-installation-status);
+
+    /// A Zed worktree.
+    resource worktree {
+        /// Returns the ID of the worktree.
+        id: func() -> u64;
+        /// Returns the root path of the worktree.
+        root-path: func() -> string;
+        /// Returns the textual contents of the specified file in the worktree.
+        read-text-file: func(path: string) -> result<string, string>;
+        /// Returns the path to the given binary name, if one is present on the `$PATH`.
+        which: func(binary-name: string) -> option<string>;
+        /// Returns the current shell environment.
+        shell-env: func() -> env-vars;
+    }
+
+    /// A Zed project.
+    resource project {
+        /// Returns the IDs of all of the worktrees in this project.
+        worktree-ids: func() -> list<u64>;
+    }
+
+    /// A key-value store.
+    resource key-value-store {
+        /// Inserts an entry under the specified key.
+        insert: func(key: string, value: string) -> result<_, string>;
+    }
+
+    /// Returns the command used to start up the language server.
+    export language-server-command: func(language-server-id: string, worktree: borrow<worktree>) -> result<command, string>;
+
+    /// Returns the initialization options to pass to the language server on startup.
+    ///
+    /// The initialization options are represented as a JSON string.
+    export language-server-initialization-options: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns the workspace configuration options to pass to the language server.
+    export language-server-workspace-configuration: func(language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns the initialization options to pass to the other language server.
+    export language-server-additional-initialization-options: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// Returns the workspace configuration options to pass to the other language server.
+    export language-server-additional-workspace-configuration: func(language-server-id: string, target-language-server-id: string, worktree: borrow<worktree>) -> result<option<string>, string>;
+
+    /// A label containing some code.
+    record code-label {
+        /// The source code to parse with Tree-sitter.
+        code: string,
+        /// The spans to display in the label.
+        spans: list<code-label-span>,
+        /// The range of the displayed label to include when filtering.
+        filter-range: range,
+    }
+
+    /// A span within a code label.
+    variant code-label-span {
+        /// A range into the parsed code.
+        code-range(range),
+        /// A span containing a code literal.
+        literal(code-label-span-literal),
+    }
+
+    /// A span containing a code literal.
+    record code-label-span-literal {
+        /// The literal text.
+        text: string,
+        /// The name of the highlight to use for this literal.
+        highlight-name: option<string>,
+    }
+
+    export labels-for-completions: func(language-server-id: string, completions: list<completion>) -> result<list<option<code-label>>, string>;
+    export labels-for-symbols: func(language-server-id: string, symbols: list<symbol>) -> result<list<option<code-label>>, string>;
+
+    /// Returns the completions that should be shown when completing the provided slash command with the given query.
+    export complete-slash-command-argument: func(command: slash-command, args: list<string>) -> result<list<slash-command-argument-completion>, string>;
+
+    /// Returns the output from running the provided slash command.
+    export run-slash-command: func(command: slash-command, args: list<string>, worktree: option<borrow<worktree>>) -> result<slash-command-output, string>;
+
+    /// Returns the command used to start up a context server.
+    export context-server-command: func(context-server-id: string, project: borrow<project>) -> result<command, string>;
+
+    /// Returns a list of packages as suggestions to be included in the `/docs`
+    /// search results.
+    ///
+    /// This can be used to provide completions for known packages (e.g., from the
+    /// local project or a registry) before a package has been indexed.
+    export suggest-docs-packages: func(provider-name: string) -> result<list<string>, string>;
+
+    /// Indexes the docs for the specified package.
+    export index-docs: func(provider-name: string, package-name: string, database: borrow<key-value-store>) -> result<_, string>;
+}

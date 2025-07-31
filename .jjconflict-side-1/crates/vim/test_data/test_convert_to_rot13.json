@@ -1,0 +1,15 @@
+{"Put":{"state":"a😀C«dÉ1*fˇ»\n"}}
+{"Key":"g"}
+{"Key":"?"}
+{"Get":{"state":"a😀CˇqÉ1*s\n","mode":"Normal"}}
+{"Put":{"state":"abˇC\n"}}
+{"Key":"shift-v"}
+{"Key":"g"}
+{"Key":"?"}
+{"Get":{"state":"ˇnoP\n","mode":"Normal"}}
+{"Put":{"state":"ˇaa\nbb\ncc"}}
+{"Key":"ctrl-v"}
+{"Key":"j"}
+{"Key":"g"}
+{"Key":"?"}
+{"Get":{"state":"ˇna\nob\ncc","mode":"Normal"}}

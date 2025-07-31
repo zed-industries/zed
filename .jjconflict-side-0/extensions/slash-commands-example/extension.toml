@@ -1,0 +1,15 @@
+id = "slash-commands-example"
+name = "Slash Commands Example"
+description = "An example extension showcasing slash commands."
+version = "0.1.0"
+schema_version = 1
+authors = ["Zed Industries <hi@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[slash_commands.echo]
+description = "echoes the provided input"
+requires_argument = true
+
+[slash_commands.pick-one]
+description = "pick one of three options"
+requires_argument = true

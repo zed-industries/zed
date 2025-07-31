@@ -1,0 +1,152 @@
+syntax = "proto3";
+package zed.messages;
+
+message Timestamp {
+    uint64 seconds = 1;
+    uint32 nanos = 2;
+}
+
+message File {
+    uint64 worktree_id = 1;
+    optional uint64 entry_id = 2;
+    string path = 3;
+    Timestamp mtime = 4;
+    bool is_deleted = 5;
+}
+
+message Entry {
+    uint64 id = 1;
+    bool is_dir = 2;
+    string path = 3;
+    uint64 inode = 4;
+    Timestamp mtime = 5;
+    bool is_ignored = 7;
+    bool is_external = 8;
+    reserved 6;
+    reserved 9;
+    bool is_fifo = 10;
+    optional uint64 size = 11;
+    optional string canonical_path = 12;
+}
+
+message AddWorktree {
+    string path = 1;
+    uint64 project_id = 2;
+    bool visible = 3;
+}
+
+message AddWorktreeResponse {
+    uint64 worktree_id = 1;
+    string canonicalized_path = 2;
+}
+
+message RemoveWorktree {
+    uint64 worktree_id = 1;
+}
+
+message GetPathMetadata {
+    uint64 project_id = 1;
+    string path = 2;
+}
+
+message GetPathMetadataResponse {
+    bool exists = 1;
+    string path = 2;
+    bool is_dir = 3;
+}
+
+message WorktreeMetadata {
+    uint64 id = 1;
+    string root_name = 2;
+    bool visible = 3;
+    string abs_path = 4;
+}
+
+message ProjectPath {
+    uint64 worktree_id = 1;
+    string path = 2;
+}
+
+message ListRemoteDirectoryConfig {
+    bool is_dir = 1;
+}
+
+message ListRemoteDirectory {
+    uint64 dev_server_id = 1;
+    string path = 2;
+    ListRemoteDirectoryConfig config = 3;
+}
+
+message EntryInfo {
+    bool is_dir = 1;
+}
+
+message ListRemoteDirectoryResponse {
+    repeated string entries = 1;
+    repeated EntryInfo entry_info = 2;
+}
+
+message CreateProjectEntry {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    bool is_directory = 4;
+    optional bytes content = 5;
+}
+
+message RenameProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+    string new_path = 3;
+}
+
+message CopyProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+    string new_path = 3;
+    optional string relative_worktree_source_path = 4;
+}
+
+message DeleteProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+    bool use_trash = 3;
+}
+
+message ExpandProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ProjectEntryResponse {
+    optional Entry entry = 1;
+    uint64 worktree_scan_id = 2;
+}
+
+message UpdateWorktreeSettings {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
+    Debug = 3;
+}

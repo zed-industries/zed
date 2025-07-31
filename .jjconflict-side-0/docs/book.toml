@@ -1,0 +1,98 @@
+[book]
+authors = ["The Zed Team"]
+language = "en"
+multilingual = false
+src = "src"
+title = "Zed"
+site-url = "/docs/"
+
+[build]
+extra-watch-dirs = ["../crates/docs_preprocessor"]
+
+# zed-html is a "custom" renderer that just wraps the
+# builtin mdbook html renderer, and applies post-processing
+# as post-processing is not possible with mdbook in the same way
+# pre-processing is
+# The config is passed directly to the html renderer, so all config
+# options that apply to html apply to zed-html
+[output.zed-html]
+command = "cargo run -p docs_preprocessor -- postprocess"
+# Set here instead of above as we only use it replace the `#description#` we set in the template
+# when no front-matter is provided value
+default-description = "Learn how to use and customize Zed, the fast, collaborative code editor. Official docs on features, configuration, AI tools, and workflows."
+default-title = "Zed Code Editor Documentation"
+no-section-label = true
+preferred-dark-theme = "dark"
+additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css"]
+additional-js  = ["theme/page-toc.js", "theme/plugins.js"]
+
+[output.zed-html.print]
+enable = false
+
+# Redirects for `/docs` pages.
+#
+# All of the source URLs are interpreted relative to mdBook, so they must:
+# 1. Not start with `/docs`
+# 2. End in `.html`
+#
+# The destination URLs are interpreted relative to `https://zed.dev`.
+# - Redirects to other docs pages should end in `.html`
+# - You can link to pages on the Zed site by omitting the `/docs` in front of it.
+[output.zed-html.redirect]
+# AI
+"/ai.html" = "/docs/ai/overview.html"
+"/assistant-panel.html" = "/docs/ai/agent-panel.html"
+"/assistant.html" = "/docs/assistant/assistant.html"
+"/assistant/assistant-panel.html" = "/docs/ai/agent-panel.html"
+"/assistant/assistant.html" = "/docs/ai/overview.html"
+"/assistant/commands.html" = "/docs/ai/text-threads.html"
+"/assistant/configuration.html" = "/docs/ai/configuration.html"
+"/assistant/context-servers.html" = "/docs/ai/mcp.html"
+"/assistant/contexts.html" = "/docs/ai/text-threads.html"
+"/assistant/inline-assistant.html" = "/docs/ai/inline-assistant.html"
+"/assistant/model-context-protocol.html" = "/docs/ai/mcp.html"
+"/assistant/prompting.html" = "/docs/ai/rules.html"
+"/language-model-integration.html" = "/docs/assistant/assistant.html"
+"/model-improvement.html" = "/docs/ai/ai-improvement.html"
+"/ai/temperature.html" = "/docs/ai/agent-settings.html#model-temperature"
+
+# Community
+"/community/feedback.html" = "/community-links"
+"/conversations.html" = "/community-links"
+
+# Debugger
+"/debuggers.html" = "/docs/debugger.html"
+
+# MCP
+"/assistant/model-context-protocolCitedby.html" = "/docs/ai/mcp.html"
+"/context-servers.html" = "/docs/ai/mcp.html"
+"/extensions/context-servers.html" = "/docs/extensions/mcp-extensions.html"
+
+# Languages
+"/adding-new-languages.html" = "/docs/extensions/languages.html"
+"/elixir.html" = "/docs/languages/elixir.html"
+"/javascript.html" = "/docs/languages/javascript.html"
+"/languages/languages/html.html" = "/docs/languages/html.html"
+"/languages/languages/javascript.html" = "/docs/languages/javascript.html"
+"/languages/languages/makefile.html" = "/docs/languages/makefile.html"
+"/languages/languages/nim.html" = "/docs/languages/nim.html"
+"/languages/languages/ruby.html" = "/docs/languages/ruby.html"
+"/languages/languages/scala.html" = "/docs/languages/scala.html"
+"/python.html" = "/docs/languages/python.html"
+"/ruby.html" = "/docs/languages/ruby.html"
+
+# Zed development
+"/contribute-to-zed.html" = "/docs/development.html#contributor-links"
+"/contributing.html" = "/docs/development.html#contributor-links"
+"/developing-zed.html" = "/docs/development.html"
+"/development/development/linux.html" = "/docs/development/linux.html"
+"/development/development/macos.html" = "/docs/development/macos.html"
+"/development/development/windows.html" = "/docs/development/windows.html"
+
+# Our custom preprocessor for expanding commands like `{#kb action::ActionName}`,
+# and other docs-related functions.
+#
+# Comment the below section out if you need to bypass the preprocessor for some reason.
+[preprocessor.zed_docs_preprocessor]
+command = "cargo run -p docs_preprocessor --"
+renderer = ["html"]

@@ -1,0 +1,13 @@
+{
+  "name": "danger",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "danger": "danger"
+  },
+  "devDependencies": {
+    "danger": "13.0.4",
+    "danger-plugin-pr-hygiene": "0.6.1"
+  }
+}

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+set -eu
+
+if [[ $# -ne 1 ]]; then
+  echo "Usage: $0 <crate_name>" >&2
+  exit 1
+fi
+
+CRATE_NAME=$1
+
+cargo metadata \
+    --no-deps \
+    --format-version=1 \
+    | jq \
+        --raw-output \
+        ".packages[] | select(.name == \"${CRATE_NAME}\") | .version"

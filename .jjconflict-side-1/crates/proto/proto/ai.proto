@@ -1,0 +1,174 @@
+syntax = "proto3";
+package zed.messages;
+
+import "buffer.proto";
+
+message Context {
+    repeated ContextOperation operations = 1;
+}
+
+message ContextMetadata {
+    string context_id = 1;
+    optional string summary = 2;
+}
+
+message ContextMessageStatus {
+    oneof variant {
+        Done done = 1;
+        Pending pending = 2;
+        Error error = 3;
+        Canceled canceled = 4;
+    }
+
+    message Done {}
+
+    message Pending {}
+
+    message Error {
+        string message = 1;
+    }
+
+    message Canceled {}
+}
+
+message ContextMessage {
+    LamportTimestamp id = 1;
+    Anchor start = 2;
+    LanguageModelRole role = 3;
+    ContextMessageStatus status = 4;
+}
+
+message SlashCommandOutputSection {
+    AnchorRange range = 1;
+    string icon_name = 2;
+    string label = 3;
+    optional string metadata = 4;
+}
+
+message ThoughtProcessOutputSection {
+    AnchorRange range = 1;
+}
+
+message ContextOperation {
+    oneof variant {
+        InsertMessage insert_message = 1;
+        UpdateMessage update_message = 2;
+        UpdateSummary update_summary = 3;
+        BufferOperation buffer_operation = 5;
+        SlashCommandStarted slash_command_started = 6;
+        SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
+        SlashCommandCompleted slash_command_completed = 8;
+        ThoughtProcessOutputSectionAdded thought_process_output_section_added = 9;
+    }
+
+    reserved 4;
+
+    message InsertMessage {
+        ContextMessage message = 1;
+        repeated VectorClockEntry version = 2;
+    }
+
+    message UpdateMessage {
+        LamportTimestamp message_id = 1;
+        LanguageModelRole role = 2;
+        ContextMessageStatus status = 3;
+        LamportTimestamp timestamp = 4;
+        repeated VectorClockEntry version = 5;
+    }
+
+    message UpdateSummary {
+        string summary = 1;
+        bool done = 2;
+        LamportTimestamp timestamp = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandStarted {
+        LamportTimestamp id = 1;
+        AnchorRange output_range = 2;
+        string name = 3;
+        repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        SlashCommandOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
+    }
+
+    message SlashCommandCompleted {
+        LamportTimestamp id = 1;
+        LamportTimestamp timestamp = 3;
+        optional string error_message = 4;
+        repeated VectorClockEntry version = 5;
+    }
+
+    message ThoughtProcessOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        ThoughtProcessOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
+    }
+
+    message BufferOperation {
+        Operation operation = 1;
+    }
+}
+
+message AdvertiseContexts {
+    uint64 project_id = 1;
+    repeated ContextMetadata contexts = 2;
+}
+
+message OpenContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+}
+
+message OpenContextResponse {
+    Context context = 1;
+}
+
+message CreateContext {
+    uint64 project_id = 1;
+}
+
+message CreateContextResponse {
+    string context_id = 1;
+    Context context = 2;
+}
+
+message UpdateContext {
+    uint64 project_id = 1;
+    string context_id = 2;
+    ContextOperation operation = 3;
+}
+
+message ContextVersion {
+    string context_id = 1;
+    repeated VectorClockEntry context_version = 2;
+    repeated VectorClockEntry buffer_version = 3;
+}
+
+message SynchronizeContexts {
+    uint64 project_id = 1;
+    repeated ContextVersion contexts = 2;
+}
+
+message SynchronizeContextsResponse {
+    repeated ContextVersion contexts = 1;
+}
+
+message GetLlmToken {}
+
+message GetLlmTokenResponse {
+    string token = 1;
+}
+
+message RefreshLlmToken {}
+
+enum LanguageModelRole {
+    LanguageModelUser = 0;
+    LanguageModelAssistant = 1;
+    LanguageModelSystem = 2;
+    reserved 3;
+}

@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+WORKDIR /app
+ARG TZ=Etc/UTC \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    DEBIAN_FRONTEND=noninteractive
+ENV CARGO_TERM_COLOR=always
+
+COPY script/linux script/
+RUN ./script/linux
+COPY script/install-mold script/install-cmake script/
+RUN ./script/install-mold "2.34.0"
+RUN ./script/install-cmake "3.30.4"
+
+COPY . .
+
+# When debugging, make these into individual RUN statements.
+# Cleanup to avoid saving big layers we aren't going to use.
+RUN . "$HOME/.cargo/env" \
+    && cargo fetch \
+    && cargo build \
+    && cargo run -- --help \
+    && cargo clean --quiet

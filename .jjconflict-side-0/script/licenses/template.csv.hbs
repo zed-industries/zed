@@ -1,0 +1,6 @@
+Crate Name,Crate Version,License,Url
+{{#each licenses}}
+{{#each used_by}}
+{{crate.name}},{{crate.version}},{{../name}},{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}
+{{/each}}
+{{/each}}

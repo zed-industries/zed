@@ -1,0 +1,5 @@
+# This file is used to build collab in a Docker image.
+# In particular, we don't use clang.
+[build]
+# v0 mangling scheme provides more detailed backtraces around closures
+rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]

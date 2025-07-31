@@ -1,0 +1,16 @@
+{"Put":{"state":"ˇa\na\na\na\na\na\na\n "}}
+{"Key":":"}
+{"Key":"2"}
+{"Key":","}
+{"Key":"5"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"^"}
+{"Key":"/"}
+{"Key":"b"}
+{"Key":"enter"}
+{"Get":{"state":"a\nba\nba\nba\nˇba\na\na\n ","mode":"Normal"}}
+{"Key":"/"}
+{"Key":"a"}
+{"Key":"enter"}
+{"Get":{"state":"a\nba\nba\nba\nbˇa\na\na\n ","mode":"Normal"}}

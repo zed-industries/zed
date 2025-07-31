@@ -1,0 +1,15 @@
+{"Put":{"state":"ˇthe quick brown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"0"}
+{"Get":{"state":"ˇhe quick brown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick bˇrown fox\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"0"}
+{"Get":{"state":"ˇown fox\njumped over the lazy dog","mode":"Normal"}}
+{"Put":{"state":"the quick brown foˇx\njumped over the lazy dog"}}
+{"Key":"d"}
+{"Key":"v"}
+{"Key":"0"}
+{"Get":{"state":"ˇ\njumped over the lazy dog","mode":"Normal"}}

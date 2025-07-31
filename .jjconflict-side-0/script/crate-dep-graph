@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+set -e
+
+if [[ -x cargo-depgraph ]]; then
+    cargo install cargo-depgraph
+fi
+
+graph_file=target/crate-graph.html
+
+cargo depgraph \
+    --workspace-only \
+    --offline \
+    --root=zed,cli,collab \
+    --dedup-transitive-deps \
+    | dot -Tsvg > $graph_file
+
+echo "open $graph_file"
+open $graph_file

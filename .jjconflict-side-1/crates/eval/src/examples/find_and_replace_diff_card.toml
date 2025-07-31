@@ -1,0 +1,43 @@
+url = "https://github.com/zed-industries/zed.git"
+revision = "38fcadf9481d018543c65f36ac3bafeba190179b"
+language_extension = "rs"
+
+prompt = """
+Look at the `find_replace_file_tool.rs`. I want to implement a card for it.
+The card should implement the `Render` trait.
+
+The card should show a diff. It should be a beautifully presented diff.
+The card "box" should look like what we show for markdown codeblocks (look at `MarkdownElement`).
+I want to see a red background for lines that were deleted and a green background for lines
+that were added. We should have a div per diff line.
+"""
+
+[diff_assertions]
+
+modify_find_and_replace_tool = """
+The changes must replace the previous output returned by `FindReplaceFileTool` with the new `ToolResult` struct.
+The struct should contain an `output` field that is the same as the task we were returning before,
+and a new `card` field that contains a view for the card.
+"""
+
+card_implementation = """
+The card should be a view that displays a diff.
+Each line in the diff should be colored according to whether it was added, removed or unchanged.
+"""
+
+[thread_assertions]
+
+path_search = """
+The first tool call should be to path search including "find_replace_file_tool.rs" in the string.
+(*Not* grep, for example, or reading the file based on a guess at the path.)
+This is because we gave the model a filename and it needs to turn that into a real path.
+"""
+
+read_file_from_path_search = """
+After obtaining the correct path of "zed/crates/assistant_tools/src/find_replace_file_tool.rs", it should read the contents of that path.
+"""
+
+symbol_search = """
+When trying to find information about the Render trait, it should *not* begin with a path search, because it doesn't yet have any information
+on what path the Render trait might be in.
+"""

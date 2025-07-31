@@ -1,0 +1,15 @@
+id = "proto"
+name = "Proto"
+description = "Protocol Buffers support."
+version = "0.2.2"
+schema_version = 1
+authors = ["Zed Industries <support@zed.dev>"]
+repository = "https://github.com/zed-industries/zed"
+
+[grammars.proto]
+repository = "https://github.com/zed-industries/tree-sitter-proto"
+commit = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad"
+
+[language_servers.protobuf-language-server]
+name = "Protobuf Language Server"
+languages = ["Proto"]

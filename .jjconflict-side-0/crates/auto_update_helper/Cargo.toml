@@ -1,0 +1,29 @@
+[package]
+name = "auto_update_helper"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "auto_update_helper"
+path = "src/auto_update_helper.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+simplelog.workspace = true
+workspace-hack.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows.workspace = true
+
+[target.'cfg(target_os = "windows")'.build-dependencies]
+winresource = "0.1"
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
