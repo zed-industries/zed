@@ -355,6 +355,7 @@ name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
+ "cloud_llm_client",
  "component",
  "gpui",
  "language_model",

@@ -2,7 +2,7 @@ use crate::{
     ai_setup_page::AiConfigurationPage,
     welcome::{ShowWelcome, WelcomePage},
 };
-use client::{Client, UserStore};
+use client::{Client, CloudUserStore, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -82,6 +82,7 @@ pub fn init(cx: &mut App) {
                         let settings_page = Onboarding::new(
                             workspace.weak_handle(),
                             workspace.user_store().clone(),
+                            workspace.app_state().cloud_user_store.clone(),
                             cx,
                         );
                         workspace.add_item_to_active_pane(
@@ -199,8 +200,12 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
         |workspace, window, cx| {
             {
                 workspace.toggle_dock(DockPosition::Left, window, cx);
-                let onboarding_page =
-                    Onboarding::new(workspace.weak_handle(), workspace.user_store().clone(), cx);
+                let onboarding_page = Onboarding::new(
+                    workspace.weak_handle(),
+                    workspace.user_store().clone(),
+                    workspace.app_state().cloud_user_store.clone(),
+                    cx,
+                );
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
                 window.focus(&onboarding_page.focus_handle(cx));
@@ -237,9 +242,11 @@ impl Onboarding {
     fn new(
         workspace: WeakEntity<Workspace>,
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
-        let ai_configuration_page = cx.new(|_| AiConfigurationPage::new(workspace.clone()));
+        let ai_configuration_page =
+            cx.new(|_| AiConfigurationPage::new(workspace.clone(), cloud_user_store));
 
         let theme_registry = ThemeRegistry::global(cx);
         let one_dark = theme_registry
@@ -491,6 +498,7 @@ impl Item for Onboarding {
         Some(Onboarding::new(
             self.workspace.clone(),
             self.user_store.clone(),
+            self.ai_configuration_page.read(cx).cloud_user_store.clone(),
             cx,
         ))
     }

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, zed_urls};
+use cloud_llm_client::Plan;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, List, Vector, VectorName, prelude::*};
 
@@ -10,13 +11,15 @@ use crate::{BulletItem, SignInStatus};
 pub struct AiUpsellCard {
     pub sign_in_status: SignInStatus,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub user_plan: Option<Plan>,
 }
 
 impl AiUpsellCard {
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(client: Arc<Client>, user_plan: Option<Plan>) -> Self {
         let status = *client.status().borrow();
 
         Self {
+            user_plan,
             sign_in_status: status.into(),
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
@@ -191,6 +194,7 @@ impl Component for AiUpsellCard {
                         AiUpsellCard {
                             sign_in_status: SignInStatus::SignedOut,
                             sign_in: Arc::new(|_, _| {}),
+                            user_plan: None,
                         }
                         .into_any_element(),
                     ),
@@ -199,6 +203,7 @@ impl Component for AiUpsellCard {
                         AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
+                            user_plan: None,
                         }
                         .into_any_element(),
                     ),

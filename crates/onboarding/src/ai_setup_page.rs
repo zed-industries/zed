@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
-use client::DisableAiSettings;
+use client::{CloudUserStore, DisableAiSettings};
 use gpui::{
-    Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity, Window,
-    prelude::*,
+    Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
+    Window, prelude::*,
 };
 use itertools;
 
@@ -22,11 +22,18 @@ const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", 
 
 pub(crate) struct AiConfigurationPage {
     workspace: WeakEntity<Workspace>,
+    pub(crate) cloud_user_store: Entity<CloudUserStore>,
 }
 
 impl AiConfigurationPage {
-    pub(crate) fn new(workspace: WeakEntity<Workspace>) -> Self {
-        Self { workspace }
+    pub(crate) fn new(
+        workspace: WeakEntity<Workspace>,
+        cloud_user_store: Entity<CloudUserStore>,
+    ) -> Self {
+        Self {
+            workspace,
+            cloud_user_store,
+        }
     }
 
     fn open_configuration_modal(
@@ -278,6 +285,7 @@ impl Render for AiConfigurationPage {
                     .child(AiUpsellCard {
                         sign_in_status: SignInStatus::SignedIn,
                         sign_in: Arc::new(|_, _| {}),
+                        user_plan: self.cloud_user_store.read(cx).plan(),
                     })
                     .child(self.render_llm_provider_section(is_ai_disabled, window, cx))
                     .when(is_ai_disabled, |this| this.child(backdrop)),
