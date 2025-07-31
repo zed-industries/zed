@@ -133,14 +133,14 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     // GitLab
                     "create a merge request",
                     // GitLab merge request already exist
-                    "View merge request", 
+                    "View merge request",
                 ];
-                
+
                 let matching_hint = pr_hints
                     .iter()
                     .find(|indicator| output.stderr.contains(*indicator))
                     .map(|hint| hint.to_string());
-                
+
                 let style = if let Some(matched_hint) = matching_hint {
                     let finder = LinkFinder::new();
                     let first_link = finder
@@ -151,8 +151,10 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     if let Some(link) = first_link {
                         let link = output.stderr[link].to_string();
                         let hint = matched_hint
-                            .get(0..1).map(|c| c.to_uppercase().to_string()).unwrap_or_default() +
-                            matched_hint.get(1..).unwrap_or("");
+                            .get(0..1)
+                            .map(|c| c.to_uppercase().to_string())
+                            .unwrap_or_default()
+                            + matched_hint.get(1..).unwrap_or("");
                         SuccessStyle::PushPrLink { hint, link }
                     } else {
                         SuccessStyle::ToastWithLog { output }
@@ -160,7 +162,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                 } else {
                     SuccessStyle::ToastWithLog { output }
                 };
-                
+
                 SuccessMessage {
                     message: format!("Pushed {} to {}", branch_name, remote_ref.name),
                     style,
@@ -242,7 +244,7 @@ mod tests {
             panic!("Expected PushPrLink variant");
         }
     }
-    
+
     #[test]
     fn test_push_branch_existing_merge_request() {
         let action = RemoteAction::Push(
@@ -254,30 +256,29 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from("
+            stderr: String::from(
+                "
                 Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
                 remote:
                 remote: View merge request for test:
                 remote:    https://example.com/test/test/-/merge_requests/99999
-                remote: 
+                remote:
                 To example.com:test/test.git
                  + 80bd3c83be...e03d499d2e test -> test
-                "),
+                ",
+            ),
         };
 
         let msg = format_output(&action, output);
 
         if let SuccessStyle::PushPrLink { hint, link } = &msg.style {
             assert_eq!(hint, "View merge request");
-            assert_eq!(
-                link,
-                "https://example.com/test/test/-/merge_requests/99999"
-            );
+            assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
         } else {
             panic!("Expected PushPrLink variant");
         }
     }
-    
+
     #[test]
     fn test_push_new_branch_no_link() {
         let action = RemoteAction::Push(
