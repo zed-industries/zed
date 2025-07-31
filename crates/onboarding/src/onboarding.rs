@@ -313,23 +313,29 @@ impl Onboarding {
         // - [ ]  -> light sets mode to light and sets light variant
         // - [ ]  -> dark sets mode to dark and sets dark variant
         // - [ ] abastract updates into function
-        let system_appearance = theme::SystemAppearance::global(cx);
-        let appearance_state = window.use_state(cx, |_, cx| system_appearance);
-        let appearance = **appearance_state.read(cx);
 
-        let theme_selection = {
-            ThemeSettings::get_global(cx)
-                .theme_selection
-                .clone()
-                .unwrap_or_else(|| ThemeSelection::Dynamic {
-                    mode: match *system_appearance {
-                        Appearance::Light => ThemeMode::Light,
-                        Appearance::Dark => ThemeMode::Dark,
-                    },
-                    light: ThemeName("One Light".into()),
-                    dark: ThemeName("One Dark".into()),
+        let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
+        let system_appearance = theme::SystemAppearance::global(cx);
+        let appearance_state = window.use_state(cx, |_, cx| {
+            theme_selection
+                .as_ref()
+                .and_then(|selection| selection.mode())
+                .and_then(|mode| match mode {
+                    ThemeMode::System => None,
+                    ThemeMode::Light => Some(Appearance::Light),
+                    ThemeMode::Dark => Some(Appearance::Dark),
                 })
-        };
+                .unwrap_or(*system_appearance)
+        });
+        let appearance = appearance_state.read(cx).clone();
+        let theme_selection = theme_selection.unwrap_or_else(|| ThemeSelection::Dynamic {
+            mode: match *system_appearance {
+                Appearance::Light => ThemeMode::Light,
+                Appearance::Dark => ThemeMode::Dark,
+            },
+            light: ThemeName("One Light".into()),
+            dark: ThemeName("One Dark".into()),
+        });
         let theme_registry = ThemeRegistry::global(cx);
 
         let current_theme_name = theme_selection.theme(appearance);
@@ -358,7 +364,9 @@ impl Onboarding {
             let name = theme.name.clone();
             v_flex()
                 .id(name.clone())
-                .on_click(move |_, window, cx| {})
+                .on_click(move |_, window, cx| {
+                    todo!();
+                })
                 .flex_1()
                 .child(theme_preview::ThemePreviewTile::new(
                     theme,
@@ -382,29 +390,27 @@ impl Onboarding {
                             ToggleButtonGroup::single_row(
                                 "theme-selector-onboarding",
                                 [
-                                    ToggleButtonSimple::new("Light", |_, _, cx| {
-                                        let theme_selection = ThemeMode::Light;
-                                        let fs = <dyn Fs>::global(cx);
-
-                                        update_settings_file::<ThemeSettings>(
-                                            fs,
-                                            cx,
-                                            move |settings, _| {
-                                                settings.set_mode(theme_selection);
-                                            },
-                                        );
+                                    ToggleButtonSimple::new("Light", {
+                                        let theme = theme_selection.clone();
+                                        move |_, _, cx| {
+                                            write_theme_selection(
+                                                theme.clone(),
+                                                ThemeMode::Light,
+                                                appearance,
+                                                cx,
+                                            );
+                                        }
                                     }),
-                                    ToggleButtonSimple::new("Dark", |_, _, cx| {
-                                        let theme_selection = ThemeMode::Dark;
-                                        let fs = <dyn Fs>::global(cx);
-
-                                        update_settings_file::<ThemeSettings>(
-                                            fs,
-                                            cx,
-                                            move |settings, _| {
-                                                settings.set_mode(theme_selection);
-                                            },
-                                        );
+                                    ToggleButtonSimple::new("Dark", {
+                                        let theme = theme_selection.clone();
+                                        move |_, _, cx| {
+                                            write_theme_selection(
+                                                theme.clone(),
+                                                ThemeMode::Dark,
+                                                appearance,
+                                                cx,
+                                            );
+                                        }
                                     }),
                                 ],
                             )
@@ -417,58 +423,63 @@ impl Onboarding {
                                 .style(ButtonStyle::Outlined)
                                 .width(rems_from_px(64.).into())
                                 .on_click({
-                                    let theme_selection = theme_selection.clone();
-                                    let appearance = appearance;
+                                    let theme = theme_selection.clone();
                                     move |_, _, cx| {
-                                        let fs = <dyn Fs>::global(cx);
-
-                                        let theme_selection = theme_selection.clone();
-                                        update_settings_file::<ThemeSettings>(
-                                            fs,
-                                            cx,
-                                            move |settings, cx| {
-                                                settings.theme = Some(match theme_selection {
-                                                    ThemeSelection::Static(theme_name) => {
-                                                        ThemeSelection::Dynamic {
-                                                            mode: ThemeMode::System,
-                                                            light: theme_name.clone(),
-                                                            dark: theme_name.clone(),
-                                                        }
-                                                    }
-                                                    ThemeSelection::Dynamic {
-                                                        mode,
-                                                        light,
-                                                        dark,
-                                                    } if mode == ThemeMode::System => {
-                                                        let mode = match appearance {
-                                                            Appearance::Light => ThemeMode::Light,
-                                                            Appearance::Dark => ThemeMode::Dark,
-                                                        };
-                                                        ThemeSelection::Dynamic {
-                                                            mode,
-                                                            light,
-                                                            dark,
-                                                        }
-                                                    }
-
-                                                    ThemeSelection::Dynamic {
-                                                        mode: _,
-                                                        light,
-                                                        dark,
-                                                    } => ThemeSelection::Dynamic {
-                                                        mode: ThemeMode::System,
-                                                        light,
-                                                        dark,
-                                                    },
-                                                });
-                                            },
-                                        );
+                                        toggle_system_theme_mode(theme.clone(), appearance, cx);
                                     }
                                 }),
                         ),
                 ),
             )
             .child(h_flex().justify_between().children(theme_previews));
+
+        fn write_theme_selection(
+            theme_selection: ThemeSelection,
+            new_mode: ThemeMode,
+            appearance: Appearance,
+            cx: &mut App,
+        ) {
+            let fs = <dyn Fs>::global(cx);
+
+            update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+                settings.set_mode(new_mode);
+            });
+        }
+
+        fn toggle_system_theme_mode(
+            theme_selection: ThemeSelection,
+            appearance: Appearance,
+            cx: &mut App,
+        ) {
+            let fs = <dyn Fs>::global(cx);
+
+            update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+                settings.theme = Some(match theme_selection {
+                    ThemeSelection::Static(theme_name) => ThemeSelection::Dynamic {
+                        mode: ThemeMode::System,
+                        light: theme_name.clone(),
+                        dark: theme_name.clone(),
+                    },
+                    ThemeSelection::Dynamic { mode, light, dark } if mode == ThemeMode::System => {
+                        let mode = match appearance {
+                            Appearance::Light => ThemeMode::Light,
+                            Appearance::Dark => ThemeMode::Dark,
+                        };
+                        ThemeSelection::Dynamic { mode, light, dark }
+                    }
+
+                    ThemeSelection::Dynamic {
+                        mode: _,
+                        light,
+                        dark,
+                    } => ThemeSelection::Dynamic {
+                        mode: ThemeMode::System,
+                        light,
+                        dark,
+                    },
+                });
+            });
+        }
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
