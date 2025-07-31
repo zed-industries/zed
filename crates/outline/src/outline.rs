@@ -119,6 +119,7 @@ struct OutlineViewDelegate {
     active_editor: Entity<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
+    manually_selected: Option<usize>,
     prev_scroll_position: Option<Point<f32>>,
     matches: Vec<StringMatch>,
     last_query: String,
@@ -139,6 +140,7 @@ impl OutlineViewDelegate {
             last_query: Default::default(),
             matches: Default::default(),
             selected_match_index: 0,
+            manually_selected: None,
             prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
             active_editor: editor,
             outline,
@@ -165,6 +167,7 @@ impl OutlineViewDelegate {
 
         if navigate && !self.matches.is_empty() {
             let selected_match = &self.matches[self.selected_match_index];
+            self.manually_selected = Some(selected_match.candidate_id);
             let outline_item = &self.outline.items[selected_match.candidate_id];
 
             self.active_editor.update(cx, |active_editor, cx| {
@@ -180,6 +183,8 @@ impl OutlineViewDelegate {
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
+        } else if self.manually_selected.is_some() {
+            self.manually_selected = None;
         }
     }
 }
@@ -261,13 +266,29 @@ impl PickerDelegate for OutlineViewDelegate {
                 self.outline
                     .search(&query, cx.background_executor().clone()),
             );
-            selected_index = self
-                .matches
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, m)| OrderedFloat(m.score))
-                .map(|(ix, _)| ix)
-                .unwrap_or(0);
+
+            if let Some(manually_selected) = self.manually_selected.and_then(|manually_selected| {
+                self.matches
+                    .iter()
+                    .find(|mtch| mtch.candidate_id == manually_selected)
+                    .map(|mtch| mtch.candidate_id)
+            }) {
+                selected_index = self
+                    .matches
+                    .iter()
+                    .enumerate()
+                    .find(|(_, m)| m.candidate_id == manually_selected)
+                    .map(|(ix, _)| ix)
+                    .unwrap_or(0);
+            } else {
+                selected_index = self
+                    .matches
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, m)| OrderedFloat(m.score))
+                    .map(|(ix, _)| ix)
+                    .unwrap_or(0);
+            }
         }
         self.last_query = query;
         self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
