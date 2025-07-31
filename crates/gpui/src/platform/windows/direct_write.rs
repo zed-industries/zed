@@ -836,51 +836,13 @@ impl DirectWriteState {
             anyhow::bail!("glyph bounds are empty");
         }
 
-        // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
         let bitmap_size = glyph_bounds.size;
-
-        let subpixel_shift = params
-            .subpixel_variant
-            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-        let baseline_origin_x = subpixel_shift.x / params.scale_factor;
-        let baseline_origin_y = subpixel_shift.y / params.scale_factor;
 
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        let font = &self.fonts[params.font_id.0];
-        let glyph_id = [params.glyph_id.0 as u16];
-        let advance = [glyph_bounds.size.width.0 as f32];
-        let offset = [DWRITE_GLYPH_OFFSET {
-            advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
-            ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
-        }];
-        let glyph_run = DWRITE_GLYPH_RUN {
-            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
-            fontEmSize: params.font_size.0,
-            glyphCount: 1,
-            glyphIndices: glyph_id.as_ptr(),
-            glyphAdvances: advance.as_ptr(),
-            glyphOffsets: offset.as_ptr(),
-            isSideways: BOOL(0),
-            bidiLevel: 0,
-        };
-        let transform = DWRITE_MATRIX {
-            m11: params.scale_factor,
-            m12: 0.0,
-            m21: 0.0,
-            m22: params.scale_factor,
-            dx: 0.0,
-            dy: 0.0,
-        };
-
         let mut bitmap_data: Vec<u8>;
         if params.is_emoji {
-            if let Ok(color) = self.rasterize_color(
-                &glyph_run,
-                &transform,
-                point(baseline_origin_x, baseline_origin_y),
-                bitmap_size,
-            ) {
+            if let Ok(color) = self.rasterize_color(&params, glyph_bounds) {
                 bitmap_data = color;
             } else {
                 let monochrome = Self::rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
@@ -921,20 +883,52 @@ impl DirectWriteState {
 
     fn rasterize_color(
         &self,
-        glyph_run: &DWRITE_GLYPH_RUN,
-        transform: &DWRITE_MATRIX,
-        baseline_origin: Point<f32>,
-        bitmap_size: Size<DevicePixels>,
+        params: &RenderGlyphParams,
+        glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        let bitmap_size = glyph_bounds.size;
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+        let baseline_origin_x = subpixel_shift.x / params.scale_factor;
+        let baseline_origin_y = subpixel_shift.y / params.scale_factor;
+
+        let transform = DWRITE_MATRIX {
+            m11: params.scale_factor,
+            m12: 0.0,
+            m21: 0.0,
+            m22: params.scale_factor,
+            dx: 0.0,
+            dy: 0.0,
+        };
+
+        let font = &self.fonts[params.font_id.0];
+        let glyph_id = [params.glyph_id.0 as u16];
+        let advance = [glyph_bounds.size.width.0 as f32];
+        let offset = [DWRITE_GLYPH_OFFSET {
+            advanceOffset: -glyph_bounds.origin.x.0 as f32 / params.scale_factor,
+            ascenderOffset: glyph_bounds.origin.y.0 as f32 / params.scale_factor,
+        }];
+        let glyph_run = DWRITE_GLYPH_RUN {
+            fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
+            fontEmSize: params.font_size.0,
+            glyphCount: 1,
+            glyphIndices: glyph_id.as_ptr(),
+            glyphAdvances: advance.as_ptr(),
+            glyphOffsets: offset.as_ptr(),
+            isSideways: BOOL(0),
+            bidiLevel: 0,
+        };
+
         // todo: support formats other than COLR
         let color_enumerator = unsafe {
             self.components.factory.TranslateColorGlyphRun(
-                Vector2::new(baseline_origin.x, baseline_origin.y),
-                glyph_run,
+                Vector2::new(baseline_origin_x, baseline_origin_y),
+                &glyph_run,
                 None,
                 DWRITE_GLYPH_IMAGE_FORMATS_COLR,
                 DWRITE_MEASURING_MODE_NATURAL,
-                Some(transform),
+                Some(&transform),
                 0,
             )
         }?;
@@ -948,13 +942,13 @@ impl DirectWriteState {
                 let color_analysis = unsafe {
                     self.components.factory.CreateGlyphRunAnalysis(
                         &color_run.Base.glyphRun as *const _,
-                        Some(transform),
+                        Some(&transform),
                         DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
                         DWRITE_MEASURING_MODE_NATURAL,
                         DWRITE_GRID_FIT_MODE_DEFAULT,
                         DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
-                        baseline_origin.x,
-                        baseline_origin.y,
+                        baseline_origin_x,
+                        baseline_origin_y,
                     )
                 }?;
 
