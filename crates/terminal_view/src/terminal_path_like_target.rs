@@ -750,12 +750,10 @@ mod tests {
             );
         }
 
-        // TODO: Needs an issue created.
+        // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
         #[should_panic(expected = "Tooltips mismatch")]
-        async fn issue_file_in_terminal_dir_should_be_preferred_over_worktree_file(
-            cx: &mut TestAppContext,
-        ) {
+        async fn issue_34027_non_worktree_file(cx: &mut TestAppContext) {
             let mut test_path_like = init_test(
                 cx,
                 vec![
