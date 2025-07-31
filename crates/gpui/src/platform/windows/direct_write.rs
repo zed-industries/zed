@@ -778,7 +778,7 @@ impl DirectWriteState {
         let antialias_mode = if params.is_emoji {
             DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
         } else {
-            DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE
+            DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE
         };
 
         let glyph_analysis = unsafe {
@@ -814,7 +814,7 @@ impl DirectWriteState {
             }
         }
 
-        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+        let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
 
         if bounds.right < bounds.left {
             Ok(Bounds {
@@ -856,45 +856,83 @@ impl DirectWriteState {
 
         let bitmap_size = glyph_bounds.size;
 
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
-
         let mut bitmap_data: Vec<u8>;
         if params.is_emoji {
+            let glyph_analysis = self.create_glyph_run_analysis(params)?;
+
             if let Ok(color) = self.rasterize_color(&params, glyph_bounds) {
                 bitmap_data = color;
             } else {
-                let monochrome = Self::rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
+                let monochrome = self.rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
                 bitmap_data = monochrome
                     .into_iter()
                     .flat_map(|pixel| [0, 0, 0, pixel])
                     .collect::<Vec<_>>();
             }
         } else {
-            bitmap_data = Self::rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
+            let glyph_analysis = self.create_glyph_run_analysis(params)?;
+            bitmap_data = self.rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
         }
 
         Ok((bitmap_size, bitmap_data))
     }
 
     fn rasterize_monochrome(
+        &self,
         glyph_analysis: &IDWriteGlyphRunAnalysis,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        let multisampled_bounds =
+            unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
+        let multisampled_size = size(
+            multisampled_bounds.right - multisampled_bounds.left,
+            multisampled_bounds.bottom - multisampled_bounds.top,
+        );
+
         let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+            vec![0u8; multisampled_size.width as usize * multisampled_size.height as usize * 3];
 
         unsafe {
             glyph_analysis.CreateAlphaTexture(
-                DWRITE_TEXTURE_ALIASED_1x1,
-                &RECT {
-                    left: glyph_bounds.origin.x.0,
-                    top: glyph_bounds.origin.y.0,
-                    right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
-                    bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
-                },
+                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                &multisampled_bounds,
                 &mut bitmap_data,
             )?;
         }
+
+        let bitmap_factory = self.components.bitmap_factory.resolve()?;
+        let bitmap = unsafe {
+            bitmap_factory.CreateBitmapFromMemory(
+                multisampled_size.width as u32,
+                multisampled_size.height as u32,
+                &GUID_WICPixelFormat24bppRGB,
+                multisampled_size.width as u32 * 3,
+                &bitmap_data,
+            )
+        }?;
+
+        let grayscale_bitmap =
+            unsafe { WICConvertBitmapSource(&GUID_WICPixelFormat8bppGray, &bitmap) }?;
+
+        let scaler = unsafe { bitmap_factory.CreateBitmapScaler() }?;
+        unsafe {
+            scaler.Initialize(
+                &grayscale_bitmap,
+                glyph_bounds.size.width.0 as u32,
+                glyph_bounds.size.height.0 as u32,
+                WICBitmapInterpolationModeHighQualityCubic,
+            )
+        }?;
+
+        let mut bitmap_data =
+            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
+        unsafe {
+            scaler.CopyPixels(
+                std::ptr::null() as _,
+                glyph_bounds.size.width.0 as u32,
+                &mut bitmap_data,
+            )
+        }?;
 
         Ok(bitmap_data)
     }
