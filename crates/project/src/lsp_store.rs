@@ -23,8 +23,8 @@ use crate::{
     lsp_command::{self, *},
     lsp_store,
     manifest_tree::{
-        AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition,
-        ManifestQueryDelegate, ManifestTree,
+        LanguageServerTree, LanguageServerTreeNode, LaunchDisposition, ManifestQueryDelegate,
+        ManifestTree,
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
@@ -1196,14 +1196,9 @@ impl LocalLspStore {
         };
         let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
         let root = self.lsp_tree.update(cx, |this, cx| {
-            this.get(
-                project_path,
-                AdapterQuery::Language(&language.name()),
-                delegate,
-                cx,
-            )
-            .filter_map(|node| node.server_id())
-            .collect::<Vec<_>>()
+            this.get(project_path, language.name(), language, delegate, cx)
+                .filter_map(|node| node.server_id())
+                .collect::<Vec<_>>()
         });
 
         root
@@ -2283,7 +2278,7 @@ impl LocalLspStore {
         };
         let delegate = Arc::new(ManifestQueryDelegate::new(snapshot));
         self.lsp_tree.update(cx, |this, cx| {
-            for node in this.get(path, AdapterQuery::Language(&language.name()), delegate, cx) {
+            for node in this.get(path, language.name(), language.manifest(), delegate, cx) {
                 let Some(server_id) = node.server_id() else {
                     continue;
                 };
@@ -2484,7 +2479,7 @@ impl LocalLspStore {
                         language_server_tree
                             .get(
                                 ProjectPath { worktree_id, path },
-                                AdapterQuery::Language(&language.name()),
+                                language.name(),
                                 delegate.clone(),
                                 cx,
                             )
@@ -4736,12 +4731,7 @@ impl LspStore {
                                 .unwrap_or_else(|| file.path().clone());
                             let worktree_path = ProjectPath { worktree_id, path };
 
-                            let nodes = rebase.get(
-                                worktree_path,
-                                AdapterQuery::Language(&language),
-                                delegate.clone(),
-                                cx,
-                            );
+                            let nodes = rebase.get(worktree_path, language, delegate.clone(), cx);
 
                             Some((false, lsp_delegate, nodes.collect()))
                         })

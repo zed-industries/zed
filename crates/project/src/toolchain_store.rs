@@ -12,8 +12,8 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
-    LanguageName, LanguageRegistry, LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain,
-    ToolchainList,
+    LanguageName, LanguageRegistry, LanguageToolchainStore, LocalLanguageToolchainStore,
+    ManifestDelegate, Toolchain, ToolchainList,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -356,17 +356,13 @@ impl LocalToolchainStore {
                 .flatten()?;
             let worktree_id = snapshot.id();
             let worktree_root = snapshot.abs_path().to_path_buf();
+            let delegate =
+                Arc::from(ManifestQueryDelegate::new(snapshot)) as Arc<dyn ManifestDelegate>;
             let relative_path = manifest_tree
                 .update(cx, |this, cx| {
-                    this.root_for_path(
-                        path,
-                        &mut std::iter::once(manifest_name.clone()),
-                        Arc::new(ManifestQueryDelegate::new(snapshot)),
-                        cx,
-                    )
+                    this.root_for_path(path, &manifest_name, &delegate, cx)
                 })
                 .ok()?
-                .remove(&manifest_name)
                 .unwrap_or_else(|| ProjectPath {
                     path: Arc::from(Path::new("")),
                     worktree_id,

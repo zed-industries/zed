@@ -167,7 +167,6 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
-    manifest_name: OnceLock<Option<ManifestName>>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -203,7 +202,6 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            manifest_name: Default::default(),
         })
     }
 
@@ -282,11 +280,6 @@ impl CachedLspAdapter {
             .get(language_name.as_ref())
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
-    }
-    pub fn manifest_name(&self) -> Option<ManifestName> {
-        self.manifest_name
-            .get_or_init(|| self.adapter.manifest_name())
-            .clone()
     }
 }
 
@@ -592,10 +585,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// And does not trip over itself in the process.
     fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
         WorkspaceFoldersContent::SubprojectRoots
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        None
     }
 
     /// Method only implemented by the default JSON language server adapter.
@@ -1108,6 +1097,7 @@ pub struct Language {
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
     pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
+    pub(crate) manifest_name: Option<ManifestName>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -1318,6 +1308,7 @@ impl Language {
             }),
             context_provider: None,
             toolchain: None,
+            manifest_name: None,
         }
     }
 
@@ -1331,6 +1322,10 @@ impl Language {
         self
     }
 
+    pub fn with_manifest(mut self, name: Option<ManifestName>) -> Self {
+        self.manifest_name = name;
+        self
+    }
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1763,6 +1758,9 @@ impl Language {
 
     pub fn name(&self) -> LanguageName {
         self.config.name.clone()
+    }
+    pub fn manifest(&self) -> Option<&ManifestName> {
+        self.manifest_name.as_ref()
     }
 
     pub fn code_fence_block_name(&self) -> Arc<str> {

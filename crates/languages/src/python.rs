@@ -396,9 +396,7 @@ impl LspAdapter for PythonLspAdapter {
             user_settings
         })
     }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
+
     fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
         WorkspaceFoldersContent::WorktreeRoot
     }
@@ -1277,9 +1275,6 @@ impl LspAdapter for PyLspAdapter {
             user_settings
         })
     }
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
-    }
     fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
         WorkspaceFoldersContent::WorktreeRoot
     }
@@ -1611,10 +1606,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
             user_settings
         })
-    }
-
-    fn manifest_name(&self) -> Option<ManifestName> {
-        Some(SharedString::new_static("pyproject.toml").into())
     }
 
     fn workspace_folders_content(&self) -> WorkspaceFoldersContent {

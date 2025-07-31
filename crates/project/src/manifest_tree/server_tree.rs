@@ -15,7 +15,7 @@ use std::{
 use collections::IndexMap;
 use gpui::{App, AppContext as _, Entity, Subscription};
 use language::{
-    CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate,
+    CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate, ManifestName,
     language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
@@ -110,17 +110,6 @@ impl InnerTreeNode {
     }
 }
 
-/// Determines how the list of adapters to query should be constructed.
-pub(crate) enum AdapterQuery<'a> {
-    /// Search for roots of all adapters associated with a given language name.
-    /// Layman: Look for all project roots along the queried path that have any
-    /// language server associated with this language running.
-    Language(&'a LanguageName),
-    /// Search for roots of adapter with a given name.
-    /// Layman: Look for all project roots along the queried path that have this server running.
-    Adapter(&'a LanguageServerName),
-}
-
 impl LanguageServerTree {
     pub(crate) fn new(
         manifest_tree: Entity<ManifestTree>,
@@ -142,27 +131,13 @@ impl LanguageServerTree {
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,
-        query: AdapterQuery<'_>,
-        delegate: Arc<dyn ManifestDelegate>,
+        language_name: LanguageName,
+        manifest_name: Option<&ManifestName>,
+        delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let settings_location = SettingsLocation {
-            worktree_id: path.worktree_id,
-            path: &path.path,
-        };
-        let adapters = match query {
-            AdapterQuery::Language(language_name) => {
-                self.adapters_for_language(settings_location, language_name, cx)
-            }
-            AdapterQuery::Adapter(language_server_name) => {
-                IndexMap::from_iter(self.adapter_for_name(language_server_name).map(|adapter| {
-                    (
-                        adapter.name(),
-                        (LspSettings::default(), BTreeSet::new(), adapter),
-                    )
-                }))
-            }
-        };
+        let adapters =
+            self.adapters_for_language(path, &language_name, manifest_name, delegate, cx);
         self.get_with_adapters(path, adapters, delegate, cx)
         // /Cargo.toml
         // /src/main.rs
@@ -176,7 +151,7 @@ impl LanguageServerTree {
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        delegate: Arc<dyn ManifestDelegate>,
+        delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let worktree_id = path.worktree_id;
@@ -242,11 +217,18 @@ impl LanguageServerTree {
 
     fn adapters_for_language(
         &self,
-        settings_location: SettingsLocation,
+        project_path: ProjectPath,
         language_name: &LanguageName,
-        cx: &App,
+        manifest_name: &ManifestName,
+        delegate: &Arc<dyn ManifestDelegate>,
+        cx: &mut App,
     ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
     {
+        // First, let's find out what the root location of our subproject is.
+        // That's where we'll look for language settings (that include a set of language servers).
+        let manifest_location = self.manifest_tree.update(cx, |this, cx| {
+            this.root_for_path_or_worktree_root(project_path, manifest_name, delegate, cx)
+        });
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
@@ -392,7 +374,8 @@ impl<'tree> ServerTreeRebase<'tree> {
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,
-        query: AdapterQuery<'_>,
+        language_name: LanguageName,
+        manifest_name: ManifestName,
         delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
@@ -400,22 +383,9 @@ impl<'tree> ServerTreeRebase<'tree> {
             worktree_id: path.worktree_id,
             path: &path.path,
         };
-        let adapters = match query {
-            AdapterQuery::Language(language_name) => {
-                self.new_tree
-                    .adapters_for_language(settings_location, language_name, cx)
-            }
-            AdapterQuery::Adapter(language_server_name) => {
-                IndexMap::from_iter(self.new_tree.adapter_for_name(language_server_name).map(
-                    |adapter| {
-                        (
-                            adapter.name(),
-                            (LspSettings::default(), BTreeSet::new(), adapter),
-                        )
-                    },
-                ))
-            }
-        };
+        let adapters = self
+            .new_tree
+            .adapters_for_language(settings_location, &language_name, cx);
 
         self.new_tree
             .get_with_adapters(path, adapters, delegate, cx)
