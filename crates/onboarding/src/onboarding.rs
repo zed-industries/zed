@@ -371,7 +371,7 @@ impl Render for Onboarding {
             .bg(cx.theme().colors().editor_background)
             .child(
                 h_flex()
-                    .max_w(rems_from_px(1000.))
+                    .max_w(rems_from_px(1100.))
                     .size_full()
                     .m_auto()
                     .py_20()

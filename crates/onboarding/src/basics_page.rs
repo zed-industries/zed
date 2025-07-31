@@ -89,7 +89,7 @@ pub(crate) fn render_basics_page(_: &mut Window, cx: &mut App) -> impl IntoEleme
                     ],
                 )
                 .button_width(rems_from_px(200.))
-                .style(ui::ToggleButtonGroupStyle::Filled),
+                .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
         .child(v_flex().child(div().child("hack").invisible()).child(SwitchField::new(
