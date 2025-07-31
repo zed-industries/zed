@@ -80,4 +80,42 @@ impl CloudApiClient {
 
         Ok(serde_json::from_str(&body)?)
     }
+
+    pub async fn create_llm_token(
+        &self,
+        system_id: Option<String>,
+    ) -> Result<CreateLlmTokenResponse> {
+        let mut request_builder = Request::builder()
+            .method(Method::GET)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/llm_tokens", &[])?
+                    .as_ref(),
+            )
+            .header("Content-Type", "application/json")
+            .header("Authorization", self.authorization_header()?);
+
+        if let Some(system_id) = system_id {
+            request_builder = request_builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id);
+        }
+
+        let request = request_builder.body(AsyncBody::default())?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if !response.status().is_success() {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+
+            anyhow::bail!(
+                "Failed to create LLM token.\nStatus: {:?}\nBody: {body}",
+                response.status()
+            )
+        }
+
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        Ok(serde_json::from_str(&body)?)
+    }
 }
