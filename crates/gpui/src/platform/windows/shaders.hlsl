@@ -28,7 +28,7 @@ struct Edges {
 struct ContentMask {
     Bounds bounds;
     Corners corner_radii;
-}
+};
 
 struct Hsla {
     float h;
