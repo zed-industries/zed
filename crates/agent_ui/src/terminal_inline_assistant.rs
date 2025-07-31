@@ -298,6 +298,7 @@ impl TerminalInlineAssistant {
                 stop: Vec::new(),
                 temperature,
                 thinking_allowed: false,
+                provider: None, // TODO: Add provider selection for inline AI?
             }
         }))
     }

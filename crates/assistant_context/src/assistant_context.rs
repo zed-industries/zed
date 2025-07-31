@@ -2294,6 +2294,7 @@ impl AssistantContext {
             stop: Vec::new(),
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
             thinking_allowed: true,
+            provider: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

@@ -15,7 +15,6 @@ use language_model::{
     LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, RateLimiter, Role,
     StopReason, TokenUsage,
 };
-use log::error;
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, get_model_endpoints, list_models,
     stream_completion,
@@ -44,6 +43,7 @@ pub struct OpenRouterSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
     pub name: String,
+    pub canonical_slug: Option<String>,
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
@@ -277,6 +277,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
             settings_models.push(open_router::Model {
                 name: model.name.clone(),
                 display_name: model.display_name.clone(),
+                canonical_slug: model.canonical_slug.clone(),
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
@@ -445,33 +446,29 @@ impl LanguageModel for OpenRouterLanguageModel {
         true
     }
 
-    fn endpoints(&self, cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
-        let Ok(api_url) = cx.read_entity(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).open_router;
-            settings.api_url.clone()
-        }) else {
-            return futures::future::ready(Err(anyhow!(
-                "App state dropped: Unable to read API key or API URL from the application state"
-            )))
-            .boxed();
-        };
-
+    fn endpoints(&self, _cx: &AsyncApp) -> BoxFuture<'static, Result<Vec<LanguageModelEndpoint>>> {
         let model = self.model.clone();
         let http_client = self.http_client.clone();
 
         async move {
-            let openrouter_endpoints =
-                get_model_endpoints(&model, http_client.as_ref(), &api_url).await?;
+            let openrouter_endpoints = get_model_endpoints(&model, http_client.as_ref()).await?;
 
             let mut endpoints = Vec::with_capacity(openrouter_endpoints.len() + 1);
             endpoints.push(LanguageModelEndpoint::Default);
-            endpoints.extend(openrouter_endpoints.iter().map(|e| {
-                LanguageModelEndpoint::Specified {
-                    name: e.provider_name.clone(),
-                    context_length: Some(e.context_length),
-                    quantization: e.quantization.clone(),
-                    availability: e.uptime_last_30m,
-                }
+            endpoints.extend(openrouter_endpoints.iter().filter_map(|e| {
+                let e = e.clone();
+                Some(LanguageModelEndpoint::Specified {
+                    name: e.provider_name,
+                    display_name: e.provider_display_name,
+                    context_length: Some(e.context_length as u64),
+                    quantization: e.quantization,
+                    throughput: Some(e.stats.p50_throughput),
+                    latency: Some(e.stats.p50_latency / 1_000.0),
+                    input_price: Some(f32::from_str(&e.pricing.prompt).log_err()? * 1_000_000.0),
+                    output_price: Some(
+                        f32::from_str(&e.pricing.completion).log_err()? * 1_000_000.0,
+                    ),
+                })
             }));
 
             Ok(endpoints)
@@ -592,6 +589,13 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+        provider: match request.provider {
+            None => None,
+            Some(provider) => Some(open_router::ProviderSetting {
+                allow_fallbacks: false,
+                order: vec![provider],
+            }),
+        },
     }
 }
 

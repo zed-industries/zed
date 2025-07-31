@@ -24,11 +24,11 @@ use gpui::{
 use http_client::StatusCode;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelExt as _, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
-    ModelRequestLimitReachedError, PaymentRequiredError, Role, SelectedModel, StopReason,
-    TokenUsage,
+    LanguageModelEndpoint, LanguageModelExt as _, LanguageModelId, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, MessageContent, ModelRequestLimitReachedError, PaymentRequiredError,
+    Role, SelectedModel, StopReason, TokenUsage,
 };
 use postage::stream::Stream as _;
 use project::{
@@ -396,6 +396,8 @@ pub struct Thread {
     remaining_turns: u32,
     configured_model: Option<ConfiguredModel>,
     profile: AgentProfile,
+    /// The endpoint (provider) for API gateways like OpenRouter.
+    endpoint: LanguageModelEndpoint,
     last_error_context: Option<(Arc<dyn LanguageModel>, CompletionIntent)>,
 }
 
@@ -496,6 +498,7 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model: configured_model.clone(),
             profile: AgentProfile::new(profile_id, tools),
+            endpoint: LanguageModelEndpoint::Default,
         }
     }
 
@@ -621,6 +624,7 @@ impl Thread {
             remaining_turns: u32::MAX,
             configured_model,
             profile: AgentProfile::new(profile_id, tools),
+            endpoint: LanguageModelEndpoint::Default,
         }
     }
 
@@ -644,6 +648,24 @@ impl Thread {
         if &id != self.profile.id() {
             self.profile = AgentProfile::new(id, self.tools.clone());
             cx.emit(ThreadEvent::ProfileChanged);
+        }
+    }
+
+    pub fn endpoint(&self) -> &LanguageModelEndpoint {
+        &self.endpoint
+    }
+
+    /// Get endpoint id (provider id) from endpoint settings
+    pub fn provider(&self) -> Option<String> {
+        match &self.endpoint {
+            LanguageModelEndpoint::Default => None,
+            LanguageModelEndpoint::Specified { name, .. } => Some(name.clone()),
+        }
+    }
+
+    pub fn set_endpoint(&mut self, endpoint: LanguageModelEndpoint) {
+        if endpoint != self.endpoint {
+            self.endpoint = endpoint;
         }
     }
 
@@ -1350,6 +1372,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(&model, cx),
             thinking_allowed: true,
+            provider: self.provider(),
         };
 
         let available_tools = self.available_tools(cx, model.clone());
@@ -1516,6 +1539,7 @@ impl Thread {
             stop: Vec::new(),
             temperature: AgentSettings::temperature_for_model(model, cx),
             thinking_allowed: false,
+            provider: self.provider(),
         };
 
         for message in &self.messages {

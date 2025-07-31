@@ -720,6 +720,7 @@ impl EditAgent {
             stop: Vec::new(),
             temperature: None,
             thinking_allowed: true,
+            provider: conversation.provider,
         };
 
         Ok(self.model.stream_completion_text(request, cx).await?.stream)

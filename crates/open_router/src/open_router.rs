@@ -49,6 +49,8 @@ impl From<Role> for String {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
+    /// Used when listing model endpoints.
+    pub canonical_slug: Option<String>,
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub supports_tools: Option<bool>,
@@ -72,6 +74,7 @@ impl Model {
         Self::new(
             "openrouter/auto",
             Some("Auto Router"),
+            Some("openrouter/auto"),
             Some(2000000),
             Some(true),
             Some(false),
@@ -86,6 +89,7 @@ impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
+        canonical_slug: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
@@ -94,6 +98,7 @@ impl Model {
         Self {
             name: name.to_owned(),
             display_name: display_name.map(|s| s.to_owned()),
+            canonical_slug: canonical_slug.map(|s| s.to_owned()),
             max_tokens: max_tokens.unwrap_or(2000000),
             supports_tools,
             supports_images,
@@ -107,6 +112,10 @@ impl Model {
 
     pub fn display_name(&self) -> &str {
         self.display_name.as_ref().unwrap_or(&self.name)
+    }
+
+    pub fn canonical_slug(&self) -> &str {
+        self.canonical_slug.as_ref().unwrap_or(&self.name)
     }
 
     pub fn max_token_count(&self) -> u64 {
@@ -144,12 +153,21 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<ProviderSetting>,
     pub usage: RequestUsage,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct RequestUsage {
     pub include: bool,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ProviderSetting {
+    pub allow_fallbacks: bool,
+    /// List of provider names, in the desired order
+    pub order: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -396,6 +414,8 @@ pub struct ListModelsResponse {
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ModelEntry {
     pub id: String,
+    /// Used in list endpoint request
+    pub canonical_slug: String,
     pub name: String,
     pub created: usize,
     pub description: String,
@@ -415,27 +435,48 @@ pub struct ModelArchitecture {
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct ListModelEndpointsResponse {
-    pub data: ModelEndpointData,
+    pub data: Vec<Endpoint>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
-pub struct ModelEndpointData {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub endpoints: Vec<Endpoint>,
-}
-
-// https://openrouter.ai/docs/api-reference/list-endpoints-for-a-model
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub struct Endpoint {
+    /// A UUID string. Mostly useless.
+    pub id: String,
+    /// e.g. "DeepInfra | qwen/qwen3-coder-480b-a35b-07-25"
     pub name: String,
-    pub context_length: u64,
+    pub context_length: u32,
+    /// The provider's name (not shown to user, used for API).
     pub provider_name: String,
+    /// The provider's display name shown on OpenRouter's webpage.
+    pub provider_display_name: String,
     pub quantization: Option<String>,
-    pub max_completion_tokens: Option<u64>,
-    pub max_prompt_tokens: Option<u64>,
-    pub uptime_last_30m: Option<f32>,
+    pub pricing: EndpointPricing,
+    pub variable_pricings: Vec<EndpointVariablePricing>,
+    pub stats: EndpointStats,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct EndpointPricing {
+    pub prompt: String,
+    pub completion: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct EndpointVariablePricing {
+    pub r#type: String,
+    pub threshold: u32,
+    pub prompt: String,
+    pub completions: String,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Deserialize)]
+pub struct EndpointStats {
+    /// An ID string. Mostly useless.
+    pub endpoint_id: String,
+    /// The throughput displayed on OpenRouter's webpage.
+    pub p50_throughput: f32,
+    /// The latency displayed on OpenRouter's webpage, but in milliseconds.
+    pub p50_latency: f32,
 }
 
 pub async fn complete(
@@ -624,6 +665,7 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
             .into_iter()
             .map(|entry| Model {
                 name: entry.id,
+                canonical_slug: Some(entry.canonical_slug),
                 // OpenRouter returns display names in the format "provider_name: model_name".
                 // When displayed in the UI, these names can get truncated from the right.
                 // Since users typically already know the provider, we extract just the model name
@@ -674,28 +716,37 @@ pub async fn list_models(client: &dyn HttpClient, api_url: &str) -> Result<Vec<M
 ///
 /// An endpoint is a service provider who does the model inference, also called
 /// "provider" in the OpenRouter web page.
-pub async fn get_model_endpoints(
-    model: &Model,
-    client: &dyn HttpClient,
-    api_url: &str,
-) -> Result<Vec<Endpoint>> {
-    let parts: Vec<_> = model.name.split('/').collect();
-    let [author, slug] = parts.as_slice() else {
-        bail!("Can't parse model id: {}", model.name)
+pub async fn get_model_endpoints(model: &Model, client: &dyn HttpClient) -> Result<Vec<Endpoint>> {
+    let parts: Vec<_> = model.name.split(':').collect();
+    let [model, varient] = match parts.as_slice() {
+        [_name, varient] => [model.canonical_slug(), *varient],
+        [_name] => [model.canonical_slug(), "standard"],
+        _ => bail!(
+            "Cannot parse model name when fetching OpenRouter endpoints: {}",
+            model.name
+        ),
     };
     let request = HttpRequest::builder()
         .method(Method::GET)
-        .uri(format!("{api_url}/models/{author}/{slug}/endpoints"))
+        .uri(format!(
+            "https://openrouter.ai/api/frontend/stats/endpoint?permaslug={model}&variant={varient}"
+        ))
         .body(AsyncBody::default())?;
     let mut response = client.send(request).await?;
     let mut body = String::new();
     response.body_mut().read_to_string(&mut body).await?;
 
     if response.status().is_success() == false {
-        bail!("Failed to call OpenRouter API.")
+        bail!(
+            "Failed to call OpenRouter API: status={:?}, err={}",
+            response.status(),
+            body
+        )
     }
 
-    let response: ListModelEndpointsResponse = serde_json::from_str(&body)
-        .context("Failed to parse OpenRouter model endpoints response")?;
-    Ok(response.data.endpoints)
+    let response: ListModelEndpointsResponse = serde_json::from_str(&body).context(format!(
+        "Failed to parse OpenRouter model endpoints response: {}",
+        body
+    ))?;
+    Ok(response.data)
 }

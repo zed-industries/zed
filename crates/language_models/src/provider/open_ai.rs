@@ -1000,6 +1000,7 @@ mod tests {
             stop: vec![],
             temperature: None,
             thinking_allowed: true,
+            provider: None,
         };
 
         // Validate that all models are supported by tiktoken-rs

@@ -226,7 +226,7 @@ impl MessageEditor {
         });
 
         let endpoint_selector =
-            cx.new(|cx| EndpointSelector::new(fs, thread.clone(), editor.focus_handle(cx), cx));
+            cx.new(|cx| EndpointSelector::new(thread.clone(), editor.focus_handle(cx), cx));
 
         Self {
             editor: editor.clone(),
@@ -1479,6 +1479,7 @@ impl MessageEditor {
                         stop: vec![],
                         temperature: AgentSettings::temperature_for_model(&model.model, cx),
                         thinking_allowed: true,
+                        provider: None,
                     };
 
                     Some(model.model.count_tokens(request, cx))

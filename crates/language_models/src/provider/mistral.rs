@@ -906,6 +906,7 @@ mod tests {
             mode: None,
             stop: vec![],
             thinking_allowed: true,
+            provider: None,
         };
 
         let mistral_request = into_mistral(request, "mistral-small-latest".into(), None);
@@ -939,6 +940,7 @@ mod tests {
             mode: None,
             stop: vec![],
             thinking_allowed: true,
+            provider: None,
         };
 
         let mistral_request = into_mistral(request, "pixtral-12b-latest".into(), None);

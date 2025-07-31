@@ -476,6 +476,7 @@ impl CodegenAlternative {
                 temperature,
                 messages: vec![request_message],
                 thinking_allowed: false,
+                provider: None, // TODO: Add provider selection for inline AI?
             }
         }))
     }

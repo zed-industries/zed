@@ -392,6 +392,7 @@ pub struct LanguageModelRequest {
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
     pub thinking_allowed: bool,
+    pub provider: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -400,20 +401,28 @@ pub struct LanguageModelResponseMessage {
     pub content: Option<String>,
 }
 
-// https://openrouter.ai/docs/api-reference/list-endpoints-for-a-model
+/// Also called "provider" in OpenRouter, or "inference provider" sometimes.
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]
 pub enum LanguageModelEndpoint {
     /// Don't specify an endpoint, use the default one
     #[default]
     Default,
+    /// Use this endpoint. `name` is used when sending requests, the rest
+    /// is used for displaying extra info in the selector menu.
     Specified {
         name: String,
+
+        display_name: String,
         context_length: Option<u64>,
         quantization: Option<String>,
-        /// Range: 0-100
-        ///
-        /// e.g. Uptime percentage in last 30mins.
-        availability: Option<f32>,
+        /// in tokens per second
+        throughput: Option<f32>,
+        /// in seconds
+        latency: Option<f32>,
+        /// in dollars per million token
+        input_price: Option<f32>,
+        /// in dollars per million token
+        output_price: Option<f32>,
     },
 }
 
