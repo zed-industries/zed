@@ -74,13 +74,10 @@ impl SettingsProfileSelectorDelegate {
         cx: &mut Context<SettingsProfileSelector>,
     ) -> Self {
         let settings_store = cx.global::<SettingsStore>();
-        let mut profile_names: Vec<String> = settings_store
+        let mut profile_names: Vec<Option<String>> = settings_store
             .configured_settings_profiles()
-            .map(|s| s.to_string())
+            .map(|s| Some(s.to_string()))
             .collect();
-
-        profile_names.sort();
-        let mut profile_names: Vec<_> = profile_names.into_iter().map(Some).collect();
         profile_names.insert(0, None);
 
         let matches = profile_names
@@ -359,15 +356,15 @@ mod tests {
 
     #[gpui::test]
     async fn test_settings_profile_selector_state(cx: &mut TestAppContext) {
-        let demo_videos_profile_name = "Demo Videos".to_string();
         let classroom_and_streaming_profile_name = "Classroom / Streaming".to_string();
+        let demo_videos_profile_name = "Demo Videos".to_string();
 
         let profiles_json = json!({
-            demo_videos_profile_name.clone(): {
-                "buffer_font_size": 15.0
-            },
             classroom_and_streaming_profile_name.clone(): {
                 "buffer_font_size": 20.0,
+            },
+            demo_videos_profile_name.clone(): {
+                "buffer_font_size": 15.0
             }
         });
         let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
