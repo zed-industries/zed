@@ -367,7 +367,9 @@ message Envelope {
         LanguageServerIdForNameResponse language_server_id_for_name_response = 333; // current max
 
         LoadCommitDiff load_commit_diff = 334;
-        LoadCommitDiffResponse load_commit_diff_response = 335; // current max
+        LoadCommitDiffResponse load_commit_diff_response = 335;
+        SearchWithRipgrep search_with_ripgrep = 336;
+        SearchWithRipgrepResponse search_with_ripgrep_response = 337; // current max
     }
 
     reserved 87 to 88;
@@ -1358,6 +1360,46 @@ message FindSearchCandidates {
 
 message FindSearchCandidatesResponse {
     repeated uint64 buffer_ids = 1;
+}
+
+message SearchWithRipgrep {
+    uint64 project_id = 1;
+    SearchQuery query = 2;
+    repeated string search_paths = 3;
+}
+
+message SearchWithRipgrepResponse {
+    oneof result {
+        RipgrepMatch match = 1;
+        RipgrepProgress progress = 2;
+        RipgrepComplete complete = 3;
+        RipgrepError error = 4;
+    }
+}
+
+message RipgrepMatch {
+    string path = 1;
+    uint32 line_number = 2;
+    string line_content = 3;
+    repeated RipgrepRange ranges = 4;
+}
+
+message RipgrepRange {
+    uint32 start = 1;
+    uint32 end = 2;
+}
+
+message RipgrepProgress {
+    uint64 files_searched = 1;
+    uint64 matches_found = 2;
+}
+
+message RipgrepComplete {
+    uint64 total_matches = 1;
+}
+
+message RipgrepError {
+    string message = 1;
 }
 
 message CodeAction {

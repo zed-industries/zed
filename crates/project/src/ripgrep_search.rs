@@ -57,7 +57,7 @@ impl RipgrepSearcher {
         let cmd = self.build_ripgrep_command(query, search_paths)?;
 
         // Spawn the process
-        let mut child = Command::from(cmd)
+        let child = Command::from(cmd)
             .stdout(std::process::Stdio::piped()) // Make sure stdout is piped
             .spawn()
             .context("Failed to spawn ripgrep process")?;
@@ -299,7 +299,6 @@ impl Drop for RipgrepSearcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use util::paths::PathMatcher;
 
     fn create_test_query(pattern: &str) -> SearchQuery {

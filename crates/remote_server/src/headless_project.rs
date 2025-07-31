@@ -226,6 +226,7 @@ impl HeadlessProject {
         client.add_entity_request_handler(Self::handle_open_buffer_by_path);
         client.add_entity_request_handler(Self::handle_open_new_buffer);
         client.add_entity_request_handler(Self::handle_find_search_candidates);
+        client.add_entity_request_handler(Self::handle_search_with_ripgrep);
         client.add_entity_request_handler(Self::handle_open_server_settings);
 
         client.add_entity_request_handler(BufferStore::handle_update_buffer);
@@ -661,6 +662,158 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_search_with_ripgrep(
+        _this: Entity<Self>,
+        envelope: TypedEnvelope<proto::SearchWithRipgrep>,
+        _cx: AsyncApp,
+    ) -> Result<proto::SearchWithRipgrepResponse> {
+        use smol::io::{AsyncBufReadExt, BufReader};
+        use smol::process::{Command, Stdio};
+        use std::path::PathBuf;
+
+        let message = envelope.payload;
+        let query = SearchQuery::from_proto(
+            message
+                .query
+                .ok_or_else(|| anyhow!("missing query field"))?,
+        )?;
+
+        // Build ripgrep command
+        let mut cmd = Command::new("rg");
+        cmd.arg("--line-number")
+            .arg("--column")
+            .arg("--no-heading")
+            .arg("--with-filename")
+            .arg("--color=never")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+
+        // Add query-specific arguments
+        match &query {
+            SearchQuery::Text {
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                inner,
+                ..
+            } => {
+                cmd.arg(inner.as_str());
+                if *whole_word {
+                    cmd.arg("--word-regexp");
+                }
+                if !case_sensitive {
+                    cmd.arg("--ignore-case");
+                }
+                if *include_ignored {
+                    cmd.arg("--no-ignore").arg("--hidden");
+                }
+                
+                // Add include/exclude patterns
+                for pattern in inner.files_to_include().sources() {
+                    if !pattern.is_empty() {
+                        cmd.arg("--glob").arg(pattern);
+                    }
+                }
+                for pattern in inner.files_to_exclude().sources() {
+                    if !pattern.is_empty() {
+                        cmd.arg("--glob").arg(format!("!{}", pattern));
+                    }
+                }
+            }
+            SearchQuery::Regex {
+                regex,
+                whole_word,
+                case_sensitive,
+                include_ignored,
+                multiline,
+                inner,
+                ..
+            } => {
+                cmd.arg(regex.as_str());
+                if *whole_word {
+                    cmd.arg("--word-regexp");
+                }
+                if !case_sensitive {
+                    cmd.arg("--ignore-case");
+                }
+                if *include_ignored {
+                    cmd.arg("--no-ignore").arg("--hidden");
+                }
+                if *multiline {
+                    cmd.arg("--multiline");
+                }
+                
+                // Add include/exclude patterns
+                for pattern in inner.files_to_include().sources() {
+                    if !pattern.is_empty() {
+                        cmd.arg("--glob").arg(pattern);
+                    }
+                }
+                for pattern in inner.files_to_exclude().sources() {
+                    if !pattern.is_empty() {
+                        cmd.arg("--glob").arg(format!("!{}", pattern));
+                    }
+                }
+            }
+        }
+
+        // Add search paths
+        for path_str in &message.search_paths {
+            let path = PathBuf::from(path_str);
+            cmd.arg(&path);
+        }
+
+        // Limit results
+        cmd.arg("--max-count=1000");
+
+        // Execute ripgrep and stream results
+        let mut child = cmd.spawn()?;
+        
+        if let Some(stdout) = child.stdout.take() {
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+            
+            // For now, just return the first match to demonstrate the RPC works
+            // In a full implementation, we'd stream all results
+            while let Some(line) = lines.next().await {
+                let line = line?;
+                if line.trim().is_empty() {
+                    continue;
+                }
+                
+                // Parse ripgrep output format: filename:line:column:content
+                let parts: Vec<&str> = line.splitn(4, ':').collect();
+                if parts.len() >= 4 {
+                    let path = parts[0].to_string();
+                    let line_number: u32 = parts[1].parse().unwrap_or(0);
+                    let column: u32 = parts[2].parse().unwrap_or(0);
+                    let content = parts[3].to_string();
+                    
+                    return Ok(proto::SearchWithRipgrepResponse {
+                        result: Some(proto::search_with_ripgrep_response::Result::Match(
+                            proto::RipgrepMatch {
+                                path,
+                                line_number,
+                                line_content: content,
+                                ranges: vec![proto::RipgrepRange {
+                                    start: column,
+                                    end: column + 1,
+                                }],
+                            }
+                        )),
+                    });
+                }
+            }
+        }
+
+        // No results found
+        Ok(proto::SearchWithRipgrepResponse {
+            result: Some(proto::search_with_ripgrep_response::Result::Complete(
+                proto::RipgrepComplete { total_matches: 0 }
+            )),
+        })
     }
 }
 

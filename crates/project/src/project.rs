@@ -3623,27 +3623,26 @@ impl Project {
     ) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 
-        // Only support local projects for now, and not fake filesystems used in tests
-        if !self.is_local() {
-            // Fall back to regular search for remote projects
-            return self.search(query, cx);
-        }
-
+        // Fall back for fake filesystems used in tests
         if self.fs.is_fake() {
-            // Fall back to regular search for fake filesystems (tests)
+            // Fake filesystems (tests): files don't exist on disk for ripgrep to find
             return self.search(query, cx);
         }
 
-        // Get the search paths from worktrees
-        let search_paths: Vec<std::path::PathBuf> = self
-            .worktree_store
-            .read(cx)
-            .visible_worktrees(cx)
-            .map(|worktree| {
-                let worktree = worktree.read(cx);
-                worktree.abs_path().to_path_buf()
-            })
-            .collect();
+        // Separate local and remote worktrees for different search strategies
+        let mut local_search_paths: Vec<std::path::PathBuf> = Vec::new();
+        let mut remote_worktrees: Vec<Entity<Worktree>> = Vec::new();
+        
+        for worktree in self.worktree_store.read(cx).visible_worktrees(cx) {
+            let worktree_read = worktree.read(cx);
+            if let Some(local) = worktree_read.as_local() {
+                local_search_paths.push(local.abs_path().to_path_buf());
+            } else if worktree_read.as_remote().is_some() {
+                remote_worktrees.push(worktree.clone());
+            }
+        }
+        
+        let search_paths = local_search_paths;
 
         if search_paths.is_empty() {
             // No worktrees found - fall back to regular search implementation
@@ -3715,6 +3714,8 @@ impl Project {
 
         // Clone what we need for the async task
         let project = cx.entity().downgrade();
+        let client = self.client.clone();
+        let project_id = self.remote_id();
 
         cx.spawn(async move |_, async_cx| {
             // Use the ripgrep searcher
@@ -3854,6 +3855,87 @@ impl Project {
                             }
                             crate::ripgrep_search::RipgrepSearchResult::Progress { .. } => {
                                 // Just continue processing
+                            }
+                        }
+                    }
+
+                    // Now search remote worktrees via RPC
+                    for remote_worktree in remote_worktrees {
+                        let worktree_id = remote_worktree.read_with(async_cx, |wt, _| wt.id()).ok();
+                        if let Some(worktree_id) = worktree_id {
+                            let search_paths = vec![format!("{}", usize::from(worktree_id))]; // Use worktree ID as path indicator
+                            
+                            match client.request(proto::SearchWithRipgrep {
+                                project_id: project_id.unwrap_or(0),
+                                query: Some(query.to_proto()),
+                                search_paths,
+                            }).await {
+                                Ok(response) => {
+                                    if let Some(result) = response.result {
+                                        match result {
+                                            proto::search_with_ripgrep_response::Result::Match(match_result) => {
+                                                // Convert remote match to local format
+                                                if let Some(buffer_task) = project
+                                                    .update(async_cx, |project, cx| {
+                                                        let path = std::path::PathBuf::from(&match_result.path);
+                                                        let project_path = ProjectPath {
+                                                            worktree_id,
+                                                            path: path.into(),
+                                                        };
+                                                        Some(project.open_buffer(project_path, cx))
+                                                    })
+                                                    .log_err()
+                                                    .flatten()
+                                                {
+                                                    if let Ok(buffer) = buffer_task.await {
+                                                        // Convert ranges from remote format
+                                                        let anchor_ranges = buffer
+                                                            .read_with(async_cx, |buffer, _| {
+                                                                let snapshot = buffer.snapshot();
+                                                                match_result.ranges.into_iter()
+                                                                    .filter_map(|range| {
+                                                                        let line_idx = match_result.line_number.saturating_sub(1);
+                                                                        let start_point = text::Point::new(
+                                                                            line_idx,
+                                                                            range.start.saturating_sub(1),
+                                                                        );
+                                                                        let end_point = text::Point::new(
+                                                                            line_idx,
+                                                                            range.end.saturating_sub(1),
+                                                                        );
+                                                                        
+                                                                        let start_anchor = snapshot.anchor_before(start_point);
+                                                                        let end_anchor = snapshot.anchor_after(end_point);
+                                                                        Some(start_anchor..end_anchor)
+                                                                    })
+                                                                    .collect::<Vec<_>>()
+                                                            })
+                                                            .unwrap_or_default();
+
+                                                        if !anchor_ranges.is_empty() {
+                                                            total_matches += anchor_ranges.len();
+                                                            let _ = result_tx
+                                                                .send(SearchResult::Buffer {
+                                                                    buffer,
+                                                                    ranges: anchor_ranges,
+                                                                })
+                                                                .await;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            proto::search_with_ripgrep_response::Result::Complete(_) => {
+                                                // Remote search completed
+                                            }
+                                            _ => {
+                                                // Handle other result types
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    // Remote search failed, continue with other worktrees
+                                }
                             }
                         }
                     }
