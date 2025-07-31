@@ -402,37 +402,23 @@ impl Onboarding {
                                 "theme-selector-onboarding",
                                 [
                                     ToggleButtonSimple::new("Light", {
-                                        let theme = theme_selection.clone();
                                         let appearance_state = appearance_state.clone();
                                         move |_, _, cx| {
-                                            appearance_state.update(cx, |appearance, cx| {
-                                                *appearance = Appearance::Light;
-                                            });
-                                            if theme.mode() != Some(ThemeMode::System) {
-                                                write_theme_selection(
-                                                    theme.clone(),
-                                                    ThemeMode::Light,
-                                                    appearance,
-                                                    cx,
-                                                );
-                                            }
+                                            write_appearance_change(
+                                                &appearance_state,
+                                                Appearance::Light,
+                                                cx,
+                                            );
                                         }
                                     }),
                                     ToggleButtonSimple::new("Dark", {
-                                        let theme = theme_selection.clone();
                                         let appearance_state = appearance_state.clone();
                                         move |_, _, cx| {
-                                            appearance_state.update(cx, |appearance, cx| {
-                                                *appearance = Appearance::Dark;
-                                            });
-                                            if theme.mode() != Some(ThemeMode::System) {
-                                                write_theme_selection(
-                                                    theme.clone(),
-                                                    ThemeMode::Dark,
-                                                    appearance,
-                                                    cx,
-                                                );
-                                            }
+                                            write_appearance_change(
+                                                &appearance_state,
+                                                Appearance::Dark,
+                                                cx,
+                                            );
                                         }
                                     }),
                                 ],
@@ -456,15 +442,25 @@ impl Onboarding {
             )
             .child(h_flex().justify_between().children(theme_previews));
 
-        fn write_theme_selection(
-            theme_selection: ThemeSelection,
-            new_mode: ThemeMode,
-            appearance: Appearance,
+        fn write_appearance_change(
+            appearance_state: &Entity<Appearance>,
+            new_appearance: Appearance,
             cx: &mut App,
         ) {
+            appearance_state.update(cx, |appearance, cx| {
+                *appearance = new_appearance;
+            });
             let fs = <dyn Fs>::global(cx);
 
             update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+                if settings.theme.as_ref().and_then(ThemeSelection::mode) == Some(ThemeMode::System)
+                {
+                    return;
+                }
+                let new_mode = match new_appearance {
+                    Appearance::Light => ThemeMode::Light,
+                    Appearance::Dark => ThemeMode::Dark,
+                };
                 settings.set_mode(new_mode);
             });
         }
