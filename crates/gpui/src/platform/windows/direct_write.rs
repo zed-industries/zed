@@ -1,4 +1,4 @@
-use std::{borrow::Cow, mem::ManuallyDrop, sync::Arc};
+use std::{borrow::Cow, sync::Arc};
 
 use ::util::ResultExt;
 use anyhow::Result;
@@ -45,7 +45,7 @@ struct DirectWriteComponent {
     builder: IDWriteFontSetBuilder1,
     text_renderer: Arc<TextRendererWrapper>,
 
-    render_params: IDWriteRenderingParams,
+    render_params: IDWriteRenderingParams3,
     gpu_state: GPUState,
 }
 
@@ -92,7 +92,25 @@ impl DirectWriteComponent {
             let locale = String::from_utf16_lossy(&locale_vec);
             let text_renderer = Arc::new(TextRendererWrapper::new(&locale));
 
-            let render_params = factory.CreateRenderingParams()?;
+            let render_params = {
+                let default_params: IDWriteRenderingParams3 =
+                    factory.CreateRenderingParams()?.cast()?;
+                let gamma = default_params.GetGamma();
+                let enhanced_contrast = default_params.GetEnhancedContrast();
+                let gray_contrast = default_params.GetGrayscaleEnhancedContrast();
+                let cleartype_level = default_params.GetClearTypeLevel();
+                let grid_fit_mode = default_params.GetGridFitMode();
+
+                factory.CreateCustomRenderingParams(
+                    gamma,
+                    enhanced_contrast,
+                    gray_contrast,
+                    cleartype_level,
+                    DWRITE_PIXEL_GEOMETRY_RGB,
+                    DWRITE_RENDERING_MODE1_NATURAL_SYMMETRIC,
+                    grid_fit_mode,
+                )?
+            };
 
             let gpu_state = GPUState::new(gpu_context)?;
 
