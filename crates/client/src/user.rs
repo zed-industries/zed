@@ -55,7 +55,7 @@ pub struct ParticipantIndex(pub u32);
 #[derive(Default, Debug)]
 pub struct User {
     pub id: UserId,
-    pub github_login: String,
+    pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -107,7 +107,7 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<String, u64>,
+    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
@@ -904,7 +904,7 @@ impl UserStore {
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
             if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login.into());
+                ret.insert(id, github_login);
             } else {
                 missing_user_ids.push(id)
             }
@@ -925,7 +925,7 @@ impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             id: message.id,
-            github_login: message.github_login,
+            github_login: message.github_login.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })

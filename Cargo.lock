@@ -18603,7 +18603,6 @@ dependencies = [
  "serde",
  "settings",
  "telemetry",
- "theme",
  "ui",
  "util",
  "vim_mode_setting",
