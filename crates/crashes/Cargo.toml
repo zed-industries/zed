@@ -13,6 +13,7 @@ paths.workspace = true
 smol.workspace = true
 uuid.workspace = true
 zlog.workspace = true
+workspace-hack.workspace = true
 
 [lints]
 workspace = true
