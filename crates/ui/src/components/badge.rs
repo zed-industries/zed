@@ -28,6 +28,7 @@ impl Badge {
 impl RenderOnce for Badge {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         h_flex()
+            .h_full()
             .gap_1()
             .pl_1()
             .pr_2()
@@ -69,4 +70,3 @@ impl Component for Badge {
         )
     }
 }
-

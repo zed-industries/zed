@@ -1,4 +1,7 @@
-use crate::welcome::{ShowWelcome, WelcomePage};
+use crate::{
+    ai_setup_page::AiConfigurationPage,
+    welcome::{ShowWelcome, WelcomePage},
+};
 use client::{Client, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
@@ -23,6 +26,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod ai_setup_page;
 mod basics_page;
 mod editing_page;
 mod welcome;
@@ -223,6 +227,7 @@ struct Onboarding {
     dark_themes: [Arc<Theme>; 3],
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
+    ai_configuration_page: Entity<AiConfigurationPage>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     _settings_subscription: Subscription,
@@ -234,8 +239,9 @@ impl Onboarding {
         user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
-        let theme_registry = ThemeRegistry::global(cx);
+        let ai_configuration_page = cx.new(|_| AiConfigurationPage::new(workspace.clone()));
 
+        let theme_registry = ThemeRegistry::global(cx);
         let one_dark = theme_registry
             .get("One Dark")
             .expect("Default themes are always present");
@@ -264,6 +270,7 @@ impl Onboarding {
             dark_themes: [one_dark, ayu_dark, gruvbox_dark],
             selected_page: SelectedPage::Basics,
             fs: <dyn Fs>::global(cx),
+            ai_configuration_page,
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -416,12 +423,8 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
+            SelectedPage::AiSetup => self.ai_configuration_page.clone().into_any_element(),
         }
-    }
-
-    fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child("ai setup page")
     }
 }
 
@@ -443,7 +446,9 @@ impl Render for Onboarding {
                     .gap_12()
                     .child(self.render_nav(window, cx))
                     .child(
-                        div()
+                        v_flex()
+                            .max_w_full()
+                            .min_w_0()
                             .pl_12()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
