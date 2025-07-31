@@ -367,8 +367,16 @@ impl Onboarding {
             let name = theme.name.clone();
             v_flex()
                 .id(name.clone())
-                .on_click(move |_, window, cx| {
-                    todo!();
+                .on_click({
+                    let theme_name = theme.name.clone();
+                    let appearance = appearance.clone();
+                    move |_, window, cx| {
+                        let fs = <dyn Fs>::global(cx);
+                        let theme_name = theme_name.clone();
+                        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+                            settings.set_theme(theme_name, appearance);
+                        });
+                    }
                 })
                 .flex_1()
                 .child(theme_preview::ThemePreviewTile::new(
