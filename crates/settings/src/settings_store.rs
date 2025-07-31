@@ -1078,7 +1078,7 @@ impl SettingsStore {
                         "preview": zed_settings_override_ref,
                         "profiles": {
                             "type": "object",
-                            "description": "Configures any number of settings profiles that are temporarily applied when selected from `settings profile selector: toggle`.",
+                            "description": "Configures any number of settings profiles.",
                             "additionalProperties": zed_settings_override_ref
                         }
                     }
