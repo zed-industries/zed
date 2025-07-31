@@ -229,7 +229,6 @@ pub struct Zeta {
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
     cloud_user_store: Entity<CloudUserStore>,
-    user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
@@ -242,13 +241,11 @@ impl Zeta {
         workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
-        user_store: Entity<UserStore>,
         cloud_user_store: Entity<CloudUserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity =
-                cx.new(|cx| Self::new(workspace, client, user_store, cloud_user_store, cx));
+            let entity = cx.new(|cx| Self::new(workspace, client, cloud_user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -271,13 +268,12 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.user_store.read(cx).edit_prediction_usage()
+        self.cloud_user_store.read(cx).edit_prediction_usage()
     }
 
     fn new(
         workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
-        user_store: Entity<UserStore>,
         cloud_user_store: Entity<CloudUserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -309,7 +305,6 @@ impl Zeta {
             ),
             update_required: false,
             license_detection_watchers: HashMap::default(),
-            user_store,
             cloud_user_store,
         }
     }
@@ -539,8 +534,8 @@ impl Zeta {
 
             if let Some(usage) = usage {
                 this.update(cx, |this, cx| {
-                    this.user_store.update(cx, |user_store, cx| {
-                        user_store.update_edit_prediction_usage(usage, cx);
+                    this.cloud_user_store.update(cx, |cloud_user_store, cx| {
+                        cloud_user_store.update_edit_prediction_usage(usage, cx);
                     });
                 })
                 .ok();
@@ -881,8 +876,8 @@ and then another
             if response.status().is_success() {
                 if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {
                     this.update(cx, |this, cx| {
-                        this.user_store.update(cx, |user_store, cx| {
-                            user_store.update_edit_prediction_usage(usage, cx);
+                        this.cloud_user_store.update(cx, |cloud_user_store, cx| {
+                            cloud_user_store.update_edit_prediction_usage(usage, cx);
                         });
                     })?;
                 }
@@ -2042,7 +2037,7 @@ mod tests {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
             cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2098,7 +2093,7 @@ mod tests {
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
             cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

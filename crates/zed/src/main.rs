@@ -564,7 +564,6 @@ pub fn main() {
         snippet_provider::init(cx);
         inline_completion_registry::init(
             app_state.client.clone(),
-            app_state.user_store.clone(),
             app_state.cloud_user_store.clone(),
             cx,
         );

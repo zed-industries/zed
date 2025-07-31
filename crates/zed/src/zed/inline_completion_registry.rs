@@ -1,4 +1,4 @@
-use client::{Client, CloudUserStore, DisableAiSettings, UserStore};
+use client::{Client, CloudUserStore, DisableAiSettings};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
@@ -13,17 +13,11 @@ use util::ResultExt;
 use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
-pub fn init(
-    client: Arc<Client>,
-    user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
-    cx: &mut App,
-) {
+pub fn init(client: Arc<Client>, cloud_user_store: Entity<CloudUserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
         let client = client.clone();
-        let user_store = user_store.clone();
         let cloud_user_store = cloud_user_store.clone();
         move |editor: &mut Editor, window, cx: &mut Context<Editor>| {
             if !editor.mode().is_full() {
@@ -54,7 +48,6 @@ pub fn init(
                 editor,
                 provider,
                 &client,
-                user_store.clone(),
                 cloud_user_store.clone(),
                 window,
                 cx,
@@ -67,7 +60,6 @@ pub fn init(
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
     cx.spawn({
-        let user_store = user_store.clone();
         let cloud_user_store = cloud_user_store.clone();
         let editors = editors.clone();
         let client = client.clone();
@@ -80,7 +72,6 @@ pub fn init(
                         &editors,
                         provider,
                         &client,
-                        user_store.clone(),
                         cloud_user_store.clone(),
                         cx,
                     );
@@ -94,16 +85,12 @@ pub fn init(
     cx.observe_global::<SettingsStore>({
         let editors = editors.clone();
         let client = client.clone();
-        let user_store = user_store.clone();
         let cloud_user_store = cloud_user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
             if new_provider != provider {
-                let tos_accepted = user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false);
+                let tos_accepted = cloud_user_store.read(cx).has_accepted_tos();
 
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
@@ -117,7 +104,6 @@ pub fn init(
                     &editors,
                     provider,
                     &client,
-                    user_store.clone(),
                     cloud_user_store.clone(),
                     cx,
                 );
@@ -159,7 +145,6 @@ fn assign_edit_prediction_providers(
     editors: &Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>>,
     provider: EditPredictionProvider,
     client: &Arc<Client>,
-    user_store: Entity<UserStore>,
     cloud_user_store: Entity<CloudUserStore>,
     cx: &mut App,
 ) {
@@ -170,7 +155,6 @@ fn assign_edit_prediction_providers(
                     editor,
                     provider,
                     &client,
-                    user_store.clone(),
                     cloud_user_store.clone(),
                     window,
                     cx,
@@ -226,7 +210,6 @@ fn assign_edit_prediction_provider(
     editor: &mut Editor,
     provider: EditPredictionProvider,
     client: &Arc<Client>,
-    user_store: Entity<UserStore>,
     cloud_user_store: Entity<CloudUserStore>,
     window: &mut Window,
     cx: &mut Context<Editor>,
@@ -279,14 +262,8 @@ fn assign_edit_prediction_provider(
                     .flatten()
                     .map(|workspace| workspace.downgrade());
 
-                let zeta = zeta::Zeta::register(
-                    workspace,
-                    worktree,
-                    client.clone(),
-                    user_store,
-                    cloud_user_store,
-                    cx,
-                );
+                let zeta =
+                    zeta::Zeta::register(workspace, worktree, client.clone(), cloud_user_store, cx);
 
                 if let Some(buffer) = &singleton_buffer {
                     if buffer.read(cx).file().is_some() {
