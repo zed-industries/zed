@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ai_onboarding::{AiUpsellCard, SignInStatus};
 use gpui::{
     Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakEntity, Window,
     prelude::*,
@@ -7,7 +8,7 @@ use gpui::{
 use itertools;
 
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, prelude::*};
+use ui::{ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, prelude::*};
 use workspace::{ModalView, Workspace};
 
 use util::ResultExt;
@@ -40,10 +41,12 @@ impl AiConfigurationPage {
             })
             .log_err();
     }
-}
 
-impl Render for AiConfigurationPage {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_llm_provider_card(
+        &mut self,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let registry = LanguageModelRegistry::read_global(cx);
 
         v_flex()
@@ -64,6 +67,7 @@ impl Render for AiConfigurationPage {
                             SharedString::new(format!("onboarding-hover-group-{}", index));
 
                         ButtonLike::new(("onboarding-ai-setup-buttons", index))
+                            .size(ButtonSize::Large)
                             .child(
                                 h_flex()
                                     .group(&group_name)
@@ -108,6 +112,7 @@ impl Render for AiConfigurationPage {
             .child(Divider::horizontal())
             .child(
                 Button::new("agent_settings", "Add Many Others")
+                    .size(ButtonSize::Large)
                     .icon(IconName::Plus)
                     .icon_position(IconPosition::Start)
                     .icon_color(Color::Muted)
@@ -116,6 +121,82 @@ impl Render for AiConfigurationPage {
                         window.dispatch_action(OpenSettings.boxed_clone(), cx)
                     }),
             )
+    }
+
+    fn render_llm_provider_section(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .gap_4()
+            .child(
+                v_flex()
+                    .child(Label::new("Or use other LLM providers").size(LabelSize::Large))
+                    .child(
+                        Label::new("Bring your API keys to use the available providers with Zed's UI for free.")
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(self.render_llm_provider_card(window, cx))
+    }
+
+    fn render_privacy_card(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        v_flex()
+            .relative()
+            .pt_2()
+            .pb_2p5()
+            .pl_3()
+            .pr_2()
+            .border_1()
+            .border_dashed()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().surface_background.opacity(0.3))
+            .rounded_lg()
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .gap_2()
+                    .justify_between()
+                    .child(Label::new("We don't train models using your data"))
+                    .child(
+                        Button::new("learn_more", "Learn More")
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Label::new(
+                    "Feel confident in the security and privacy of your projects using Zed.",
+                )
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+    }
+}
+
+impl Render for AiConfigurationPage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_4()
+            .child(SwitchField::new(
+                "enable_ai",
+                "Enable AI features",
+                None,
+                ui::ToggleState::Selected,
+                |_, _, _| {},
+            ))
+            .child(self.render_privacy_card(window, cx))
+            .child(AiUpsellCard {
+                sign_in_status: SignInStatus::SignedIn,
+                sign_in: Arc::new(|_, _| {}),
+            })
+            .child(self.render_llm_provider_section(window, cx))
     }
 }
 
