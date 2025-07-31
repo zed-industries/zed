@@ -4049,9 +4049,8 @@ impl Editor {
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
                             let should_skip = selection.end == region.range.end.to_point(&snapshot)
-                                && text.as_ref() == region.pair.end.as_str();
-                            // TODO kb revert, it's still useful
-                            // && snapshot.contains_str_at(region.range.end, text.as_ref());
+                                && text.as_ref() == region.pair.end.as_str()
+                                && snapshot.contains_str_at(region.range.end, text.as_ref());
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
                                 new_selections
