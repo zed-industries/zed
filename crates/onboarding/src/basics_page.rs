@@ -92,7 +92,7 @@ pub(crate) fn render_basics_page(_: &mut Window, cx: &mut App) -> impl IntoEleme
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
-        .child(v_flex().child(div().child("hack").invisible()).child(SwitchField::new(
+        .child(v_flex().justify_center().child(div().h_0().child("hack").invisible()).child(SwitchField::new(
             "vim_mode",
             "Vim Mode",
             "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.",

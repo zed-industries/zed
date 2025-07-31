@@ -314,8 +314,14 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(render_font_customization_section(window, cx))
         .child(
             h_flex()
+                .items_start()
                 .justify_between()
-                .child(Label::new("Mini Map"))
+                .child(
+                    v_flex().child(Label::new("Mini Map")).child(
+                        Label::new("See a high-level overview of your source code.")
+                            .color(Color::Muted),
+                    ),
+                )
                 .child(
                     ToggleButtonGroup::single_row(
                         "onboarding-show-mini-map",
