@@ -3049,7 +3049,11 @@ dependencies = [
 name = "cloud_api_types"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "cloud_llm_client",
+ "pretty_assertions",
  "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
