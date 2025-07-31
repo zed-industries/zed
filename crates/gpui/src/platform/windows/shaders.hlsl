@@ -97,8 +97,7 @@ float4 to_device_position(float2 unit_vertex, Bounds bounds) {
     return to_device_position_impl(position);
 }
 
-float4 distance_from_clip_rect_impl(float2 position, ContentMask content_mask) {
-    Bounds clip_bounds = content_mask.bounds;
+float4 distance_from_clip_rect_impl(float2 position, Bounds clip_bounds) {
     float2 tl = position - clip_bounds.origin;
     float2 br = clip_bounds.origin + clip_bounds.size - position;
     return float4(tl.x, br.x, tl.y, br.y);
@@ -106,7 +105,7 @@ float4 distance_from_clip_rect_impl(float2 position, ContentMask content_mask) {
 
 float4 distance_from_clip_rect(float2 unit_vertex, Bounds bounds, ContentMask content_mask) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
-    return distance_from_clip_rect_impl(position, content_mask);
+    return distance_from_clip_rect_impl(position, content_mask.bounds);
 }
 
 // Convert linear RGB to sRGB
@@ -260,6 +259,15 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
             return corner_radii.bottom_right;
         }
     }
+}
+
+Corners max_corner_radii(Corners a, Corners b) {
+    Corners output;
+    output.top_left = max(a.top_left, b.top_left);
+    output.top_right = max(a.top_right, b.top_right);
+    output.bottom_right = max(a.bottom_right, b.bottom_right);
+    output.bottom_left = max(a.bottom_left, b.bottom_left);
+    return output;
 }
 
 float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
@@ -1166,13 +1174,4 @@ float4 polychrome_sprite_fragment(PolychromeSpriteFragmentInput input): SV_Targe
     }
     color.a *= sprite.opacity * saturate(0.5 - distance);
     return color;
-}
-
-Corners max_corner_radii(Corners a, Corners b) {
-    Corners output;
-    output.top_left = max(a.top_left, b.top_left);
-    output.top_right = max(a.top_right, b.top_right);
-    output.bottom_right = max(a.bottom_right, b.bottom_right);
-    output.bottom_left = max(a.bottom_left, b.bottom_left);
-    return output;
 }
