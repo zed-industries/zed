@@ -696,17 +696,17 @@ impl TestClient {
                 current: store
                     .contacts()
                     .iter()
-                    .map(|contact| contact.user.github_login.clone())
+                    .map(|contact| contact.user.github_login.clone().to_string())
                     .collect(),
                 outgoing_requests: store
                     .outgoing_contact_requests()
                     .iter()
-                    .map(|user| user.github_login.clone())
+                    .map(|user| user.github_login.clone().to_string())
                     .collect(),
                 incoming_requests: store
                     .incoming_contact_requests()
                     .iter()
-                    .map(|user| user.github_login.clone())
+                    .map(|user| user.github_login.clone().to_string())
                     .collect(),
             })
     }

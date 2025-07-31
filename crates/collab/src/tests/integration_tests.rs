@@ -1881,7 +1881,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 id: client_a.user_id().unwrap(),
-                github_login: "user_a".to_string(),
+                github_login: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
             }),
@@ -1900,7 +1900,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 id: client_b.user_id().unwrap(),
-                github_login: "user_b".to_string(),
+                github_login: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
             }),
@@ -6079,7 +6079,7 @@ async fn test_contacts(
                 .iter()
                 .map(|contact| {
                     (
-                        contact.user.github_login.clone(),
+                        contact.user.github_login.clone().to_string(),
                         if contact.online { "online" } else { "offline" },
                         if contact.busy { "busy" } else { "free" },
                     )

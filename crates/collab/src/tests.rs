@@ -38,12 +38,12 @@ fn room_participants(room: &Entity<Room>, cx: &mut TestAppContext) -> RoomPartic
         let mut remote = room
             .remote_participants()
             .values()
-            .map(|participant| participant.user.github_login.clone())
+            .map(|participant| participant.user.github_login.clone().to_string())
             .collect::<Vec<_>>();
         let mut pending = room
             .pending_participants()
             .iter()
-            .map(|user| user.github_login.clone())
+            .map(|user| user.github_login.clone().to_string())
             .collect::<Vec<_>>();
         remote.sort();
         pending.sort();
