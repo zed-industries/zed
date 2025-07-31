@@ -4688,114 +4688,111 @@ impl LspStore {
             let mut messages_to_report = Vec::new();
             let to_stop = local.lsp_tree.clone().update(cx, |lsp_tree, cx| {
                 let mut rebase = lsp_tree.rebase();
-                for buffer_handle in buffer_store.read(cx).buffers().sorted_by_key(|buffer| {
-                    Reverse(
-                        File::from_dyn(buffer.read(cx).file())
-                            .map(|file| file.worktree.read(cx).is_visible()),
-                    )
-                }) {
-                    let buffer = buffer_handle.read(cx);
-                    if !local.registered_buffers.contains_key(&buffer.remote_id()) {
+                let buffers = buffer_store
+                    .read(cx)
+                    .buffers()
+                    .filter_map(|buffer| {
+                        let raw_buffer = buffer.read(cx);
+                        if !local
+                            .registered_buffers
+                            .contains_key(&raw_buffer.remote_id())
+                        {
+                            return None;
+                        }
+                        File::from_dyn(raw_buffer.file())
+                            .cloned()
+                            .zip(raw_buffer.language().map(|l| l.name()))
+                    })
+                    .sorted_by_key(|(file, _)| Reverse(file.worktree.read(cx).is_visible()));
+                for (file, language) in buffers {
+                    let worktree_id = file.worktree_id(cx);
+                    let Some(worktree) = local
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                    else {
                         continue;
-                    }
-                    if let Some((file, language)) = File::from_dyn(buffer.file())
-                        .cloned()
-                        .zip(buffer.language().map(|l| l.name()))
-                    {
-                        let worktree_id = file.worktree_id(cx);
-                        let Some(worktree) = local
-                            .worktree_store
-                            .read(cx)
-                            .worktree_for_id(worktree_id, cx)
-                        else {
-                            continue;
-                        };
+                    };
 
-                        let Some((reused, delegate, nodes)) = local
-                            .reuse_existing_language_server(
-                                rebase.server_tree(),
-                                &worktree,
-                                &language,
+                    let Some((reused, delegate, nodes)) = local
+                        .reuse_existing_language_server(
+                            rebase.server_tree(),
+                            &worktree,
+                            &language,
+                            cx,
+                        )
+                        .map(|(delegate, servers)| (true, delegate, servers))
+                        .or_else(|| {
+                            let lsp_delegate = adapters
+                                .entry(worktree_id)
+                                .or_insert_with(|| get_adapter(worktree_id, cx))
+                                .clone()?;
+                            let delegate =
+                                Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+                            let path = file
+                                .path()
+                                .parent()
+                                .map(Arc::from)
+                                .unwrap_or_else(|| file.path().clone());
+                            let worktree_path = ProjectPath { worktree_id, path };
+
+                            let nodes = rebase.get(
+                                worktree_path,
+                                AdapterQuery::Language(&language),
+                                delegate.clone(),
                                 cx,
-                            )
-                            .map(|(delegate, servers)| (true, delegate, servers))
-                            .or_else(|| {
-                                let lsp_delegate = adapters
-                                    .entry(worktree_id)
-                                    .or_insert_with(|| get_adapter(worktree_id, cx))
-                                    .clone()?;
-                                let delegate = Arc::new(ManifestQueryDelegate::new(
-                                    worktree.read(cx).snapshot(),
-                                ));
-                                let path = file
-                                    .path()
-                                    .parent()
-                                    .map(Arc::from)
-                                    .unwrap_or_else(|| file.path().clone());
-                                let worktree_path = ProjectPath { worktree_id, path };
+                            );
 
-                                let nodes = rebase.get(
-                                    worktree_path,
-                                    AdapterQuery::Language(&language),
+                            Some((false, lsp_delegate, nodes.collect()))
+                        })
+                    else {
+                        continue;
+                    };
+
+                    let abs_path = file.abs_path(cx);
+                    for node in nodes {
+                        if !reused {
+                            let server_id = node.server_id_or_init(|disposition| {
+                                let path = &disposition.path;
+                                let uri = Url::from_file_path(
+                                    worktree.read(cx).abs_path().join(&path.path),
+                                );
+                                let key = LanguageServerSeed {
+                                    worktree_id: worktree.read(cx).id(),
+                                    name: disposition.server_name.clone(),
+                                    settings: disposition.settings.clone(),
+                                    workspace_configuration: Arc::new(serde_json::Value::Null),
+                                };
+                                local.language_server_ids.remove(&key);
+
+                                let server_id = local.get_or_insert_language_server(
+                                    &worktree,
                                     delegate.clone(),
+                                    disposition,
+                                    language.clone(),
                                     cx,
                                 );
-
-                                Some((false, lsp_delegate, nodes.collect()))
-                            })
-                        else {
-                            continue;
-                        };
-
-                        let abs_path = file.abs_path(cx);
-                        for node in nodes {
-                            if !reused {
-                                let server_id = node.server_id_or_init(
-                                    |disposition|
-                                         {
-                                            let path = &disposition.path;
-                                            let uri = Url::from_file_path(
-                                                worktree.read(cx).abs_path().join(&path.path),
-                                            );
-                                            let key = LanguageServerSeed {
-                                                worktree_id: worktree.read(cx).id(),
-                                                name: disposition.server_name.clone(),
-                                                settings: disposition.settings.clone(),
-                                                workspace_configuration: Arc::new(serde_json::Value::Null),
-                                            };
-                                            local.language_server_ids.remove(&key);
-
-
-                                            let server_id = local.get_or_insert_language_server(
-                                                &worktree,
-                                                delegate.clone(),
-                                                disposition,
-                                                language.clone(),
-                                                cx,
-                                            );
-                                            if let Some(state) =
-                                                local.language_servers.get(&server_id)
-                                            {
-                                                if let Ok(uri) = uri {
-                                                    state.add_workspace_folder(uri);
-                                                };
-                                            }
-                                            server_id
-                                        }
-                                );
-
-                                if let Some(language_server_id) = server_id {
-                                    messages_to_report.push(LspStoreEvent::LanguageServerUpdate {
-                                        language_server_id,
-                                        name: node.name(),
-                                        message:
-                                            proto::update_language_server::Variant::RegisteredForBuffer(
-                                                proto::RegisteredForBuffer {
-                                                    buffer_abs_path: abs_path.to_string_lossy().to_string(),
-                                                },
-                                            ),
-                                    });
+                                if let Some(state) = local.language_servers.get(&server_id) {
+                                    if let Ok(uri) = uri {
+                                        state.add_workspace_folder(uri);
+                                    };
                                 }
+                                server_id
+                            });
+
+                            if let Some(language_server_id) = server_id {
+                                messages_to_report.push(LspStoreEvent::LanguageServerUpdate {
+                                    language_server_id,
+                                    name: node.name(),
+                                    message:
+                                        proto::update_language_server::Variant::RegisteredForBuffer(
+                                            proto::RegisteredForBuffer {
+                                                buffer_abs_path: abs_path
+                                                    .to_string_lossy()
+                                                    .to_string(),
+                                            },
+                                        ),
+                                });
                             }
                         }
                     }
