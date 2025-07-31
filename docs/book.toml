@@ -94,5 +94,5 @@ enable = false
 #
 # Comment the below section out if you need to bypass the preprocessor for some reason.
 [preprocessor.zed_docs_preprocessor]
-command = "cargo run -p docs_preprocessor -r --"
+command = "cargo run -p docs_preprocessor --release --"
 renderer = ["html"]
