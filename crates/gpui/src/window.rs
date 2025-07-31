@@ -2361,14 +2361,16 @@ impl Window {
         opacity: Option<f32>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
-        if opacity.is_none() {
-            return f(self);
-        }
-
         self.invalidator.debug_assert_paint_or_prepaint();
-        self.element_opacity = opacity;
+
+        let Some(opacity) = opacity else {
+            return f(self);
+        };
+
+        let previous_opacity = self.element_opacity;
+        self.element_opacity = Some(previous_opacity.unwrap_or(1.0) * opacity);
         let result = f(self);
-        self.element_opacity = None;
+        self.element_opacity = previous_opacity;
         result
     }
 
