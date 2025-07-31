@@ -174,23 +174,23 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from(
-                "
-                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
-                remote:
-                remote: Create a pull request for 'test' on GitHub by visiting:
-                remote:      https://example.com/test/test/pull/new/test
-                remote:
-                To example.com:test/test.git
-                 * [new branch]      test -> test
-                ",
-            ),
+            stderr: [
+                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
+                "remote:",
+                "remote: Create a pull request for 'test' on GitHub by visiting:",
+                "remote:      https://example.com/test/test/pull/new/test",
+                "remote:\n",
+                "To example.com:test/test.git",
+                " * [new branch]      test -> test",
+                "",
+            ]
+            .join("\n"),
         };
 
         let msg = format_output(&action, output);
 
         if let SuccessStyle::PushPrLink { text: hint, link } = &msg.style {
-            assert_eq!(hint, "Create a pull request");
+            assert_eq!(hint, "Create Pull Request");
             assert_eq!(link, "https://example.com/test/test/pull/new/test");
         } else {
             panic!("Expected PushPrLink variant");
@@ -208,15 +208,17 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from("
-                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
-                remote:
-                remote: To create a merge request for test, visit:
-                remote:   https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test
-                remote:
-                To example.com:test/test.git
-                 * [new branch]      test -> test
-                "),
+            stderr: [
+                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
+                "remote:",
+                "remote: To create a merge request for test, visit:",
+                "remote:   https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test",
+                "remote:",
+                "To example.com:test/test.git",
+                " * [new branch]      test -> test",
+                "",
+            ]
+            .join("\n"),
         };
 
         let msg = format_output(&action, output);
@@ -243,23 +245,23 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from(
-                "
-                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
-                remote:
-                remote: View merge request for test:
-                remote:    https://example.com/test/test/-/merge_requests/99999
-                remote:
-                To example.com:test/test.git
-                 + 80bd3c83be...e03d499d2e test -> test
-                ",
-            ),
+            stderr: [
+                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
+                "remote:",
+                "remote: View merge request for test:",
+                "remote:    https://example.com/test/test/-/merge_requests/99999",
+                "remote:",
+                "To example.com:test/test.git",
+                " + 80bd3c83be...e03d499d2e test -> test",
+                "",
+            ]
+            .join("\n"),
         };
 
         let msg = format_output(&action, output);
 
         if let SuccessStyle::PushPrLink { text, link } = &msg.style {
-            assert_eq!(text, "View Merge request");
+            assert_eq!(text, "View Merge Request");
             assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
         } else {
             panic!("Expected PushPrLink variant");
@@ -277,12 +279,12 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from(
-                "
-                To http://example.com/test/test.git
-                 * [new branch]      test -> test
-                ",
-            ),
+            stderr: [
+                "To http://example.com/test/test.git",
+                " * [new branch]      test -> test",
+                "",
+            ]
+            .join("\n"),
         };
 
         let msg = format_output(&action, output);
@@ -290,10 +292,7 @@ mod tests {
         if let SuccessStyle::ToastWithLog { output } = &msg.style {
             assert_eq!(
                 output.stderr,
-                "
-                To http://example.com/test/test.git
-                 * [new branch]      test -> test
-                "
+                "To http://example.com/test/test.git\n * [new branch]      test -> test\n"
             );
         } else {
             panic!("Expected ToastWithLog variant");
