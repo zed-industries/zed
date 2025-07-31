@@ -1806,14 +1806,50 @@ fn tokens_for_bytes(bytes: usize) -> usize {
 mod tests {
     use client::test::FakeServer;
     use clock::FakeSystemClock;
+    use cloud_api_types::{
+        AuthenticatedUser, CreateLlmTokenResponse, GetAuthenticatedUserResponse, LlmToken, PlanInfo,
+    };
+    use cloud_llm_client::{CurrentUsage, Plan, UsageData, UsageLimit};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
     use language::Point;
-    use rpc::proto;
     use settings::SettingsStore;
 
     use super::*;
+
+    fn make_get_authenticated_user_response() -> GetAuthenticatedUserResponse {
+        GetAuthenticatedUserResponse {
+            user: AuthenticatedUser {
+                id: 1,
+                metrics_id: "metrics-id-1".to_string(),
+                avatar_url: "".to_string(),
+                github_login: "".to_string(),
+                name: None,
+                is_staff: false,
+                accepted_tos_at: None,
+            },
+            feature_flags: vec![],
+            plan: PlanInfo {
+                plan: Plan::ZedPro,
+                subscription_period: None,
+                usage: CurrentUsage {
+                    model_requests: UsageData {
+                        used: 0,
+                        limit: UsageLimit::Limited(500),
+                    },
+                    edit_predictions: UsageData {
+                        used: 250,
+                        limit: UsageLimit::Unlimited,
+                    },
+                },
+                trial_started_at: None,
+                is_usage_based_billing_enabled: false,
+                is_account_too_young: false,
+                has_overdue_invoices: false,
+            },
+        }
+    }
 
     #[gpui::test]
     async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
@@ -2014,26 +2050,51 @@ mod tests {
             <|editable_region_end|>
             ```"};
 
-        let http_client = FakeHttpClient::create(move |_| async move {
-            Ok(http_client::Response::builder()
-                .status(200)
-                .body(
-                    serde_json::to_string(&PredictEditsResponse {
-                        request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
-                            .unwrap(),
-                        output_excerpt: completion_response.to_string(),
-                    })
-                    .unwrap()
-                    .into(),
-                )
-                .unwrap())
+        let http_client = FakeHttpClient::create(move |req| async move {
+            match (req.method(), req.uri().path()) {
+                (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&make_get_authenticated_user_response())
+                            .unwrap()
+                            .into(),
+                    )
+                    .unwrap()),
+                (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&CreateLlmTokenResponse {
+                            token: LlmToken("the-llm-token".to_string()),
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap()),
+                (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&PredictEditsResponse {
+                            request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
+                                .unwrap(),
+                            output_excerpt: completion_response.to_string(),
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap()),
+                _ => Ok(http_client::Response::builder()
+                    .status(404)
+                    .body("Not Found".into())
+                    .unwrap()),
+            }
         });
 
         let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
         cx.update(|cx| {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
-        let server = FakeServer::for_client(42, &client, cx).await;
+        // Construct the fake server to authenticate.
+        let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
             cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
@@ -2044,13 +2105,6 @@ mod tests {
         let completion_task = zeta.update(cx, |zeta, cx| {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
-
-        server.receive::<proto::GetUsers>().await.unwrap();
-        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
-        server.respond(
-            token_request.receipt(),
-            proto::GetLlmTokenResponse { token: "".into() },
-        );
 
         let completion = completion_task.await.unwrap().unwrap();
         buffer.update(cx, |buffer, cx| {
@@ -2068,20 +2122,44 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Vec<(Range<Point>, String)> {
         let completion_response = completion_response.to_string();
-        let http_client = FakeHttpClient::create(move |_| {
+        let http_client = FakeHttpClient::create(move |req| {
             let completion = completion_response.clone();
             async move {
-                Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(
-                        serde_json::to_string(&PredictEditsResponse {
-                            request_id: Uuid::new_v4(),
-                            output_excerpt: completion,
-                        })
-                        .unwrap()
-                        .into(),
-                    )
-                    .unwrap())
+                match (req.method(), req.uri().path()) {
+                    (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::to_string(&make_get_authenticated_user_response())
+                                .unwrap()
+                                .into(),
+                        )
+                        .unwrap()),
+                    (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::to_string(&CreateLlmTokenResponse {
+                                token: LlmToken("the-llm-token".to_string()),
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap()),
+                    (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::to_string(&PredictEditsResponse {
+                                request_id: Uuid::new_v4(),
+                                output_excerpt: completion,
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap()),
+                    _ => Ok(http_client::Response::builder()
+                        .status(404)
+                        .body("Not Found".into())
+                        .unwrap()),
+                }
             }
         });
 
@@ -2089,7 +2167,8 @@ mod tests {
         cx.update(|cx| {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
-        let server = FakeServer::for_client(42, &client, cx).await;
+        // Construct the fake server to authenticate.
+        let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let cloud_user_store =
             cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
@@ -2101,13 +2180,6 @@ mod tests {
         let completion_task = zeta.update(cx, |zeta, cx| {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
-
-        server.receive::<proto::GetUsers>().await.unwrap();
-        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
-        server.respond(
-            token_request.receipt(),
-            proto::GetLlmTokenResponse { token: "".into() },
-        );
 
         let completion = completion_task.await.unwrap().unwrap();
         completion
