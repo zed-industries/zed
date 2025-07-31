@@ -104,6 +104,13 @@ impl CloudUserStore {
             })
     }
 
+    pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.trial_started_at)
+            .map(|trial_started_at| trial_started_at.0)
+    }
+
     pub fn has_accepted_tos(&self) -> bool {
         self.authenticated_user
             .as_ref()
