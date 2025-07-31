@@ -1,7 +1,4 @@
-use crate::{
-    ai_setup_page::AiConfigurationPage,
-    welcome::{ShowWelcome, WelcomePage},
-};
+use crate::welcome::{ShowWelcome, WelcomePage};
 use client::{Client, CloudUserStore, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
@@ -79,12 +76,7 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = Onboarding::new(
-                            workspace.weak_handle(),
-                            workspace.user_store().clone(),
-                            workspace.app_state().cloud_user_store.clone(),
-                            cx,
-                        );
+                        let settings_page = Onboarding::new(workspace, cx);
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
@@ -200,12 +192,7 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
         |workspace, window, cx| {
             {
                 workspace.toggle_dock(DockPosition::Left, window, cx);
-                let onboarding_page = Onboarding::new(
-                    workspace.weak_handle(),
-                    workspace.user_store().clone(),
-                    workspace.app_state().cloud_user_store.clone(),
-                    cx,
-                );
+                let onboarding_page = Onboarding::new(workspace, cx);
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
                 window.focus(&onboarding_page.focus_handle(cx));
@@ -232,22 +219,14 @@ struct Onboarding {
     dark_themes: [Arc<Theme>; 3],
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
-    ai_configuration_page: Entity<AiConfigurationPage>,
+    cloud_user_store: Entity<CloudUserStore>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     _settings_subscription: Subscription,
 }
 
 impl Onboarding {
-    fn new(
-        workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        let ai_configuration_page =
-            cx.new(|_| AiConfigurationPage::new(workspace.clone(), cloud_user_store));
-
+    fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         let theme_registry = ThemeRegistry::global(cx);
         let one_dark = theme_registry
             .get("One Dark")
@@ -270,14 +249,14 @@ impl Onboarding {
             .expect("Default themes are always present");
 
         cx.new(|cx| Self {
-            workspace,
-            user_store,
+            workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
             light_themes: [one_light, ayu_light, gruvbox_light],
             dark_themes: [one_dark, ayu_dark, gruvbox_dark],
             selected_page: SelectedPage::Basics,
             fs: <dyn Fs>::global(cx),
-            ai_configuration_page,
+            cloud_user_store: workspace.app_state().cloud_user_store.clone(),
+            user_store: workspace.user_store().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -430,7 +409,9 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => self.ai_configuration_page.clone().into_any_element(),
+            SelectedPage::AiSetup => {
+                crate::ai_setup_page::render_ai_setup_page(&self, window, cx).into_any_element()
+            }
         }
     }
 }
@@ -495,12 +476,9 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        Some(Onboarding::new(
-            self.workspace.clone(),
-            self.user_store.clone(),
-            self.ai_configuration_page.read(cx).cloud_user_store.clone(),
-            cx,
-        ))
+        self.workspace
+            .update(cx, |workspace, cx| Onboarding::new(workspace, cx))
+            .ok()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
