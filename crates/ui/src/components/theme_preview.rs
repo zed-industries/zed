@@ -9,7 +9,7 @@ use theme::{Theme, ThemeRegistry};
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
     selected: bool,
-    on_click: Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     seed: f32,
 }
 
@@ -19,7 +19,7 @@ impl ThemePreviewTile {
             theme,
             seed,
             selected,
-            on_click: Rc::new(|_, _, _| {}),
+            on_click: None,
         }
     }
 
@@ -32,7 +32,7 @@ impl ThemePreviewTile {
         mut self,
         listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_click = Rc::new(listener);
+        self.on_click = Some(Rc::new(listener));
         self
     }
 }
@@ -191,11 +191,9 @@ impl RenderOnce for ThemePreviewTile {
             // Note: If two theme preview tiles are rendering the same theme they'll share an ID
             // this will mean on hover and on click events will be shared between them
             .id(SharedString::from(self.theme.id.clone()))
-            .on_click({
-                let on_click = self.on_click.clone();
-                move |event, window, cx| {
-                    on_click(event, window, cx);
-                }
+            .when_some(self.on_click.clone(), |this, on_click| {
+                this.on_click(move |event, window, cx| on_click(event, window, cx))
+                    .hover(|style| style.cursor_pointer().border_color(color.element_hover))
             })
             .size_full()
             .rounded(root_radius)
@@ -205,7 +203,6 @@ impl RenderOnce for ThemePreviewTile {
             .when(self.selected, |this| {
                 this.border_color(color.border_selected)
             })
-            .hover(|this| this.border_color(color.border_selected))
             .child(
                 div()
                     .size_full()
