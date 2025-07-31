@@ -3846,7 +3846,7 @@ impl BackgroundScanner {
 
         log::trace!("containing git repository: {containing_git_repository:?}");
 
-        let global_gitignore_path = global_gitignore_path();
+        let global_gitignore_path = paths::global_gitignore_path();
         self.state.lock().snapshot.global_gitignore =
             if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
                 build_gitignore(global_gitignore_path, self.fs.as_ref())
@@ -5707,14 +5707,4 @@ fn discover_git_paths(dot_git_abs_path: &Arc<Path>, fs: &dyn Fs) -> (Arc<Path>, 
     };
 
     (repository_dir_abs_path, common_dir_abs_path)
-}
-
-#[cfg(test)]
-fn global_gitignore_path() -> Option<Arc<Path>> {
-    Some(Path::new(util::path!("/home/zed/.config/git/ignore")).into())
-}
-
-#[cfg(not(test))]
-fn global_gitignore_path() -> Option<Arc<Path>> {
-    ::ignore::gitignore::gitconfig_excludes_path().map(Into::into)
 }

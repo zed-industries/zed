@@ -507,3 +507,16 @@ fn add_vscode_user_data_paths(paths: &mut Vec<PathBuf>, product_name: &str) {
         );
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    Some(Path::new(util::path!("/home/zed/.config/git/ignore")).into())
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    static GLOBAL_GITIGNORE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    GLOBAL_GITIGNORE_PATH
+        .get_or_init(|| ::ignore::gitignore::gitconfig_excludes_path())
+        .clone()
+}
