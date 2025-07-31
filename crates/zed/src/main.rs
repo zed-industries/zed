@@ -487,7 +487,7 @@ pub fn main() {
         project::Project::init(&client, cx);
         debugger_ui::init(cx);
         debugger_tools::init(cx);
-        client::init(&client, cloud_user_store.downgrade(), cx);
+        client::init(&client, cx);
         let telemetry = client.telemetry();
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),

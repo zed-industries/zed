@@ -1,7 +1,6 @@
 use crate::channel_chat::ChannelChatEvent;
 
 use super::*;
-use client::CloudUserStore;
 use client::{Client, UserStore, test::FakeServer};
 use clock::FakeSystemClock;
 use gpui::{App, AppContext as _, Entity, SemanticVersion, TestAppContext};
@@ -455,9 +454,8 @@ fn init_test(cx: &mut App) -> Entity<ChannelStore> {
     let http = FakeHttpClient::with_404_response();
     let client = Client::new(clock, http.clone(), cx);
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-    let cloud_user_store = cx.new(|cx| CloudUserStore::new(client.cloud_client(), cx));
 
-    client::init(&client, cloud_user_store.downgrade(), cx);
+    client::init(&client, cx);
     crate::init(&client, user_store, cx);
 
     ChannelStore::global(cx)

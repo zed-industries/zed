@@ -917,7 +917,7 @@ impl AppState {
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
-        client::init(&client, cloud_user_store.downgrade(), cx);
+        client::init(&client, cx);
         crate::init_settings(cx);
 
         Arc::new(Self {

@@ -159,7 +159,7 @@ pub fn init_settings(cx: &mut App) {
     ProxySettings::register(cx);
 }
 
-pub fn init(client: &Arc<Client>, cloud_user_store: WeakEntity<CloudUserStore>, cx: &mut App) {
+pub fn init(client: &Arc<Client>, cx: &mut App) {
     let client = Arc::downgrade(client);
     cx.on_action({
         let client = client.clone();
@@ -185,14 +185,7 @@ pub fn init(client: &Arc<Client>, cloud_user_store: WeakEntity<CloudUserStore>, 
 
     cx.on_action({
         let client = client.clone();
-        let cloud_user_store = cloud_user_store.clone();
         move |_: &SignOut, cx| {
-            if let Some(cloud_user_store) = cloud_user_store.upgrade() {
-                cloud_user_store.update(cx, |this, _cx| {
-                    this.clear_authenticated_user();
-                });
-            }
-
             if let Some(client) = client.upgrade() {
                 cx.spawn(async move |cx| {
                     client.sign_out(&cx).await;
@@ -1164,10 +1157,6 @@ impl Client {
         credentials: &Credentials,
         cx: &AsyncApp,
     ) -> Task<Result<Connection, EstablishConnectionError>> {
-        if 1 < 2 {
-            return Task::ready(Err(EstablishConnectionError::Other(anyhow!("overloaded"))));
-        }
-
         let release_channel = cx
             .update(|cx| ReleaseChannel::try_global(cx))
             .ok()
