@@ -68,7 +68,7 @@ pub fn init_crash_handler(app: &Application) {
                     move |crash_context: &crash_handler::CrashContext| {
                         // only request a minidump once
                         let res = if REQUESTED_MINIDUMP
-                            .compare_exchange(false, true, Ordering::SeqCst, Ordering::Acquire)
+                            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
                             .is_ok()
                         {
                             client.send_message(2, "mistakes were made").unwrap();
@@ -87,6 +87,7 @@ pub fn init_crash_handler(app: &Application) {
             {
                 handler.set_ptracer(Some(server_pid));
             }
+            CRASH_HANDLER.store(true, Ordering::Release);
             std::mem::forget(handler);
             info!("crash handler registered");
         })
@@ -113,19 +114,14 @@ pub fn init_panic_hook(
         // wait 500ms for the crash handler process to start up
         // if it's still not there just write panic info and no minidump
         let retry_frequency = Duration::from_millis(100);
-        let max_retries = 5;
-        let mut retries = 0;
-        while {
-            let handler_loaded = CRASH_HANDLER.load(Ordering::SeqCst);
-            if handler_loaded {
+        for _ in 0..5 {
+            if CRASH_HANDLER.load(Ordering::Acquire) {
                 log::error!("triggering a crash to generate a minidump...");
                 CrashHandler.simulate_exception(None);
-            } else {
-                thread::sleep(retry_frequency);
+                break;
             }
-            retries += 1;
-            !handler_loaded || retries < max_retries
-        } {}
+            thread::sleep(retry_frequency);
+        }
 
         let thread = thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
