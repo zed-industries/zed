@@ -14,18 +14,12 @@ use smol::stream::StreamExt;
 use std::{
     env,
     ffi::{OsStr, c_void},
-    io::Write,
-    panic,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
-    thread,
+    sync::{Arc, atomic::Ordering},
 };
+use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
-use zlog::info;
 
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
@@ -61,7 +55,7 @@ pub fn init_panic_hook(
         if *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             let location = info.location().unwrap();
             let backtrace = Backtrace::new();
-            info!(
+            eprintln!(
                 "Thread {:?} panicked with {:?} at {}:{}:{}\n{}{:?}",
                 thread_name,
                 payload,
