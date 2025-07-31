@@ -371,10 +371,10 @@ mod tests {
     use util::path;
     use workspace::AppState;
 
-    pub async fn init_test<'a, 'b: 'a>(
-        app_cx: &'a mut TestAppContext,
-        trees: impl IntoIterator<Item = (&'b str, serde_json::Value)>,
-        worktree_roots: impl IntoIterator<Item = &'b str>,
+    async fn init_test(
+        app_cx: &mut TestAppContext,
+        trees: impl IntoIterator<Item = (&str, serde_json::Value)>,
+        worktree_roots: impl IntoIterator<Item = &str>,
     ) -> impl AsyncFnMut(HoveredWord, PathLikeTarget) -> (Option<HoverTarget>, Option<OpenTarget>)
     {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
@@ -409,7 +409,7 @@ mod tests {
                 project.create_terminal(TerminalKind::Shell(None), window.window_handle(), cx)
             })
             .await
-            .unwrap();
+            .expect("Failed to create a terminal");
 
         let (terminal_a, workspace_a) = (terminal.clone(), workspace.clone());
         let (terminal_view, cx) = app_cx.add_window_view(|window, cx| {
@@ -452,7 +452,7 @@ mod tests {
                     )
                 })
                 .await
-                .unwrap_or_default();
+                .expect("Failed to possibly open target");
 
             (hover_target, open_target)
         }
@@ -493,13 +493,9 @@ mod tests {
         );
 
         let open_target = open_target.expect("Open target should not be None");
-        let expected_path = Path::new(tooltip);
         match open_target {
-            OpenTarget::File(path, _metadata) => {
-                assert_eq!(path.path.as_path(), expected_path);
-            }
-            OpenTarget::Worktree(path, _entry) => {
-                assert_eq!(path.path.as_path(), expected_path);
+            OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
+                assert_eq!(path.path.as_path(), Path::new(tooltip));
             }
         }
     }
@@ -543,11 +539,7 @@ mod tests {
         )
         .await;
 
-        macro_rules! test {
-            ($maybe_path:expr, $tooltip:expr) => {
-                test_path_like!(test_path_like, $maybe_path, $tooltip)
-            };
-        }
+        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
         test!("lib.rs", "/test/lib.rs");
         test!("test.rs", "/test/test.rs");
@@ -577,11 +569,7 @@ mod tests {
         )
         .await;
 
-        macro_rules! test {
-            ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-            };
-        }
+        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
         test!("file.txt", "/file.txt", "/");
         test!("lib.rs", "/test/lib.rs", "/test");
@@ -611,11 +599,7 @@ mod tests {
         )
         .await;
 
-        macro_rules! test {
-            ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-            };
-        }
+        macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
         test!("file.txt", "/test/file.txt", "/test");
     }
@@ -643,11 +627,7 @@ mod tests {
             )
             .await;
 
-            macro_rules! test {
-                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-                };
-            }
+            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
             test!("C.py", "/dir1/dir 2/C.py", "/dir1");
             test!("C.py", "/dir1/dir 2/C.py", "/dir1/dir 2");
@@ -678,11 +658,7 @@ mod tests {
             )
             .await;
 
-            macro_rules! test {
-                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-                };
-            }
+            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
             // Failing currently
             test!("main.rs", "/project/src/main.rs", "/project");
@@ -738,11 +714,7 @@ mod tests {
             )
             .await;
 
-            macro_rules! test {
-                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-                };
-            }
+            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
             test!(
                 "foo/./bar.txt",
@@ -802,11 +774,7 @@ mod tests {
             )
             .await;
 
-            macro_rules! test {
-                ($maybe_path:expr, $tooltip:expr, $terminal_dir:expr) => {
-                    test_path_like!(test_path_like, $maybe_path, $tooltip, $terminal_dir)
-                };
-            }
+            macro_rules! test { ($($args:tt),+) => { test_path_like!(test_path_like, $($args),+) } }
 
             test!("file.txt", "/file.txt", "/");
         }
