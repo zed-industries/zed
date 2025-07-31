@@ -8,7 +8,9 @@ use gpui::{
 use itertools;
 
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
-use ui::{ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, prelude::*};
+use ui::{
+    Badge, ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, prelude::*,
+};
 use workspace::{ModalView, Workspace};
 
 use util::ResultExt;
@@ -160,10 +162,15 @@ impl AiConfigurationPage {
                     .justify_between()
                     .child(Label::new("We don't train models using your data"))
                     .child(
-                        Button::new("learn_more", "Learn More")
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted),
+                        h_flex()
+                            .gap_1()
+                            .child(Badge::new("Privacy").icon(IconName::FileLock))
+                            .child(
+                                Button::new("learn_more", "Learn More")
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted),
+                            ),
                     ),
             )
             .child(
