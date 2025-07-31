@@ -1242,6 +1242,11 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding) {
+        self.text.set_line_ending(line_ending);
+    }
+
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
         self.capability = capability;
