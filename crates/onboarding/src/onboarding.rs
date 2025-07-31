@@ -10,13 +10,9 @@ use gpui::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
+use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use theme::{ThemeMode, ThemeSettings};
-use ui::{
-    Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
-    ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*, rems_from_px,
-};
+use ui::{FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -24,6 +20,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod basics_page;
 mod editing_page;
 mod welcome;
 
@@ -205,23 +202,6 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
     )
 }
 
-fn read_theme_selection(cx: &App) -> ThemeMode {
-    let settings = ThemeSettings::get_global(cx);
-    settings
-        .theme_selection
-        .as_ref()
-        .and_then(|selection| selection.mode())
-        .unwrap_or_default()
-}
-
-fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
-    let fs = <dyn Fs>::global(cx);
-
-    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-        settings.set_mode(theme_mode);
-    });
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SelectedPage {
     Basics,
@@ -246,7 +226,7 @@ impl Onboarding {
         })
     }
 
-    fn render_page_nav(
+    fn render_nav_button(
         &mut self,
         page: SelectedPage,
         _: &mut Window,
@@ -257,89 +237,124 @@ impl Onboarding {
             SelectedPage::Editing => "Editing",
             SelectedPage::AiSetup => "AI Setup",
         };
+
         let binding = match page {
             SelectedPage::Basics => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-1").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::Editing => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-2").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::AiSetup => {
                 KeyBinding::new(vec![gpui::Keystroke::parse("cmd-3").unwrap()], cx)
+                    .map(|kb| kb.size(rems_from_px(12.)))
             }
         };
+
         let selected = self.selected_page == page;
+
         h_flex()
             .id(text)
-            .rounded_sm()
-            .child(text)
-            .child(binding)
-            .h_8()
+            .relative()
+            .w_full()
             .gap_2()
             .px_2()
             .py_0p5()
-            .w_full()
             .justify_between()
-            .map(|this| {
-                if selected {
-                    this.bg(Color::Selected.color(cx))
-                        .border_l_1()
-                        .border_color(Color::Accent.color(cx))
-                } else {
-                    this.text_color(Color::Muted.color(cx))
-                }
+            .rounded_sm()
+            .when(selected, |this| {
+                this.child(
+                    div()
+                        .h_4()
+                        .w_px()
+                        .bg(cx.theme().colors().text_accent)
+                        .absolute()
+                        .left_0(),
+                )
             })
-            .hover(|style| {
+            .hover(|style| style.bg(cx.theme().colors().element_hover))
+            .child(Label::new(text).map(|this| {
                 if selected {
-                    style.bg(Color::Selected.color(cx).opacity(0.6))
+                    this.color(Color::Default)
                 } else {
-                    style.bg(Color::Selected.color(cx).opacity(0.3))
+                    this.color(Color::Muted)
                 }
-            })
+            }))
+            .child(binding)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_page = page;
                 cx.notify();
             }))
     }
 
+    fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .h_full()
+            .w(rems_from_px(220.))
+            .flex_shrink_0()
+            .gap_4()
+            .justify_between()
+            .child(
+                v_flex()
+                    .gap_6()
+                    .child(
+                        h_flex()
+                            .px_2()
+                            .gap_4()
+                            .child(Vector::square(VectorName::ZedLogo, rems(2.5)))
+                            .child(
+                                v_flex()
+                                    .child(
+                                        Headline::new("Welcome to Zed").size(HeadlineSize::Small),
+                                    )
+                                    .child(
+                                        Label::new("The editor for what's next")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                            .italic(),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .child(
+                                v_flex()
+                                    .py_4()
+                                    .border_y_1()
+                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                                    .gap_1()
+                                    .children([
+                                        self.render_nav_button(SelectedPage::Basics, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::Editing, window, cx)
+                                            .into_element(),
+                                        self.render_nav_button(SelectedPage::AiSetup, window, cx)
+                                            .into_element(),
+                                    ]),
+                            )
+                            .child(Button::new("skip_all", "Skip All")),
+                    ),
+            )
+            .child(
+                Button::new("sign_in", "Sign In")
+                    .style(ButtonStyle::Outlined)
+                    .full_width(),
+            )
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => self.render_basics_page(window, cx).into_any_element(),
+            SelectedPage::Basics => {
+                crate::basics_page::render_basics_page(window, cx).into_any_element()
+            }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
             SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
         }
-    }
-
-    fn render_basics_page(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme_mode = read_theme_selection(cx);
-
-        v_flex().child(
-            h_flex().justify_between().child(Label::new("Theme")).child(
-                ToggleButtonGroup::single_row(
-                    "theme-selector-onboarding",
-                    [
-                        ToggleButtonSimple::new("Light", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Light, cx)
-                        }),
-                        ToggleButtonSimple::new("Dark", |_, _, cx| {
-                            write_theme_selection(ThemeMode::Dark, cx)
-                        }),
-                        ToggleButtonSimple::new("System", |_, _, cx| {
-                            write_theme_selection(ThemeMode::System, cx)
-                        }),
-                    ],
-                )
-                .selected_index(match theme_mode {
-                    ThemeMode::Light => 0,
-                    ThemeMode::Dark => 1,
-                    ThemeMode::System => 2,
-                })
-                .style(ui::ToggleButtonGroupStyle::Outlined)
-                .button_width(rems_from_px(64.)),
-            ),
-        )
     }
 
     fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -352,44 +367,27 @@ impl Render for Onboarding {
         h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context("onboarding-page")
-            .px_24()
-            .py_12()
-            .items_start()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .child(
-                v_flex()
-                    .w_1_3()
-                    .h_full()
+                h_flex()
+                    .max_w(rems_from_px(1100.))
+                    .size_full()
+                    .m_auto()
+                    .py_20()
+                    .px_12()
+                    .items_start()
+                    .gap_12()
+                    .child(self.render_nav(window, cx))
                     .child(
-                        h_flex()
-                            .pt_0p5()
-                            .child(Vector::square(VectorName::ZedLogo, rems(2.)))
-                            .child(
-                                v_flex()
-                                    .left_1()
-                                    .items_center()
-                                    .child(Headline::new("Welcome to Zed"))
-                                    .child(
-                                        Label::new("The editor for what's next")
-                                            .color(Color::Muted)
-                                            .italic(),
-                                    ),
-                            ),
-                    )
-                    .p_1()
-                    .child(Divider::horizontal())
-                    .child(
-                        v_flex().gap_1().children([
-                            self.render_page_nav(SelectedPage::Basics, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::Editing, window, cx)
-                                .into_element(),
-                            self.render_page_nav(SelectedPage::AiSetup, window, cx)
-                                .into_element(),
-                        ]),
+                        div()
+                            .pl_12()
+                            .border_l_1()
+                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                            .size_full()
+                            .child(self.render_page(window, cx)),
                     ),
             )
-            .child(div().child(Divider::vertical()).h_full())
-            .child(div().w_2_3().h_full().child(self.render_page(window, cx)))
     }
 }
 
