@@ -457,7 +457,8 @@ pub fn main() {
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store = cx.new(|cx| CloudUserStore::new(client.cloud_client(), cx));
+        let cloud_user_store =
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         language_extension::init(

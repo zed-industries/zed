@@ -16563,6 +16563,7 @@ dependencies = [
  "call",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "db",
  "gpui",
