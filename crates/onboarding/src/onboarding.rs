@@ -12,7 +12,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore, VsCodeSettingsSource, update_settings_file};
 use std::{alloc::System, sync::Arc};
-use theme::{Appearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings};
+use theme::{
+    Appearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings,
+    ThemeSettingsContent,
+};
 use ui::{
     Divider, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
     ToggleButton, ToggleButtonGroup, ToggleButtonSimple, Vector, VectorName, prelude::*,
@@ -392,24 +395,36 @@ impl Onboarding {
                                 [
                                     ToggleButtonSimple::new("Light", {
                                         let theme = theme_selection.clone();
+                                        let appearance_state = appearance_state.clone();
                                         move |_, _, cx| {
-                                            write_theme_selection(
-                                                theme.clone(),
-                                                ThemeMode::Light,
-                                                appearance,
-                                                cx,
-                                            );
+                                            appearance_state.update(cx, |appearance, cx| {
+                                                *appearance = Appearance::Light;
+                                            });
+                                            if theme.mode() != Some(ThemeMode::System) {
+                                                write_theme_selection(
+                                                    theme.clone(),
+                                                    ThemeMode::Light,
+                                                    appearance,
+                                                    cx,
+                                                );
+                                            }
                                         }
                                     }),
                                     ToggleButtonSimple::new("Dark", {
                                         let theme = theme_selection.clone();
+                                        let appearance_state = appearance_state.clone();
                                         move |_, _, cx| {
-                                            write_theme_selection(
-                                                theme.clone(),
-                                                ThemeMode::Dark,
-                                                appearance,
-                                                cx,
-                                            );
+                                            appearance_state.update(cx, |appearance, cx| {
+                                                *appearance = Appearance::Dark;
+                                            });
+                                            if theme.mode() != Some(ThemeMode::System) {
+                                                write_theme_selection(
+                                                    theme.clone(),
+                                                    ThemeMode::Dark,
+                                                    appearance,
+                                                    cx,
+                                                );
+                                            }
                                         }
                                     }),
                                 ],
