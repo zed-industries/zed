@@ -283,12 +283,15 @@ fn display_name(profile_name: &Option<String>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client;
     use editor;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use language;
     use menu::{Cancel, Confirm, SelectNext, SelectPrevious};
     use project::{FakeFs, Project};
     use serde_json::json;
+    use settings::Settings;
+    use theme::{self, ThemeSettings};
     use workspace::{self, AppState};
     use zed_actions::settings_profile_selector;
 
@@ -298,6 +301,12 @@ mod tests {
     ) -> (Entity<Workspace>, &mut VisualTestContext) {
         cx.update(|cx| {
             let state = AppState::test(cx);
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            settings::init(cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            ThemeSettings::register(cx);
+            client::init_settings(cx);
             language::init(cx);
             super::init(cx);
             editor::init(cx);
@@ -309,7 +318,8 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 let settings_json = json!({
-                    "profiles": profiles_json
+                    "buffer_font_size": 10.0,
+                    "profiles": profiles_json,
                 });
 
                 store
@@ -325,6 +335,8 @@ mod tests {
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());
+            let theme_settings = ThemeSettings::get_global(cx);
+            assert_eq!(theme_settings.buffer_font_size(cx).0, 10.0);
         });
 
         (workspace, cx)
@@ -347,32 +359,37 @@ mod tests {
 
     #[gpui::test]
     async fn test_settings_profile_selector_state(cx: &mut TestAppContext) {
+        let demo_videos_profile_name = "Demo Videos".to_string();
+        let classroom_and_streaming_profile_name = "Classroom / Streaming".to_string();
+
         let profiles_json = json!({
-            "Demo Videos": {
-                "buffer_font_size": 14
+            demo_videos_profile_name.clone(): {
+                "buffer_font_size": 15.0
             },
-            "Classroom / Streaming": {
-                "buffer_font_size": 16,
-                "vim_mode": true
+            classroom_and_streaming_profile_name.clone(): {
+                "buffer_font_size": 20.0,
             }
         });
         let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
 
         cx.dispatch_action(settings_profile_selector::Toggle);
-
         let picker = active_settings_profile_picker(&workspace, cx);
 
         picker.read_with(cx, |picker, cx| {
             assert_eq!(picker.delegate.matches.len(), 3);
-            assert_eq!(picker.delegate.matches[0].string, "Disabled");
-            assert_eq!(picker.delegate.matches[1].string, "Classroom / Streaming");
-            assert_eq!(picker.delegate.matches[2].string, "Demo Videos");
+            assert_eq!(picker.delegate.matches[0].string, display_name(&None));
+            assert_eq!(
+                picker.delegate.matches[1].string,
+                classroom_and_streaming_profile_name
+            );
+            assert_eq!(picker.delegate.matches[2].string, demo_videos_profile_name);
             assert_eq!(picker.delegate.matches.get(3), None);
 
             assert_eq!(picker.delegate.selected_index, 0);
             assert_eq!(picker.delegate.selected_profile_name, None);
 
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
 
         cx.dispatch_action(Confirm);
@@ -389,20 +406,23 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 1);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 20.0);
         });
 
         cx.dispatch_action(Cancel);
 
         cx.update(|_, cx| {
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
 
         cx.dispatch_action(settings_profile_selector::Toggle);
@@ -414,14 +434,16 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 1);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 20.0);
         });
 
         cx.dispatch_action(SelectNext);
@@ -430,14 +452,16 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 2);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 15.0);
         });
 
         cx.dispatch_action(Confirm);
@@ -446,8 +470,9 @@ mod tests {
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 15.0);
         });
 
         cx.dispatch_action(settings_profile_selector::Toggle);
@@ -457,14 +482,15 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 2);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 15.0);
         });
 
         cx.dispatch_action(SelectPrevious);
@@ -473,14 +499,16 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 1);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 20.0);
         });
 
         cx.dispatch_action(Cancel);
@@ -489,8 +517,10 @@ mod tests {
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 15.0);
         });
 
         cx.dispatch_action(settings_profile_selector::Toggle);
@@ -500,14 +530,16 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 2);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Demo Videos".to_string())
+                Some(demo_videos_profile_name)
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 15.0);
         });
 
         cx.dispatch_action(SelectPrevious);
@@ -516,14 +548,16 @@ mod tests {
             assert_eq!(picker.delegate.selected_index, 1);
             assert_eq!(
                 picker.delegate.selected_profile_name,
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name.clone())
             );
 
             assert_eq!(
                 cx.try_global::<ActiveSettingsProfileName>()
                     .map(|p| p.0.clone()),
-                Some("Classroom / Streaming".to_string())
+                Some(classroom_and_streaming_profile_name)
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 20.0);
         });
 
         cx.dispatch_action(SelectPrevious);
@@ -537,12 +571,15 @@ mod tests {
                     .map(|p| p.0.clone()),
                 None
             );
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
 
         cx.dispatch_action(Confirm);
 
         cx.update(|_, cx| {
             assert_eq!(cx.try_global::<ActiveSettingsProfileName>(), None);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
     }
 }
