@@ -1,8 +1,0 @@
-kbd.keybinding {
-  background-color: var(--keybinding-bg);
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-family: monospace;
-  display: inline-block;
-  margin: 0 2px;
-}

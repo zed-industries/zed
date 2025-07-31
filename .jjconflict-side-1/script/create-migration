@@ -1,3 +1,0 @@
-zed . \
-    "crates/collab/migrations.sqlite/20221109000000_test_schema.sql" \
-    "crates/collab/migrations/$(date -u +%Y%m%d%H%M%S)_$(echo $1 | sed 's/[^a-z0-9]/_/g').sql"

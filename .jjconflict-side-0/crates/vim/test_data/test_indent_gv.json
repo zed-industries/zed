@@ -1,8 +1,0 @@
-{"SetOption":{"value":"shiftwidth=4"}}
-{"Put":{"state":"ˇhello\nworld\n"}}
-{"Key":"v"}
-{"Key":"j"}
-{"Key":">"}
-{"Key":"g"}
-{"Key":"v"}
-{"Get":{"state":"«    hello\n ˇ»   world\n","mode":"Visual"}}

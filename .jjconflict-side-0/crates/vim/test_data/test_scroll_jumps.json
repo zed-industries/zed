@@ -1,12 +1,0 @@
-{"SetOption":{"value":"scrolloff=3"}}
-{"SetOption":{"value":"lines=22"}}
-{"Put":{"state":"ˇaa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz\n{{\n||\n}}\n~~\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"}}
-{"Key":"shift-g"}
-{"Key":"g"}
-{"Key":"g"}
-{"Key":"ctrl-d"}
-{"Key":"ctrl-d"}
-{"Key":"ctrl-o"}
-{"Get":{"state":"aa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz\n{{\n||\n}}\n~~\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nˇ","mode":"Normal"}}
-{"Key":"ctrl-o"}
-{"Get":{"state":"ˇaa\nbb\ncc\ndd\nee\nff\ngg\nhh\nii\njj\nkk\nll\nmm\nnn\noo\npp\nqq\nrr\nss\ntt\nuu\nvv\nww\nxx\nyy\nzz\n{{\n||\n}}\n~~\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n","mode":"Normal"}}

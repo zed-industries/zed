@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-cargo run -p theme_importer -- "$@"

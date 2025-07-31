@@ -1,8 +1,0 @@
-{"Exec":{"command":"imap jk <esc>"}}
-{"Put":{"state":"ˇhello"}}
-{"Key":"i"}
-{"Key":"j"}
-{"Key":"o"}
-{"Key":"j"}
-{"Key":"k"}
-{"Get":{"state":"jˇohello","mode":"Normal"}}

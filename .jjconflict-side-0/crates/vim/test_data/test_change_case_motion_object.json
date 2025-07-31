@@ -1,6 +1,0 @@
-{"Put":{"state":"abc dˇef\n"}}
-{"Key":"g"}
-{"Key":"shift-u"}
-{"Key":"i"}
-{"Key":"w"}
-{"Get":{"state":"abc ˇDEF\n","mode":"Normal"}}

@@ -1,1 +1,0 @@
-ALTER TABLE "channels" ADD COLUMN "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE;

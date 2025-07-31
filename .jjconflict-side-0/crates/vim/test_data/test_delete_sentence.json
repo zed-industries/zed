@@ -1,8 +1,0 @@
-{"Put":{"state":"ˇFirst.\nFourth.\n"}}
-{"Key":"d"}
-{"Key":")"}
-{"Get":{"state":"ˇFourth.\n","mode":"Normal"}}
-{"Put":{"state":"First.\nˇSecond.\nFourth.\n"}}
-{"Key":"d"}
-{"Key":"("}
-{"Get":{"state":"ˇSecond.\nFourth.\n","mode":"Normal"}}

@@ -1,9 +1,0 @@
-{"Put":{"state":"ˇaa\nbb\ncc"}}
-{"Key":"$"}
-{"Get":{"state":"aˇa\nbb\ncc","mode":"Normal"}}
-{"Key":"2"}
-{"Key":"$"}
-{"Get":{"state":"aa\nbˇb\ncc","mode":"Normal"}}
-{"Key":"4"}
-{"Key":"$"}
-{"Get":{"state":"aa\nbb\ncˇc","mode":"Normal"}}

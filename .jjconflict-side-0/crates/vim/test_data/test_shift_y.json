@@ -1,7 +1,0 @@
-{"Put":{"state":"The ˇquick brown\n"}}
-{"Key":"v"}
-{"Key":"i"}
-{"Key":"w"}
-{"Key":"shift-y"}
-{"Get":{"state":"ˇThe quick brown\n","mode":"Normal"}}
-{"ReadRegister":{"name":"\"","value":"The quick brown\n"}}
