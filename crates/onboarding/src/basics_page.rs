@@ -1,16 +1,24 @@
 use fs::Fs;
-use gpui::{App, IntoElement, Window};
+use gpui::{App, IntoElement};
 use settings::{Settings, update_settings_file};
-use theme::{ThemeMode, ThemeSettings};
-use ui::{SwitchField, ToggleButtonGroup, ToggleButtonSimple, ToggleButtonWithIcon, prelude::*};
+use theme::{Appearance, SystemAppearance, ThemeMode, ThemeSettings};
+use ui::{
+    SwitchField, ThemePreviewTile, ToggleButtonGroup, ToggleButtonSimple, ToggleButtonWithIcon,
+    prelude::*,
+};
 
-fn read_theme_selection(cx: &App) -> ThemeMode {
+use crate::Onboarding;
+
+fn read_theme_selection(cx: &App) -> (ThemeMode, SharedString) {
     let settings = ThemeSettings::get_global(cx);
-    settings
-        .theme_selection
-        .as_ref()
-        .and_then(|selection| selection.mode())
-        .unwrap_or_default()
+    (
+        settings
+            .theme_selection
+            .as_ref()
+            .and_then(|selection| selection.mode())
+            .unwrap_or_default(),
+        settings.active_theme.name.clone(),
+    )
 }
 
 fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
@@ -21,9 +29,7 @@ fn write_theme_selection(theme_mode: ThemeMode, cx: &App) {
     });
 }
 
-fn render_theme_section(cx: &mut App) -> impl IntoElement {
-    let theme_mode = read_theme_selection(cx);
-
+fn render_theme_section(theme_mode: ThemeMode) -> impl IntoElement {
     h_flex().justify_between().child(Label::new("Theme")).child(
         ToggleButtonGroup::single_row(
             "theme-selector-onboarding",
@@ -69,10 +75,35 @@ fn render_telemetry_section() -> impl IntoElement {
         ))
 }
 
-pub(crate) fn render_basics_page(_: &mut Window, cx: &mut App) -> impl IntoElement {
+pub(crate) fn render_basics_page(onboarding: &Onboarding, cx: &mut App) -> impl IntoElement {
+    let (theme_mode, active_theme_name) = read_theme_selection(cx);
+    let themes = match theme_mode {
+        ThemeMode::Dark => &onboarding.dark_themes,
+        ThemeMode::Light => &onboarding.light_themes,
+        ThemeMode::System => match SystemAppearance::global(cx).0 {
+            Appearance::Light => &onboarding.light_themes,
+            Appearance::Dark => &onboarding.dark_themes,
+        },
+    };
+
     v_flex()
         .gap_6()
-        .child(render_theme_section(cx))
+        .child(render_theme_section(theme_mode))
+        .child(h_flex().children(
+            themes.iter().map(|theme| {
+                ThemePreviewTile::new(theme.clone(), active_theme_name == theme.name, 0.48)
+                .on_click({
+                    let theme_name = theme.name.clone();
+                    let fs = onboarding.fs.clone();
+                    move |_, _, cx| {
+                        let theme_name = theme_name.clone();
+                        update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                            settings.set_theme(theme_name.to_string(), SystemAppearance::global(cx).0);
+                        });
+                    }
+                })
+            })
+        ))
         .child(
             v_flex().gap_2().child(Label::new("Base Keymap")).child(
                 ToggleButtonGroup::two_rows(
