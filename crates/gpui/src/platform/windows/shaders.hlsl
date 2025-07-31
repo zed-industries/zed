@@ -1,6 +1,7 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint2 _global_pad;
+    uint premultiplied_alpha;
+    uint _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -1069,6 +1070,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
 };
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
@@ -1090,11 +1092,28 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     return output;
 }
 
+float4 blend_color(float4 color, float alpha_factor) {
+    float alpha = color.a * alpha_factor;
+    float multiplier = premultiplied_alpha != 0 ? alpha : 1.0;
+    return float4(color.rgb * multiplier, alpha);
+}
+
+float3 linear_to_srgbee(float3 l) {
+    bool cutoff = l < float3(0.0031308, 0.0031308, 0.0031308);
+    float3 higher = float3(1.055, 1.055, 1.055) * pow(l, float3(1.0 / 2.4, 1.0 / 2.4, 1.0 / 2.4)) - float3(0.055, 0.055, 0.055);
+    float3 lower = l * float3(12.92, 12.92, 12.92);
+    return cutoff ? lower : higher;
+}
+
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
     float4 color = input.color;
-    color.a *= sample.a;
-    return color;
+    // color.a *= sample;
+    // return float4(color.rgb, color.a);
+    if (any(input.clip_distance < 0.0)) {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+    return blend_color(input.color, sample);
 }
 
 /*
