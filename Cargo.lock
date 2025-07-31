@@ -10945,6 +10945,7 @@ name = "ollama"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "editor",
  "futures 0.3.31",
  "gpui",

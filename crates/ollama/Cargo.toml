@@ -27,6 +27,7 @@ gpui.workspace = true
 http_client.workspace = true
 inline_completion.workspace = true
 language.workspace = true
+
 log.workspace = true
 
 project.workspace = true
@@ -38,6 +39,7 @@ text.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }

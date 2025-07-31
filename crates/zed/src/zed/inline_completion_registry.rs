@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::{OllamaCompletionProvider, OllamaService};
+use ollama::{OllamaCompletionProvider, OllamaService, SettingsModel};
 use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -19,8 +19,30 @@ use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     // Initialize global Ollama service
-    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-    let ollama_service = OllamaService::new(client.http_client(), settings.api_url.clone(), cx);
+    let (api_url, settings_models) = {
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+        let api_url = settings.api_url.clone();
+        let settings_models: Vec<SettingsModel> = settings
+            .available_models
+            .iter()
+            .map(|model| SettingsModel {
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
+                max_tokens: model.max_tokens,
+                supports_tools: model.supports_tools,
+                supports_images: model.supports_images,
+                supports_thinking: model.supports_thinking,
+            })
+            .collect();
+        (api_url, settings_models)
+    };
+
+    let ollama_service = OllamaService::new(client.http_client(), api_url, cx);
+
+    ollama_service.update(cx, |service, cx| {
+        service.set_settings_models(settings_models, cx);
+    });
+
     OllamaService::set_global(ollama_service, cx);
 
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -144,10 +166,23 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 }
             } else if provider == EditPredictionProvider::Ollama {
                 // Update global Ollama service when settings change
-                let _settings = &AllLanguageModelSettings::get_global(cx).ollama;
+                let settings = &AllLanguageModelSettings::get_global(cx).ollama;
                 if let Some(service) = OllamaService::global(cx) {
+                    let settings_models: Vec<SettingsModel> = settings
+                        .available_models
+                        .iter()
+                        .map(|model| SettingsModel {
+                            name: model.name.clone(),
+                            display_name: model.display_name.clone(),
+                            max_tokens: model.max_tokens,
+                            supports_tools: model.supports_tools,
+                            supports_images: model.supports_images,
+                            supports_thinking: model.supports_thinking,
+                        })
+                        .collect();
+
                     service.update(cx, |service, cx| {
-                        service.refresh_models(cx);
+                        service.set_settings_models(settings_models, cx);
                     });
                 }
             }
