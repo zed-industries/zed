@@ -1092,28 +1092,9 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
     return output;
 }
 
-float4 blend_color(float4 color, float alpha_factor) {
-    float alpha = color.a * alpha_factor;
-    float multiplier = premultiplied_alpha != 0 ? alpha : 1.0;
-    return float4(color.rgb * multiplier, alpha);
-}
-
-float3 linear_to_srgbee(float3 l) {
-    bool cutoff = l < float3(0.0031308, 0.0031308, 0.0031308);
-    float3 higher = float3(1.055, 1.055, 1.055) * pow(l, float3(1.0 / 2.4, 1.0 / 2.4, 1.0 / 2.4)) - float3(0.055, 0.055, 0.055);
-    float3 lower = l * float3(12.92, 12.92, 12.92);
-    return cutoff ? lower : higher;
-}
-
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    float4 color = input.color;
-    // color.a *= sample;
-    // return float4(color.rgb, color.a);
-    if (any(input.clip_distance < 0.0)) {
-        return float4(0.0, 0.0, 0.0, 0.0);
-    }
-    return blend_color(input.color, sample);
+    return float4(input.color.rgb, input.color.a * sample);
 }
 
 /*
