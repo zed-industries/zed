@@ -710,15 +710,11 @@ impl DirectWriteState {
     fn create_glyph_run_analysis(
         &self,
         params: &RenderGlyphParams,
-        advance: f32,
-        offset: DWRITE_GLYPH_OFFSET,
-        baseline_origin_x: f32,
-        baseline_origin_y: f32,
     ) -> Result<IDWriteGlyphRunAnalysis> {
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
-        let advance = [advance];
-        let offset = [offset];
+        let advance = [0.0];
+        let offset = [DWRITE_GLYPH_OFFSET::default()];
         let glyph_run = DWRITE_GLYPH_RUN {
             fontFace: unsafe { std::mem::transmute_copy(&font.font_face) },
             fontEmSize: params.font_size.0,
@@ -737,6 +733,11 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
+        let subpixel_shift = params
+            .subpixel_variant
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+        let baseline_origin_x = subpixel_shift.x / params.scale_factor;
+        let baseline_origin_y = subpixel_shift.y / params.scale_factor;
 
         let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
         let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
@@ -744,9 +745,9 @@ impl DirectWriteState {
             font.font_face.GetRecommendedRenderingMode(
                 params.font_size.0,
                 // The dpi here seems that it has the same effect with `Some(&transform)`
-                params.scale_factor,
-                params.scale_factor,
-                None,
+                1.0,
+                1.0,
+                Some(&transform),
                 false,
                 DWRITE_OUTLINE_THRESHOLD_ANTIALIASED,
                 DWRITE_MEASURING_MODE_NATURAL,
@@ -778,8 +779,7 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let glyph_analysis =
-            self.create_glyph_run_analysis(params, 0.0, DWRITE_GLYPH_OFFSET::default(), 0.0, 0.0)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
         if params.is_emoji {
             let bounds =
@@ -837,14 +837,7 @@ impl DirectWriteState {
         }
 
         // Add an extra pixel when the subpixel variant isn't zero to make room for anti-aliasing.
-        let mut bitmap_size = glyph_bounds.size;
-        if params.subpixel_variant.x > 0 {
-            bitmap_size.width += DevicePixels(1);
-        }
-        if params.subpixel_variant.y > 0 {
-            bitmap_size.height += DevicePixels(1);
-        }
-        let bitmap_size = bitmap_size;
+        let bitmap_size = glyph_bounds.size;
 
         let subpixel_shift = params
             .subpixel_variant
@@ -852,13 +845,7 @@ impl DirectWriteState {
         let baseline_origin_x = subpixel_shift.x / params.scale_factor;
         let baseline_origin_y = subpixel_shift.y / params.scale_factor;
 
-        let glyph_analysis = self.create_glyph_run_analysis(
-            params,
-            glyph_bounds.size.width.0 as f32,
-            DWRITE_GLYPH_OFFSET::default(),
-            baseline_origin_x,
-            baseline_origin_y,
-        )?;
+        let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
@@ -896,16 +883,14 @@ impl DirectWriteState {
             ) {
                 bitmap_data = color;
             } else {
-                let monochrome =
-                    Self::rasterize_monochrome(&glyph_analysis, glyph_bounds.origin, bitmap_size)?;
+                let monochrome = Self::rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
                 bitmap_data = monochrome
                     .into_iter()
                     .flat_map(|pixel| [0, 0, 0, pixel])
                     .collect::<Vec<_>>();
             }
         } else {
-            bitmap_data =
-                Self::rasterize_monochrome(&glyph_analysis, glyph_bounds.origin, bitmap_size)?;
+            bitmap_data = Self::rasterize_monochrome(&glyph_analysis, glyph_bounds)?;
         }
 
         Ok((bitmap_size, bitmap_data))
@@ -913,20 +898,19 @@ impl DirectWriteState {
 
     fn rasterize_monochrome(
         glyph_analysis: &IDWriteGlyphRunAnalysis,
-        origin: Point<DevicePixels>,
-        bitmap_size: Size<DevicePixels>,
+        glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
         let mut bitmap_data =
-            vec![0u8; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
+            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
 
         unsafe {
             glyph_analysis.CreateAlphaTexture(
                 DWRITE_TEXTURE_ALIASED_1x1,
                 &RECT {
-                    left: origin.x.0,
-                    top: origin.y.0,
-                    right: bitmap_size.width.0 + origin.x.0,
-                    bottom: bitmap_size.height.0 + origin.y.0,
+                    left: glyph_bounds.origin.x.0,
+                    top: glyph_bounds.origin.y.0,
+                    right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
+                    bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
                 },
                 &mut bitmap_data,
             )?;
