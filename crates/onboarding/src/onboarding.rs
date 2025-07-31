@@ -2,6 +2,7 @@ use crate::{
     ai_setup_page::AiConfigurationPage,
     welcome::{ShowWelcome, WelcomePage},
 };
+use client::{Client, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -15,11 +16,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use ui::{FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
+use theme::{Theme, ThemeRegistry};
+use ui::{Avatar, FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
     item::{Item, ItemEvent},
+    notifications::NotifyResultExt as _,
     open_new, with_active_or_new_workspace,
 };
 
@@ -76,7 +79,11 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = Onboarding::new(workspace.weak_handle(), cx);
+                        let settings_page = Onboarding::new(
+                            workspace.weak_handle(),
+                            workspace.user_store().clone(),
+                            cx,
+                        );
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
@@ -192,7 +199,8 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
         |workspace, window, cx| {
             {
                 workspace.toggle_dock(DockPosition::Left, window, cx);
-                let onboarding_page = Onboarding::new(workspace.weak_handle(), cx);
+                let onboarding_page =
+                    Onboarding::new(workspace.weak_handle(), workspace.user_store().clone(), cx);
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
                 window.focus(&onboarding_page.focus_handle(cx));
@@ -215,21 +223,54 @@ enum SelectedPage {
 
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
+    light_themes: [Arc<Theme>; 3],
+    dark_themes: [Arc<Theme>; 3],
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
     ai_configuration_page: Entity<AiConfigurationPage>,
+    fs: Arc<dyn Fs>,
+    user_store: Entity<UserStore>,
     _settings_subscription: Subscription,
 }
 
 impl Onboarding {
-    fn new(workspace: WeakEntity<Workspace>, cx: &mut App) -> Entity<Self> {
+    fn new(
+        workspace: WeakEntity<Workspace>,
+        user_store: Entity<UserStore>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         let ai_configuration_page = cx.new(|_| AiConfigurationPage::new(workspace.clone()));
+        let theme_registry = ThemeRegistry::global(cx);
+
+        let one_dark = theme_registry
+            .get("One Dark")
+            .expect("Default themes are always present");
+        let ayu_dark = theme_registry
+            .get("Ayu Dark")
+            .expect("Default themes are always present");
+        let gruvbox_dark = theme_registry
+            .get("Gruvbox Dark")
+            .expect("Default themes are always present");
+
+        let one_light = theme_registry
+            .get("One Light")
+            .expect("Default themes are always present");
+        let ayu_light = theme_registry
+            .get("Ayu Light")
+            .expect("Default themes are always present");
+        let gruvbox_light = theme_registry
+            .get("Gruvbox Light")
+            .expect("Default themes are always present");
 
         cx.new(|cx| Self {
             workspace,
+            user_store,
             focus_handle: cx.focus_handle(),
+            light_themes: [one_light, ayu_light, gruvbox_light],
+            dark_themes: [one_dark, ayu_dark, gruvbox_dark],
             selected_page: SelectedPage::Basics,
             ai_configuration_page,
+            fs: <dyn Fs>::global(cx),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -347,16 +388,37 @@ impl Onboarding {
                     ),
             )
             .child(
-                Button::new("sign_in", "Sign In")
-                    .style(ButtonStyle::Outlined)
-                    .full_width(),
+                if let Some(user) = self.user_store.read(cx).current_user() {
+                    h_flex()
+                        .gap_2()
+                        .child(Avatar::new(user.avatar_uri.clone()))
+                        .child(Label::new(user.github_login.clone()))
+                        .into_any_element()
+                } else {
+                    Button::new("sign_in", "Sign In")
+                        .style(ButtonStyle::Outlined)
+                        .full_width()
+                        .on_click(|_, window, cx| {
+                            let client = Client::global(cx);
+                            window
+                                .spawn(cx, async move |cx| {
+                                    client
+                                        .authenticate_and_connect(true, &cx)
+                                        .await
+                                        .into_response()
+                                        .notify_async_err(cx);
+                                })
+                                .detach();
+                        })
+                        .into_any_element()
+                },
             )
     }
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
             SelectedPage::Basics => {
-                crate::basics_page::render_basics_page(window, cx).into_any_element()
+                crate::basics_page::render_basics_page(&self, cx).into_any_element()
             }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
@@ -424,7 +486,11 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        Some(Onboarding::new(self.workspace.clone(), cx))
+        Some(Onboarding::new(
+            self.workspace.clone(),
+            self.user_store.clone(),
+            cx,
+        ))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {

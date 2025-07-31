@@ -1,10 +1,7 @@
-#![allow(unused, dead_code)]
-use gpui::{Hsla, Length};
-use std::sync::Arc;
+use crate::{component_prelude::Documented, prelude::*, utils::inner_corner_radius};
+use gpui::{App, ClickEvent, Hsla, IntoElement, Length, RenderOnce, Window};
+use std::{rc::Rc, sync::Arc};
 use theme::{Theme, ThemeRegistry};
-use ui::{
-    IntoElement, RenderOnce, component_prelude::Documented, prelude::*, utils::inner_corner_radius,
-};
 
 /// Shows a preview of a theme as an abstract illustration
 /// of a thumbnail-sized editor.
@@ -12,6 +9,7 @@ use ui::{
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
     selected: bool,
+    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     seed: f32,
 }
 
@@ -19,8 +17,9 @@ impl ThemePreviewTile {
     pub fn new(theme: Arc<Theme>, selected: bool, seed: f32) -> Self {
         Self {
             theme,
-            selected,
             seed,
+            selected,
+            on_click: None,
         }
     }
 
@@ -28,10 +27,18 @@ impl ThemePreviewTile {
         self.selected = selected;
         self
     }
+
+    pub fn on_click(
+        mut self,
+        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(Rc::new(listener));
+        self
+    }
 }
 
 impl RenderOnce for ThemePreviewTile {
-    fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let color = self.theme.colors();
 
         let root_radius = px(8.0);
@@ -181,6 +188,13 @@ impl RenderOnce for ThemePreviewTile {
         let content = div().size_full().flex().child(sidebar).child(pane);
 
         div()
+            // Note: If two theme preview tiles are rendering the same theme they'll share an ID
+            // this will mean on hover and on click events will be shared between them
+            .id(SharedString::from(self.theme.id.clone()))
+            .when_some(self.on_click.clone(), |this, on_click| {
+                this.on_click(move |event, window, cx| on_click(event, window, cx))
+                    .hover(|style| style.cursor_pointer().border_color(color.element_hover))
+            })
             .size_full()
             .rounded(root_radius)
             .p(root_padding)
@@ -261,7 +275,7 @@ impl Component for ThemePreviewTile {
                                 themes_to_preview
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, theme)| {
+                                    .map(|(_, theme)| {
                                         div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
                                             theme.clone(),
                                             false,
