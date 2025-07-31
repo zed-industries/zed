@@ -1149,6 +1149,8 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
+                    this.update_ssh_paths(cx);
+                    this.serialize_ssh_paths(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.update_history(cx);
@@ -5071,6 +5073,35 @@ impl Workspace {
         } else {
             None
         }
+    }
+
+    fn update_ssh_paths(&mut self, cx: &App) {
+        let project = self.project().read(cx);
+        if !project.is_local() {
+            let paths: Vec<String> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                .collect();
+            if let Some(ssh_project) = &mut self.serialized_ssh_project {
+                ssh_project.paths = paths;
+            }
+        }
+    }
+
+    fn serialize_ssh_paths(&self, window: &mut Window, cx: &mut Context<Workspace>) {
+        let Some(ssh_project) = &self.serialized_ssh_project else {
+            return;
+        };
+        println!("serializing ssh paths");
+        let ssh_project_id = ssh_project.id;
+        let ssh_project_paths = ssh_project.paths.clone();
+        window
+            .spawn(cx, async move |_| {
+                let _ = persistence::DB
+                    .update_ssh_project_paths(ssh_project_id, ssh_project_paths)
+                    .await;
+            })
+            .detach();
     }
 
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
