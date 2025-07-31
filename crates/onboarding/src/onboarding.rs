@@ -13,8 +13,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
-use theme::{Theme, ThemeRegistry};
-use ui::{Avatar, FluentBuilder, KeyBinding, Vector, VectorName, prelude::*, rems_from_px};
+use ui::{
+    Avatar, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
+    Vector, VectorName, prelude::*, rems_from_px,
+};
 use workspace::{
     AppState, Workspace, WorkspaceId,
     dock::DockPosition,
@@ -26,6 +28,7 @@ use workspace::{
 mod ai_setup_page;
 mod basics_page;
 mod editing_page;
+mod theme_preview;
 mod welcome;
 
 pub struct OnBoardingFeatureFlag {}
@@ -215,46 +218,19 @@ enum SelectedPage {
 
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
-    light_themes: [Arc<Theme>; 3],
-    dark_themes: [Arc<Theme>; 3],
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
     cloud_user_store: Entity<CloudUserStore>,
-    fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     _settings_subscription: Subscription,
 }
 
 impl Onboarding {
     fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
-        let theme_registry = ThemeRegistry::global(cx);
-        let one_dark = theme_registry
-            .get("One Dark")
-            .expect("Default themes are always present");
-        let ayu_dark = theme_registry
-            .get("Ayu Dark")
-            .expect("Default themes are always present");
-        let gruvbox_dark = theme_registry
-            .get("Gruvbox Dark")
-            .expect("Default themes are always present");
-
-        let one_light = theme_registry
-            .get("One Light")
-            .expect("Default themes are always present");
-        let ayu_light = theme_registry
-            .get("Ayu Light")
-            .expect("Default themes are always present");
-        let gruvbox_light = theme_registry
-            .get("Gruvbox Light")
-            .expect("Default themes are always present");
-
         cx.new(|cx| Self {
             workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
-            light_themes: [one_light, ayu_light, gruvbox_light],
-            dark_themes: [one_dark, ayu_dark, gruvbox_dark],
             selected_page: SelectedPage::Basics,
-            fs: <dyn Fs>::global(cx),
             cloud_user_store: workspace.app_state().cloud_user_store.clone(),
             user_store: workspace.user_store().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
@@ -404,7 +380,7 @@ impl Onboarding {
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
             SelectedPage::Basics => {
-                crate::basics_page::render_basics_page(&self, cx).into_any_element()
+                crate::basics_page::render_basics_page(window, cx).into_any_element()
             }
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()

@@ -1,47 +1,32 @@
-use crate::{component_prelude::Documented, prelude::*, utils::inner_corner_radius};
-use gpui::{App, ClickEvent, Hsla, IntoElement, Length, RenderOnce, Window};
-use std::{rc::Rc, sync::Arc};
+#![allow(unused, dead_code)]
+use gpui::{Hsla, Length};
+use std::sync::Arc;
 use theme::{Theme, ThemeRegistry};
+use ui::{
+    IntoElement, RenderOnce, component_prelude::Documented, prelude::*, utils::inner_corner_radius,
+};
 
 /// Shows a preview of a theme as an abstract illustration
 /// of a thumbnail-sized editor.
 #[derive(IntoElement, RegisterComponent, Documented)]
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
-    selected: bool,
-    on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     seed: f32,
 }
 
 impl ThemePreviewTile {
-    pub fn new(theme: Arc<Theme>, selected: bool, seed: f32) -> Self {
-        Self {
-            theme,
-            seed,
-            selected,
-            on_click: None,
-        }
-    }
+    pub const CORNER_RADIUS: Pixels = px(8.0);
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-
-    pub fn on_click(
-        mut self,
-        listener: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> Self {
-        self.on_click = Some(Rc::new(listener));
-        self
+    pub fn new(theme: Arc<Theme>, seed: f32) -> Self {
+        Self { theme, seed }
     }
 }
 
 impl RenderOnce for ThemePreviewTile {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
         let color = self.theme.colors();
 
-        let root_radius = px(8.0);
+        let root_radius = Self::CORNER_RADIUS;
         let root_border = px(2.0);
         let root_padding = px(2.0);
         let child_border = px(1.0);
@@ -188,21 +173,9 @@ impl RenderOnce for ThemePreviewTile {
         let content = div().size_full().flex().child(sidebar).child(pane);
 
         div()
-            // Note: If two theme preview tiles are rendering the same theme they'll share an ID
-            // this will mean on hover and on click events will be shared between them
-            .id(SharedString::from(self.theme.id.clone()))
-            .when_some(self.on_click.clone(), |this, on_click| {
-                this.on_click(move |event, window, cx| on_click(event, window, cx))
-                    .hover(|style| style.cursor_pointer().border_color(color.element_hover))
-            })
             .size_full()
             .rounded(root_radius)
             .p(root_padding)
-            .border(root_border)
-            .border_color(color.border_transparent)
-            .when(self.selected, |this| {
-                this.border_color(color.border_selected)
-            })
             .child(
                 div()
                     .size_full()
@@ -244,24 +217,14 @@ impl Component for ThemePreviewTile {
                 .p_4()
                 .children({
                     if let Some(one_dark) = one_dark.ok() {
-                        vec![example_group(vec![
-                            single_example(
-                                "Default",
-                                div()
-                                    .w(px(240.))
-                                    .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark.clone(), false, 0.42))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                div()
-                                    .w(px(240.))
-                                    .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark, true, 0.42))
-                                    .into_any_element(),
-                            ),
-                        ])]
+                        vec![example_group(vec![single_example(
+                            "Default",
+                            div()
+                                .w(px(240.))
+                                .h(px(180.))
+                                .child(ThemePreviewTile::new(one_dark.clone(), 0.42))
+                                .into_any_element(),
+                        )])]
                     } else {
                         vec![]
                     }
@@ -276,11 +239,10 @@ impl Component for ThemePreviewTile {
                                     .iter()
                                     .enumerate()
                                     .map(|(_, theme)| {
-                                        div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
-                                            theme.clone(),
-                                            false,
-                                            0.42,
-                                        ))
+                                        div()
+                                            .w(px(200.))
+                                            .h(px(140.))
+                                            .child(ThemePreviewTile::new(theme.clone(), 0.42))
                                     })
                                     .collect::<Vec<_>>(),
                             )
