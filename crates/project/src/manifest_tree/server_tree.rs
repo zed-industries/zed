@@ -137,8 +137,8 @@ impl LanguageServerTree {
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let adapters =
-            self.adapters_for_language(path, &language_name, manifest_name, delegate, cx);
-        self.get_with_adapters(path, adapters, delegate, cx)
+            self.adapters_for_language(&path, &language_name, manifest_name, delegate, cx);
+        self.get_with_adapters(path, adapters, cx)
         // /Cargo.toml
         // /src/main.rs
         // /src/.zed/settings.json ("Rust": {"language_servers" ["!rust_analyzer"]})
@@ -146,15 +146,14 @@ impl LanguageServerTree {
 
     fn get_with_adapters<'a>(
         &'a mut self,
-        path: ProjectPath,
+        root_path: ProjectPath,
         adapters: IndexMap<
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let worktree_id = path.worktree_id;
+        let worktree_id = root_path.worktree_id;
 
         let mut manifest_to_adapters = BTreeMap::default();
         for (_, _, adapter) in adapters.values() {
@@ -181,7 +180,6 @@ impl LanguageServerTree {
         adapters
             .into_iter()
             .map(move |(_, (settings, new_languages, adapter))| {
-                // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
                 let root_path = adapter
                     .manifest_name()
                     .and_then(|name| roots.get(&name))
@@ -217,9 +215,9 @@ impl LanguageServerTree {
 
     fn adapters_for_language(
         &self,
-        project_path: ProjectPath,
+        project_path: &ProjectPath,
         language_name: &LanguageName,
-        manifest_name: &ManifestName,
+        manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
@@ -229,6 +227,10 @@ impl LanguageServerTree {
         let manifest_location = self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path_or_worktree_root(project_path, manifest_name, delegate, cx)
         });
+        let settings_location = SettingsLocation {
+            worktree_id: manifest_location.worktree_id,
+            path: &manifest_location.path,
+        };
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
@@ -388,7 +390,7 @@ impl<'tree> ServerTreeRebase<'tree> {
             .adapters_for_language(settings_location, &language_name, cx);
 
         self.new_tree
-            .get_with_adapters(path, adapters, delegate, cx)
+            .get_with_adapters(path, adapters, cx)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.

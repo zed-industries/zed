@@ -360,7 +360,7 @@ impl LocalToolchainStore {
                 Arc::from(ManifestQueryDelegate::new(snapshot)) as Arc<dyn ManifestDelegate>;
             let relative_path = manifest_tree
                 .update(cx, |this, cx| {
-                    this.root_for_path(path, &manifest_name, &delegate, cx)
+                    this.root_for_path(&path, &manifest_name, &delegate, cx)
                 })
                 .ok()?
                 .unwrap_or_else(|| ProjectPath {

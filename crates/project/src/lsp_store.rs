@@ -55,8 +55,8 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
-    WorkspaceFoldersContent,
+    ManifestDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped, WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -2276,9 +2276,9 @@ impl LocalLspStore {
         else {
             return;
         };
-        let delegate = Arc::new(ManifestQueryDelegate::new(snapshot));
+        let delegate: Arc<dyn ManifestDelegate> = Arc::new(ManifestQueryDelegate::new(snapshot));
         self.lsp_tree.update(cx, |this, cx| {
-            for node in this.get(path, language.name(), language.manifest(), delegate, cx) {
+            for node in this.get(path, language.name(), language.manifest(), &delegate, cx) {
                 let Some(server_id) = node.server_id() else {
                     continue;
                 };
@@ -7672,28 +7672,9 @@ impl LspStore {
             return;
         };
 
-        let worktree_id = worktree.read(cx).id();
-        if worktree.read(cx).is_visible() {
-            let path = ProjectPath {
-                worktree_id,
-                path: Arc::from("".as_ref()),
-            };
-            let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
-            local.lsp_tree.update(cx, |language_server_tree, cx| {
-                for node in language_server_tree.get(
-                    path,
-                    AdapterQuery::Adapter(&language_server_name),
-                    delegate,
-                    cx,
-                ) {
-                    node.server_id_or_init(|disposition| {
-                        assert_eq!(&disposition.server_name, &language_server_name);
-
-                        language_server_id
-                    });
-                }
-            });
-        }
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        debug_assert!(!worktree.is_visible());
 
         let seed = LanguageServerSeed {
             worktree_id,

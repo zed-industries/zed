@@ -108,20 +108,20 @@ impl ManifestTree {
 
     pub(crate) fn root_for_path(
         &mut self,
-        ProjectPath { worktree_id, path }: ProjectPath,
+        ProjectPath { worktree_id, path }: &ProjectPath,
         manifest_name: &ManifestName,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> Option<ProjectPath> {
-        debug_assert_eq!(delegate.worktree_id(), worktree_id);
+        debug_assert_eq!(delegate.worktree_id(), *worktree_id);
         let (mut marked_path, mut current_presence) = (None, LabelPresence::KnownAbsent);
-        let worktree_roots = match self.root_points.entry(worktree_id) {
+        let worktree_roots = match self.root_points.entry(*worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
                 let Some(worktree) = self
                     .worktree_store
                     .read(cx)
-                    .worktree_for_id(worktree_id, cx)
+                    .worktree_for_id(*worktree_id, cx)
                 else {
                     return Default::default();
                 };
@@ -130,7 +130,7 @@ impl ManifestTree {
             }
         };
 
-        let key = TriePath::from(&*path);
+        let key = TriePath::from(&**path);
         worktree_roots.read_with(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
@@ -138,7 +138,7 @@ impl ManifestTree {
                         if current_presence > *presence {
                             debug_assert!(false, "RootPathTrie precondition violation; while walking the tree label presence is only allowed to increase");
                         }
-                        marked_path = Some(ProjectPath {worktree_id, path: path.clone()});
+                        marked_path = Some(ProjectPath {worktree_id: *worktree_id, path: path.clone()});
                         current_presence = *presence;
                     }
 
@@ -174,7 +174,7 @@ impl ManifestTree {
                             .insert(&root, manifest_name.clone(), LabelPresence::Present);
                         current_presence = LabelPresence::Present;
                         marked_path = Some(ProjectPath {
-                            worktree_id,
+                            worktree_id: *worktree_id,
                             path: known_root,
                         });
                     }),
@@ -190,18 +190,21 @@ impl ManifestTree {
 
     pub(crate) fn root_for_path_or_worktree_root(
         &mut self,
-        project_path: ProjectPath,
-        manifest_name: &ManifestName,
+        project_path: &ProjectPath,
+        manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> ProjectPath {
         let worktree_id = project_path.worktree_id;
-        self.root_for_path(project_path, manifest_name, delegate, cx)
+        // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
+        manifest_name
+            .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
             .unwrap_or_else(|| ProjectPath {
                 worktree_id,
                 path: Arc::from(Path::new("")),
             })
     }
+
     fn on_worktree_store_event(
         &mut self,
         _: Entity<WorktreeStore>,
