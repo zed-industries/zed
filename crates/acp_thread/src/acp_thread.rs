@@ -894,6 +894,7 @@ impl AcpThread {
         };
 
         self.upsert_tool_call_inner(tool_call, status, cx);
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
         rx
     }
 

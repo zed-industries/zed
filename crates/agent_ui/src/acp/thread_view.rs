@@ -575,7 +575,9 @@ impl AcpThreadView {
                 self.sync_thread_entry_view(index, window, cx);
                 self.list_state.splice(index..index + 1, 1);
             }
-            AcpThreadEvent::ToolAuthorizationRequired => todo!(),
+            AcpThreadEvent::ToolAuthorizationRequired => {
+                self.notify_with_sound("Waiting for tool confirmation", IconName::Info, window, cx);
+            }
             AcpThreadEvent::Stopped => {
                 let used_tools = thread.read(cx).used_tools_since_last_user_message();
                 self.notify_with_sound(
@@ -2628,7 +2630,9 @@ mod tests {
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
     use fs::FakeFs;
+    use futures::future::try_join_all;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use rand::Rng;
     use settings::SettingsStore;
 
     use super::*;
@@ -2665,6 +2669,51 @@ mod tests {
 
         let (thread_view, cx) =
             setup_thread_view(StubAgentServer::new(SabatourAgentConnection), cx).await;
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+
+        cx.deactivate_window();
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.chat(&Chat, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        assert!(
+            cx.windows()
+                .iter()
+                .any(|window| window.downcast::<AgentNotification>().is_some())
+        );
+    }
+
+    #[gpui::test]
+    async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let tool_call_id = acp::ToolCallId("1".into());
+        let tool_call = acp::ToolCall {
+            id: tool_call_id.clone(),
+            label: "Label".into(),
+            kind: acp::ToolKind::Edit,
+            status: acp::ToolCallStatus::Pending,
+            content: vec!["hi".into()],
+            locations: vec![],
+            raw_input: None,
+        };
+        let connection = StubAgentConnection::new(vec![acp::SessionUpdate::ToolCall(tool_call)])
+            .with_permission_requests(HashMap::from_iter([(
+                tool_call_id,
+                vec![acp::PermissionOption {
+                    id: acp::PermissionOptionId("1".into()),
+                    label: "Allow".into(),
+                    kind: acp::PermissionOptionKind::AllowOnce,
+                }],
+            )]));
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::new(connection), cx).await;
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -2725,7 +2774,7 @@ mod tests {
 
     impl StubAgentServer<StubAgentConnection> {
         fn default() -> Self {
-            Self::new(StubAgentConnection)
+            Self::new(StubAgentConnection::default())
         }
     }
 
@@ -2759,8 +2808,30 @@ mod tests {
         }
     }
 
-    #[derive(Clone)]
-    struct StubAgentConnection;
+    #[derive(Clone, Default)]
+    struct StubAgentConnection {
+        sessions: Arc<Mutex<HashMap<acp::SessionId, WeakEntity<AcpThread>>>>,
+        permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+        updates: Vec<acp::SessionUpdate>,
+    }
+
+    impl StubAgentConnection {
+        fn new(updates: Vec<acp::SessionUpdate>) -> Self {
+            Self {
+                updates,
+                permission_requests: HashMap::default(),
+                sessions: Arc::default(),
+            }
+        }
+
+        fn with_permission_requests(
+            mut self,
+            permission_requests: HashMap<acp::ToolCallId, Vec<acp::PermissionOption>>,
+        ) -> Self {
+            self.permission_requests = permission_requests;
+            self
+        }
+    }
 
     impl AgentConnection for StubAgentConnection {
         fn name(&self) -> &'static str {
@@ -2773,17 +2844,61 @@ mod tests {
             _cwd: &Path,
             cx: &mut gpui::AsyncApp,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
-            Task::ready(Ok(cx
-                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
-                .unwrap()))
+            let session_id = SessionId(
+                rand::thread_rng()
+                    .sample_iter(&rand::distributions::Alphanumeric)
+                    .take(7)
+                    .map(char::from)
+                    .collect::<String>()
+                    .into(),
+            );
+            let thread = cx
+                .new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))
+                .unwrap();
+            self.sessions.lock().insert(session_id, thread.downgrade());
+            Task::ready(Ok(thread))
         }
 
         fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
-            Task::ready(Ok(()))
+        fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<gpui::Result<()>> {
+            let sessions = self.sessions.lock();
+            let thread = sessions.get(&params.session_id).unwrap();
+            let mut tasks = vec![];
+            for update in &self.updates {
+                let thread = thread.clone();
+                let update = update.clone();
+                let permission_request = if let acp::SessionUpdate::ToolCall(tool_call) = &update
+                    && let Some(options) = self.permission_requests.get(&tool_call.id)
+                {
+                    Some((tool_call.clone(), options.clone()))
+                } else {
+                    None
+                };
+                let task = cx.spawn(async move |cx| {
+                    if let Some((tool_call, options)) = permission_request {
+                        let permission = thread.update(cx, |thread, cx| {
+                            thread.request_tool_call_permission(
+                                tool_call.clone(),
+                                options.clone(),
+                                cx,
+                            )
+                        })?;
+                        permission.await?;
+                    }
+                    thread.update(cx, |thread, cx| {
+                        thread.handle_session_update(update.clone(), cx).unwrap();
+                    })?;
+                    anyhow::Ok(())
+                });
+                tasks.push(task);
+            }
+            cx.spawn(async move |_| {
+                try_join_all(tasks).await?;
+                Ok(())
+            })
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {
