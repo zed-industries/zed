@@ -85,6 +85,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
+    collections::HashSet,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -621,7 +622,7 @@ impl LocalLspStore {
             .on_request::<lsp::request::RegisterCapability, _, _>({
                 let this = this.clone();
                 move |params, cx| {
-                    let this = this.clone();
+                    let lsp_store = this.clone();
                     let mut cx = cx.clone();
                     async move {
                         for reg in params.registrations {
@@ -629,7 +630,7 @@ impl LocalLspStore {
                                 "workspace/didChangeWatchedFiles" => {
                                     if let Some(options) = reg.register_options {
                                         let options = serde_json::from_value(options)?;
-                                        this.update(&mut cx, |this, cx| {
+                                        lsp_store.update(&mut cx, |this, cx| {
                                             this.as_local_mut()?.on_lsp_did_change_watched_files(
                                                 server_id, &reg.id, options, cx,
                                             );
@@ -638,8 +639,9 @@ impl LocalLspStore {
                                     }
                                 }
                                 "textDocument/rangeFormatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             let options = reg
                                                 .register_options
@@ -658,14 +660,16 @@ impl LocalLspStore {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.document_range_formatting_provider =
                                                     Some(provider);
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                         anyhow::Ok(())
                                     })??;
                                 }
                                 "textDocument/onTypeFormatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             let options = reg
                                                 .register_options
@@ -682,15 +686,17 @@ impl LocalLspStore {
                                                     capabilities
                                                         .document_on_type_formatting_provider =
                                                         Some(options);
-                                                })
+                                                });
+                                                notify_server_capabilities_updated(&server, cx);
                                             }
                                         }
                                         anyhow::Ok(())
                                     })??;
                                 }
                                 "textDocument/formatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             let options = reg
                                                 .register_options
@@ -709,7 +715,8 @@ impl LocalLspStore {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.document_formatting_provider =
                                                     Some(provider);
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                         anyhow::Ok(())
                                     })??;
@@ -718,8 +725,9 @@ impl LocalLspStore {
                                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
                                 "textDocument/rename" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             let options = reg
                                                 .register_options
@@ -736,7 +744,8 @@ impl LocalLspStore {
 
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.rename_provider = Some(options);
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                         anyhow::Ok(())
                                     })??;
@@ -754,14 +763,15 @@ impl LocalLspStore {
             .on_request::<lsp::request::UnregisterCapability, _, _>({
                 let this = this.clone();
                 move |params, cx| {
-                    let this = this.clone();
+                    let lsp_store = this.clone();
                     let mut cx = cx.clone();
                     async move {
                         for unreg in params.unregisterations.iter() {
                             match unreg.method.as_str() {
                                 "workspace/didChangeWatchedFiles" => {
-                                    this.update(&mut cx, |this, cx| {
-                                        this.as_local_mut()?
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        lsp_store
+                                            .as_local_mut()?
                                             .on_lsp_unregister_did_change_watched_files(
                                                 server_id, &unreg.id, cx,
                                             );
@@ -772,44 +782,52 @@ impl LocalLspStore {
                                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                                 }
                                 "textDocument/rename" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.rename_provider = None
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                     })?;
                                 }
                                 "textDocument/rangeFormatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.document_range_formatting_provider =
                                                     None
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                     })?;
                                 }
                                 "textDocument/onTypeFormatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.document_on_type_formatting_provider =
                                                     None;
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                     })?;
                                 }
                                 "textDocument/formatting" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.document_formatting_provider = None;
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                     })?;
                                 }
@@ -3490,6 +3508,20 @@ impl LocalLspStore {
         }
 
         Ok(workspace_config)
+    }
+}
+
+fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
+    if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
+        cx.emit(LspStoreEvent::LanguageServerUpdate {
+            language_server_id: server.server_id(),
+            name: Some(server.name()),
+            message: proto::update_language_server::Variant::MetadataUpdated(
+                proto::ServerMetadataUpdated {
+                    capabilities: Some(capabilities),
+                },
+            ),
+        });
     }
 }
 
@@ -6771,6 +6803,18 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
+            if let Some(language) = buffer.read(cx).language() {
+                let relevant_language_servers = self
+                    .languages
+                    .lsp_adapters(&language.name())
+                    .into_iter()
+                    .map(|lsp_adapter| lsp_adapter.name())
+                    .collect::<HashSet<_>>();
+
+                // TODO kb check for capabilities here
+                dbg!(("remote colors fetch!", relevant_language_servers));
+            }
+
             let request_task = client.request(proto::MultiLspQuery {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().to_proto(),
@@ -7536,16 +7580,20 @@ impl LspStore {
         self.downstream_client = Some((downstream_client.clone(), project_id));
 
         for (server_id, status) in &self.language_server_statuses {
-            downstream_client
-                .send(proto::StartLanguageServer {
-                    project_id,
-                    server: Some(proto::LanguageServer {
-                        id: server_id.0 as u64,
-                        name: status.name.clone(),
-                        worktree_id: None,
-                    }),
-                })
-                .log_err();
+            if let Some(server) = self.language_server_for_id(*server_id) {
+                downstream_client
+                    .send(proto::StartLanguageServer {
+                        project_id,
+                        server: Some(proto::LanguageServer {
+                            id: server_id.0 as u64,
+                            name: status.name.clone(),
+                            worktree_id: None,
+                        }),
+                        capabilities: serde_json::to_string(&server.capabilities())
+                            .expect("serializing server LSP capabilities"),
+                    })
+                    .log_err();
+            }
         }
     }
 
@@ -8725,6 +8773,8 @@ impl LspStore {
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        // TODO kb handle new capabilities info here
+        dbg!(("@@@@@@@@@@@@@", &envelope.payload));
         let server = envelope.payload.server.context("invalid server")?;
 
         this.update(&mut cx, |this, cx| {
@@ -8801,7 +8851,8 @@ impl LspStore {
                 }
 
                 non_lsp @ proto::update_language_server::Variant::StatusUpdate(_)
-                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_) => {
+                | non_lsp @ proto::update_language_server::Variant::RegisteredForBuffer(_)
+                | non_lsp @ proto::update_language_server::Variant::MetadataUpdated(_) => {
                     cx.emit(LspStoreEvent::LanguageServerUpdate {
                         language_server_id,
                         name: envelope
@@ -10764,6 +10815,8 @@ impl LspStore {
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.0.to_proto()),
                     }),
+                    capabilities: serde_json::to_string(&language_server.capabilities())
+                        .expect("serializing server LSP capabilities"),
                 })
                 .log_err();
         }

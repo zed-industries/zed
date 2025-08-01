@@ -692,6 +692,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                // TODO kb add more: capabilities and share on [re]join
             })
             .on_conflict(
                 OnConflict::columns([
