@@ -782,6 +782,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
+                // We're using cleartype not grayscale for monchrome is because it provides better quality
                 DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
                 baseline_origin_x,
                 baseline_origin_y,
@@ -793,29 +794,10 @@ impl DirectWriteState {
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
 
-        if params.is_emoji {
-            let bounds =
-                unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
-            // If it's empty, retry with grayscale AA.
-            if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
-                return Ok(Bounds {
-                    origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
-                    size: size(
-                        (bounds.right - bounds.left).into(),
-                        (bounds.bottom - bounds.top).into(),
-                    ),
-                });
-            }
-        }
-
         let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
-
-        if bounds.right < bounds.left {
-            Ok(Bounds {
-                origin: point(0.into(), 0.into()),
-                size: size(0.into(), 0.into()),
-            })
-        } else {
+        // Some glyphs cannot be drawn with ClearType, such as bitmap fonts. In that case
+        // GetAlphaTextureBounds() supposedly returns an empty RECT, but I haven't tested that yet.
+        if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
             Ok(Bounds {
                 origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
                 size: size(
@@ -823,6 +805,25 @@ impl DirectWriteState {
                     (bounds.bottom - bounds.top).into(),
                 ),
             })
+        } else {
+            // If it's empty, retry with grayscale AA.
+            let bounds =
+                unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1)? };
+
+            if bounds.right < bounds.left {
+                Ok(Bounds {
+                    origin: point(0.into(), 0.into()),
+                    size: size(0.into(), 0.into()),
+                })
+            } else {
+                Ok(Bounds {
+                    origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
+                    size: size(
+                        (bounds.right - bounds.left).into(),
+                        (bounds.bottom - bounds.top).into(),
+                    ),
+                })
+            }
         }
     }
 
