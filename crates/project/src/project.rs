@@ -43,8 +43,7 @@ pub use manifest_tree::ManifestTree;
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
-    Client, CloudUserStore, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope,
-    UserStore, proto,
+    Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore, proto,
 };
 use clock::ReplicaId;
 
@@ -183,7 +182,6 @@ pub struct Project {
     join_project_response_message_id: u32,
     task_store: Entity<TaskStore>,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     fs: Arc<dyn Fs>,
     ssh_client: Option<Entity<SshRemoteClient>>,
     client_state: ProjectClientState,
@@ -986,7 +984,6 @@ impl Project {
         client: Arc<Client>,
         node: NodeRuntime,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         env: Option<HashMap<String, String>>,
@@ -1120,7 +1117,6 @@ impl Project {
                 client,
                 task_store,
                 user_store,
-                cloud_user_store,
                 settings_observer,
                 fs,
                 ssh_client: None,
@@ -1152,7 +1148,6 @@ impl Project {
         client: Arc<Client>,
         node: NodeRuntime,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
@@ -1292,7 +1287,6 @@ impl Project {
                 client,
                 task_store,
                 user_store,
-                cloud_user_store,
                 settings_observer,
                 fs,
                 ssh_client: Some(ssh.clone()),
@@ -1346,21 +1340,12 @@ impl Project {
         remote_id: u64,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        let project = Self::in_room(
-            remote_id,
-            client,
-            user_store,
-            cloud_user_store,
-            languages,
-            fs,
-            cx.clone(),
-        )
-        .await?;
+        let project =
+            Self::in_room(remote_id, client, user_store, languages, fs, cx.clone()).await?;
         cx.update(|cx| {
             connection_manager::Manager::global(cx).update(cx, |manager, cx| {
                 manager.maintain_project_connection(&project, cx)
@@ -1373,7 +1358,6 @@ impl Project {
         remote_id: u64,
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
@@ -1410,7 +1394,6 @@ impl Project {
             client,
             false,
             user_store,
-            cloud_user_store,
             languages,
             fs,
             cx,
@@ -1424,7 +1407,6 @@ impl Project {
         client: Arc<Client>,
         run_tasks: bool,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         mut cx: AsyncApp,
@@ -1552,7 +1534,6 @@ impl Project {
                 join_project_response_message_id: response.message_id,
                 languages,
                 user_store: user_store.clone(),
-                cloud_user_store,
                 task_store,
                 snippets,
                 fs,
@@ -1688,16 +1669,12 @@ impl Project {
             .update(|cx| client::Client::new(clock, http_client.clone(), cx))
             .unwrap();
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx)).unwrap();
-        let cloud_user_store = cx
-            .new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx))
-            .unwrap();
         let project = cx
             .update(|cx| {
                 Project::local(
                     client,
                     node_runtime::NodeRuntime::unavailable(),
                     user_store,
-                    cloud_user_store,
                     Arc::new(languages),
                     fs,
                     None,
@@ -1733,14 +1710,11 @@ impl Project {
         let http_client = http_client::FakeHttpClient::with_404_response();
         let client = cx.update(|cx| client::Client::new(clock, http_client.clone(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let project = cx.update(|cx| {
             Project::local(
                 client,
                 node_runtime::NodeRuntime::unavailable(),
                 user_store,
-                cloud_user_store,
                 Arc::new(languages),
                 fs,
                 None,
@@ -1808,10 +1782,6 @@ impl Project {
 
     pub fn user_store(&self) -> Entity<UserStore> {
         self.user_store.clone()
-    }
-
-    pub fn cloud_user_store(&self) -> Entity<CloudUserStore> {
-        self.cloud_user_store.clone()
     }
 
     pub fn node_runtime(&self) -> Option<&NodeRuntime> {

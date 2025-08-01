@@ -290,7 +290,7 @@ impl TestServer {
         let app_state = Arc::new(workspace::AppState {
             client: client.clone(),
             user_store: user_store.clone(),
-            cloud_user_store: cloud_user_store.clone(),
+            cloud_user_store,
             workspace_store,
             languages: language_registry,
             fs: fs.clone(),
@@ -308,12 +308,7 @@ impl TestServer {
             language::init(cx);
             editor::init(cx);
             workspace::init(app_state.clone(), cx);
-            call::init(
-                client.clone(),
-                user_store.clone(),
-                cloud_user_store.clone(),
-                cx,
-            );
+            call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
             collab_ui::init(&app_state, cx);
@@ -625,10 +620,6 @@ impl TestClient {
         &self.app_state.user_store
     }
 
-    pub fn cloud_user_store(&self) -> &Entity<CloudUserStore> {
-        &self.app_state.cloud_user_store
-    }
-
     pub fn language_registry(&self) -> &Arc<LanguageRegistry> {
         &self.app_state.languages
     }
@@ -749,7 +740,6 @@ impl TestClient {
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
-                self.app_state.cloud_user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
                 cx,
@@ -817,7 +807,6 @@ impl TestClient {
                 self.client().clone(),
                 self.app_state.node_runtime.clone(),
                 self.app_state.user_store.clone(),
-                self.app_state.cloud_user_store.clone(),
                 self.app_state.languages.clone(),
                 self.app_state.fs.clone(),
                 None,

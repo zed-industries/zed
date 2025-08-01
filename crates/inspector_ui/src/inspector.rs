@@ -29,7 +29,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
         app_state.client.clone(),
         app_state.node_runtime.clone(),
         app_state.user_store.clone(),
-        app_state.cloud_user_store.clone(),
         app_state.languages.clone(),
         app_state.fs.clone(),
         None,

@@ -4,7 +4,7 @@
 use crate::headless_project::HeadlessProject;
 use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
-use client::{Client, CloudUserStore, UserStore};
+use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
@@ -1837,8 +1837,6 @@ fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entit
 
     let node = NodeRuntime::unavailable();
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-    let cloud_user_store =
-        cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
 
@@ -1847,16 +1845,5 @@ fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entit
         language::init(cx);
     });
 
-    cx.update(|cx| {
-        Project::ssh(
-            ssh,
-            client,
-            node,
-            user_store,
-            cloud_user_store,
-            languages,
-            fs,
-            cx,
-        )
-    })
+    cx.update(|cx| Project::ssh(ssh, client, node, user_store, languages, fs, cx))
 }

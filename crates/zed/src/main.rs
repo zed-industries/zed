@@ -623,12 +623,7 @@ pub fn main() {
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
         language_tools::init(cx);
-        call::init(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            app_state.cloud_user_store.clone(),
-            cx,
-        );
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         collab_ui::init(&app_state, cx);
         git_ui::init(cx);

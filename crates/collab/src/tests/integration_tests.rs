@@ -3988,7 +3988,6 @@ async fn test_leaving_project(
             project_id,
             client_b.app_state.client.clone(),
             client_b.user_store().clone(),
-            client_b.cloud_user_store().clone(),
             client_b.language_registry().clone(),
             FakeFs::new(cx.background_executor().clone()),
             cx,

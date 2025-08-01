@@ -17,9 +17,10 @@ pub fn load_preview_thread_store(
     cx: &mut AsyncApp,
 ) -> Task<Result<Entity<ThreadStore>>> {
     workspace
-        .update(cx, |_, cx| {
+        .update(cx, |workspace, cx| {
             ThreadStore::load(
                 project.clone(),
+                workspace.app_state().cloud_user_store.clone(),
                 cx.new(|_| ToolWorkingSet::default()),
                 None,
                 Arc::new(PromptBuilder::new(None).unwrap()),

@@ -487,6 +487,7 @@ impl AgentPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(
                         project,
+                        workspace.app_state().cloud_user_store.clone(),
                         tools.clone(),
                         prompt_store.clone(),
                         prompt_builder.clone(),
