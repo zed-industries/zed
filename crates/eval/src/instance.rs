@@ -221,6 +221,7 @@ impl ExampleInstance {
         let prompt_store = None;
         let thread_store = ThreadStore::load(
             project.clone(),
+            app_state.cloud_user_store.clone(),
             tools,
             prompt_store,
             app_state.prompt_builder.clone(),

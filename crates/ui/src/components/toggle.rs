@@ -609,6 +609,9 @@ impl RenderOnce for SwitchField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         h_flex()
             .id(SharedString::from(format!("{}-container", self.id)))
+            .when(!self.disabled, |this| {
+                this.hover(|this| this.cursor_pointer())
+            })
             .w_full()
             .gap_4()
             .justify_between()

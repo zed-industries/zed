@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use client::{Client, UserStore};
+use client::{Client, CloudUserStore, UserStore};
+use cloud_llm_client::Plan;
 use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::prelude::*;
@@ -9,6 +10,7 @@ use crate::{AgentPanelOnboardingCard, ApiKeysWithoutProviders, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     client: Arc<Client>,
     configured_providers: Vec<(IconName, SharedString)>,
     continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
@@ -17,6 +19,7 @@ pub struct AgentPanelOnboarding {
 impl AgentPanelOnboarding {
     pub fn new(
         user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         client: Arc<Client>,
         continue_with_zed_ai: impl Fn(&mut Window, &mut App) + 'static,
         cx: &mut Context<Self>,
@@ -36,6 +39,7 @@ impl AgentPanelOnboarding {
 
         Self {
             user_store,
+            cloud_user_store,
             client,
             configured_providers: Self::compute_available_providers(cx),
             continue_with_zed_ai: Arc::new(continue_with_zed_ai),
@@ -56,15 +60,8 @@ impl AgentPanelOnboarding {
 
 impl Render for AgentPanelOnboarding {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let enrolled_in_trial = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedProTrial)
-        );
-
-        let is_pro_user = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedPro)
-        );
+        let enrolled_in_trial = self.cloud_user_store.read(cx).plan() == Some(Plan::ZedProTrial);
+        let is_pro_user = self.cloud_user_store.read(cx).plan() == Some(Plan::ZedPro);
 
         AgentPanelOnboardingCard::new()
             .child(

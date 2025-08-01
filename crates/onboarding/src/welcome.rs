@@ -7,7 +7,7 @@ use workspace::{
     NewFile, Open, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
 };
-use zed_actions::{Extensions, OpenSettings, command_palette};
+use zed_actions::{Extensions, OpenSettings, agent, command_palette};
 
 actions!(
     zed,
@@ -55,8 +55,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
-                // TODO: use proper action
-                action: &NoAction,
+                action: &agent::OpenSettings,
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -228,12 +227,14 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(cx: &mut Context<Workspace>) -> Entity<Self> {
-        let this = cx.new(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-        });
+    pub fn new(window: &mut Window, cx: &mut Context<Workspace>) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
+                .detach();
 
-        this
+            WelcomePage { focus_handle }
+        })
     }
 }
 

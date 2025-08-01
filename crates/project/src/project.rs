@@ -3374,7 +3374,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3392,7 +3392,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.declarations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3410,7 +3410,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3428,7 +3428,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.implementations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3446,7 +3446,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3998,7 +3998,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result

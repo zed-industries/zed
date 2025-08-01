@@ -5,7 +5,7 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, ProxySettings, UserStore, parse_zed_link};
+use client::{Client, CloudUserStore, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
@@ -457,6 +457,8 @@ pub fn main() {
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        let cloud_user_store =
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         language_extension::init(
@@ -516,6 +518,7 @@ pub fn main() {
             languages: languages.clone(),
             client: client.clone(),
             user_store: user_store.clone(),
+            cloud_user_store,
             fs: fs.clone(),
             build_window_options,
             workspace_store,
@@ -553,7 +556,12 @@ pub fn main() {
         );
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
-        language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        language_models::init(
+            app_state.user_store.clone(),
+            app_state.cloud_user_store.clone(),
+            app_state.client.clone(),
+            cx,
+        );
         agent_settings::init(cx);
         agent_servers::init(cx);
         web_search::init(cx);
@@ -561,7 +569,7 @@ pub fn main() {
         snippet_provider::init(cx);
         inline_completion_registry::init(
             app_state.client.clone(),
-            app_state.user_store.clone(),
+            app_state.cloud_user_store.clone(),
             cx,
         );
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
@@ -613,6 +621,7 @@ pub fn main() {
         language_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
+        settings_profile_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);

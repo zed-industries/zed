@@ -1020,7 +1020,7 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                if invalidator.is_dirty() {
+                if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {

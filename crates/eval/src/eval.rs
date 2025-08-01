@@ -13,7 +13,7 @@ pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
 use clap::Parser;
-use client::{Client, ProxySettings, UserStore};
+use client::{Client, CloudUserStore, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
@@ -329,6 +329,7 @@ pub struct AgentAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
+    pub cloud_user_store: Entity<CloudUserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
 
@@ -383,6 +384,8 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let languages = Arc::new(languages);
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+    let cloud_user_store =
+        cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
 
     extension::init(cx);
 
@@ -422,7 +425,12 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         languages.clone(),
     );
     language_model::init(client.clone(), cx);
-    language_models::init(user_store.clone(), client.clone(), cx);
+    language_models::init(
+        user_store.clone(),
+        cloud_user_store.clone(),
+        client.clone(),
+        cx,
+    );
     languages::init(languages.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
@@ -447,6 +455,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         languages,
         client,
         user_store,
+        cloud_user_store,
         fs,
         node_runtime,
         prompt_builder,

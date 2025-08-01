@@ -1,27 +1,28 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod cloud;
 mod proxy;
 pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
     error::Error as WebsocketError,
     http::{HeaderValue, Request, StatusCode},
 };
-use chrono::{DateTime, Utc};
 use clock::SystemClock;
+use cloud_api_client::CloudApiClient;
 use credentials_provider::CredentialsProvider;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -31,7 +32,6 @@ use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
-use std::pin::Pin;
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -45,12 +45,14 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
+pub use cloud::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -78,7 +80,7 @@ pub static ZED_ALWAYS_ACTIVE: LazyLock<bool> =
     LazyLock::new(|| std::env::var("ZED_ALWAYS_ACTIVE").map_or(false, |e| !e.is_empty()));
 
 pub const INITIAL_RECONNECTION_DELAY: Duration = Duration::from_millis(500);
-pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(10);
+pub const MAX_RECONNECTION_DELAY: Duration = Duration::from_secs(30);
 pub const CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 
 actions!(
@@ -213,6 +215,7 @@ pub struct Client {
     id: AtomicU64,
     peer: Arc<Peer>,
     http: Arc<HttpClientWithUrl>,
+    cloud_client: Arc<CloudApiClient>,
     telemetry: Arc<Telemetry>,
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
@@ -586,6 +589,7 @@ impl Client {
             id: AtomicU64::new(0),
             peer: Peer::new(0),
             telemetry: Telemetry::new(clock, http.clone(), cx),
+            cloud_client: Arc::new(CloudApiClient::new(http.clone())),
             http,
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
@@ -616,6 +620,10 @@ impl Client {
 
     pub fn http_client(&self) -> Arc<HttpClientWithUrl> {
         self.http.clone()
+    }
+
+    pub fn cloud_client(&self) -> Arc<CloudApiClient> {
+        self.cloud_client.clone()
     }
 
     pub fn set_id(&self, id: u64) -> &Self {
@@ -727,11 +735,10 @@ impl Client {
                                 },
                                 &cx,
                             );
-                            cx.background_executor().timer(delay).await;
-                            delay = delay
-                                .mul_f32(rng.gen_range(0.5..=2.5))
-                                .max(INITIAL_RECONNECTION_DELAY)
-                                .min(MAX_RECONNECTION_DELAY);
+                            let jitter =
+                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            cx.background_executor().timer(delay + jitter).await;
+                            delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
                             break;
                         }
@@ -931,6 +938,8 @@ impl Client {
         }
         let credentials = credentials.unwrap();
         self.set_id(credentials.user_id);
+        self.cloud_client
+            .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -1369,96 +1378,31 @@ impl Client {
         self: &Arc<Self>,
         http: Arc<HttpClientWithUrl>,
         login: String,
-        mut api_token: String,
+        api_token: String,
     ) -> Result<Credentials> {
-        #[derive(Deserialize)]
-        struct AuthenticatedUserResponse {
-            user: User,
+        #[derive(Serialize)]
+        struct ImpersonateUserBody {
+            github_login: String,
         }
 
         #[derive(Deserialize)]
-        struct User {
-            id: u64,
+        struct ImpersonateUserResponse {
+            user_id: u64,
+            access_token: String,
         }
 
-        let github_user = {
-            #[derive(Deserialize)]
-            struct GithubUser {
-                id: i32,
-                login: String,
-                created_at: DateTime<Utc>,
-            }
-
-            let request = {
-                let mut request_builder =
-                    Request::get(&format!("https://api.github.com/users/{login}"));
-                if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
-                    request_builder =
-                        request_builder.header("Authorization", format!("Bearer {}", github_token));
-                }
-
-                request_builder.body(AsyncBody::empty())?
-            };
-
-            let mut response = http
-                .send(request)
-                .await
-                .context("error fetching GitHub user")?;
-
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .context("error reading GitHub user")?;
-
-            if !response.status().is_success() {
-                let text = String::from_utf8_lossy(body.as_slice());
-                bail!(
-                    "status error {}, response: {text:?}",
-                    response.status().as_u16()
-                );
-            }
-
-            serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
-                log::error!("Error deserializing: {:?}", err);
-                log::error!(
-                    "GitHub API response text: {:?}",
-                    String::from_utf8_lossy(body.as_slice())
-                );
-                anyhow!("error deserializing GitHub user")
-            })?
-        };
-
-        let query_params = [
-            ("github_login", &github_user.login),
-            ("github_user_id", &github_user.id.to_string()),
-            (
-                "github_user_created_at",
-                &github_user.created_at.to_rfc3339(),
-            ),
-        ];
-
-        // Use the collab server's admin API to retrieve the ID
-        // of the impersonated user.
-        let mut url = self.rpc_url(http.clone(), None).await?;
-        url.set_path("/user");
-        url.set_query(Some(
-            &query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        key,
-                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join("&"),
-        ));
-        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
-            .header("Authorization", format!("token {api_token}"))
-            .body("".into())?;
+        let url = self
+            .http
+            .build_zed_cloud_url("/internal/users/impersonate", &[])?;
+        let request = Request::post(url.as_str())
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {api_token}"))
+            .body(
+                serde_json::to_string(&ImpersonateUserBody {
+                    github_login: login,
+                })?
+                .into(),
+            )?;
 
         let mut response = http.send(request).await?;
         let mut body = String::new();
@@ -1469,18 +1413,17 @@ impl Client {
             response.status().as_u16(),
             body,
         );
-        let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
+        let response: ImpersonateUserResponse = serde_json::from_str(&body)?;
 
-        // Use the admin API token to authenticate as the impersonated user.
-        api_token.insert_str(0, "ADMIN_TOKEN:");
         Ok(Credentials {
-            user_id: response.user.id,
-            access_token: api_token,
+            user_id: response.user_id,
+            access_token: response.access_token,
         })
     }
 
     pub async fn sign_out(self: &Arc<Self>, cx: &AsyncApp) {
         self.state.write().credentials = None;
+        self.cloud_client.clear_credentials();
         self.disconnect(cx);
 
         if self.has_credentials(cx).await {

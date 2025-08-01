@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Weak},
 };
 use text::ReplicaId;
-use util::{TryFutureExt as _, maybe};
+use util::TryFutureExt as _;
 
 pub type UserId = u64;
 
@@ -55,7 +55,7 @@ pub struct ParticipantIndex(pub u32);
 #[derive(Default, Debug)]
 pub struct User {
     pub id: UserId,
-    pub github_login: String,
+    pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -107,17 +107,13 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<String, u64>,
+    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
-    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     trial_started_at: Option<DateTime<Utc>>,
-    model_request_usage: Option<ModelRequestUsage>,
-    edit_prediction_usage: Option<EditPredictionUsage>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
-    has_overdue_invoices: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -145,6 +141,7 @@ pub enum Event {
     ShowContacts,
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
+    PlanUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -189,13 +186,9 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             current_plan: None,
-            subscription_period: None,
             trial_started_at: None,
-            model_request_usage: None,
-            edit_prediction_usage: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
-            has_overdue_invoices: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -357,54 +350,17 @@ impl UserStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.current_plan = Some(message.payload.plan());
-            this.subscription_period = maybe!({
-                let period = message.payload.subscription_period?;
-                let started_at = DateTime::from_timestamp(period.started_at as i64, 0)?;
-                let ended_at = DateTime::from_timestamp(period.ended_at as i64, 0)?;
-
-                Some((started_at, ended_at))
-            });
             this.trial_started_at = message
                 .payload
                 .trial_started_at
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
             this.account_too_young = message.payload.account_too_young;
-            this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
-            if let Some(usage) = message.payload.usage {
-                // limits are always present even though they are wrapped in Option
-                this.model_request_usage = usage
-                    .model_requests_usage_limit
-                    .and_then(|limit| {
-                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
-                    })
-                    .map(ModelRequestUsage);
-                this.edit_prediction_usage = usage
-                    .edit_predictions_usage_limit
-                    .and_then(|limit| {
-                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
-                    })
-                    .map(EditPredictionUsage);
-            }
-
+            cx.emit(Event::PlanUpdated);
             cx.notify();
         })?;
         Ok(())
-    }
-
-    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
-        self.model_request_usage = Some(usage);
-        cx.notify();
-    }
-
-    pub fn update_edit_prediction_usage(
-        &mut self,
-        usage: EditPredictionUsage,
-        cx: &mut Context<Self>,
-    ) {
-        self.edit_prediction_usage = Some(usage);
-        cx.notify();
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -779,24 +735,12 @@ impl UserStore {
         self.current_plan
     }
 
-    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-        self.subscription_period
-    }
-
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
         self.trial_started_at
     }
 
     pub fn usage_based_billing_enabled(&self) -> Option<bool> {
         self.is_usage_based_billing_enabled
-    }
-
-    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
-        self.model_request_usage
-    }
-
-    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
-        self.edit_prediction_usage
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
@@ -806,11 +750,6 @@ impl UserStore {
     /// Returns whether the user's account is too new to use the service.
     pub fn account_too_young(&self) -> bool {
         self.account_too_young.unwrap_or(false)
-    }
-
-    /// Returns whether the current user has overdue invoices and usage should be blocked.
-    pub fn has_overdue_invoices(&self) -> bool {
-        self.has_overdue_invoices.unwrap_or(false)
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
@@ -902,7 +841,7 @@ impl UserStore {
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
             if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login.into());
+                ret.insert(id, github_login);
             } else {
                 missing_user_ids.push(id)
             }
@@ -923,7 +862,7 @@ impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             id: message.id,
-            github_login: message.github_login,
+            github_login: message.github_login.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })

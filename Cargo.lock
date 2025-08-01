@@ -355,6 +355,7 @@ name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
+ "cloud_llm_client",
  "component",
  "gpui",
  "language_model",
@@ -2976,6 +2977,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "clock",
+ "cloud_api_client",
  "cloud_llm_client",
  "cocoa 0.26.0",
  "collections",
@@ -3028,6 +3030,31 @@ dependencies = [
  "parking_lot",
  "serde",
  "smallvec",
+ "workspace-hack",
+]
+
+[[package]]
+name = "cloud_api_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_api_types",
+ "futures 0.3.31",
+ "http_client",
+ "parking_lot",
+ "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
+name = "cloud_api_types"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "cloud_llm_client",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
  "workspace-hack",
 ]
 
@@ -4270,41 +4297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "darling"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7f46116c46ff9ab3eb1597a45688b6715c6e628b5c133e288e709a29bcb4ee"
-dependencies = [
- "darling_core",
- "darling_macro",
-]
-
-[[package]]
-name = "darling_core"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d00b9596d185e565c2207a0b01f8bd1a135483d02d9b7b0a54b11da8d53412e"
-dependencies = [
- "fnv",
- "ident_case",
- "proc-macro2",
- "quote",
- "strsim",
- "syn 2.0.101",
-]
-
-[[package]]
-name = "darling_macro"
-version = "0.20.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc34b93ccb385b40dc71c6fceac4b2ad23662c7eeb248cf10d529b7e055b6ead"
-dependencies = [
- "darling_core",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
 name = "dashmap"
 version = "5.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4517,37 +4509,6 @@ checksum = "9c9e6a11ca8224451684bc0d7d5a7adbf8f2fd6887261a1cfc3c0432f9d4068e"
 dependencies = [
  "powerfmt",
  "serde",
-]
-
-[[package]]
-name = "derive_builder"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "507dfb09ea8b7fa618fcf76e953f4f5e192547945816d5358edffe39f6f94947"
-dependencies = [
- "derive_builder_macro",
-]
-
-[[package]]
-name = "derive_builder_core"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d5bcf7b024d6835cfb3d473887cd966994907effbe9227e8c8219824d06c4e8"
-dependencies = [
- "darling",
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
-name = "derive_builder_macro"
-version = "0.20.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab63b0e2bf4d5928aff72e83a7dace85d7bba5fe12dcc3c5a572d78caffd3f3c"
-dependencies = [
- "derive_builder_core",
- "syn 2.0.101",
 ]
 
 [[package]]
@@ -4960,6 +4921,7 @@ dependencies = [
  "theme",
  "time",
  "tree-sitter-bash",
+ "tree-sitter-c",
  "tree-sitter-html",
  "tree-sitter-python",
  "tree-sitter-rust",
@@ -5928,7 +5890,7 @@ dependencies = [
  "ignore",
  "libc",
  "log",
- "notify",
+ "notify 8.0.0",
  "objc",
  "parking_lot",
  "paths",
@@ -7367,9 +7329,8 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
- "wayland-protocols 0.31.2",
+ "wayland-protocols",
  "wayland-protocols-plasma",
- "wayland-protocols-wlr",
  "windows 0.61.1",
  "windows-core 0.61.0",
  "windows-numerics",
@@ -7486,18 +7447,16 @@ dependencies = [
 
 [[package]]
 name = "handlebars"
-version = "6.3.2"
+version = "5.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "759e2d5aea3287cb1190c8ec394f42866cb5bf74fcbf213f354e3c856ea26098"
+checksum = "d08485b96a0e6393e9e4d1b8d48cf74ad6c063cd905eb33f42c1ce3f0377539b"
 dependencies = [
- "derive_builder",
  "log",
- "num-order",
  "pest",
  "pest_derive",
  "serde",
  "serde_json",
- "thiserror 2.0.12",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -7677,12 +7636,6 @@ name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hex-literal"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bcaaec4551594c969335c98c903c1397853d4198408ea609190f420500f6be71"
 
 [[package]]
 name = "hexf-parse"
@@ -8169,12 +8122,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "25a2bc672d1148e28034f176e01fffebb08b35768468cc954630da77a1449005"
 
 [[package]]
-name = "ident_case"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
-
-[[package]]
 name = "idna"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8394,6 +8341,17 @@ dependencies = [
 
 [[package]]
 name = "inotify"
+version = "0.9.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8069d3ec154eb856955c1c0fbffefbf5f3c40a104ec912d4797314c1801abff"
+dependencies = [
+ "bitflags 1.3.2",
+ "inotify-sys",
+ "libc",
+]
+
+[[package]]
+name = "inotify"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f37dccff2791ab604f9babef0ba14fbe0be30bd368dc541e2b08d07c8aa908f3"
@@ -8545,7 +8503,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "libc",
- "mio",
+ "mio 1.0.3",
  "rand 0.8.5",
  "serde",
  "tempfile",
@@ -9399,7 +9357,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.10"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "cxx",
  "jni",
@@ -9479,7 +9437,7 @@ checksum = "23fb14cb19457329c82206317a5663005a4d404783dc74f4252769b0d5f42856"
 [[package]]
 name = "livekit"
 version = "0.7.8"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "chrono",
  "futures-util",
@@ -9502,7 +9460,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.2"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "futures-util",
  "http 0.2.12",
@@ -9526,7 +9484,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.3.9"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -9543,7 +9501,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -9985,9 +9943,9 @@ dependencies = [
 
 [[package]]
 name = "mdbook"
-version = "0.4.48"
+version = "0.4.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b6fbb4ac2d9fd7aa987c3510309ea3c80004a968d063c42f0d34fea070817c1"
+checksum = "b45a38e19bd200220ef07c892b0157ad3d2365e5b5a267ca01ad12182491eea5"
 dependencies = [
  "ammonia",
  "anyhow",
@@ -9997,12 +9955,11 @@ dependencies = [
  "elasticlunr-rs",
  "env_logger 0.11.8",
  "futures-util",
- "handlebars 6.3.2",
- "hex",
+ "handlebars 5.1.2",
  "ignore",
  "log",
  "memchr",
- "notify",
+ "notify 6.1.1",
  "notify-debouncer-mini",
  "once_cell",
  "opener",
@@ -10011,7 +9968,6 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "sha2",
  "shlex",
  "tempfile",
  "tokio",
@@ -10153,6 +10109,18 @@ name = "mint"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e53debba6bda7a793e5f99b8dacf19e626084f525f7829104ba9898f367d85ff"
+
+[[package]]
+name = "mio"
+version = "0.8.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4a650543ca06a924e8b371db273b2756685faae30f8487da1b56505a8f78b0c"
+dependencies = [
+ "libc",
+ "log",
+ "wasi 0.11.0+wasi-snapshot-preview1",
+ "windows-sys 0.48.0",
+]
 
 [[package]]
 name = "mio"
@@ -10502,17 +10470,36 @@ dependencies = [
 
 [[package]]
 name = "notify"
+version = "6.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6205bd8bb1e454ad2e27422015fb5e4f2bcc7e08fa8f27058670d208324a4d2d"
+dependencies = [
+ "bitflags 2.9.0",
+ "crossbeam-channel",
+ "filetime",
+ "fsevent-sys 4.1.0",
+ "inotify 0.9.6",
+ "kqueue",
+ "libc",
+ "log",
+ "mio 0.8.11",
+ "walkdir",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "notify"
 version = "8.0.0"
 source = "git+https://github.com/zed-industries/notify.git?rev=bbb9ea5ae52b253e095737847e367c30653a2e96#bbb9ea5ae52b253e095737847e367c30653a2e96"
 dependencies = [
  "bitflags 2.9.0",
  "filetime",
  "fsevent-sys 4.1.0",
- "inotify",
+ "inotify 0.11.0",
  "kqueue",
  "libc",
  "log",
- "mio",
+ "mio 1.0.3",
  "notify-types",
  "walkdir",
  "windows-sys 0.59.0",
@@ -10520,14 +10507,13 @@ dependencies = [
 
 [[package]]
 name = "notify-debouncer-mini"
-version = "0.6.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a689eb4262184d9a1727f9087cd03883ea716682ab03ed24efec57d7716dccb8"
+checksum = "5d40b221972a1fc5ef4d858a2f671fb34c75983eb385463dff3780eeff6a9d43"
 dependencies = [
+ "crossbeam-channel",
  "log",
- "notify",
- "notify-types",
- "tempfile",
+ "notify 6.1.1",
 ]
 
 [[package]]
@@ -10665,21 +10651,6 @@ dependencies = [
  "autocfg",
  "num-integer",
  "num-traits",
-]
-
-[[package]]
-name = "num-modular"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "17bb261bf36fa7d83f4c294f834e91256769097b3cb505d44831e0a179ac647f"
-
-[[package]]
-name = "num-order"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "537b596b97c40fcf8056d153049eb22f481c17ebce72a513ec9286e4986d1bb6"
-dependencies = [
- "num-modular",
 ]
 
 [[package]]
@@ -10953,20 +10924,28 @@ name = "onboarding"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "command_palette_hooks",
+ "component",
  "db",
+ "documented",
  "editor",
  "feature_flags",
  "fs",
  "gpui",
  "language",
  "project",
+ "schemars",
+ "serde",
  "settings",
  "theme",
  "ui",
+ "util",
+ "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zlog",
 ]
 
 [[package]]
@@ -14731,6 +14710,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings_profile_selector"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "editor",
+ "fuzzy",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde_json",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+]
+
+[[package]]
 name = "settings_ui"
 version = "0.1.0"
 dependencies = [
@@ -14752,7 +14752,6 @@ dependencies = [
  "notifications",
  "paths",
  "project",
- "schemars",
  "search",
  "serde",
  "serde_json",
@@ -16538,6 +16537,7 @@ dependencies = [
  "call",
  "chrono",
  "client",
+ "cloud_llm_client",
  "collections",
  "db",
  "gpui",
@@ -16573,7 +16573,7 @@ dependencies = [
  "backtrace",
  "bytes 1.10.1",
  "libc",
- "mio",
+ "mio 1.0.3",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
@@ -18386,9 +18386,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-backend"
-version = "0.3.10"
+version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe770181423e5fc79d3e2a7f4410b7799d5aab1de4372853de3c6aa13ca24121"
+checksum = "b7208998eaa3870dad37ec8836979581506e0c5c64c20c9e79e9d2a10d6f47bf"
 dependencies = [
  "cc",
  "downcast-rs",
@@ -18400,9 +18400,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-client"
-version = "0.31.10"
+version = "0.31.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978fa7c67b0847dbd6a9f350ca2569174974cd4082737054dbb7fbb79d7d9a61"
+checksum = "c2120de3d33638aaef5b9f4472bff75f07c56379cf76ea320bd3a3d65ecaf73f"
 dependencies = [
  "bitflags 2.9.0",
  "rustix 0.38.44",
@@ -18434,18 +18434,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wayland-protocols"
-version = "0.32.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "779075454e1e9a521794fed15886323ea0feda3f8b0fc1390f5398141310422a"
-dependencies = [
- "bitflags 2.9.0",
- "wayland-backend",
- "wayland-client",
- "wayland-scanner",
-]
-
-[[package]]
 name = "wayland-protocols-plasma"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -18454,20 +18442,7 @@ dependencies = [
  "bitflags 2.9.0",
  "wayland-backend",
  "wayland-client",
- "wayland-protocols 0.31.2",
- "wayland-scanner",
-]
-
-[[package]]
-name = "wayland-protocols-wlr"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1cb6cdc73399c0e06504c437fe3cf886f25568dd5454473d565085b36d6a8bbf"
-dependencies = [
- "bitflags 2.9.0",
- "wayland-backend",
- "wayland-client",
- "wayland-protocols 0.32.8",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 
@@ -18576,7 +18551,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.7"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "cc",
  "cxx",
@@ -18589,15 +18564,13 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.6"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=383e5377f8b7de1f8627ee16f0cf11c5293337bd#383e5377f8b7de1f8627ee16f0cf11c5293337bd"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=5f04705ac3f356350ae31534ffbc476abc9ea83d#5f04705ac3f356350ae31534ffbc476abc9ea83d"
 dependencies = [
  "fs2",
- "hex-literal",
  "regex",
  "reqwest 0.11.27",
  "scratch",
  "semver",
- "sha2",
  "zip",
 ]
 
@@ -18626,7 +18599,6 @@ dependencies = [
  "serde",
  "settings",
  "telemetry",
- "theme",
  "ui",
  "util",
  "vim_mode_setting",
@@ -19775,7 +19747,7 @@ dependencies = [
  "md-5",
  "memchr",
  "miniz_oxide",
- "mio",
+ "mio 1.0.3",
  "naga",
  "nix 0.29.0",
  "nom",
@@ -20219,7 +20191,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.198.0"
+version = "0.199.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -20322,6 +20294,7 @@ dependencies = [
  "serde_json",
  "session",
  "settings",
+ "settings_profile_selector",
  "settings_ui",
  "shellexpand 2.1.2",
  "smol",
@@ -20598,6 +20571,7 @@ dependencies = [
  "call",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -20618,7 +20592,6 @@ dependencies = [
  "menu",
  "postage",
  "project",
- "proto",
  "regex",
  "release_channel",
  "reqwest_client",

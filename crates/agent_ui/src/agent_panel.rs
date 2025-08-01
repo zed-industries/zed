@@ -43,7 +43,7 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{DisableAiSettings, UserStore, zed_urls};
+use client::{CloudUserStore, DisableAiSettings, UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -78,7 +78,7 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding, ToggleModelSelector},
+    agent::{OpenOnboardingModal, OpenSettings, ResetOnboarding, ToggleModelSelector},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
 
@@ -105,7 +105,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
+                .register_action(|workspace, _: &OpenSettings, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
@@ -427,6 +427,7 @@ impl ActiveView {
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -486,6 +487,7 @@ impl AgentPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(
                         project,
+                        workspace.app_state().cloud_user_store.clone(),
                         tools.clone(),
                         prompt_store.clone(),
                         prompt_builder.clone(),
@@ -553,6 +555,7 @@ impl AgentPanel {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
+        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
@@ -579,7 +582,7 @@ impl AgentPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
-                user_store.clone(),
+                cloud_user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -694,6 +697,7 @@ impl AgentPanel {
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(
                 user_store.clone(),
+                cloud_user_store.clone(),
                 client,
                 |_window, cx| {
                     OnboardingUpsell::set_dismissed(true, cx);
@@ -706,6 +710,7 @@ impl AgentPanel {
             active_view,
             workspace,
             user_store,
+            cloud_user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -848,7 +853,7 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
+                self.cloud_user_store.clone(),
                 context_store.clone(),
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1122,7 +1127,7 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
+                self.cloud_user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1821,8 +1826,8 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_store = self.user_store.read(cx);
-        let usage = user_store.model_request_usage();
+        let cloud_user_store = self.cloud_user_store.read(cx);
+        let usage = cloud_user_store.model_request_usage();
 
         let account_url = zed_urls::account_url(cx);
 
@@ -2088,7 +2093,7 @@ impl AgentPanel {
 
                         menu = menu
                             .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                            .action("Settings", Box::new(OpenConfiguration))
+                            .action("Settings", Box::new(OpenSettings))
                             .action(zoom_in_label, Box::new(ToggleZoom));
                         menu
                     }))
@@ -2482,14 +2487,14 @@ impl AgentPanel {
                                                 .icon_color(Color::Muted)
                                                 .full_width()
                                                 .key_binding(KeyBinding::for_action_in(
-                                                    &OpenConfiguration,
+                                                    &OpenSettings,
                                                     &focus_handle,
                                                     window,
                                                     cx,
                                                 ))
                                                 .on_click(|_event, window, cx| {
                                                     window.dispatch_action(
-                                                        OpenConfiguration.boxed_clone(),
+                                                        OpenSettings.boxed_clone(),
                                                         cx,
                                                     )
                                                 }),
@@ -2713,16 +2718,11 @@ impl AgentPanel {
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(
-                                &OpenConfiguration,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
-                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx)
                         }),
                 ),
             ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
@@ -3226,7 +3226,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &OpenConfiguration, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))
