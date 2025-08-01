@@ -1,11 +1,10 @@
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, Agent as _};
 use collections::HashMap;
 use futures::channel::oneshot;
 use project::Project;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-use util::ResultExt;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
@@ -15,7 +14,7 @@ use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 pub struct AcpConnection {
     server_name: &'static str,
-    connection: Rc<acp::AgentConnection>,
+    connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     _io_task: Task<Result<()>>,
@@ -51,7 +50,7 @@ impl AcpConnection {
             sessions: sessions.clone(),
             cx: cx.clone(),
         };
-        let (connection, io_task) = acp::AgentConnection::new(client, stdin, stdout, {
+        let (connection, io_task) = acp::ClientSideConnection::new(client, stdin, stdout, {
             let foreground_executor = cx.foreground_executor().clone();
             move |fut| {
                 foreground_executor.spawn(fut).detach();
@@ -149,8 +148,14 @@ impl AgentConnection for AcpConnection {
             .spawn(async move { Ok(conn.prompt(params).await?) })
     }
 
-    fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
-        self.connection.cancel(session_id.clone()).log_err();
+    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+        let conn = self.connection.clone();
+        let params = acp::CancelledNotification {
+            session_id: session_id.clone(),
+        };
+        cx.foreground_executor()
+            .spawn(async move { conn.cancelled(params).await })
+            .detach();
     }
 }
 
