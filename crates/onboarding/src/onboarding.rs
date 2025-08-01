@@ -14,8 +14,8 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    Avatar, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
-    Vector, VectorName, prelude::*, rems_from_px,
+    Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
+    StatefulInteractiveElement, Vector, VectorName, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -346,12 +346,15 @@ impl Onboarding {
                                             .into_element(),
                                     ]),
                             )
-                            .child(Button::new("skip_all", "Skip All")),
+                            .child(
+                                ButtonLike::new("skip_all").child(Label::new("Skip All").ml_1()),
+                            ),
                     ),
             )
             .child(
                 if let Some(user) = self.user_store.read(cx).current_user() {
                     h_flex()
+                        .pl_1p5()
                         .gap_2()
                         .child(Avatar::new(user.avatar_uri.clone()))
                         .child(Label::new(user.github_login.clone()))
