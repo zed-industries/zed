@@ -14,8 +14,8 @@ use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
-    Avatar, FluentBuilder, Headline, KeyBinding, ParentElement as _, StatefulInteractiveElement,
-    Vector, VectorName, prelude::*, rems_from_px,
+    Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
+    StatefulInteractiveElement, Vector, VectorName, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -344,12 +344,73 @@ impl Onboarding {
                                             .into_element(),
                                     ]),
                             )
-                            .child(Button::new("skip_all", "Skip All")),
+                            .child(
+                                ButtonLike::new("skip_all")
+                                    .child(Label::new("Skip All").ml_1())
+                                    .on_click(|_, _, cx| {
+                                        with_active_or_new_workspace(
+                                            cx,
+                                            |workspace, window, cx| {
+                                                let Some((onboarding_id, onboarding_idx)) =
+                                                    workspace
+                                                        .active_pane()
+                                                        .read(cx)
+                                                        .items()
+                                                        .enumerate()
+                                                        .find_map(|(idx, item)| {
+                                                            let _ =
+                                                                item.downcast::<Onboarding>()?;
+                                                            Some((item.item_id(), idx))
+                                                        })
+                                                else {
+                                                    return;
+                                                };
+
+                                                workspace.active_pane().update(cx, |pane, cx| {
+                                                    // Get the index here to get around the borrow checker
+                                                    let idx = pane.items().enumerate().find_map(
+                                                        |(idx, item)| {
+                                                            let _ =
+                                                                item.downcast::<WelcomePage>()?;
+                                                            Some(idx)
+                                                        },
+                                                    );
+
+                                                    if let Some(idx) = idx {
+                                                        pane.activate_item(
+                                                            idx, true, true, window, cx,
+                                                        );
+                                                    } else {
+                                                        let item =
+                                                            Box::new(WelcomePage::new(window, cx));
+                                                        pane.add_item(
+                                                            item,
+                                                            true,
+                                                            true,
+                                                            Some(onboarding_idx),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+
+                                                    pane.remove_item(
+                                                        onboarding_id,
+                                                        false,
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        );
+                                    }),
+                            ),
                     ),
             )
             .child(
                 if let Some(user) = self.user_store.read(cx).current_user() {
                     h_flex()
+                        .pl_1p5()
                         .gap_2()
                         .child(Avatar::new(user.avatar_uri.clone()))
                         .child(Label::new(user.github_login.clone()))

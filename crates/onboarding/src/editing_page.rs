@@ -143,7 +143,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorVsCode)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
@@ -169,7 +169,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorCursor)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
