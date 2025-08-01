@@ -286,6 +286,8 @@ pub enum Status {
     SignedOut,
     UpgradeRequired,
     Authenticating,
+    Authenticated,
+    AuthenticationError,
     Connecting,
     ConnectionError,
     Connected {
@@ -312,6 +314,19 @@ impl Status {
         )
     }
 
+    pub fn is_signed_in(&self) -> bool {
+        matches!(
+            self,
+            Self::Authenticated
+                | Self::ConnectionError
+                | Self::Connected { .. }
+                | Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reconnecting
+                | Self::ReconnectionError { .. }
+        )
+    }
+
     pub fn is_signed_out(&self) -> bool {
         matches!(self, Self::SignedOut | Self::UpgradeRequired)
     }
@@ -327,6 +342,7 @@ struct ClientState {
 pub struct Credentials {
     pub user_id: u64,
     pub access_token: String,
+    pub read_from_provider: bool,
 }
 
 impl Credentials {
@@ -371,6 +387,7 @@ impl ClientCredentialsProvider {
             Some(Credentials {
                 user_id: user_id.parse().ok()?,
                 access_token: String::from_utf8(access_token).ok()?,
+                read_from_provider: true,
             })
         }
         .boxed_local()
@@ -893,6 +910,8 @@ impl Client {
             Status::ConnectionError
             | Status::ConnectionLost
             | Status::Authenticating { .. }
+            | Status::Authenticated
+            | Status::AuthenticationError
             | Status::Reauthenticating { .. }
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
@@ -905,41 +924,10 @@ impl Client {
                 );
             }
         };
-        if was_disconnected {
-            self.set_status(Status::Authenticating, cx);
-        } else {
-            self.set_status(Status::Reauthenticating, cx)
-        }
-
-        let mut read_from_provider = false;
-        let mut credentials = self.state.read().credentials.clone();
-        if credentials.is_none() && try_provider {
-            credentials = self.credentials_provider.read_credentials(cx).await;
-            read_from_provider = credentials.is_some();
-        }
-
-        if credentials.is_none() {
-            let mut status_rx = self.status();
-            let _ = status_rx.next().await;
-            futures::select_biased! {
-                authenticate = self.authenticate(cx).fuse() => {
-                    match authenticate {
-                        Ok(creds) => credentials = Some(creds),
-                        Err(err) => {
-                            self.set_status(Status::ConnectionError, cx);
-                            return ConnectionResult::Result(Err(err));
-                        }
-                    }
-                }
-                _ = status_rx.next().fuse() => {
-                    return ConnectionResult::Result(Err(anyhow!("authentication canceled")));
-                }
-            }
-        }
-        let credentials = credentials.unwrap();
-        self.set_id(credentials.user_id);
-        self.cloud_client
-            .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
+        let credentials = match self.sign_in(try_provider, cx).await {
+            Ok(credentials) => credentials,
+            Err(err) => return ConnectionResult::Result(Err(err)),
+        };
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -954,7 +942,7 @@ impl Client {
                 match connection {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
-                        if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
+                        if !credentials.read_from_provider && IMPERSONATE_LOGIN.is_none() {
                             self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
                         }
 
@@ -976,7 +964,7 @@ impl Client {
                     }
                     Err(EstablishConnectionError::Unauthorized) => {
                         self.state.write().credentials.take();
-                        if read_from_provider {
+                        if credentials.read_from_provider {
                             self.credentials_provider.delete_credentials(cx).await.log_err();
                             self.set_status(Status::SignedOut, cx);
                             self.authenticate_and_connect(false, cx).await
@@ -1000,6 +988,50 @@ impl Client {
                 ConnectionResult::Timeout
             }
         }
+    }
+
+    pub async fn sign_in(
+        self: &Arc<Self>,
+        try_provider: bool,
+        cx: &AsyncApp,
+    ) -> Result<Credentials> {
+        if matches!(*self.status().borrow(), Status::UpgradeRequired) {
+            return Err(anyhow!("upgrade required"));
+        } else if self.status().borrow().is_signed_out() {
+            self.set_status(Status::Authenticating, cx);
+        } else {
+            self.set_status(Status::Reauthenticating, cx);
+        }
+
+        let mut credentials = self.state.read().credentials.clone();
+        if credentials.is_none() && try_provider {
+            credentials = self.credentials_provider.read_credentials(cx).await;
+        }
+
+        if credentials.is_none() {
+            let mut status_rx = self.status();
+            let _ = status_rx.next().await;
+            futures::select_biased! {
+                authenticate = self.authenticate(cx).fuse() => {
+                    match authenticate {
+                        Ok(creds) => credentials = Some(creds),
+                        Err(err) => {
+                            self.set_status(Status::AuthenticationError, cx);
+                            return Err(err);
+                        }
+                    }
+                }
+                _ = status_rx.next().fuse() => {
+                    return Err(anyhow!("authentication canceled"));
+                }
+            }
+        }
+        let credentials = credentials.unwrap();
+        self.set_id(credentials.user_id);
+        self.cloud_client
+            .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
+        self.set_status(Status::Authenticated, cx);
+        Ok(credentials)
     }
 
     async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncApp) -> Result<()> {
@@ -1365,6 +1397,7 @@ impl Client {
                     Ok(Credentials {
                         user_id: user_id.parse()?,
                         access_token,
+                        read_from_provider: false,
                     })
                 })
                 .await?;
@@ -1418,6 +1451,7 @@ impl Client {
         Ok(Credentials {
             user_id: response.user_id,
             access_token: response.access_token,
+            read_from_provider: false,
         })
     }
 
@@ -1722,6 +1756,7 @@ mod tests {
                 Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
+                    read_from_provider: false,
                 })
             })
         });

@@ -52,6 +52,7 @@ impl FakeServer {
                         Ok(Credentials {
                             user_id: client_user_id,
                             access_token,
+                            read_from_provider: false,
                         })
                     })
                 }
@@ -76,6 +77,7 @@ impl FakeServer {
                             != (Credentials {
                                 user_id: client_user_id,
                                 access_token: state.lock().access_token.to_string(),
+                                read_from_provider: false,
                             })
                         {
                             Err(EstablishConnectionError::Unauthorized)?
