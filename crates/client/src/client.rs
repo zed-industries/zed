@@ -299,19 +299,6 @@ impl Status {
         )
     }
 
-    pub fn is_signed_in(&self) -> bool {
-        matches!(
-            self,
-            Self::Authenticated
-                | Self::ConnectionError
-                | Self::Connected { .. }
-                | Self::ConnectionLost
-                | Self::Reauthenticating
-                | Self::Reconnecting
-                | Self::ReconnectionError { .. }
-        )
-    }
-
     pub fn is_signed_out(&self) -> bool {
         matches!(self, Self::SignedOut | Self::UpgradeRequired)
     }
@@ -327,7 +314,6 @@ struct ClientState {
 pub struct Credentials {
     pub user_id: u64,
     pub access_token: String,
-    pub read_from_provider: bool,
 }
 
 impl Credentials {
@@ -372,7 +358,6 @@ impl ClientCredentialsProvider {
             Some(Credentials {
                 user_id: user_id.parse().ok()?,
                 access_token: String::from_utf8(access_token).ok()?,
-                read_from_provider: true,
             })
         }
         .boxed_local()
@@ -1410,7 +1395,6 @@ impl Client {
                     Ok(Credentials {
                         user_id: user_id.parse()?,
                         access_token,
-                        read_from_provider: false,
                     })
                 })
                 .await?;
@@ -1464,7 +1448,6 @@ impl Client {
         Ok(Credentials {
             user_id: response.user_id,
             access_token: response.access_token,
-            read_from_provider: false,
         })
     }
 
@@ -1769,7 +1752,6 @@ mod tests {
                 Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
-                    read_from_provider: false,
                 })
             })
         });

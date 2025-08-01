@@ -704,7 +704,6 @@ impl AgentPanel {
             active_view,
             workspace,
             user_store,
-
             project: project.clone(),
             fs: fs.clone(),
             language_registry,

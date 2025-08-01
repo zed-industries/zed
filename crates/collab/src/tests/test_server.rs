@@ -213,7 +213,6 @@ impl TestServer {
                     Ok(Credentials {
                         user_id: user_id.to_proto(),
                         access_token,
-                        read_from_provider: false,
                     })
                 })
             })
@@ -223,7 +222,6 @@ impl TestServer {
                     &Credentials {
                         user_id: user_id.0 as u64,
                         access_token: "the-token".into(),
-                        read_from_provider: false,
                     }
                 );
 

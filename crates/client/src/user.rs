@@ -227,7 +227,7 @@ impl UserStore {
                                             id: user_id,
                                             github_login: response.user.github_login.clone().into(),
                                             avatar_uri: response.user.avatar_url.clone().into(),
-                                            name: response.user.name.clone().into(),
+                                            name: response.user.name.clone(),
                                         }));
                                         this.update(cx, |this, cx| {
                                             this.update_authenticated_user(response, cx)
@@ -236,8 +236,6 @@ impl UserStore {
                                         anyhow::Ok(())
                                     }
                                 })??;
-
-                                dbg!(&user);
                                 current_user_tx.send(user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
