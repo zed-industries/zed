@@ -2250,6 +2250,13 @@ async fn update_language_server(
         .await
         .project_connection_ids(project_id, session.connection_id, true)
         .await?;
+    if let Some(proto::update_language_server::Variant::MetadataUpdated(server_metadata_updated)) =
+        &request.variant
+    {
+        if let Some(capabilities) = &server_metadata_updated.capabilities {
+            dbg!("TODO kb update the language server DB with new capabilities {capabilities}");
+        }
+    }
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),

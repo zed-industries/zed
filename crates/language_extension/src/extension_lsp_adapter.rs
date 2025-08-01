@@ -242,7 +242,7 @@ impl LspAdapter for ExtensionLspAdapter {
         ]))
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         // TODO: The language IDs can be provided via the language server options
         // in `extension.toml now but we're leaving these existing usages in place temporarily
         // to avoid any compatibility issues between Zed and the extension versions.
@@ -250,7 +250,7 @@ impl LspAdapter for ExtensionLspAdapter {
         // We can remove once the following extension versions no longer see any use:
         // - php@0.0.1
         if self.extension.manifest().id.as_ref() == "php" {
-            return HashMap::from_iter([("PHP".into(), "php".into())]);
+            return HashMap::from_iter([(LanguageName::new("PHP"), "php".into())]);
         }
 
         self.extension

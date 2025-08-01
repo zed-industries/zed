@@ -518,6 +518,7 @@ message LanguageServer {
 message StartLanguageServer {
     uint64 project_id = 1;
     LanguageServer server = 2;
+    string capabilities = 3;
 }
 
 message UpdateDiagnosticSummary {
@@ -545,6 +546,7 @@ message UpdateLanguageServer {
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
         StatusUpdate status_update = 9;
         RegisteredForBuffer registered_for_buffer = 10;
+        ServerMetadataUpdated metadata_updated = 11;
     }
 }
 
@@ -597,6 +599,10 @@ enum ServerBinaryStatus {
 
 message RegisteredForBuffer {
     string buffer_abs_path = 1;
+}
+
+message ServerMetadataUpdated {
+    optional string capabilities = 1;
 }
 
 message LanguageServerLog {

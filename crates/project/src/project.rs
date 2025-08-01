@@ -2915,6 +2915,18 @@ impl Project {
                         },
                     )
                     .ok();
+                } else {
+                    if let proto::update_language_server::Variant::MetadataUpdated(
+                        server_metadata_updated,
+                    ) = message
+                    {
+                        if let Some(capabilities) = server_metadata_updated.capabilities {
+                            // TODO kb this has to be stored inside collab's DB and re-shared on join!
+                            // Do the same as `proto::StartLanguageServer` path does to access the data, then update it
+                            // (see `lsp_store::handle_start_language_server`)
+                            dbg!(capabilities);
+                        }
+                    }
                 }
             }
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {

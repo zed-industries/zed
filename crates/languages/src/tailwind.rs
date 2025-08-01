@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LanguageName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
@@ -168,20 +168,20 @@ impl LspAdapter for TailwindLspAdapter {
         }))
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            ("Astro".to_string(), "astro".to_string()),
-            ("HTML".to_string(), "html".to_string()),
-            ("CSS".to_string(), "css".to_string()),
-            ("JavaScript".to_string(), "javascript".to_string()),
-            ("TSX".to_string(), "typescriptreact".to_string()),
-            ("Svelte".to_string(), "svelte".to_string()),
-            ("Elixir".to_string(), "phoenix-heex".to_string()),
-            ("HEEX".to_string(), "phoenix-heex".to_string()),
-            ("ERB".to_string(), "erb".to_string()),
-            ("HTML/ERB".to_string(), "erb".to_string()),
-            ("PHP".to_string(), "php".to_string()),
-            ("Vue.js".to_string(), "vue".to_string()),
+            (LanguageName::new("Astro"), "astro".to_string()),
+            (LanguageName::new("HTML"), "html".to_string()),
+            (LanguageName::new("CSS"), "css".to_string()),
+            (LanguageName::new("JavaScript"), "javascript".to_string()),
+            (LanguageName::new("TSX"), "typescriptreact".to_string()),
+            (LanguageName::new("Svelte"), "svelte".to_string()),
+            (LanguageName::new("Elixir"), "phoenix-heex".to_string()),
+            (LanguageName::new("HEEX"), "phoenix-heex".to_string()),
+            (LanguageName::new("ERB"), "erb".to_string()),
+            (LanguageName::new("HTML/ERB"), "erb".to_string()),
+            (LanguageName::new("PHP"), "php".to_string()),
+            (LanguageName::new("Vue.js"), "vue".to_string()),
         ])
     }
 }
