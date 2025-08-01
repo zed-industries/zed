@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{CloudUserStore, zed_urls};
+use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use copilot::{Copilot, Status};
 use editor::{
@@ -60,7 +60,7 @@ pub struct InlineCompletionButton {
     file: Option<Arc<dyn File>>,
     edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
-    cloud_user_store: Entity<CloudUserStore>,
+    user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
@@ -246,9 +246,9 @@ impl Render for InlineCompletionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                if zeta::should_show_upsell_modal(&self.cloud_user_store, cx) {
-                    let tooltip_meta = if self.cloud_user_store.read(cx).is_authenticated() {
-                        if self.cloud_user_store.read(cx).has_accepted_tos() {
+                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                    let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
+                        if self.user_store.read(cx).has_accepted_terms_of_service() {
                             "Choose a Plan"
                         } else {
                             "Accept the Terms of Service"
@@ -372,7 +372,7 @@ impl Render for InlineCompletionButton {
 impl InlineCompletionButton {
     pub fn new(
         fs: Arc<dyn Fs>,
-        cloud_user_store: Entity<CloudUserStore>,
+        user_store: Entity<UserStore>,
         popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -391,9 +391,9 @@ impl InlineCompletionButton {
             language: None,
             file: None,
             edit_prediction_provider: None,
+            user_store,
             popover_menu_handle,
             fs,
-            cloud_user_store,
         }
     }
 
@@ -764,7 +764,7 @@ impl InlineCompletionButton {
                         })
                     })
                     .separator();
-            } else if self.cloud_user_store.read(cx).account_too_young() {
+            } else if self.user_store.read(cx).account_too_young() {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {
@@ -779,7 +779,7 @@ impl InlineCompletionButton {
                         cx.open_url(&zed_urls::account_url(cx))
                     })
                     .separator();
-            } else if self.cloud_user_store.read(cx).has_overdue_invoices() {
+            } else if self.user_store.read(cx).has_overdue_invoices() {
                 menu = menu
                     .custom_entry(
                         |_window, _cx| {

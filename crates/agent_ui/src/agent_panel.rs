@@ -43,8 +43,8 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{CloudUserStore, UserStore, zed_urls};
-use cloud_llm_client::{CompletionIntent, UsageLimit};
+use client::{ UserStore, zed_urls};
+use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -60,7 +60,6 @@ use language_model::{
 };
 use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
-use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
@@ -427,7 +426,6 @@ impl ActiveView {
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -487,7 +485,6 @@ impl AgentPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(
                         project,
-                        workspace.app_state().cloud_user_store.clone(),
                         tools.clone(),
                         prompt_store.clone(),
                         prompt_builder.clone(),
@@ -555,7 +552,6 @@ impl AgentPanel {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
-        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
@@ -582,7 +578,6 @@ impl AgentPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
-                cloud_user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -697,7 +692,6 @@ impl AgentPanel {
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(
                 user_store.clone(),
-                cloud_user_store.clone(),
                 client,
                 |_window, cx| {
                     OnboardingUpsell::set_dismissed(true, cx);
@@ -710,7 +704,6 @@ impl AgentPanel {
             active_view,
             workspace,
             user_store,
-            cloud_user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -853,7 +846,6 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.cloud_user_store.clone(),
                 context_store.clone(),
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1127,7 +1119,6 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.cloud_user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1826,8 +1817,8 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let cloud_user_store = self.cloud_user_store.read(cx);
-        let usage = cloud_user_store.model_request_usage();
+        let user_store = self.user_store.read(cx);
+        let usage = user_store.model_request_usage();
 
         let account_url = zed_urls::account_url(cx);
 
@@ -2298,10 +2289,10 @@ impl AgentPanel {
             | ActiveView::Configuration => return false,
         }
 
-        let plan = self.user_store.read(cx).current_plan();
+        let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        matches!(plan, Some(Plan::Free)) && has_previous_trial
+        matches!(plan, Some(Plan::ZedFree)) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2916,7 +2907,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let error_message = match plan {
             Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            Plan::ZedProTrial | Plan::Free => "Upgrade to Zed Pro for more prompts.",
+            Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
         };
 
         let icon = Icon::new(IconName::XCircle)

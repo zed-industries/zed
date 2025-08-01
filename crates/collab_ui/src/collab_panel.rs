@@ -2331,7 +2331,7 @@ impl CollabPanel {
                                 let client = this.client.clone();
                                 cx.spawn_in(window, async move |_, cx| {
                                     client
-                                        .authenticate_and_connect(true, &cx)
+                                        .connect(true, &cx)
                                         .await
                                         .into_response()
                                         .notify_async_err(cx);
