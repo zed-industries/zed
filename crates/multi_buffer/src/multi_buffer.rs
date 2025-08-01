@@ -43,7 +43,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Cursor, Dimension, SumTree, Summary, TreeMap};
+use sum_tree::{Bias, Cursor, Dimension, Dimensions, SumTree, Summary, TreeMap};
 use text::{
     BufferId, Edit, LineIndent, TextSummary,
     locator::Locator,
@@ -474,7 +474,7 @@ pub struct MultiBufferRows<'a> {
 
 pub struct MultiBufferChunks<'a> {
     excerpts: Cursor<'a, Excerpt, ExcerptOffset>,
-    diff_transforms: Cursor<'a, DiffTransform, (usize, ExcerptOffset)>,
+    diff_transforms: Cursor<'a, DiffTransform, Dimensions<usize, ExcerptOffset>>,
     diffs: &'a TreeMap<BufferId, BufferDiffSnapshot>,
     diff_base_chunks: Option<(BufferId, BufferChunks<'a>)>,
     buffer_chunk: Option<Chunk<'a>>,
@@ -2120,10 +2120,10 @@ impl MultiBuffer {
         let buffers = self.buffers.borrow();
         let mut excerpts = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptDimension<Point>)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptDimension<Point>>>(&());
         let mut diff_transforms = snapshot
             .diff_transforms
-            .cursor::<(ExcerptDimension<Point>, OutputDimension<Point>)>(&());
+            .cursor::<Dimensions<ExcerptDimension<Point>, OutputDimension<Point>>>(&());
         diff_transforms.next();
         let locators = buffers
             .get(&buffer_id)
@@ -2281,7 +2281,7 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
         let mut edits = Vec::new();
         let mut excerpt_ids = ids.iter().copied().peekable();
         let mut removed_buffer_ids = Vec::new();
@@ -2492,7 +2492,7 @@ impl MultiBuffer {
         for locator in &buffer_state.excerpts {
             let mut cursor = snapshot
                 .excerpts
-                .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+                .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
             cursor.seek_forward(&Some(locator), Bias::Left);
             if let Some(excerpt) = cursor.item() {
                 if excerpt.locator == *locator {
@@ -2845,7 +2845,7 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
         let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         let prefix = cursor.slice(&Some(locator), Bias::Left);
@@ -2921,7 +2921,7 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
         let mut edits = Vec::<Edit<ExcerptOffset>>::new();
 
         for locator in &locators {
@@ -3067,7 +3067,7 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::default();
         let mut cursor = snapshot
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
 
         for (locator, buffer, buffer_edited) in excerpts_to_edit {
             new_excerpts.append(cursor.slice(&Some(locator), Bias::Left), &());
@@ -3135,7 +3135,7 @@ impl MultiBuffer {
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         let mut old_diff_transforms = snapshot
             .diff_transforms
-            .cursor::<(ExcerptOffset, usize)>(&());
+            .cursor::<Dimensions<ExcerptOffset, usize>>(&());
         let mut new_diff_transforms = SumTree::default();
         let mut old_expanded_hunks = HashSet::default();
         let mut output_edits = Vec::new();
@@ -3260,7 +3260,7 @@ impl MultiBuffer {
         &self,
         edit: &Edit<TypedOffset<Excerpt>>,
         excerpts: &mut Cursor<Excerpt, TypedOffset<Excerpt>>,
-        old_diff_transforms: &mut Cursor<DiffTransform, (TypedOffset<Excerpt>, usize)>,
+        old_diff_transforms: &mut Cursor<DiffTransform, Dimensions<TypedOffset<Excerpt>, usize>>,
         new_diff_transforms: &mut SumTree<DiffTransform>,
         end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, DiffTransformHunkInfo)>,
         old_expanded_hunks: &mut HashSet<DiffTransformHunkInfo>,
@@ -4713,7 +4713,9 @@ impl MultiBufferSnapshot {
         O: ToOffset,
     {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
+        let mut cursor = self
+            .diff_transforms
+            .cursor::<Dimensions<usize, ExcerptOffset>>(&());
         cursor.seek(&range.start, Bias::Right);
 
         let Some(first_transform) = cursor.item() else {
@@ -4867,7 +4869,10 @@ impl MultiBufferSnapshot {
         &self,
         anchor: &Anchor,
         excerpt_position: D,
-        diff_transforms: &mut Cursor<DiffTransform, (ExcerptDimension<D>, OutputDimension<D>)>,
+        diff_transforms: &mut Cursor<
+            DiffTransform,
+            Dimensions<ExcerptDimension<D>, OutputDimension<D>>,
+        >,
     ) -> D
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
@@ -4927,7 +4932,7 @@ impl MultiBufferSnapshot {
     fn excerpt_offset_for_anchor(&self, anchor: &Anchor) -> ExcerptOffset {
         let mut cursor = self
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptOffset)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptOffset>>(&());
         let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
 
         cursor.seek(&Some(locator), Bias::Left);
@@ -4971,7 +4976,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
         let mut diff_transforms_cursor = self
             .diff_transforms
-            .cursor::<(ExcerptDimension<D>, OutputDimension<D>)>(&());
+            .cursor::<Dimensions<ExcerptDimension<D>, OutputDimension<D>>>(&());
         diff_transforms_cursor.next();
 
         let mut summaries = Vec::new();
@@ -5201,7 +5206,9 @@ impl MultiBufferSnapshot {
 
         // Find the given position in the diff transforms. Determine the corresponding
         // offset in the excerpts, and whether the position is within a deleted hunk.
-        let mut diff_transforms = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
+        let mut diff_transforms = self
+            .diff_transforms
+            .cursor::<Dimensions<usize, ExcerptOffset>>(&());
         diff_transforms.seek(&offset, Bias::Right);
 
         if offset == diff_transforms.start().0 && bias == Bias::Left {
@@ -5250,7 +5257,7 @@ impl MultiBufferSnapshot {
 
         let mut excerpts = self
             .excerpts
-            .cursor::<(ExcerptOffset, Option<ExcerptId>)>(&());
+            .cursor::<Dimensions<ExcerptOffset, Option<ExcerptId>>>(&());
         excerpts.seek(&excerpt_offset, Bias::Right);
         if excerpts.item().is_none() && excerpt_offset == excerpts.start().0 && bias == Bias::Left {
             excerpts.prev();
@@ -5341,7 +5348,7 @@ impl MultiBufferSnapshot {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut excerpts = self
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptDimension<usize>)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptDimension<usize>>>(&());
         excerpts.seek(&Some(start_locator), Bias::Left);
         excerpts.prev();
 
@@ -6242,14 +6249,14 @@ impl MultiBufferSnapshot {
     pub fn range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<Point>> {
         let mut cursor = self
             .excerpts
-            .cursor::<(Option<&Locator>, ExcerptDimension<Point>)>(&());
+            .cursor::<Dimensions<Option<&Locator>, ExcerptDimension<Point>>>(&());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         if cursor.seek(&Some(locator), Bias::Left) {
             let start = cursor.start().1.clone();
             let end = cursor.end().1;
             let mut diff_transforms = self
                 .diff_transforms
-                .cursor::<(ExcerptDimension<Point>, OutputDimension<Point>)>(&());
+                .cursor::<Dimensions<ExcerptDimension<Point>, OutputDimension<Point>>>(&());
             diff_transforms.seek(&start, Bias::Left);
             let overshoot = start.0 - diff_transforms.start().0.0;
             let start = diff_transforms.start().1.0 + overshoot;

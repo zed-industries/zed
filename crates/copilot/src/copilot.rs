@@ -39,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -271,7 +272,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);

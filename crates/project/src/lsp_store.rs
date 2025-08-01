@@ -96,6 +96,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use sum_tree::Dimensions;
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use url::Url;
 use util::{
@@ -7278,7 +7279,9 @@ impl LspStore {
 
             let build_incremental_change = || {
                 buffer
-                    .edits_since::<(PointUtf16, usize)>(previous_snapshot.snapshot.version())
+                    .edits_since::<Dimensions<PointUtf16, usize>>(
+                        previous_snapshot.snapshot.version(),
+                    )
                     .map(|edit| {
                         let edit_start = edit.new.start.0;
                         let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
