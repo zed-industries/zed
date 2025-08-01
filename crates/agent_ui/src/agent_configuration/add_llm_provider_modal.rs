@@ -136,6 +136,10 @@ impl ModelInput {
                 .text(cx)
                 .parse::<u64>()
                 .map_err(|_| SharedString::from("Max Tokens must be a number"))?,
+            supports_parallel_tools: None,
+            streaming: None,
+            multipart_allowed: None,
+            minimal_schema: None,
         })
     }
 }

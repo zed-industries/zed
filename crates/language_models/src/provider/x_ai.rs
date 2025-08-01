@@ -271,7 +271,7 @@ impl XAiLanguageModel {
         let future = self.request_limiter.stream(async move {
             let api_key = api_key.context("Missing xAI API Key")?;
             let request =
-                open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+                open_ai::stream_completion(http_client.as_ref(), &api_url, &api_key, request, true);
             let response = request.await?;
             Ok(response)
         });
@@ -359,6 +359,8 @@ impl LanguageModel for XAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            true,
+            true,
             self.max_output_tokens(),
         );
         let completions = self.stream_completion(request, cx);

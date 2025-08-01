@@ -354,6 +354,7 @@ pub enum LanguageModelToolSchemaFormat {
     JsonSchema,
     /// A subset of an OpenAPI 3.0 schema object supported by Google AI, see https://ai.google.dev/api/caching#Schema
     JsonSchemaSubset,
+    JsonSchemaMinimal,
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]

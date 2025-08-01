@@ -17,6 +17,7 @@ pub fn adapt_schema_to_format(
 
     match format {
         LanguageModelToolSchemaFormat::JsonSchema => preprocess_json_schema(json),
+        LanguageModelToolSchemaFormat::JsonSchemaMinimal |
         LanguageModelToolSchemaFormat::JsonSchemaSubset => adapt_to_json_schema_subset(json),
     }
 }

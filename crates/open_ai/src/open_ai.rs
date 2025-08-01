@@ -377,9 +377,24 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct ChoiceCompletion {
+    pub index: u32,
+    pub message: ResponseMessageComplete,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResponseMessageComplete {
+    pub role: Role,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "is_none_or_empty")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
-pub enum ResponseStreamResult {
-    Ok(ResponseStreamEvent),
+pub enum ResponseStreamResult<T> {
+    Ok(T),
     Err { error: String },
 }
 
@@ -390,11 +405,19 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct ResponseStreamMessage {
+    pub model: String,
+    pub choices: Vec<ChoiceCompletion>,
+    pub usage: Option<Usage>,
+}
+
 pub async fn stream_completion(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: &str,
     request: Request,
+    stream: bool,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>> {
     let uri = format!("{api_url}/chat/completions");
     let request_builder = HttpRequest::builder()
@@ -409,15 +432,50 @@ pub async fn stream_completion(
         let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
-            .filter_map(|line| async move {
+            .filter_map(move |line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
-                        if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str(line) {
+                        if stream {
+                            let line = line.strip_prefix("data: ")?;
+                            if line == "[DONE]" {
+                                return None
+                            }
+
+                            match serde_json::from_str::<ResponseStreamResult<ResponseStreamEvent>>(&line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error)))
+                                }
+                                Err(error) => Some(Err(anyhow!(error))),
+                            }
+                        } else {
+                            match serde_json::from_str::<ResponseStreamResult<ResponseStreamMessage>>(&line) {
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(ResponseStreamEvent {
+                                    model: response.model,
+                                    usage: response.usage,
+                                    choices: response.choices.into_iter().map(|it| ChoiceDelta {
+                                        delta: ResponseMessageDelta {
+                                            content: Some(it.message.content),
+                                            role: Some(it.message.role),
+                                            tool_calls:
+                                                it.message.tool_calls.map(|it| it.into_iter().enumerate().map(|(index, it)| {
+                                                    let ToolCallContent::Function { function } = it.content;
+
+                                                    ToolCallChunk {
+                                                        index,
+                                                        id: Some(it.id),
+                                                        function: Some(FunctionChunk {
+                                                            arguments: Some(function.arguments),
+                                                            name: Some(function.name),
+                                                        }),
+                                                    }
+                                                }).collect()
+                                            )
+                                        },
+                                        finish_reason: it.finish_reason,
+                                        index: it.index,
+                                    }).collect(),
+                                })),
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error)))
                                 }

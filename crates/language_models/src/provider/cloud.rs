@@ -948,6 +948,8 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     model.id(),
                     model.supports_parallel_tool_calls(),
+                    true,
+                    true,
                     None,
                 );
                 let llm_api_token = self.llm_api_token.clone();
