@@ -869,99 +869,6 @@ impl Client {
             .is_some()
     }
 
-    pub async fn connect(
-        self: &Arc<Self>,
-        try_provider: bool,
-        cx: &AsyncApp,
-    ) -> ConnectionResult<()> {
-        let was_disconnected = match *self.status().borrow() {
-            Status::SignedOut | Status::Authenticated => true,
-            Status::ConnectionError
-            | Status::ConnectionLost
-            | Status::Authenticating { .. }
-            | Status::AuthenticationError
-            | Status::Reauthenticating { .. }
-            | Status::ReconnectionError { .. } => false,
-            Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
-                return ConnectionResult::Result(Ok(()));
-            }
-            Status::UpgradeRequired => {
-                return ConnectionResult::Result(
-                    Err(EstablishConnectionError::UpgradeRequired)
-                        .context("client auth and connect"),
-                );
-            }
-        };
-        let credentials = match self.sign_in(try_provider, cx).await {
-            Ok(credentials) => credentials,
-            Err(err) => return ConnectionResult::Result(Err(err)),
-        };
-
-        if was_disconnected {
-            self.set_status(Status::Connecting, cx);
-        } else {
-            self.set_status(Status::Reconnecting, cx);
-        }
-
-        let mut timeout =
-            futures::FutureExt::fuse(cx.background_executor().timer(CONNECTION_TIMEOUT));
-        futures::select_biased! {
-            connection = self.establish_connection(&credentials, cx).fuse() => {
-                match connection {
-                    Ok(conn) => {
-                        futures::select_biased! {
-                            result = self.set_connection(conn, cx).fuse() => {
-                                match result.context("client auth and connect") {
-                                    Ok(()) => ConnectionResult::Result(Ok(())),
-                                    Err(err) => {
-                                        self.set_status(Status::ConnectionError, cx);
-                                        ConnectionResult::Result(Err(err))
-                                    },
-                                }
-                            },
-                            _ = timeout => {
-                                self.set_status(Status::ConnectionError, cx);
-                                ConnectionResult::Timeout
-                            }
-                        }
-                    }
-                    Err(EstablishConnectionError::Unauthorized) => {
-                        self.set_status(Status::ConnectionError, cx);
-                        ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
-                    }
-                    Err(EstablishConnectionError::UpgradeRequired) => {
-                        self.set_status(Status::UpgradeRequired, cx);
-                        ConnectionResult::Result(Err(EstablishConnectionError::UpgradeRequired).context("client auth and connect"))
-                    }
-                    Err(error) => {
-                        self.set_status(Status::ConnectionError, cx);
-                        ConnectionResult::Result(Err(error).context("client auth and connect"))
-                    }
-                }
-            }
-            _ = &mut timeout => {
-                self.set_status(Status::ConnectionError, cx);
-                ConnectionResult::Timeout
-            }
-        }
-    }
-
-    /// Performs a sign-in and also connects to Collab.
-    ///
-    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
-    /// to `sign_in` when we're ready to remove auto-connection to Collab.
-    pub async fn sign_in_with_optional_connect(
-        self: &Arc<Self>,
-        try_provider: bool,
-        cx: &AsyncApp,
-    ) -> Result<()> {
-        match self.connect(try_provider, cx).await {
-            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
-            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
-            ConnectionResult::Result(result) => result.context("client auth and connect"),
-        }
-    }
-
     pub async fn sign_in(
         self: &Arc<Self>,
         try_provider: bool,
@@ -1044,6 +951,112 @@ impl Client {
         self.set_status(Status::Authenticated, cx);
 
         Ok(credentials)
+    }
+
+    /// Performs a sign-in and also connects to Collab.
+    ///
+    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
+    /// to `sign_in` when we're ready to remove auto-connection to Collab.
+    pub async fn sign_in_with_optional_connect(
+        self: &Arc<Self>,
+        try_provider: bool,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let credentials = self.sign_in(try_provider, cx).await?;
+
+        let connect_result = match self.connect_with_credentials(credentials, cx).await {
+            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
+            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
+            ConnectionResult::Result(result) => result.context("client auth and connect"),
+        };
+        connect_result.log_err();
+
+        Ok(())
+    }
+
+    pub async fn connect(
+        self: &Arc<Self>,
+        try_provider: bool,
+        cx: &AsyncApp,
+    ) -> ConnectionResult<()> {
+        let was_disconnected = match *self.status().borrow() {
+            Status::SignedOut | Status::Authenticated => true,
+            Status::ConnectionError
+            | Status::ConnectionLost
+            | Status::Authenticating { .. }
+            | Status::AuthenticationError
+            | Status::Reauthenticating { .. }
+            | Status::ReconnectionError { .. } => false,
+            Status::Connected { .. } | Status::Connecting { .. } | Status::Reconnecting { .. } => {
+                return ConnectionResult::Result(Ok(()));
+            }
+            Status::UpgradeRequired => {
+                return ConnectionResult::Result(
+                    Err(EstablishConnectionError::UpgradeRequired)
+                        .context("client auth and connect"),
+                );
+            }
+        };
+        let credentials = match self.sign_in(try_provider, cx).await {
+            Ok(credentials) => credentials,
+            Err(err) => return ConnectionResult::Result(Err(err)),
+        };
+
+        if was_disconnected {
+            self.set_status(Status::Connecting, cx);
+        } else {
+            self.set_status(Status::Reconnecting, cx);
+        }
+
+        self.connect_with_credentials(credentials, cx).await
+    }
+
+    async fn connect_with_credentials(
+        self: &Arc<Self>,
+        credentials: Credentials,
+        cx: &AsyncApp,
+    ) -> ConnectionResult<()> {
+        let mut timeout =
+            futures::FutureExt::fuse(cx.background_executor().timer(CONNECTION_TIMEOUT));
+        futures::select_biased! {
+            connection = self.establish_connection(&credentials, cx).fuse() => {
+                match connection {
+                    Ok(conn) => {
+                        futures::select_biased! {
+                            result = self.set_connection(conn, cx).fuse() => {
+                                match result.context("client auth and connect") {
+                                    Ok(()) => ConnectionResult::Result(Ok(())),
+                                    Err(err) => {
+                                        self.set_status(Status::ConnectionError, cx);
+                                        ConnectionResult::Result(Err(err))
+                                    },
+                                }
+                            },
+                            _ = timeout => {
+                                self.set_status(Status::ConnectionError, cx);
+                                ConnectionResult::Timeout
+                            }
+                        }
+                    }
+                    Err(EstablishConnectionError::Unauthorized) => {
+                        self.set_status(Status::ConnectionError, cx);
+                        ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
+                    }
+                    Err(EstablishConnectionError::UpgradeRequired) => {
+                        self.set_status(Status::UpgradeRequired, cx);
+                        ConnectionResult::Result(Err(EstablishConnectionError::UpgradeRequired).context("client auth and connect"))
+                    }
+                    Err(error) => {
+                        self.set_status(Status::ConnectionError, cx);
+                        ConnectionResult::Result(Err(error).context("client auth and connect"))
+                    }
+                }
+            }
+            _ = &mut timeout => {
+                self.set_status(Status::ConnectionError, cx);
+                ConnectionResult::Timeout
+            }
+        }
     }
 
     async fn set_connection(self: &Arc<Self>, conn: Connection, cx: &AsyncApp) -> Result<()> {
