@@ -20,7 +20,7 @@ use std::{
     sync::{Arc, Weak},
 };
 use text::ReplicaId;
-use util::{TryFutureExt as _, maybe};
+use util::TryFutureExt as _;
 
 pub type UserId = u64;
 
@@ -111,7 +111,6 @@ pub struct UserStore {
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     current_plan: Option<proto::Plan>,
-    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     trial_started_at: Option<DateTime<Utc>>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
@@ -188,7 +187,6 @@ impl UserStore {
             by_github_login: Default::default(),
             current_user: current_user_rx,
             current_plan: None,
-            subscription_period: None,
             trial_started_at: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
@@ -354,13 +352,6 @@ impl UserStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             this.current_plan = Some(message.payload.plan());
-            this.subscription_period = maybe!({
-                let period = message.payload.subscription_period?;
-                let started_at = DateTime::from_timestamp(period.started_at as i64, 0)?;
-                let ended_at = DateTime::from_timestamp(period.ended_at as i64, 0)?;
-
-                Some((started_at, ended_at))
-            });
             this.trial_started_at = message
                 .payload
                 .trial_started_at
@@ -745,10 +736,6 @@ impl UserStore {
         }
 
         self.current_plan
-    }
-
-    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-        self.subscription_period
     }
 
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
