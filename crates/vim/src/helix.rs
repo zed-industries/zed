@@ -454,7 +454,6 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         self.jump(".".into(), false, false, window, cx);
-        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 }
 
