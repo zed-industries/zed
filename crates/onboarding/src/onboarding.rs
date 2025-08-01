@@ -6,8 +6,8 @@ use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription, Task, WeakEntity,
-    Window, actions,
+    FocusHandle, Focusable, IntoElement, KeyContext, Render, SharedString, Subscription, Task,
+    WeakEntity, Window, actions,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -62,6 +62,18 @@ actions!(
     [
         /// Opens the onboarding view.
         OpenOnboarding
+    ]
+);
+
+actions!(
+    onboarding,
+    [
+        /// Activates the Basics page.
+        ActivateBasicsPage,
+        /// Activates the Editing page.
+        ActivateEditingPage,
+        /// Activates the AI Setup page.
+        ActivateAISetupPage,
     ]
 );
 
@@ -240,7 +252,7 @@ impl Onboarding {
     fn render_nav_button(
         &mut self,
         page: SelectedPage,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let text = match page {
@@ -251,15 +263,15 @@ impl Onboarding {
 
         let binding = match page {
             SelectedPage::Basics => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-1").unwrap()], cx)
+                KeyBinding::for_action_in(&ActivateBasicsPage, &self.focus_handle, window, cx)
                     .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::Editing => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-2").unwrap()], cx)
+                KeyBinding::for_action_in(&ActivateEditingPage, &self.focus_handle, window, cx)
                     .map(|kb| kb.size(rems_from_px(12.)))
             }
             SelectedPage::AiSetup => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-3").unwrap()], cx)
+                KeyBinding::for_action_in(&ActivateAISetupPage, &self.focus_handle, window, cx)
                     .map(|kb| kb.size(rems_from_px(12.)))
             }
         };
@@ -293,7 +305,10 @@ impl Onboarding {
                     this.color(Color::Muted)
                 }
             }))
-            .child(binding)
+            .child(binding.map_or(
+                gpui::Empty.into_any_element(),
+                IntoElement::into_any_element,
+            ))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.selected_page = page;
                 cx.notify();
@@ -396,9 +411,26 @@ impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
-            .key_context("onboarding-page")
+            .key_context({
+                let mut ctx = KeyContext::new_with_defaults();
+                ctx.add("Onboarding");
+                ctx
+            })
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
+                this.selected_page = SelectedPage::Basics;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
+                this.selected_page = SelectedPage::Editing;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
+                this.selected_page = SelectedPage::AiSetup;
+                cx.notify();
+            }))
             .child(
                 h_flex()
                     .max_w(rems_from_px(1100.))
