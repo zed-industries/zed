@@ -5930,7 +5930,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
         );
     }
 
-    // Test case 3: Selecting a directory shouldn't count as a comparable file
+    // Test 3: Selecting a directory shouldn't count as a comparable file
     select_path_with_mark(&panel, "root/dir1", cx);
 
     let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
@@ -5946,7 +5946,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
         );
     }
 
-    // Test case 4: Selecting one more file
+    // Test 4: Selecting one more file
     select_path_with_mark(&panel, "root/dir2/file3.txt", cx);
 
     let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
