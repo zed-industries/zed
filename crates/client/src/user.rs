@@ -212,14 +212,12 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
-                    dbg!(&status);
                     // if the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
                     match status {
                         Status::Authenticated | Status::Connected { .. } => {
-                            dbg!(client.user_id());
                             if let Some(user_id) = client.user_id() {
                                 let response = client.cloud_client().get_authenticated_user().await;
                                 let mut user = None;
