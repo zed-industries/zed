@@ -139,7 +139,6 @@ fn write_font_ligatures(enabled: bool, cx: &mut App) {
 
         if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {
             features[calt_index].1 = bit;
-            dbg!(&features[calt_index]);
         } else {
             features.push(("calt".into(), bit));
         }
@@ -365,7 +364,7 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(SwitchField::new(
             "onboarding-font-ligatures",
             "Font Ligatures",
-            Some("todo!".into()),
+            Some("Combine text characters into their associated symbols.".into()),
             if read_font_ligatures(cx) {
                 ui::ToggleState::Selected
             } else {
