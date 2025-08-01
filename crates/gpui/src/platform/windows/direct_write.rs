@@ -782,7 +782,7 @@ impl DirectWriteState {
                 rendering_mode,
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
-                // We're using cleartype not grayscale for monchrome is because it provides better quality
+                // We're using cleartype not grayscale for monochrome is because it provides better quality
                 DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
                 baseline_origin_x,
                 baseline_origin_y,
@@ -877,6 +877,7 @@ impl DirectWriteState {
         let glyph_analysis = self.create_glyph_run_analysis(params)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
+                // We're using cleartype not grayscale for monochrome is because it provides better quality
                 DWRITE_TEXTURE_CLEARTYPE_3x1,
                 &RECT {
                     left: glyph_bounds.origin.x.0,
