@@ -373,6 +373,12 @@ pub enum ToggleButtonGroupStyle {
     Outlined,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ToggleButtonGroupSize {
+    Default,
+    Medium,
+}
+
 #[derive(IntoElement)]
 pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
 where
@@ -381,6 +387,7 @@ where
     group_name: &'static str,
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
+    size: ToggleButtonGroupSize,
     button_width: Rems,
     selected_index: usize,
 }
@@ -391,6 +398,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
             group_name,
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
+            size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
         }
@@ -403,6 +411,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
             group_name,
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
+            size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
         }
@@ -412,6 +421,11 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
 impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
     pub fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    pub fn size(mut self, size: ToggleButtonGroupSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -449,6 +463,9 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                     .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
                         button.style(ButtonStyle::Filled)
                     })
+                    .when(self.size == ToggleButtonGroupSize::Medium, |button| {
+                        button.size(ButtonSize::Medium)
+                    })
                     .child(
                         h_flex()
                             .min_w(self.button_width)
@@ -457,13 +474,14 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                             .py_1()
                             .justify_center()
                             .when_some(icon, |this, icon| {
-                                this.child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
-                                    if entry_index == self.selected_index {
-                                        this.color(Color::Accent)
-                                    } else {
-                                        this.color(Color::Muted)
-                                    }
-                                }))
+                                this.py_2()
+                                    .child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
+                                        if entry_index == self.selected_index {
+                                            this.color(Color::Accent)
+                                        } else {
+                                            this.color(Color::Muted)
+                                        }
+                                    }))
                             })
                             .child(
                                 Label::new(label)
