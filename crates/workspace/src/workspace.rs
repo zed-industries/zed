@@ -6926,7 +6926,6 @@ async fn join_channel_internal(
     }
 
     let client = cx.update(|cx| active_call.read(cx).client())?;
-    client.connect(true, cx).await;
 
     let mut client_status = client.status();
 

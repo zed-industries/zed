@@ -20,7 +20,6 @@ cloud_llm_client.workspace = true
 component.workspace = true
 gpui.workspace = true
 language_model.workspace = true
-proto.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 telemetry.workspace = true
