@@ -17,7 +17,6 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 
 [dependencies]
 anyhow.workspace = true
-async-recursion = "0.3"
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }

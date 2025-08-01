@@ -278,7 +278,7 @@ pub(crate) fn render_ai_setup_page(
                 .child(AiUpsellCard {
                     sign_in_status: SignInStatus::SignedIn,
                     sign_in: Arc::new(|_, _| {}),
-                    user_plan: onboarding.cloud_user_store.read(cx).plan(),
+                    user_plan: onboarding.user_store.read(cx).plan(),
                 })
                 .child(render_llm_provider_section(
                     onboarding,
