@@ -274,6 +274,10 @@ impl http_client::HttpClient for ReqwestClient {
         }
         .boxed()
     }
+
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        Some((&self.client, self.handle.clone()))
+    }
 }
 
 #[cfg(test)]
