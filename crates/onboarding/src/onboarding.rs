@@ -248,6 +248,12 @@ impl Onboarding {
         })
     }
 
+    fn set_page(&mut self, page: SelectedPage, cx: &mut Context<Self>) {
+        self.selected_page = page;
+        cx.notify();
+        cx.emit(ItemEvent::UpdateTab);
+    }
+
     fn render_nav_buttons(
         &mut self,
         window: &mut Window,
@@ -307,8 +313,7 @@ impl Onboarding {
                     IntoElement::into_any_element,
                 ))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.selected_page = page;
-                    cx.notify();
+                    this.set_page(page, cx);
                 }))
         })
     }
@@ -471,16 +476,13 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.selected_page = SelectedPage::Basics;
-                cx.notify();
+                this.set_page(SelectedPage::Basics, cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.selected_page = SelectedPage::Editing;
-                cx.notify();
+                this.set_page(SelectedPage::Editing, cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.selected_page = SelectedPage::AiSetup;
-                cx.notify();
+                this.set_page(SelectedPage::AiSetup, cx);
             }))
             .child(
                 h_flex()
@@ -625,11 +627,25 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut App,
     ) -> gpui::Task<gpui::Result<Entity<Self>>> {
         window.spawn(cx, async move |cx| {
-            if persistence::ONBOARDING_PAGES
-                .get_onboarding_page(item_id, workspace_id)?
-                .is_some()
+            if let Some(page_number) =
+                persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
             {
-                workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
+                let page = match page_number {
+                    0 => Some(SelectedPage::Basics),
+                    1 => Some(SelectedPage::Editing),
+                    2 => Some(SelectedPage::AiSetup),
+                    _ => None,
+                };
+                workspace.update(cx, |workspace, cx| {
+                    let onboarding_page = Onboarding::new(workspace, cx);
+                    if let Some(page) = page {
+                        zlog::info!("Onboarding page {page:?} loaded");
+                        onboarding_page.update(cx, |onboarding_page, cx| {
+                            onboarding_page.set_page(page, cx);
+                        })
+                    }
+                    onboarding_page
+                })
             } else {
                 Err(anyhow::anyhow!("No onboarding page to deserialize"))
             }
@@ -645,15 +661,16 @@ impl workspace::SerializableItem for Onboarding {
         cx: &mut ui::Context<Self>,
     ) -> Option<gpui::Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
+        let page_number = self.selected_page as u16;
         Some(cx.background_spawn(async move {
             persistence::ONBOARDING_PAGES
-                .save_onboarding_page(item_id, workspace_id)
+                .save_onboarding_page(item_id, workspace_id, page_number)
                 .await
         }))
     }
 
-    fn should_serialize(&self, _event: &Self::Event) -> bool {
-        false
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
     }
 }
 
@@ -663,26 +680,30 @@ mod persistence {
 
     define_connection! {
         pub static ref ONBOARDING_PAGES: OnboardingPagesDb<WorkspaceDb> =
-            &[sql!(
-                CREATE TABLE onboarding_pages (
-                    workspace_id INTEGER,
-                    item_id INTEGER UNIQUE,
+            &[
+                sql!(
+                    CREATE TABLE onboarding_pages (
+                        workspace_id INTEGER,
+                        item_id INTEGER UNIQUE,
+                        page_number INTEGER,
 
-                    PRIMARY KEY(workspace_id, item_id),
-                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
-                    ON DELETE CASCADE
-                ) STRICT;
-            )];
+                        PRIMARY KEY(workspace_id, item_id),
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                        ON DELETE CASCADE
+                    ) STRICT;
+                ),
+            ];
     }
 
     impl OnboardingPagesDb {
         query! {
             pub async fn save_onboarding_page(
                 item_id: workspace::ItemId,
-                workspace_id: workspace::WorkspaceId
+                workspace_id: workspace::WorkspaceId,
+                page_number: u16
             ) -> Result<()> {
-                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id)
-                VALUES (?, ?)
+                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id, page_number)
+                VALUES (?, ?, ?)
             }
         }
 
@@ -690,8 +711,8 @@ mod persistence {
             pub fn get_onboarding_page(
                 item_id: workspace::ItemId,
                 workspace_id: workspace::WorkspaceId
-            ) -> Result<Option<workspace::ItemId>> {
-                SELECT item_id
+            ) -> Result<Option<u16>> {
+                SELECT page_number
                 FROM onboarding_pages
                 WHERE item_id = ? AND workspace_id = ?
             }
