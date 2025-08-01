@@ -183,15 +183,15 @@ impl AgentConnection for ClaudeAgentConnection {
         })
     }
 
-    fn auth_methods(&self) -> Vec<acp::AuthMethod> {
-        vec![]
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
     }
 
     fn authenticate(&self, _: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(

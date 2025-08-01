@@ -356,6 +356,7 @@ pub struct OldAcpAgentConnection {
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
+    pub auth_methods: [acp::AuthMethod; 1],
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -391,12 +392,8 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn auth_methods(&self) -> Vec<acp::AuthMethod> {
-        vec![acp::AuthMethod {
-            id: acp::AuthMethodId("acp-old-no-id".into()),
-            label: "Log in".into(),
-            description: None,
-        }]
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &self.auth_methods
     }
 
     fn authenticate(&self, _method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
@@ -409,7 +406,7 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let chunks = params
             .prompt
             .into_iter()

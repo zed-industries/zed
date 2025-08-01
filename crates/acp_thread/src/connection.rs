@@ -16,11 +16,11 @@ pub trait AgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>>;
 
-    fn auth_methods(&self) -> Vec<acp::AuthMethod>;
+    fn auth_methods(&self) -> &[acp::AuthMethod];
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>>;
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 }

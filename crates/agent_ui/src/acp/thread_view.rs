@@ -2211,13 +2211,16 @@ impl Render for AcpThreadView {
                     .child(self.render_pending_auth_state())
                     .child(h_flex().mt_1p5().justify_center().children(
                         connection.auth_methods().into_iter().map(|method| {
-                            Button::new(SharedString::from(method.id.0.clone()), method.label)
-                                .on_click({
-                                    let method_id = method.id.clone();
-                                    cx.listener(move |this, _, window, cx| {
-                                        this.authenticate(method_id.clone(), window, cx)
-                                    })
+                            Button::new(
+                                SharedString::from(method.id.0.clone()),
+                                method.label.clone(),
+                            )
+                            .on_click({
+                                let method_id = method.id.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.authenticate(method_id.clone(), window, cx)
                                 })
+                            })
                         }),
                     )),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),

@@ -14,7 +14,7 @@ use crate::AllAgentServersSettings;
 #[derive(Clone)]
 pub struct Gemini;
 
-const MCP_ARG: &str = "--experimental-mcp";
+const ACP_ARG: &str = "--experimental-acp";
 
 impl AgentServer for Gemini {
     fn name(&self) -> &'static str {
@@ -35,26 +35,26 @@ impl AgentServer for Gemini {
 
     fn connect(
         &self,
-        _root_dir: &Path,
+        root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let project = project.clone();
         let server_name = self.name();
-        let working_directory = project.read(cx).active_project_directory(cx);
+        let root_dir = root_dir.to_path_buf();
         cx.spawn(async move |cx| {
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).gemini.clone()
             })?;
 
             let Some(command) =
-                AgentServerCommand::resolve("gemini", &[MCP_ARG], settings, &project, cx).await
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
             else {
                 anyhow::bail!("Failed to find gemini binary");
             };
             // todo! check supported version
 
-            let conn = AcpConnection::stdio(server_name, command, working_directory, cx).await?;
+            let conn = AcpConnection::stdio(server_name, command, &root_dir, cx).await?;
             Ok(Rc::new(conn) as _)
         })
     }

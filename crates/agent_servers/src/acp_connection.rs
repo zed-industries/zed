@@ -1,123 +1,87 @@
 use agent_client_protocol as acp;
-use anyhow::anyhow;
 use collections::HashMap;
-use context_server::listener::McpServerTool;
-use context_server::types::requests;
-use context_server::{ContextServer, ContextServerCommand, ContextServerId};
-use futures::channel::{mpsc, oneshot};
+use futures::channel::oneshot;
 use project::Project;
-use smol::stream::StreamExt as _;
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
-use std::{path::Path, sync::Arc};
 use util::ResultExt;
 
-use anyhow::{Context, Result};
+use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
-use crate::mcp_server::ZedMcpServer;
-use crate::{AgentServerCommand, mcp_server};
+use crate::AgentServerCommand;
 use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 pub struct AcpConnection {
-    auth_methods: Rc<RefCell<Vec<acp::AuthMethod>>>,
     server_name: &'static str,
-    context_server: Arc<context_server::ContextServer>,
+    connection: Rc<acp::AgentConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-    _session_update_task: Task<()>,
+    auth_methods: Vec<acp::AuthMethod>,
+    _io_task: Task<Result<()>>,
+}
+
+pub struct AcpSession {
+    thread: WeakEntity<AcpThread>,
 }
 
 impl AcpConnection {
     pub async fn stdio(
         server_name: &'static str,
         command: AgentServerCommand,
-        working_directory: Option<Arc<Path>>,
+        root_dir: &Path,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        let context_server: Arc<ContextServer> = ContextServer::stdio(
-            ContextServerId(format!("{}-mcp-server", server_name).into()),
-            ContextServerCommand {
-                path: command.path,
-                args: command.args,
-                env: command.env,
-            },
-            working_directory,
-        )
-        .into();
+        let mut child = util::command::new_smol_command(&command.path)
+            .args(command.args.iter().map(|arg| arg.as_str()))
+            .envs(command.env.iter().flatten())
+            .current_dir(root_dir)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()?;
 
-        let (notification_tx, mut notification_rx) = mpsc::unbounded();
+        let stdout = child.stdout.take().expect("Failed to take stdout");
+        let stdin = child.stdin.take().expect("Failed to take stdin");
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
-        let session_update_handler_task = cx.spawn({
-            let sessions = sessions.clone();
-            async move |cx| {
-                while let Some(notification) = notification_rx.next().await {
-                    Self::handle_session_notification(notification, sessions.clone(), cx)
-                }
+        let client = ClientDelegate {
+            sessions: sessions.clone(),
+            cx: cx.clone(),
+        };
+        let (connection, io_task) = acp::AgentConnection::new(client, stdin, stdout, {
+            let foreground_executor = cx.foreground_executor().clone();
+            move |fut| {
+                foreground_executor.spawn(fut).detach();
             }
         });
 
-        context_server
-            .start_with_handlers(
-                vec![(acp::AGENT_METHODS.session_update, {
-                    Box::new(move |notification, _cx| {
-                        let notification_tx = notification_tx.clone();
-                        log::trace!(
-                            "ACP Notification: {}",
-                            serde_json::to_string_pretty(&notification).unwrap()
-                        );
+        let io_task = cx.background_spawn(io_task);
 
-                        if let Some(notification) =
-                            serde_json::from_value::<acp::SessionNotification>(notification)
-                                .log_err()
-                        {
-                            notification_tx.unbounded_send(notification).ok();
-                        }
-                    })
-                })],
-                cx,
-            )
+        let response = connection
+            .initialize(acp::InitializeRequest {
+                protocol_version: acp::VERSION,
+                client_capabilities: acp::ClientCapabilities {
+                    fs: acp::FileSystemCapability {
+                        read_text_file: true,
+                        write_text_file: true,
+                    },
+                },
+            })
             .await?;
 
+        // todo! check version
+
         Ok(Self {
-            auth_methods: Default::default(),
+            auth_methods: response.auth_methods,
+            connection: connection.into(),
             server_name,
-            context_server,
             sessions,
-            _session_update_task: session_update_handler_task,
+            _io_task: io_task,
         })
     }
-
-    pub fn handle_session_notification(
-        notification: acp::SessionNotification,
-        threads: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
-        cx: &mut AsyncApp,
-    ) {
-        let threads = threads.borrow();
-        let Some(thread) = threads
-            .get(&notification.session_id)
-            .and_then(|session| session.thread.upgrade())
-        else {
-            log::error!(
-                "Thread not found for session ID: {}",
-                notification.session_id
-            );
-            return;
-        };
-
-        thread
-            .update(cx, |thread, cx| {
-                thread.handle_session_update(notification.update, cx)
-            })
-            .log_err();
-    }
-}
-
-pub struct AcpSession {
-    thread: WeakEntity<AcpThread>,
-    cancel_tx: Option<oneshot::Sender<()>>,
-    _mcp_server: ZedMcpServer,
 }
 
 impl AgentConnection for AcpConnection {
@@ -127,52 +91,19 @@ impl AgentConnection for AcpConnection {
         cwd: &Path,
         cx: &mut AsyncApp,
     ) -> Task<Result<Entity<AcpThread>>> {
-        let client = self.context_server.client();
+        let conn = self.connection.clone();
         let sessions = self.sessions.clone();
-        let auth_methods = self.auth_methods.clone();
         let cwd = cwd.to_path_buf();
         cx.spawn(async move |cx| {
-            let client = client.context("MCP server is not initialized yet")?;
-            let (mut thread_tx, thread_rx) = watch::channel(WeakEntity::new_invalid());
-
-            let mcp_server = ZedMcpServer::new(thread_rx, cx).await?;
-
-            let response = client
-                .request::<requests::CallTool>(context_server::types::CallToolParams {
-                    name: acp::AGENT_METHODS.new_session.into(),
-                    arguments: Some(serde_json::to_value(acp::NewSessionArguments {
-                        mcp_servers: vec![mcp_server.server_config()?],
-                        client_tools: acp::ClientTools {
-                            request_permission: Some(acp::McpToolId {
-                                mcp_server: mcp_server::SERVER_NAME.into(),
-                                tool_name: mcp_server::RequestPermissionTool::NAME.into(),
-                            }),
-                            read_text_file: Some(acp::McpToolId {
-                                mcp_server: mcp_server::SERVER_NAME.into(),
-                                tool_name: mcp_server::ReadTextFileTool::NAME.into(),
-                            }),
-                            write_text_file: Some(acp::McpToolId {
-                                mcp_server: mcp_server::SERVER_NAME.into(),
-                                tool_name: mcp_server::WriteTextFileTool::NAME.into(),
-                            }),
-                        },
-                        cwd,
-                    })?),
-                    meta: None,
+            let response = conn
+                .new_session(acp::NewSessionRequest {
+                    // todo! Zed MCP server?
+                    mcp_servers: vec![],
+                    cwd,
                 })
                 .await?;
 
-            if response.is_error.unwrap_or_default() {
-                return Err(anyhow!(response.text_contents()));
-            }
-
-            let result = serde_json::from_value::<acp::NewSessionOutput>(
-                response.structured_content.context("Empty response")?,
-            )?;
-
-            auth_methods.replace(result.auth_methods);
-
-            let Some(session_id) = result.session_id else {
+            let Some(session_id) = response.session_id else {
                 anyhow::bail!(AuthRequired);
             };
 
@@ -186,12 +117,8 @@ impl AgentConnection for AcpConnection {
                 )
             })?;
 
-            thread_tx.send(thread.downgrade())?;
-
             let session = AcpSession {
                 thread: thread.downgrade(),
-                cancel_tx: None,
-                _mcp_server: mcp_server,
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -199,94 +126,115 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn auth_methods(&self) -> Vec<agent_client_protocol::AuthMethod> {
-        self.auth_methods.borrow().clone()
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &self.auth_methods
     }
 
     fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
-        let client = self.context_server.client();
+        let conn = self.connection.clone();
         cx.foreground_executor().spawn(async move {
-            let params = acp::AuthenticateArguments { method_id };
-
-            let response = client
-                .context("MCP server is not initialized yet")?
-                .request::<requests::CallTool>(context_server::types::CallToolParams {
-                    name: acp::AGENT_METHODS.authenticate.into(),
-                    arguments: Some(serde_json::to_value(params)?),
-                    meta: None,
+            let result = conn
+                .authenticate(acp::AuthenticateRequest {
+                    method_id: method_id.clone(),
                 })
                 .await?;
 
-            if response.is_error.unwrap_or_default() {
-                Err(anyhow!(response.text_contents()))
-            } else {
-                Ok(())
-            }
+            Ok(result)
         })
     }
 
-    fn prompt(
-        &self,
-        params: agent_client_protocol::PromptArguments,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        let client = self.context_server.client();
-        let sessions = self.sessions.clone();
-
-        cx.foreground_executor().spawn(async move {
-            let client = client.context("MCP server is not initialized yet")?;
-
-            let (new_cancel_tx, cancel_rx) = oneshot::channel();
-            {
-                let mut sessions = sessions.borrow_mut();
-                let session = sessions
-                    .get_mut(&params.session_id)
-                    .context("Session not found")?;
-                session.cancel_tx.replace(new_cancel_tx);
-            }
-
-            let result = client
-                .request_with::<requests::CallTool>(
-                    context_server::types::CallToolParams {
-                        name: acp::AGENT_METHODS.prompt.into(),
-                        arguments: Some(serde_json::to_value(params)?),
-                        meta: None,
-                    },
-                    Some(cancel_rx),
-                    None,
-                )
-                .await;
-
-            if let Err(err) = &result
-                && err.is::<context_server::client::RequestCanceled>()
-            {
-                return Ok(());
-            }
-
-            let response = result?;
-
-            if response.is_error.unwrap_or_default() {
-                return Err(anyhow!(response.text_contents()));
-            }
-
-            Ok(())
-        })
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+        let conn = self.connection.clone();
+        cx.foreground_executor()
+            .spawn(async move { Ok(conn.prompt(params).await?) })
     }
 
-    fn cancel(&self, session_id: &agent_client_protocol::SessionId, _cx: &mut App) {
-        let mut sessions = self.sessions.borrow_mut();
-
-        if let Some(cancel_tx) = sessions
-            .get_mut(session_id)
-            .and_then(|session| session.cancel_tx.take())
-        {
-            cancel_tx.send(()).ok();
-        }
+    fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
+        self.connection.cancel(session_id.clone()).log_err();
     }
 }
 
-impl Drop for AcpConnection {
-    fn drop(&mut self) {
-        self.context_server.stop().log_err();
+struct ClientDelegate {
+    sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+    cx: AsyncApp,
+}
+
+impl acp::Client for ClientDelegate {
+    async fn request_permission(
+        &self,
+        arguments: acp::RequestPermissionRequest,
+    ) -> Result<acp::RequestPermissionResponse, acp::Error> {
+        let cx = &mut self.cx.clone();
+        let result = self
+            .sessions
+            .borrow()
+            .get(&arguments.session_id)
+            .context("Failed to get session")?
+            .thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_permission(arguments.tool_call, arguments.options, cx)
+            })?
+            .await;
+
+        let outcome = match result {
+            Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
+            Err(oneshot::Canceled) => acp::RequestPermissionOutcome::Cancelled,
+        };
+
+        Ok(acp::RequestPermissionResponse { outcome })
+    }
+
+    async fn write_text_file(
+        &self,
+        arguments: acp::WriteTextFileRequest,
+    ) -> Result<(), acp::Error> {
+        let cx = &mut self.cx.clone();
+        self.sessions
+            .borrow()
+            .get(&arguments.session_id)
+            .context("Failed to get session")?
+            .thread
+            .update(cx, |thread, cx| {
+                thread.write_text_file(arguments.path, arguments.content, cx)
+            })?
+            .await?;
+
+        Ok(())
+    }
+
+    async fn read_text_file(
+        &self,
+        arguments: acp::ReadTextFileRequest,
+    ) -> Result<acp::ReadTextFileResponse, acp::Error> {
+        let cx = &mut self.cx.clone();
+        let content = self
+            .sessions
+            .borrow()
+            .get(&arguments.session_id)
+            .context("Failed to get session")?
+            .thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(arguments.path, arguments.line, arguments.limit, false, cx)
+            })?
+            .await?;
+
+        Ok(acp::ReadTextFileResponse { content })
+    }
+
+    async fn session_notification(
+        &self,
+        notification: acp::SessionNotification,
+    ) -> Result<(), acp::Error> {
+        let cx = &mut self.cx.clone();
+        let sessions = self.sessions.borrow();
+        let session = sessions
+            .get(&notification.session_id)
+            .context("Failed to get session")?;
+
+        session.thread.update(cx, |thread, cx| {
+            thread.handle_session_update(notification.update, cx)
+        })??;
+
+        Ok(())
     }
 }

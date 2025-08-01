@@ -999,7 +999,7 @@ impl AcpThread {
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
-                            acp::PromptArguments {
+                            acp::PromptRequest {
                                 prompt: message,
                                 session_id: this.session_id.clone(),
                             },
@@ -1595,6 +1595,11 @@ mod tests {
                 connection,
                 child_status: io_task,
                 current_thread: thread_rc,
+                auth_methods: [acp::AuthMethod {
+                    id: acp::AuthMethodId("acp-old-no-id".into()),
+                    label: "Log in".into(),
+                    description: None,
+                }],
             };
 
             AcpThread::new(
