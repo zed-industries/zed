@@ -9230,3 +9230,209 @@ async fn test_find_project_path_abs(
         );
     });
 }
+
+#[gpui::test]
+async fn test_fs_operation_recording_boundaries(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "test.txt": "content",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    project.update(cx, |project, _| {
+        project.client_state = ProjectClientState::Local;
+        assert!(
+            project.should_record_fs_operations(),
+            "Local projects should record fs operations"
+        );
+
+        project.client_state = ProjectClientState::Shared { remote_id: 1 };
+        assert!(
+            project.should_record_fs_operations(),
+            "Shared projects should record fs operations"
+        );
+
+        project.client_state = ProjectClientState::Remote {
+            sharing_has_stopped: false,
+            capability: Capability::ReadWrite,
+            remote_id: 1,
+            replica_id: 1,
+        };
+        assert!(
+            !project.should_record_fs_operations(),
+            "Remote projects should not record fs operations"
+        );
+
+        project.client_state = ProjectClientState::Local;
+        project.performing_undo = true;
+        assert!(
+            !project.should_record_fs_operations(),
+            "Should not record when performing undo"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_fs_operation_history_limit(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    project.update(cx, |project, _| {
+        for i in 0..102 {
+            let old_path = format!("/root/old_{}.txt", i);
+            let new_path = format!("/root/new_{}.txt", i);
+            project.record_fs_operation(FsOperation::Move {
+                old_path: Path::new(&old_path).into(),
+                new_path: Path::new(&new_path).into(),
+            });
+        }
+    });
+
+    project.read_with(cx, |project, _| {
+        assert_eq!(
+            project.fs_operations.len(),
+            100,
+            "Should maintain exactly 100 operations"
+        );
+
+        match &project.fs_operations[0] {
+            FsOperation::Move { old_path, .. } => {
+                assert_eq!(
+                    old_path.to_string_lossy(),
+                    "/root/old_2.txt",
+                    "Oldest operations should be dropped"
+                );
+            }
+            _ => panic!("Expected Move operation"),
+        }
+
+        match &project.fs_operations[99] {
+            FsOperation::Move { old_path, .. } => {
+                assert_eq!(
+                    old_path.to_string_lossy(),
+                    "/root/old_101.txt",
+                    "Newest operations should be kept"
+                );
+            }
+            _ => panic!("Expected Move operation"),
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_fs_undo_copy_operation(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "original.txt": "content to copy",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+        project.record_fs_operation(FsOperation::Copy {
+            worktree_id,
+            copied_to_path: Path::new("copied.txt").into(),
+        });
+    });
+
+    project.read_with(cx, |project, _| {
+        assert_eq!(project.fs_operations.len(), 1);
+        match &project.fs_operations[0] {
+            FsOperation::Copy { copied_to_path, .. } => {
+                assert_eq!(copied_to_path.to_string_lossy(), "copied.txt");
+            }
+            _ => panic!("Expected Copy operation"),
+        }
+    });
+
+    fs.insert_file(
+        path!("/root/copied.txt"),
+        "content to copy".as_bytes().to_vec(),
+    )
+    .await;
+
+    let task = project.update(cx, |project, cx| project.undo_fs_operation(cx));
+    let result = task.await;
+    assert!(result.is_ok(), "Copy undo should succeed: {:?}", result);
+
+    project.read_with(cx, |project, _| {
+        assert_eq!(project.fs_operations.len(), 0);
+    });
+}
+
+#[gpui::test]
+async fn test_fs_undo_create_operation(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    project.update(cx, |project, cx| {
+        let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
+        project.record_fs_operation(FsOperation::Create {
+            worktree_id,
+            created_path: Path::new("new_file.txt").into(),
+            is_directory: false,
+        });
+    });
+
+    fs.insert_file(
+        path!("/root/new_file.txt"),
+        "newly created content".as_bytes().to_vec(),
+    )
+    .await;
+
+    let task = project.update(cx, |project, cx| project.undo_fs_operation(cx));
+    let result = task.await;
+    assert!(result.is_ok(), "Create undo should succeed: {:?}", result);
+
+    project.read_with(cx, |project, _| {
+        assert_eq!(project.fs_operations.len(), 0);
+    });
+}
+
+#[gpui::test]
+async fn test_fs_undo_empty_queue(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/root"), json!({})).await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    project.read_with(cx, |project, _| {
+        assert_eq!(
+            project.fs_operations.len(),
+            0,
+            "Should start with empty operation queue"
+        );
+    });
+
+    // Undo with empty queue should succeed without error
+    let task = project.update(cx, |project, cx| project.undo_fs_operation(cx));
+    let result = task.await;
+    assert!(
+        result.is_ok(),
+        "Undo on empty queue should succeed without error"
+    );
+}

@@ -75,7 +75,8 @@
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
       "ctrl-x": "project_panel::Cut", // tree-view:cut
       "ctrl-c": "project_panel::Copy", // tree-view:copy
-      "ctrl-v": "project_panel::Paste" // tree-view:paste
+      "ctrl-v": "project_panel::Paste", // tree-view:paste
+      "ctrl-z": "project_panel::UndoFsOperation" // tree-view:undo
     }
   },
   {
