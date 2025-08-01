@@ -82,7 +82,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use lsp_colors::LspColorData;
 
 use ::git::blame::BlameEntry;
-use ::git::{Restore, blame::ParsedCommitMessage};
+use ::git::{Restore, commit::ParsedCommitMessage};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
     CompletionsMenu, ContextMenuOrigin,
