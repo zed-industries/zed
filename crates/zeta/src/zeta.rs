@@ -16,7 +16,7 @@ pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
-use client::{Client, CloudUserStore, EditPredictionUsage};
+use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
@@ -120,8 +120,8 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(cloud_user_store: &Entity<CloudUserStore>, cx: &App) -> bool {
-    if cloud_user_store.read(cx).has_accepted_tos() {
+pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
+    if user_store.read(cx).has_accepted_terms_of_service() {
         !ZedPredictUpsell::dismissed()
     } else {
         true
@@ -229,7 +229,7 @@ pub struct Zeta {
     _llm_token_subscription: Subscription,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
-    cloud_user_store: Entity<CloudUserStore>,
+    user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
@@ -242,11 +242,11 @@ impl Zeta {
         workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
-        cloud_user_store: Entity<CloudUserStore>,
+        user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, cloud_user_store, cx));
+            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -269,13 +269,13 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.cloud_user_store.read(cx).edit_prediction_usage()
+        self.user_store.read(cx).edit_prediction_usage()
     }
 
     fn new(
         workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
-        cloud_user_store: Entity<CloudUserStore>,
+        user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
@@ -306,7 +306,7 @@ impl Zeta {
             ),
             update_required: false,
             license_detection_watchers: HashMap::default(),
-            cloud_user_store,
+            user_store,
         }
     }
 
@@ -535,8 +535,8 @@ impl Zeta {
 
             if let Some(usage) = usage {
                 this.update(cx, |this, cx| {
-                    this.cloud_user_store.update(cx, |cloud_user_store, cx| {
-                        cloud_user_store.update_edit_prediction_usage(usage, cx);
+                    this.user_store.update(cx, |user_store, cx| {
+                        user_store.update_edit_prediction_usage(usage, cx);
                     });
                 })
                 .ok();
@@ -877,8 +877,8 @@ and then another
             if response.status().is_success() {
                 if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {
                     this.update(cx, |this, cx| {
-                        this.cloud_user_store.update(cx, |cloud_user_store, cx| {
-                            cloud_user_store.update_edit_prediction_usage(usage, cx);
+                        this.user_store.update(cx, |user_store, cx| {
+                            user_store.update_edit_prediction_usage(usage, cx);
                         });
                     })?;
                 }
@@ -1559,9 +1559,9 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         !self
             .zeta
             .read(cx)
-            .cloud_user_store
+            .user_store
             .read(cx)
-            .has_accepted_tos()
+            .has_accepted_terms_of_service()
     }
 
     fn is_refreshing(&self) -> bool {
@@ -1587,7 +1587,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         if self
             .zeta
             .read(cx)
-            .cloud_user_store
+            .user_store
             .read_with(cx, |cloud_user_store, _cx| {
                 cloud_user_store.account_too_young() || cloud_user_store.has_overdue_invoices()
             })
@@ -2098,9 +2098,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2172,9 +2170,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

@@ -100,8 +100,8 @@ impl ZedAiOnboarding {
 
         Self {
             sign_in_status: status.into(),
-            has_accepted_terms_of_service: store.current_user_has_accepted_terms().unwrap_or(false),
-            plan: store.current_plan(),
+            has_accepted_terms_of_service: store.has_accepted_terms_of_service(),
+            plan: store.plan(),
             account_too_young: store.account_too_young(),
             continue_with_zed_ai,
             accept_terms_of_service: Arc::new({

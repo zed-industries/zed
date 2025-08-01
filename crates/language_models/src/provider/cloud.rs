@@ -2,7 +2,7 @@ use ai_onboarding::YoungAccountBanner;
 use anthropic::AnthropicModelMode;
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use client::{Client, CloudUserStore, ModelRequestUsage, UserStore, zed_urls};
+use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
@@ -117,7 +117,6 @@ pub struct State {
     client: Arc<Client>,
     llm_api_token: LlmApiToken,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     status: client::Status,
     accept_terms_of_service_task: Option<Task<Result<()>>>,
     models: Vec<Arc<cloud_llm_client::LanguageModel>>,
@@ -133,17 +132,14 @@ impl State {
     fn new(
         client: Arc<Client>,
         user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
         status: client::Status,
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store,
-            cloud_user_store,
+            user_store: user_store.clone(),
             status,
             accept_terms_of_service_task: None,
             models: Vec::new(),
@@ -152,18 +148,12 @@ impl State {
             recommended_models: Vec::new(),
             _fetch_models_task: cx.spawn(async move |this, cx| {
                 maybe!(async move {
-                    let (client, cloud_user_store, llm_api_token) =
-                        this.read_with(cx, |this, _cx| {
-                            (
-                                client.clone(),
-                                this.cloud_user_store.clone(),
-                                this.llm_api_token.clone(),
-                            )
-                        })?;
+                    let (client, llm_api_token) = this
+                        .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
 
                     loop {
-                        let is_authenticated =
-                            cloud_user_store.read_with(cx, |this, _cx| this.is_authenticated())?;
+                        let is_authenticated = user_store
+                            .read_with(cx, |user_store, _cx| user_store.current_user().is_some())?;
                         if is_authenticated {
                             break;
                         }
@@ -204,7 +194,7 @@ impl State {
     }
 
     fn is_signed_out(&self, cx: &App) -> bool {
-        !self.cloud_user_store.read(cx).is_authenticated()
+        self.user_store.read(cx).current_user().is_none()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -216,7 +206,7 @@ impl State {
     }
 
     fn has_accepted_terms_of_service(&self, cx: &App) -> bool {
-        self.cloud_user_store.read(cx).has_accepted_tos()
+        self.user_store.read(cx).has_accepted_terms_of_service()
     }
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
@@ -300,24 +290,11 @@ impl State {
 }
 
 impl CloudLanguageModelProvider {
-    pub fn new(
-        user_store: Entity<UserStore>,
-        cloud_user_store: Entity<CloudUserStore>,
-        client: Arc<Client>,
-        cx: &mut App,
-    ) -> Self {
+    pub fn new(user_store: Entity<UserStore>, client: Arc<Client>, cx: &mut App) -> Self {
         let mut status_rx = client.status();
         let status = *status_rx.borrow();
 
-        let state = cx.new(|cx| {
-            State::new(
-                client.clone(),
-                user_store.clone(),
-                cloud_user_store.clone(),
-                status,
-                cx,
-            )
-        });
+        let state = cx.new(|cx| State::new(client.clone(), user_store.clone(), status, cx));
 
         let state_ref = state.downgrade();
         let maintain_client_status = cx.spawn(async move |cx| {
@@ -1273,15 +1250,15 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = self.state.read(cx);
-        let cloud_user_store = state.cloud_user_store.read(cx);
+        let user_store = state.user_store.read(cx);
 
         ZedAiConfiguration {
             is_connected: !state.is_signed_out(cx),
-            plan: cloud_user_store.plan(),
-            subscription_period: cloud_user_store.subscription_period(),
-            eligible_for_trial: cloud_user_store.trial_started_at().is_none(),
+            plan: user_store.plan(),
+            subscription_period: user_store.subscription_period(),
+            eligible_for_trial: user_store.trial_started_at().is_none(),
             has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
-            account_too_young: cloud_user_store.account_too_young(),
+            account_too_young: user_store.account_too_young(),
             accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
             accept_terms_of_service_callback: self.accept_terms_of_service_callback.clone(),
             sign_in_callback: self.sign_in_callback.clone(),

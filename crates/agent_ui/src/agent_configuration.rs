@@ -180,7 +180,7 @@ impl AgentConfiguration {
         let current_plan = if is_zed_provider {
             self.workspace
                 .upgrade()
-                .and_then(|workspace| workspace.read(cx).user_store().read(cx).current_plan())
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).plan())
         } else {
             None
         };

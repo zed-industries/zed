@@ -20,7 +20,7 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
-use client::{Client, CloudUserStore, UserStore, zed_urls};
+use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
@@ -126,7 +126,6 @@ pub struct TitleBar {
     platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
     application_menu: Option<Entity<ApplicationMenu>>,
@@ -246,7 +245,6 @@ impl TitleBar {
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
-        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
 
@@ -294,7 +292,6 @@ impl TitleBar {
             workspace: workspace.weak_handle(),
             project,
             user_store,
-            cloud_user_store,
             client,
             _subscriptions: subscriptions,
             banner,
@@ -626,15 +623,15 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let cloud_user_store = self.cloud_user_store.read(cx);
-        if let Some(user) = cloud_user_store.authenticated_user() {
-            let has_subscription_period = cloud_user_store.subscription_period().is_some();
-            let plan = cloud_user_store.plan().filter(|_| {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let has_subscription_period = user_store.subscription_period().is_some();
+            let plan = user_store.plan().filter(|_| {
                 // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
                 has_subscription_period
             });
 
-            let user_avatar = user.avatar_url.clone();
+            let user_avatar = user.avatar_uri.clone();
             let free_chip_bg = cx
                 .theme()
                 .colors()

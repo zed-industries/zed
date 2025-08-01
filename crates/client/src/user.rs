@@ -1,7 +1,7 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
-use cloud_api_client::PlanInfo;
+use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
     MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
@@ -111,10 +111,9 @@ pub struct UserStore {
     by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    current_plan_info: Option<PlanInfo>,
-    trial_started_at: Option<DateTime<Utc>>,
-    is_usage_based_billing_enabled: Option<bool>,
-    account_too_young: Option<bool>,
+    model_request_usage: Option<ModelRequestUsage>,
+    edit_prediction_usage: Option<EditPredictionUsage>,
+    plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
@@ -186,10 +185,9 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
-            current_plan_info: None,
-            trial_started_at: None,
-            is_usage_based_billing_enabled: None,
-            account_too_young: None,
+            plan_info: None,
+            model_request_usage: None,
+            edit_prediction_usage: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -214,54 +212,34 @@ impl UserStore {
                 let weak = Arc::downgrade(&client);
                 drop(client);
                 while let Some(status) = status.next().await {
+                    dbg!(&status);
                     // if the client is dropped, the app is shutting down.
                     let Some(client) = weak.upgrade() else {
                         return Ok(());
                     };
                     match status {
                         Status::Authenticated | Status::Connected { .. } => {
+                            dbg!(client.user_id());
                             if let Some(user_id) = client.user_id() {
                                 let response = client.cloud_client().get_authenticated_user().await;
                                 let mut user = None;
                                 cx.update(|cx| {
                                     if let Some(response) = response.log_err() {
-                                        let staff = response.user.is_staff
-                                            && !*feature_flags::ZED_DISABLE_STAFF;
-                                        cx.update_flags(staff, response.feature_flags);
-                                        client.telemetry.set_authenticated_user_info(
-                                            Some(response.user.metrics_id.clone()),
-                                            staff,
-                                        );
                                         user = Some(Arc::new(User {
                                             id: user_id,
-                                            github_login: response.user.github_login.into(),
-                                            avatar_uri: response.user.avatar_url.into(),
-                                            name: response.user.name.into(),
+                                            github_login: response.user.github_login.clone().into(),
+                                            avatar_uri: response.user.avatar_url.clone().into(),
+                                            name: response.user.name.clone().into(),
                                         }));
-
                                         this.update(cx, |this, cx| {
-                                            let accepted_tos_at = {
-                                                #[cfg(debug_assertions)]
-                                                if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok()
-                                                {
-                                                    None
-                                                } else {
-                                                    response.user.accepted_tos_at
-                                                }
-
-                                                #[cfg(not(debug_assertions))]
-                                                response.user.accepted_tos_at
-                                            };
-
-                                            this.accepted_tos_at = Some(accepted_tos_at);
-                                            this.current_plan_info = Some(response.plan);
-                                            cx.emit(Event::PrivateUserInfoUpdated);
+                                            this.update_authenticated_user(response, cx)
                                         })
                                     } else {
                                         anyhow::Ok(())
                                     }
                                 })??;
 
+                                dbg!(&user);
                                 current_user_tx.send(user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
@@ -718,7 +696,7 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-    pub fn current_plan(&self) -> Option<cloud_llm_client::Plan> {
+    pub fn plan(&self) -> Option<cloud_llm_client::Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
             return match plan.as_str() {
@@ -731,29 +709,118 @@ impl UserStore {
             };
         }
 
-        self.current_plan_info.as_ref().map(|info| info.plan)
+        self.plan_info.as_ref().map(|info| info.plan)
+    }
+
+    pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.subscription_period)
+            .map(|subscription_period| {
+                (
+                    subscription_period.started_at.0,
+                    subscription_period.ended_at.0,
+                )
+            })
     }
 
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
-        self.trial_started_at
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.trial_started_at)
+            .map(|trial_started_at| trial_started_at.0)
     }
 
-    pub fn usage_based_billing_enabled(&self) -> Option<bool> {
-        self.is_usage_based_billing_enabled
+    /// Returns whether the user's account is too new to use the service.
+    pub fn account_too_young(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_account_too_young)
+            .unwrap_or_default()
+    }
+
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
+    pub fn has_overdue_invoices(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.has_overdue_invoices)
+            .unwrap_or_default()
+    }
+
+    pub fn is_usage_based_billing_enabled(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_usage_based_billing_enabled)
+            .unwrap_or_default()
+    }
+
+    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        self.model_request_usage
+    }
+
+    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
+        self.model_request_usage = Some(usage);
+        cx.notify();
+    }
+
+    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+        self.edit_prediction_usage
+    }
+
+    pub fn update_edit_prediction_usage(
+        &mut self,
+        usage: EditPredictionUsage,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_prediction_usage = Some(usage);
+        cx.notify();
+    }
+
+    fn update_authenticated_user(
+        &mut self,
+        response: GetAuthenticatedUserResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let staff = response.user.is_staff && !*feature_flags::ZED_DISABLE_STAFF;
+        cx.update_flags(staff, response.feature_flags);
+        if let Some(client) = self.client.upgrade() {
+            client
+                .telemetry
+                .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
+        }
+
+        let accepted_tos_at = {
+            #[cfg(debug_assertions)]
+            if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok() {
+                None
+            } else {
+                response.user.accepted_tos_at
+            }
+
+            #[cfg(not(debug_assertions))]
+            response.user.accepted_tos_at
+        };
+
+        self.accepted_tos_at = Some(accepted_tos_at);
+        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
+            limit: response.plan.usage.model_requests.limit,
+            amount: response.plan.usage.model_requests.used as i32,
+        }));
+        self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
+            limit: response.plan.usage.edit_predictions.limit,
+            amount: response.plan.usage.edit_predictions.used as i32,
+        }));
+        self.plan_info = Some(response.plan);
+        cx.emit(Event::PrivateUserInfoUpdated);
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
     }
 
-    /// Returns whether the user's account is too new to use the service.
-    pub fn account_too_young(&self) -> bool {
-        self.account_too_young.unwrap_or(false)
-    }
-
-    pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
+    pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map(|accepted_tos_at| accepted_tos_at.is_some())
+            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {

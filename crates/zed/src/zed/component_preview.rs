@@ -140,7 +140,7 @@ impl ComponentPreview {
 
         cx.spawn_in(window, async move |entity, cx| {
             let thread_store_future =
-                load_preview_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
+                load_preview_thread_store(project_clone.clone(), cx);
             let text_thread_store_future =
                 load_preview_text_thread_store(workspace_clone.clone(), project_clone.clone(), cx);
 

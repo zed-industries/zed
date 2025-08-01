@@ -1,7 +1,6 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-mod cloud;
 mod proxy;
 pub mod telemetry;
 pub mod user;
@@ -52,7 +51,6 @@ use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
 
-pub use cloud::*;
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
@@ -928,11 +926,6 @@ impl Client {
             connection = self.establish_connection(&credentials, cx).fuse() => {
                 match connection {
                     Ok(conn) => {
-                        self.state.write().credentials = Some(credentials.clone());
-                        if !credentials.read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                            self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
-                        }
-
                         futures::select_biased! {
                             result = self.set_connection(conn, cx).fuse() => {
                                 match result.context("client auth and connect") {
@@ -950,15 +943,8 @@ impl Client {
                         }
                     }
                     Err(EstablishConnectionError::Unauthorized) => {
-                        self.state.write().credentials.take();
-                        if credentials.read_from_provider {
-                            self.credentials_provider.delete_credentials(cx).await.log_err();
-                            self.set_status(Status::SignedOut, cx);
-                            self.connect(false, cx).await
-                        } else {
-                            self.set_status(Status::ConnectionError, cx);
-                            ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
-                        }
+                        self.set_status(Status::ConnectionError, cx);
+                        ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
                     }
                     Err(EstablishConnectionError::UpgradeRequired) => {
                         self.set_status(Status::UpgradeRequired, cx);
@@ -982,10 +968,7 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        // todo!("validate that credentials are still valid")
-        if matches!(*self.status().borrow(), Status::UpgradeRequired) {
-            return Err(anyhow!("upgrade required"));
-        } else if self.status().borrow().is_signed_out() {
+        if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
         } else {
             self.set_status(Status::Reauthenticating, cx);
@@ -993,7 +976,23 @@ impl Client {
 
         let mut credentials = self.state.read().credentials.clone();
         if credentials.is_none() && try_provider {
-            credentials = self.credentials_provider.read_credentials(cx).await;
+            if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
+                self.cloud_client.set_credentials(
+                    stored_credentials.user_id as u32,
+                    stored_credentials.access_token.clone(),
+                );
+
+                // Fetch the authenticated user with the stored credentials, and
+                // clear them from the credentials provider if that fails.
+                if self.cloud_client.get_authenticated_user().await.is_ok() {
+                    credentials = Some(stored_credentials);
+                } else {
+                    self.credentials_provider
+                        .delete_credentials(cx)
+                        .await
+                        .log_err();
+                }
+            }
         }
 
         if credentials.is_none() {
@@ -1002,7 +1001,16 @@ impl Client {
             futures::select_biased! {
                 authenticate = self.authenticate(cx).fuse() => {
                     match authenticate {
-                        Ok(creds) => credentials = Some(creds),
+                        Ok(creds) => {
+                            if IMPERSONATE_LOGIN.is_none() {
+                                self.credentials_provider
+                                    .write_credentials(creds.user_id, creds.access_token.clone(), cx)
+                                    .await
+                                    .log_err();
+                            }
+
+                            credentials = Some(creds);
+                        },
                         Err(err) => {
                             self.set_status(Status::AuthenticationError, cx);
                             return Err(err);
@@ -1014,11 +1022,14 @@ impl Client {
                 }
             }
         }
+
         let credentials = credentials.unwrap();
         self.set_id(credentials.user_id);
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
+        self.state.write().credentials = Some(credentials.clone());
         self.set_status(Status::Authenticated, cx);
+
         Ok(credentials)
     }
 
