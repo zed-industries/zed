@@ -242,7 +242,7 @@ fn render_telemetry_section(cx: &App) -> impl IntoElement {
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
             "Help Improve Zed",
-            "Sending anonymous usage data helps us build the right features and create the best experience.",
+            Some("Sending anonymous usage data helps us build the right features and create the best experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
             } else {
@@ -267,7 +267,7 @@ fn render_telemetry_section(cx: &App) -> impl IntoElement {
         .child(SwitchField::new(
             "onboarding-telemetry-crash-reports",
             "Help Fix Zed",
-            "Send crash reports so we can fix critical issues fast.",
+            Some("Send crash reports so we can fix critical issues fast.".into()),
             if TelemetrySettings::get_global(cx).diagnostics {
                 ui::ToggleState::Selected
             } else {
@@ -338,10 +338,10 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
-        .child(v_flex().justify_center().child(div().h_0().child("hack").invisible()).child(SwitchField::new(
+        .child(SwitchField::new(
             "onboarding-vim-mode",
             "Vim Mode",
-            "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.",
+            Some("Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.".into()),
             if VimModeSetting::get_global(cx).0 {
                 ui::ToggleState::Selected
             } else {
@@ -363,6 +363,6 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                     );
                 }
             },
-        )))
+        ))
         .child(render_telemetry_section(cx))
 }

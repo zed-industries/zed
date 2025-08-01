@@ -25,6 +25,7 @@ use workspace::{
     open_new, with_active_or_new_workspace,
 };
 
+mod ai_setup_page;
 mod basics_page;
 mod editing_page;
 mod theme_preview;
@@ -78,11 +79,7 @@ pub fn init(cx: &mut App) {
                     if let Some(existing) = existing {
                         workspace.activate_item(&existing, true, true, window, cx);
                     } else {
-                        let settings_page = Onboarding::new(
-                            workspace.weak_handle(),
-                            workspace.user_store().clone(),
-                            cx,
-                        );
+                        let settings_page = Onboarding::new(workspace, cx);
                         workspace.add_item_to_active_pane(
                             Box::new(settings_page),
                             None,
@@ -198,8 +195,7 @@ pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyh
         |workspace, window, cx| {
             {
                 workspace.toggle_dock(DockPosition::Left, window, cx);
-                let onboarding_page =
-                    Onboarding::new(workspace.weak_handle(), workspace.user_store().clone(), cx);
+                let onboarding_page = Onboarding::new(workspace, cx);
                 workspace.add_item_to_center(Box::new(onboarding_page.clone()), window, cx);
 
                 window.focus(&onboarding_page.focus_handle(cx));
@@ -229,16 +225,12 @@ struct Onboarding {
 }
 
 impl Onboarding {
-    fn new(
-        workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
-        cx: &mut App,
-    ) -> Entity<Self> {
+    fn new(workspace: &Workspace, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self {
-            workspace,
-            user_store,
+            workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
             selected_page: SelectedPage::Basics,
+            user_store: workspace.user_store().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
     }
@@ -390,12 +382,10 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => self.render_ai_setup_page(window, cx).into_any_element(),
+            SelectedPage::AiSetup => {
+                crate::ai_setup_page::render_ai_setup_page(&self, window, cx).into_any_element()
+            }
         }
-    }
-
-    fn render_ai_setup_page(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().child("ai setup page")
     }
 }
 
@@ -417,7 +407,9 @@ impl Render for Onboarding {
                     .gap_12()
                     .child(self.render_nav(window, cx))
                     .child(
-                        div()
+                        v_flex()
+                            .max_w_full()
+                            .min_w_0()
                             .pl_12()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
@@ -457,11 +449,9 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        Some(Onboarding::new(
-            self.workspace.clone(),
-            self.user_store.clone(),
-            cx,
-        ))
+        self.workspace
+            .update(cx, |workspace, cx| Onboarding::new(workspace, cx))
+            .ok()
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
