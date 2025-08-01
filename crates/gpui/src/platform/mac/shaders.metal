@@ -106,28 +106,30 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
+  float4 border_color = input.border_color;
 
   // Apply content_mask corner radii clipping
   float clip_alpha = 1.0;
-  if (quad.content_mask.corner_radii.top_left > 0 ||
-      quad.content_mask.corner_radii.bottom_left > 0 ||
-      quad.content_mask.corner_radii.top_right > 0 ||
-      quad.content_mask.corner_radii.bottom_right > 0) {
-    float2 clip_half_size = float2(quad.content_mask.bounds.size.width, quad.content_mask.bounds.size.height) / 2.0;
-    float2 clip_center = float2(quad.content_mask.bounds.origin.x, quad.content_mask.bounds.origin.y) + clip_half_size;
+  ContentMask_ScaledPixels content_mask = quad.content_mask;
+  if (content_mask.corner_radii.top_left > quad.corner_radii.top_left ||
+      content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
+      content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
+      content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
+    float2 clip_half_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height) / 2.0;
+    float2 clip_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + clip_half_size;
     float2 clip_center_to_point = input.position.xy - clip_center;
-    float clip_corner_radius = pick_corner_radius(clip_center_to_point, quad.content_mask.corner_radii);
+    float clip_corner_radius = pick_corner_radius(clip_center_to_point, content_mask.corner_radii);
     float2 clip_corner_center_to_point = fabs(clip_center_to_point) - clip_half_size + clip_corner_radius;
     float clip_sdf = quad_sdf_impl(clip_corner_center_to_point, clip_corner_radius);
     clip_alpha = saturate(antialias_threshold - clip_sdf);
   }
 
+  float4 cliped_background_color = background_color * float4(1.0, 1.0, 1.0, clip_alpha);
+
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
     quad.corner_radii.top_right == 0.0 &&
     quad.corner_radii.bottom_right == 0.0;
-
-  float4 cliped_background_color = background_color * float4(1.0, 1.0, 1.0, clip_alpha);
 
   // Fast path when the quad is not rounded and doesn't have any border
   if (quad.border_widths.top == 0.0 &&
