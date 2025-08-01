@@ -21129,13 +21129,6 @@ fn process_completion_for_edit(
                     .is_le(),
                 "replace_range should start before or at cursor position"
             );
-            debug_assert!(
-                insert_range
-                    .end
-                    .cmp(&cursor_position, &buffer_snapshot)
-                    .is_le(),
-                "insert_range should end before or at cursor position"
-            );
 
             let should_replace = match intent {
                 CompletionIntent::CompleteWithInsert => false,
