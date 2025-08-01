@@ -36,6 +36,7 @@ use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 use std::{
     io::Write,
@@ -411,7 +412,15 @@ pub fn execute_run(
     }
 
     let app = gpui::Application::headless();
-    app.background_executor().spawn(crashes::init()).detach();
+    app.background_executor()
+        .spawn(crashes::init(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+                .to_string(),
+        ))
+        .detach();
     init_panic_hook();
     let log_rx = init_logging_server(log_file)?;
     log::info!(

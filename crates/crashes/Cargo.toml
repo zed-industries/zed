@@ -11,7 +11,6 @@ log.workspace = true
 minidumper.workspace = true
 paths.workspace = true
 smol.workspace = true
-uuid.workspace = true
 zlog.workspace = true
 workspace-hack.workspace = true
 

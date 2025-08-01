@@ -5,20 +5,24 @@ use minidumper::{Client, LoopAction, MinidumpBinary};
 use std::{
     env,
     fs::File,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     process::{self, Command},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     thread,
     time::Duration,
 };
 
 pub static CRASH_HANDLER: AtomicBool = AtomicBool::new(false);
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
+pub static SESSION_ID: OnceLock<String> = OnceLock::new();
 
 // meant to be detached to lazily set up a crash handler, the CRASH_HANDLER atomic bool will
 // be set to true once initialization is complete
-pub async fn init() {
+pub async fn init(id: String) {
     let exe = env::current_exe().expect("unable to find ourselves");
     let zed_pid = process::id();
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
@@ -44,6 +48,7 @@ pub async fn init() {
         smol::Timer::after(retry_frequency).await;
     }
     let client = maybe_client.unwrap();
+    client.send_message(1, id).unwrap();
     let handler = crash_handler::CrashHandler::attach(unsafe {
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
@@ -71,12 +76,15 @@ pub async fn init() {
     info!("crash handler registered");
 }
 
-pub struct CrashServer;
+pub struct CrashServer {
+    session_id: OnceLock<String>,
+}
 
 impl minidumper::ServerHandler for CrashServer {
     fn create_minidump_file(&self) -> Result<(File, PathBuf), io::Error> {
+        let err_message = "Need to send a message with the ID upon starting the crash handler";
         let dump_path = paths::logs_dir()
-            .join(uuid::Uuid::new_v4().to_string())
+            .join(self.session_id.get().expect(err_message))
             .with_extension("dmp");
         let file = File::create(&dump_path)?;
         Ok((file, dump_path))
@@ -85,7 +93,7 @@ impl minidumper::ServerHandler for CrashServer {
     fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
         match result {
             Ok(mut md_bin) => {
-                use Write;
+                use io::Write;
                 let _ = md_bin.file.flush();
                 info!("wrote minidump to disk {:?}", md_bin.path);
             }
@@ -98,10 +106,13 @@ impl minidumper::ServerHandler for CrashServer {
     }
 
     fn on_message(&self, kind: u32, buffer: Vec<u8>) {
-        info!(
-            "kind: {kind}, message: {}",
-            String::from_utf8(buffer).unwrap()
-        );
+        let message = String::from_utf8(buffer).expect("invalid utf-8");
+        info!("kind: {kind}, message: {message}",);
+        if kind == 1 {
+            self.session_id
+                .set(message)
+                .expect("session id already initialized");
+        }
     }
 
     fn on_client_disconnected(&self, clients: usize) -> LoopAction {
@@ -132,9 +143,17 @@ pub fn handle_panic() {
 }
 
 pub fn crash_server(socket: &Path) {
-    let mut server = minidumper::Server::with_name(socket).expect("failed to create server");
+    let Ok(mut server) = minidumper::Server::with_name(socket) else {
+        log::info!("Couldn't create socket, there may already be a running crash server")
+    };
     let ab = AtomicBool::new(false);
     server
-        .run(Box::new(CrashServer), &ab, None)
+        .run(
+            Box::new(CrashServer {
+                session_id: OnceLock::new(),
+            }),
+            &ab,
+            None,
+        )
         .expect("failed to run server");
 }

@@ -270,7 +270,7 @@ pub fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
 
-    app.background_executor().spawn(crashes::init()).detach();
+    app.background_executor().spawn(crashes::init(session_id.clone())).detach();
     reliability::init_panic_hook(
         app_version,
         app_commit_sha.clone(),
