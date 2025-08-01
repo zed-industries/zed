@@ -72,8 +72,28 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_selected = theme.name == current_theme_name;
         let name = theme.name.clone();
         let colors = cx.theme().colors();
+
         v_flex()
             .id(name.clone())
+            .w_full()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .w_full()
+                    .border_2()
+                    .border_color(colors.border_transparent)
+                    .rounded(ThemePreviewTile::CORNER_RADIUS)
+                    .map(|this| {
+                        if is_selected {
+                            this.border_color(colors.border_selected)
+                        } else {
+                            this.opacity(0.8).hover(|s| s.border_color(colors.border))
+                        }
+                    })
+                    .child(ThemePreviewTile::new(theme.clone(), theme_seed)),
+            )
+            .child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
             .on_click({
                 let theme_name = theme.name.clone();
                 move |_, _, cx| {
@@ -84,84 +104,44 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     });
                 }
             })
-            .flex_1()
-            .child(
-                div()
-                    .border_2()
-                    .border_color(colors.border_transparent)
-                    .rounded(ThemePreviewTile::CORNER_RADIUS)
-                    .hover(|mut style| {
-                        if !is_selected {
-                            style.border_color = Some(colors.element_hover);
-                        }
-                        style
-                    })
-                    .when(is_selected, |this| {
-                        this.border_color(colors.border_selected)
-                    })
-                    .cursor_pointer()
-                    .child(ThemePreviewTile::new(theme, theme_seed)),
-            )
-            .child(
-                h_flex()
-                    .justify_center()
-                    .items_baseline()
-                    .child(Label::new(name).color(Color::Muted)),
-            )
     });
 
     return v_flex()
+        .gap_2()
         .child(
             h_flex().justify_between().child(Label::new("Theme")).child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-dark-light",
-                            [
-                                ToggleButtonSimple::new("Light", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Light,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                                ToggleButtonSimple::new("Dark", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Dark,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                            ],
-                        )
-                        .selected_index(selected_index)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    )
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-system",
-                            [ToggleButtonSimple::new("System", {
-                                let theme = theme_selection.clone();
-                                move |_, _, cx| {
-                                    toggle_system_theme_mode(theme.clone(), appearance, cx);
-                                }
-                            })],
-                        )
-                        .selected_index((theme_mode != Some(ThemeMode::System)) as usize)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    ),
+                ToggleButtonGroup::single_row(
+                    "theme-selector-onboarding-dark-light",
+                    [
+                        ToggleButtonSimple::new("Light", {
+                            let appearance_state = appearance_state.clone();
+                            move |_, _, cx| {
+                                write_appearance_change(&appearance_state, Appearance::Light, cx);
+                            }
+                        }),
+                        ToggleButtonSimple::new("Dark", {
+                            let appearance_state = appearance_state.clone();
+                            move |_, _, cx| {
+                                write_appearance_change(&appearance_state, Appearance::Dark, cx);
+                            }
+                        }),
+                        // TODO: Properly put the System back as a button within this group
+                        // Currently, given "System" is not an option in the Appearance enum,
+                        // this button doesn't get selected
+                        ToggleButtonSimple::new("System", {
+                            let theme = theme_selection.clone();
+                            move |_, _, cx| {
+                                toggle_system_theme_mode(theme.clone(), appearance, cx);
+                            }
+                        }),
+                    ],
+                )
+                .selected_index(selected_index)
+                .style(ui::ToggleButtonGroupStyle::Outlined)
+                .button_width(rems_from_px(64.)),
             ),
         )
-        .child(h_flex().justify_between().children(theme_previews));
+        .child(h_flex().gap_4().justify_between().children(theme_previews));
 
     fn write_appearance_change(
         appearance_state: &Entity<Appearance>,
@@ -210,7 +190,6 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     };
                     ThemeSelection::Dynamic { mode, light, dark }
                 }
-
                 ThemeSelection::Dynamic {
                     mode: _,
                     light,
@@ -311,30 +290,31 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                 ToggleButtonGroup::two_rows(
                     "multiple_row_test",
                     [
-                        ToggleButtonWithIcon::new("VS Code", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
                             write_keymap_base(BaseKeymap::VSCode, cx);
                         }),
-                        ToggleButtonWithIcon::new("Jetbrains", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Jetbrains", IconName::EditorJetBrains, |_, _, cx| {
                             write_keymap_base(BaseKeymap::JetBrains, cx);
                         }),
-                        ToggleButtonWithIcon::new("Sublime Text", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
                             write_keymap_base(BaseKeymap::SublimeText, cx);
                         }),
                     ],
                     [
-                        ToggleButtonWithIcon::new("Atom", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Atom, cx);
                         }),
-                        ToggleButtonWithIcon::new("Emacs", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Emacs, cx);
                         }),
-                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Cursor, cx);
                         }),
                     ],
                 )
                 .when_some(base_keymap, |this, base_keymap| this.selected_index(base_keymap))
-                .button_width(rems_from_px(230.))
+                .button_width(rems_from_px(220.))
+                .size(ui::ToggleButtonGroupSize::Medium)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
