@@ -728,6 +728,7 @@ impl DirectWriteState {
     fn create_glyph_run_analysis(
         &self,
         params: &RenderGlyphParams,
+        scale: f32,
     ) -> Result<IDWriteGlyphRunAnalysis> {
         let font = &self.fonts[params.font_id.0];
         let glyph_id = [params.glyph_id.0 as u16];
@@ -744,18 +745,18 @@ impl DirectWriteState {
             bidiLevel: 0,
         };
         let transform = DWRITE_MATRIX {
-            m11: params.scale_factor,
+            m11: params.scale_factor * scale,
             m12: 0.0,
             m21: 0.0,
-            m22: params.scale_factor,
+            m22: params.scale_factor * scale,
             dx: 0.0,
             dy: 0.0,
         };
         let subpixel_shift = params
             .subpixel_variant
             .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-        let baseline_origin_x = subpixel_shift.x / params.scale_factor;
-        let baseline_origin_y = subpixel_shift.y / params.scale_factor;
+        let baseline_origin_x = subpixel_shift.x * scale / params.scale_factor;
+        let baseline_origin_y = subpixel_shift.y * scale / params.scale_factor;
 
         let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
         let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
@@ -783,7 +784,8 @@ impl DirectWriteState {
                 DWRITE_MEASURING_MODE_NATURAL,
                 grid_fit_mode,
                 // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                // DWRITE_TEXT_ANTIALIAS_MODE_CLEARTYPE,
+                DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
                 baseline_origin_x,
                 baseline_origin_y,
             )
@@ -792,7 +794,7 @@ impl DirectWriteState {
     }
 
     fn raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params, 1.0)?;
 
         let bounds = unsafe { glyph_analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_CLEARTYPE_3x1)? };
         // Some glyphs cannot be drawn with ClearType, such as bitmap fonts. In that case
@@ -817,10 +819,13 @@ impl DirectWriteState {
                 })
             } else {
                 Ok(Bounds {
-                    origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
+                    origin: point(
+                        (bounds.left as i32 - 1).into(),
+                        (bounds.top as i32 - 1).into(),
+                    ),
                     size: size(
-                        (bounds.right - bounds.left).into(),
-                        (bounds.bottom - bounds.top).into(),
+                        (bounds.right - bounds.left + 2).into(),
+                        (bounds.bottom - bounds.top + 2).into(),
                     ),
                 })
             }
@@ -872,18 +877,19 @@ impl DirectWriteState {
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
         let mut bitmap_data =
-            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize * 3];
+            vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize * 4];
 
-        let glyph_analysis = self.create_glyph_run_analysis(params)?;
+        let glyph_analysis = self.create_glyph_run_analysis(params, 2.0)?;
         unsafe {
             glyph_analysis.CreateAlphaTexture(
                 // We're using cleartype not grayscale for monochrome is because it provides better quality
-                DWRITE_TEXTURE_CLEARTYPE_3x1,
+                // DWRITE_TEXTURE_CLEARTYPE_3x1,
+                DWRITE_TEXTURE_ALIASED_1x1,
                 &RECT {
-                    left: glyph_bounds.origin.x.0,
-                    top: glyph_bounds.origin.y.0,
-                    right: glyph_bounds.size.width.0 + glyph_bounds.origin.x.0,
-                    bottom: glyph_bounds.size.height.0 + glyph_bounds.origin.y.0,
+                    left: glyph_bounds.origin.x.0 * 2,
+                    top: glyph_bounds.origin.y.0 * 2,
+                    right: glyph_bounds.size.width.0 * 2 + glyph_bounds.origin.x.0 * 2,
+                    bottom: glyph_bounds.size.height.0 * 2 + glyph_bounds.origin.y.0 * 2,
                 },
                 &mut bitmap_data,
             )?;
@@ -892,21 +898,31 @@ impl DirectWriteState {
         let bitmap_factory = self.components.bitmap_factory.resolve()?;
         let bitmap = unsafe {
             bitmap_factory.CreateBitmapFromMemory(
-                glyph_bounds.size.width.0 as u32,
-                glyph_bounds.size.height.0 as u32,
-                &GUID_WICPixelFormat24bppRGB,
-                glyph_bounds.size.width.0 as u32 * 3,
+                glyph_bounds.size.width.0 as u32 * 2,
+                glyph_bounds.size.height.0 as u32 * 2,
+                // &GUID_WICPixelFormat24bppRGB,
+                &GUID_WICPixelFormat8bppGray,
+                glyph_bounds.size.width.0 as u32 * 2,
                 &bitmap_data,
             )
         }?;
 
-        let grayscale_bitmap =
-            unsafe { WICConvertBitmapSource(&GUID_WICPixelFormat8bppGray, &bitmap) }?;
+        // let grayscale_bitmap =
+        //     unsafe { WICConvertBitmapSource(&GUID_WICPixelFormat8bppGray, &bitmap) }?;
+        let scaler = unsafe { bitmap_factory.CreateBitmapScaler()? };
+        unsafe {
+            scaler.Initialize(
+                &bitmap,
+                glyph_bounds.size.width.0 as u32,
+                glyph_bounds.size.height.0 as u32,
+                WICBitmapInterpolationModeHighQualityCubic,
+            )?;
+        }
 
         let mut bitmap_data =
             vec![0u8; glyph_bounds.size.width.0 as usize * glyph_bounds.size.height.0 as usize];
         unsafe {
-            grayscale_bitmap.CopyPixels(
+            scaler.CopyPixels(
                 std::ptr::null() as _,
                 glyph_bounds.size.width.0 as u32,
                 &mut bitmap_data,
