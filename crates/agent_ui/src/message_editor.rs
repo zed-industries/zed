@@ -17,7 +17,7 @@ use agent::{
 use agent_settings::{AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
-use client::UserStore;
+use client::CloudUserStore;
 use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
@@ -43,7 +43,6 @@ use language_model::{
 use multi_buffer;
 use project::Project;
 use prompt_store::PromptStore;
-use proto::Plan;
 use settings::Settings;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -79,7 +78,7 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     history_store: Option<WeakEntity<HistoryStore>>,
@@ -159,7 +158,7 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
-        user_store: Entity<UserStore>,
+        cloud_user_store: Entity<CloudUserStore>,
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
@@ -231,7 +230,7 @@ impl MessageEditor {
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
-            user_store,
+            cloud_user_store,
             thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
@@ -1287,26 +1286,16 @@ impl MessageEditor {
             return None;
         }
 
-        let user_store = self.user_store.read(cx);
-
-        let ubb_enable = user_store
-            .usage_based_billing_enabled()
-            .map_or(false, |enabled| enabled);
-
-        if ubb_enable {
+        let cloud_user_store = self.cloud_user_store.read(cx);
+        if cloud_user_store.is_usage_based_billing_enabled() {
             return None;
         }
 
-        let plan = user_store
-            .current_plan()
-            .map(|plan| match plan {
-                Plan::Free => cloud_llm_client::Plan::ZedFree,
-                Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-                Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-            })
+        let plan = cloud_user_store
+            .plan()
             .unwrap_or(cloud_llm_client::Plan::ZedFree);
 
-        let usage = user_store.model_request_usage()?;
+        let usage = cloud_user_store.model_request_usage()?;
 
         Some(
             div()
@@ -1769,7 +1758,7 @@ impl AgentPreview for MessageEditor {
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
-            let user_store = workspace.read(cx).app_state().user_store.clone();
+            let cloud_user_store = workspace.read(cx).app_state().cloud_user_store.clone();
             let project = workspace.read(cx).project().clone();
             let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
@@ -1782,7 +1771,7 @@ impl AgentPreview for MessageEditor {
                 MessageEditor::new(
                     fs,
                     workspace.downgrade(),
-                    user_store,
+                    cloud_user_store,
                     context_store,
                     None,
                     thread_store.downgrade(),
