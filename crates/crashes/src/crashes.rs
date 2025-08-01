@@ -101,7 +101,6 @@ impl minidumper::ServerHandler for CrashServer {
                 info!("failed to write minidump: {:#}", e);
             }
         }
-
         LoopAction::Exit
     }
 
@@ -144,7 +143,8 @@ pub fn handle_panic() {
 
 pub fn crash_server(socket: &Path) {
     let Ok(mut server) = minidumper::Server::with_name(socket) else {
-        log::info!("Couldn't create socket, there may already be a running crash server")
+        log::info!("Couldn't create socket, there may already be a running crash server");
+        return;
     };
     let ab = AtomicBool::new(false);
     server

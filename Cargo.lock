@@ -3968,7 +3968,6 @@ dependencies = [
  "paths",
  "smol",
  "workspace-hack",
- "zlog",
 ]
 
 [[package]]
