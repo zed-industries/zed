@@ -676,6 +676,13 @@ pub struct AssistantContext {
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
     slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Option<Arc<assistant_tool::ToolWorkingSet>>,
+    cached_tools: Arc<parking_lot::Mutex<Option<Vec<language_model::LanguageModelRequestTool>>>>,
+    tools_loading_task: Arc<parking_lot::Mutex<Option<Task<()>>>>,
+    pending_tool_uses: Vec<PendingToolUse>,
+    action_log: Option<Entity<assistant_tool::ActionLog>>,
+    current_request: Option<Arc<LanguageModelRequest>>,
+    current_model: Option<Arc<dyn LanguageModel>>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     thought_process_output_sections: Vec<ThoughtProcessOutputSection<language::Anchor>>,
     message_anchors: Vec<MessageAnchor>,
@@ -717,6 +724,7 @@ impl AssistantContext {
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Option<Arc<assistant_tool::ToolWorkingSet>>,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
@@ -726,6 +734,7 @@ impl AssistantContext {
             language_registry,
             prompt_builder,
             slash_commands,
+            tools,
             project,
             telemetry,
             cx,
@@ -747,6 +756,7 @@ impl AssistantContext {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Option<Arc<assistant_tool::ToolWorkingSet>>,
         project: Option<Entity<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut Context<Self>,
@@ -793,6 +803,13 @@ impl AssistantContext {
             project,
             language_registry,
             slash_commands,
+            tools,
+            cached_tools: Arc::new(parking_lot::Mutex::new(None)),
+            tools_loading_task: Arc::new(parking_lot::Mutex::new(None)),
+            pending_tool_uses: Vec::new(),
+            action_log: None,
+            current_request: None,
+            current_model: None,
             prompt_builder,
         };
 
@@ -890,6 +907,7 @@ impl AssistantContext {
             language_registry,
             prompt_builder,
             slash_commands,
+            None, // tools parameter
             project,
             telemetry,
             cx,
@@ -1674,6 +1692,148 @@ impl AssistantContext {
         start_ix..end_ix
     }
 
+    /// Return tools that are both enabled and supported by the model
+    fn available_tools(
+        &self,
+        model: Option<&Arc<dyn LanguageModel>>,
+        cx: &App,
+    ) -> Vec<language_model::LanguageModelRequestTool> {
+        let Some(model) = model else {
+            return Vec::new();
+        };
+
+        if !model.supports_tools() {
+            return Vec::new();
+        }
+
+        // If we have a tools working set, use it
+        if let Some(tools) = &self.tools {
+            return tools
+                .tools(cx)
+                .into_iter()
+                .filter_map(|(name, tool)| {
+                    // Skip tools that cannot be supported by this model
+                    let input_schema = tool.input_schema(model.tool_input_format()).ok()?;
+                    Some(language_model::LanguageModelRequestTool {
+                        name: name.into(),
+                        description: tool.description(),
+                        input_schema,
+                    })
+                })
+                .collect();
+        }
+
+        // Check cache first
+        {
+            let cached = self.cached_tools.lock();
+            if let Some(cached_tools) = &*cached {
+                return cached_tools.clone();
+            }
+        }
+
+        // Return empty tools for now and schedule async loading
+        // This prevents blocking the main thread while still providing MCP support
+        self.schedule_tool_loading(model, cx);
+        Vec::new()
+    }
+
+    fn schedule_tool_loading(&self, model: &Arc<dyn LanguageModel>, cx: &App) {
+        // Only load if we have a project and no loading is in progress
+        let Some(project) = &self.project else {
+            return;
+        };
+
+        {
+            let loading_task = self.tools_loading_task.lock();
+            if loading_task.is_some() {
+                return; // Already loading
+            }
+        }
+
+        let project = project.clone();
+        let model = model.clone();
+        let cached_tools = self.cached_tools.clone();
+        let loading_task_ref = self.tools_loading_task.clone();
+
+        // Start async loading on main thread to access entities
+        let task = cx.spawn({
+            let project = project.clone();
+            let model = model.clone();
+            let cached_tools = cached_tools.clone();
+            let loading_task_ref = loading_task_ref.clone();
+
+            async move |cx| {
+                let mut tools = Vec::new();
+
+                log::info!("Loading MCP tools from context servers");
+
+                // Access context server store
+                if let Ok(context_server_store) = project.update(cx, |project, _| {
+                    project.context_server_store()
+                }) {
+                    let running_servers = context_server_store.update(cx, |store, _| {
+                        store.running_servers()
+                    }).unwrap_or_default();
+
+                    for server in running_servers {
+                        if let Some(protocol) = server.client() {
+                            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                                log::info!("Loading tools from context server: {:?}", server.id());
+
+                                if let Ok(response) = protocol
+                                    .request::<context_server::types::requests::ListTools>(())
+                                    .await
+                                {
+                                    for tool in response.tools {
+                                        log::info!("Found context server tool: {:?}", tool.name);
+
+                                        // Convert context server tool to language model tool format
+                                        let input_schema = match tool.input_schema {
+                                            serde_json::Value::Null => {
+                                                serde_json::json!({ "type": "object", "properties": {} })
+                                            }
+                                            serde_json::Value::Object(map) if map.is_empty() => {
+                                                serde_json::json!({ "type": "object", "properties": {} })
+                                            }
+                                            _ => tool.input_schema,
+                                        };
+
+                                        // Adapt schema to model format
+                                        let mut adapted_schema = input_schema;
+                                        if assistant_tool::adapt_schema_to_format(
+                                            &mut adapted_schema,
+                                            model.tool_input_format(),
+                                        ).is_ok() {
+                                            tools.push(language_model::LanguageModelRequestTool {
+                                                name: tool.name,
+                                                description: tool.description.unwrap_or_default(),
+                                                input_schema: adapted_schema,
+                                            });
+                                        } else {
+                                            log::warn!("Failed to adapt tool schema for model format");
+                                        }
+                                    }
+                                } else {
+                                    log::warn!("Failed to list tools from context server");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                log::info!("Loaded {} MCP tools from context servers", tools.len());
+
+                // Cache the results
+                *cached_tools.lock() = Some(tools);
+
+                // Clear the loading task
+                *loading_task_ref.lock() = None;
+            }
+        });
+
+        *loading_task_ref.lock() = Some(task);
+    }
+
     pub fn insert_command_output(
         &mut self,
         command_source_range: Range<language::Anchor>,
@@ -2031,6 +2191,11 @@ impl AssistantContext {
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
         let request = self.to_completion_request(Some(&model), cx);
+        let request = Arc::new(request);
+
+        // Store current request and model for tool execution
+        self.current_request = Some(request.clone());
+        self.current_model = Some(model.clone());
 
         let assistant_message = self
             .insert_message_after(last_message_id, Role::Assistant, MessageStatus::Pending, cx)
@@ -2045,7 +2210,7 @@ impl AssistantContext {
 
         let task = cx.spawn({
             async move |this, cx| {
-                let stream = model.stream_completion(request, &cx);
+                let stream = model.stream_completion(request.as_ref().clone(), &cx);
                 let assistant_message_id = assistant_message.id;
                 let mut response_latency = None;
                 let stream_completion = async {
@@ -2065,6 +2230,7 @@ impl AssistantContext {
 
                         let mut context_event = None;
                         let mut thought_process_output_section = None;
+                        let mut tool_use_events = Vec::new();
 
                         this.update(cx, |this, cx| {
                             let message_ix = this
@@ -2139,7 +2305,9 @@ impl AssistantContext {
                                             cx,
                                         );
                                     }
-                                    LanguageModelCompletionEvent::ToolUse(_) |
+                                    LanguageModelCompletionEvent::ToolUse(tool_use) => {
+                                        tool_use_events.push(tool_use);
+                                    }
                                     LanguageModelCompletionEvent::ToolUseJsonParseError { .. } |
                                     LanguageModelCompletionEvent::UsageUpdate(_) => {}
                                 }
@@ -2150,6 +2318,11 @@ impl AssistantContext {
                             }
                             if let Some(context_event) = context_event.take() {
                                 cx.emit(context_event);
+                            }
+
+                            // Process tool use events outside buffer context
+                            for tool_use in tool_use_events.drain(..) {
+                                this.handle_tool_use(tool_use, cx);
                             }
 
                             cx.emit(ContextEvent::StreamedCompletion);
@@ -2171,6 +2344,9 @@ impl AssistantContext {
                 let result = stream_completion.await;
 
                 this.update(cx, |this, cx| {
+                    // Clear current request and model after completion
+                    this.current_request = None;
+                    this.current_model = None;
                     let error_message = if let Some(error) = result.as_ref().err() {
                         if error.is::<PaymentRequiredError>() {
                             cx.emit(ContextEvent::ShowPaymentRequiredError);
@@ -2225,7 +2401,9 @@ impl AssistantContext {
 
                     if let Ok(stop_reason) = result {
                         match stop_reason {
-                            StopReason::ToolUse => {}
+                            StopReason::ToolUse => {
+                                this.execute_pending_tools(cx);
+                            }
                             StopReason::EndTurn => {}
                             StopReason::MaxTokens => {}
                             StopReason::Refusal => {}
@@ -2283,13 +2461,15 @@ impl AssistantContext {
             }
         }
 
+        let tools = self.available_tools(model, cx);
+
         let mut completion_request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
             intent: Some(CompletionIntent::UserPrompt),
             mode: None,
             messages: Vec::new(),
-            tools: Vec::new(),
+            tools,
             tool_choice: None,
             stop: Vec::new(),
             temperature: model.and_then(|model| AgentSettings::temperature_for_model(model, cx)),
@@ -3032,6 +3212,173 @@ pub enum PendingToolUseStatus {
 impl PendingToolUseStatus {
     pub fn is_idle(&self) -> bool {
         matches!(self, PendingToolUseStatus::Idle)
+    }
+}
+
+impl AssistantContext {
+    fn handle_tool_use(
+        &mut self,
+        tool_use: language_model::LanguageModelToolUse,
+        cx: &mut Context<Self>,
+    ) {
+        // Find the insertion point for the tool use in the buffer
+        let buffer = self.buffer.read(cx);
+        let insertion_point = buffer.len();
+        let start_anchor = buffer.anchor_before(insertion_point);
+        let end_anchor = buffer.anchor_after(insertion_point);
+
+        let pending_tool_use = PendingToolUse {
+            id: tool_use.id,
+            name: tool_use.name.to_string(),
+            input: tool_use.input,
+            status: PendingToolUseStatus::Idle,
+            source_range: start_anchor..end_anchor,
+        };
+
+        self.pending_tool_uses.push(pending_tool_use);
+        log::info!("Added pending tool use: {}", tool_use.name);
+    }
+
+    fn execute_pending_tools(&mut self, cx: &mut Context<Self>) {
+        let Some(tools) = &self.tools else {
+            log::warn!("No tools available for execution");
+            return;
+        };
+
+        let Some(current_request) = &self.current_request else {
+            log::warn!("No current request available for tool execution");
+            return;
+        };
+
+        let Some(current_model) = &self.current_model else {
+            log::warn!("No current model available for tool execution");
+            return;
+        };
+
+        let tools = tools.clone();
+        let request = current_request.clone();
+        let model = current_model.clone();
+        let Some(project) = self.project.clone() else {
+            log::warn!("No project available for tool execution");
+            return;
+        };
+
+        // Create action log lazily if needed
+        let action_log = if let Some(action_log) = &self.action_log {
+            action_log.clone()
+        } else {
+            let action_log = cx.new(|_| assistant_tool::ActionLog::new(project.clone()));
+            self.action_log = Some(action_log.clone());
+            action_log
+        };
+
+        let pending_tools: Vec<_> = self
+            .pending_tool_uses
+            .iter()
+            .filter(|tool_use| tool_use.status.is_idle())
+            .cloned()
+            .collect();
+
+        for pending_tool in pending_tools {
+            let tool_name = pending_tool.name.clone();
+            let tool_id = pending_tool.id.clone();
+
+            if let Some(tool) = tools.tool(&tool_name, cx) {
+                log::info!("Executing tool: {}", tool_name);
+
+                // Mark tool as running
+                if let Some(existing_tool) =
+                    self.pending_tool_uses.iter_mut().find(|t| t.id == tool_id)
+                {
+                    let tool_result = tool.run(
+                        pending_tool.input,
+                        request.clone(),
+                        project.clone(),
+                        action_log.clone(),
+                        model.clone(),
+                        None, // window
+                        cx,
+                    );
+
+                    let task = cx.spawn(async move |this, cx| {
+                        let result = tool_result.output.await;
+                        this.update(cx, |this, cx| {
+                            this.handle_tool_result(tool_id, result, cx);
+                        })
+                        .log_err();
+                    });
+
+                    existing_tool.status = PendingToolUseStatus::Running {
+                        _task: task.shared(),
+                    };
+                }
+            } else {
+                log::warn!("Tool not found: {}", tool_name);
+                if let Some(existing_tool) =
+                    self.pending_tool_uses.iter_mut().find(|t| t.id == tool_id)
+                {
+                    existing_tool.status =
+                        PendingToolUseStatus::Error(format!("Tool '{}' not found", tool_name));
+                }
+            }
+        }
+    }
+
+    fn handle_tool_result(
+        &mut self,
+        tool_id: LanguageModelToolUseId,
+        result: anyhow::Result<assistant_tool::ToolResultOutput>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(tool_use) = self.pending_tool_uses.iter_mut().find(|t| t.id == tool_id) {
+            match result {
+                Ok(tool_result_output) => {
+                    log::info!("Tool execution completed: {}", tool_use.name);
+
+                    // Extract the text content from the tool result
+                    let result_text = match &tool_result_output.content {
+                        assistant_tool::ToolResultContent::Text(text) => text.clone(),
+                        assistant_tool::ToolResultContent::Image(_) => {
+                            "[Image output - display not yet implemented in text threads]"
+                                .to_string()
+                        }
+                    };
+
+                    // Insert the tool result into the buffer
+                    let buffer = self.buffer.clone();
+                    buffer.update(cx, |buffer, cx| {
+                        let insertion_point = tool_use.source_range.end.to_offset(buffer);
+                        let formatted_result = format!(
+                            "\n\n**Tool Result ({}):**\n{}\n",
+                            tool_use.name, result_text
+                        );
+                        buffer.edit(
+                            [(insertion_point..insertion_point, formatted_result)],
+                            None,
+                            cx,
+                        );
+                    });
+
+                    // Remove the completed tool use
+                    self.pending_tool_uses.retain(|t| t.id != tool_id);
+                }
+                Err(error) => {
+                    log::error!("Tool execution failed: {}", error);
+                    tool_use.status = PendingToolUseStatus::Error(error.to_string());
+
+                    // Insert error message into the buffer
+                    let buffer = self.buffer.clone();
+                    buffer.update(cx, |buffer, cx| {
+                        let insertion_point = tool_use.source_range.end.to_offset(buffer);
+                        let error_text =
+                            format!("\n\n**Tool Error ({}):**\n{}\n", tool_use.name, error);
+                        buffer.edit([(insertion_point..insertion_point, error_text)], None, cx);
+                    });
+                }
+            }
+
+            cx.emit(ContextEvent::MessagesEdited);
+        }
     }
 }
 

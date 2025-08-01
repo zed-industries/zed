@@ -24,24 +24,49 @@ struct WorkingSetState {
 
 impl SlashCommandWorkingSet {
     pub fn command(&self, name: &str, cx: &App) -> Option<Arc<dyn SlashCommand>> {
-        self.state
+        let context_server_command = self
+            .state
             .lock()
             .context_server_commands_by_name
             .get(name)
-            .cloned()
-            .or_else(|| SlashCommandRegistry::global(cx).command(name))
+            .cloned();
+
+        if let Some(command) = &context_server_command {
+            log::debug!("Found context server slash command: '{}'", name);
+            return Some(command.clone());
+        }
+
+        let registry_command = SlashCommandRegistry::global(cx).command(name);
+        if registry_command.is_some() {
+            log::debug!("Found registry slash command: '{}'", name);
+        } else {
+            log::debug!(
+                "Slash command '{}' not found in either context server or registry",
+                name
+            );
+        }
+
+        registry_command
     }
 
     pub fn command_names(&self, cx: &App) -> Vec<Arc<str>> {
         let mut command_names = SlashCommandRegistry::global(cx).command_names();
-        command_names.extend(
-            self.state
-                .lock()
-                .context_server_commands_by_name
-                .keys()
-                .cloned(),
+
+        let context_server_commands: Vec<Arc<str>> = self
+            .state
+            .lock()
+            .context_server_commands_by_name
+            .keys()
+            .cloned()
+            .collect();
+
+        log::debug!(
+            "Available slash commands - Registry: {:?}, Context Server: {:?}",
+            command_names,
+            context_server_commands
         );
 
+        command_names.extend(context_server_commands);
         command_names
     }
 
@@ -50,6 +75,9 @@ impl SlashCommandWorkingSet {
     }
 
     pub fn insert(&self, command: Arc<dyn SlashCommand>) -> SlashCommandId {
+        let command_name = command.name();
+        log::info!("Inserting slash command: '{}'", command_name);
+
         let mut state = self.state.lock();
         let command_id = state.next_command_id;
         state.next_command_id.0 += 1;
@@ -57,25 +85,56 @@ impl SlashCommandWorkingSet {
             .context_server_commands_by_id
             .insert(command_id, command.clone());
         state.slash_commands_changed();
+
+        log::info!(
+            "Successfully inserted slash command '{}' with ID {:?}",
+            command_name,
+            command_id
+        );
         command_id
     }
 
     pub fn remove(&self, command_ids_to_remove: &[SlashCommandId]) {
+        log::info!(
+            "Removing slash commands with IDs: {:?}",
+            command_ids_to_remove
+        );
+
         let mut state = self.state.lock();
+        let before_count = state.context_server_commands_by_id.len();
         state
             .context_server_commands_by_id
             .retain(|id, _| !command_ids_to_remove.contains(id));
         state.slash_commands_changed();
+
+        let after_count = state.context_server_commands_by_id.len();
+        log::info!(
+            "Removed {} slash commands, {} remaining",
+            before_count - after_count,
+            after_count
+        );
     }
 }
 
 impl WorkingSetState {
     fn slash_commands_changed(&mut self) {
         self.context_server_commands_by_name.clear();
-        self.context_server_commands_by_name.extend(
-            self.context_server_commands_by_id
-                .values()
-                .map(|command| (command.name().into(), command.clone())),
+        let commands: Vec<(Arc<str>, Arc<dyn SlashCommand>)> = self
+            .context_server_commands_by_id
+            .values()
+            .map(|command| (command.name().into(), command.clone()))
+            .collect();
+
+        log::debug!(
+            "Rebuilding slash command name mapping with {} commands: {}",
+            commands.len(),
+            commands
+                .iter()
+                .map(|(name, _)| name.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
+
+        self.context_server_commands_by_name.extend(commands);
     }
 }

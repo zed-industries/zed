@@ -6762,12 +6762,13 @@ async fn test_context_collaboration_with_reconnect(
     });
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
+    let slash_commands = Arc::new(SlashCommandWorkingSet::default());
     let context_store_a = cx_a
         .update(|cx| {
             ContextStore::new(
                 project_a.clone(),
                 prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
+                slash_commands.clone(),
                 cx,
             )
         })
@@ -6778,7 +6779,7 @@ async fn test_context_collaboration_with_reconnect(
             ContextStore::new(
                 project_b.clone(),
                 prompt_builder.clone(),
-                Arc::new(SlashCommandWorkingSet::default()),
+                slash_commands.clone(),
                 cx,
             )
         })

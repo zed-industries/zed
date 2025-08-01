@@ -355,6 +355,7 @@ impl ContextStore {
                 Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
                 self.slash_commands.clone(),
+                None,
                 cx,
             )
         });
@@ -391,6 +392,7 @@ impl ContextStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
+                    None,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -560,6 +562,7 @@ impl ContextStore {
                     language_registry,
                     prompt_builder,
                     slash_commands,
+                    None,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -873,18 +876,48 @@ impl ContextStore {
                 return;
             };
 
+            let mut all_slash_command_ids = Vec::new();
+
+            // Load prompts as slash commands
             if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
+                log::info!("Context server {} supports prompts, requesting prompts list", server_id);
                 if let Some(response) = protocol
                     .request::<context_server::types::requests::PromptsList>(())
                     .await
                     .log_err()
                 {
-                    let slash_command_ids = response
+                    log::info!("Context server {} returned {} prompts", server_id, response.prompts.len());
+
+                    // Debug: Log all prompt names before filtering
+                    for prompt in &response.prompts {
+                        log::debug!("Context server {} raw prompt: '{}' (args: {:?})", server_id, prompt.name, prompt.arguments);
+                    }
+
+                    // Collect command names for debugging before consuming the vector
+                    let debug_command_names: Vec<String> = response.prompts.iter()
+                        .filter(|prompt| assistant_slash_commands::acceptable_prompt(prompt))
+                        .map(|prompt| prompt.name.clone())
+                        .collect();
+
+                    let mut accepted_count = 0;
+                    let mut rejected_count = 0;
+
+                    let prompt_slash_command_ids = response
                         .prompts
                         .into_iter()
-                        .filter(assistant_slash_commands::acceptable_prompt)
+                        .filter_map(|prompt| {
+                            let is_acceptable = assistant_slash_commands::acceptable_prompt(&prompt);
+                            if is_acceptable {
+                                accepted_count += 1;
+                                log::info!("registering context server command: {:?} (arguments: {:?})", prompt.name, prompt.arguments);
+                                Some(prompt)
+                            } else {
+                                rejected_count += 1;
+                                log::warn!("rejecting context server command: {:?} (arguments: {:?}) - too many arguments", prompt.name, prompt.arguments);
+                                None
+                            }
+                        })
                         .map(|prompt| {
-                            log::info!("registering context server command: {:?}", prompt.name);
                             slash_command_working_set.insert(Arc::new(
                                 assistant_slash_commands::ContextServerSlashCommand::new(
                                     context_server_store.clone(),
@@ -895,12 +928,81 @@ impl ContextStore {
                         })
                         .collect::<Vec<_>>();
 
-                    this.update(cx, |this, _cx| {
-                        this.context_server_slash_command_ids
-                            .insert(server_id.clone(), slash_command_ids);
-                    })
-                    .log_err();
+                    all_slash_command_ids.extend(prompt_slash_command_ids);
+
+                    log::info!("Context server {} prompt commands: {} accepted, {} rejected", server_id, accepted_count, rejected_count);
+
+                    // Debug: Log final slash command names for verification
+                    if accepted_count > 0 {
+                        log::info!("Context server {} registered prompt slash commands: {}", server_id, debug_command_names.join(", "));
+                    }
+                } else {
+                    log::warn!("Context server {} failed to return prompts list", server_id);
                 }
+            }
+
+            // Load tools as slash commands
+            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                log::info!("Context server {} supports tools, requesting tools list", server_id);
+                if let Some(response) = protocol
+                    .request::<context_server::types::requests::ListTools>(())
+                    .await
+                    .log_err()
+                {
+                    log::info!("Context server {} returned {} tools", server_id, response.tools.len());
+
+                    // Debug: Log all tool names
+                    let debug_tool_names: Vec<String> = response.tools.iter()
+                        .map(|tool| tool.name.clone())
+                        .collect();
+
+                    let tool_slash_command_ids = response
+                        .tools
+                        .into_iter()
+                        .map(|tool| {
+                            log::info!("registering {} tool slash command: {:?}", server_id, tool.name);
+                            slash_command_working_set.insert(Arc::new(
+                                assistant_slash_commands::McpToolSlashCommand::new(
+                                    context_server_store.clone(),
+                                    server.id(),
+                                    tool,
+                                ),
+                            ))
+                        })
+                        .collect::<Vec<_>>();
+
+                    all_slash_command_ids.extend(tool_slash_command_ids);
+
+                    log::info!("Context server {} registered {} tool slash commands: {}",
+                        server_id, debug_tool_names.len(), debug_tool_names.join(", "));
+                } else {
+                    log::warn!("Context server {} failed to return tools list", server_id);
+                }
+            }
+
+            if !all_slash_command_ids.is_empty() {
+                this.update(cx, |this, _cx| {
+                    this.context_server_slash_command_ids
+                        .insert(server_id.clone(), all_slash_command_ids);
+                })
+                .log_err();
+            }
+
+            if !protocol.capable(context_server::protocol::ServerCapability::Prompts)
+                && !protocol.capable(context_server::protocol::ServerCapability::Tools) {
+                let supported_capabilities = [
+                    ("experimental", protocol.capable(context_server::protocol::ServerCapability::Experimental)),
+                    ("logging", protocol.capable(context_server::protocol::ServerCapability::Logging)),
+                    ("prompts", protocol.capable(context_server::protocol::ServerCapability::Prompts)),
+                    ("resources", protocol.capable(context_server::protocol::ServerCapability::Resources)),
+                    ("tools", protocol.capable(context_server::protocol::ServerCapability::Tools)),
+                ];
+                let capabilities_str = supported_capabilities
+                    .iter()
+                    .filter_map(|(name, supported)| if *supported { Some(*name) } else { None })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                log::info!("Context server {} does not support prompts capability - supported capabilities: [{}]", server_id, capabilities_str);
             }
         })
         .detach();

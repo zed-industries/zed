@@ -235,8 +235,22 @@ impl TextThreadEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let slash_commands = context.read(cx).slash_commands().clone();
+
+        // Debug: Log slash commands available to this text thread
+        let command_names = slash_commands.command_names(cx);
+        log::info!(
+            "TextThreadEditor created with {} slash commands: {}",
+            command_names.len(),
+            command_names
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
         let completion_provider = SlashCommandCompletionProvider::new(
-            context.read(cx).slash_commands().clone(),
+            slash_commands.clone(),
             Some(cx.entity().downgrade()),
             Some(workspace.clone()),
         );
@@ -277,6 +291,19 @@ impl TextThreadEditor {
         let slash_command_sections = context.read(cx).slash_command_output_sections().to_vec();
         let thought_process_sections = context.read(cx).thought_process_output_sections().to_vec();
         let slash_commands = context.read(cx).slash_commands().clone();
+
+        // Debug: Log final slash commands assignment
+        let final_command_names = slash_commands.command_names(cx);
+        log::debug!(
+            "TextThreadEditor final slash commands ({}): {}",
+            final_command_names.len(),
+            final_command_names
+                .iter()
+                .map(|s| s.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+
         let mut this = Self {
             context,
             slash_commands,
@@ -323,7 +350,45 @@ impl TextThreadEditor {
             window,
             cx,
         );
+        // Debug: Test slash command availability
+        this.debug_available_slash_commands(cx);
+
         this
+    }
+
+    /// Debug function to test slash command availability
+    fn debug_available_slash_commands(&self, cx: &App) {
+        let command_names = self.slash_commands.command_names(cx);
+        let featured_names = self.slash_commands.featured_command_names(cx);
+
+        log::info!("=== SLASH COMMAND DEBUG ===");
+        log::info!("Total slash commands available: {}", command_names.len());
+        log::info!("Featured commands: {}", featured_names.len());
+
+        for name in &command_names {
+            if let Some(command) = self.slash_commands.command(name, cx) {
+                log::info!("  ✓ '{}' - {}", name, command.description());
+            } else {
+                log::warn!("  ✗ '{}' - command not found (inconsistent state)", name);
+            }
+        }
+
+        // Test specific GitHub commands
+        let github_commands = [
+            "AssignCodingAgent",
+            "create_issue",
+            "search_code",
+            "get_issue",
+        ];
+        log::info!("Testing specific GitHub commands:");
+        for cmd in &github_commands {
+            if let Some(command) = self.slash_commands.command(cmd, cx) {
+                log::info!("  ✓ '{}' found - {}", cmd, command.description());
+            } else {
+                log::info!("  ✗ '{}' not found", cmd);
+            }
+        }
+        log::info!("=== END SLASH COMMAND DEBUG ===");
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3286,6 +3351,7 @@ mod tests {
                 None,
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
+                None,
                 cx,
             );
             let mut message_1 = context.messages(cx).next().unwrap();
@@ -3329,5 +3395,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);
         editor::init_settings(cx);
+        // Initialize slash command registry for tests
+        assistant_slash_command::SlashCommandRegistry::default_global(cx);
     }
 }
