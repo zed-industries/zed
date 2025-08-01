@@ -386,7 +386,7 @@
       "right": "vim::WrappingRight",
       "h": "vim::WrappingLeft",
       "l": "vim::WrappingRight",
-      "y": "editor::Copy",
+      "y": "vim::HelixYank",
       "alt-;": "vim::OtherEnd",
       "ctrl-r": "vim::Redo",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
