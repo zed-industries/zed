@@ -7,6 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
+use cloud_llm_client::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use extension::ExtensionManifest;
@@ -25,7 +26,6 @@ use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
-use proto::Plan;
 use settings::{Settings, update_settings_file};
 use ui::{
     Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
@@ -180,7 +180,7 @@ impl AgentConfiguration {
         let current_plan = if is_zed_provider {
             self.workspace
                 .upgrade()
-                .and_then(|workspace| workspace.read(cx).user_store().read(cx).current_plan())
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).plan())
         } else {
             None
         };
@@ -508,7 +508,7 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::Free => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
             };

@@ -3820,7 +3820,6 @@ mod tests {
     use super::*;
     use agent::{MessageSegment, context::ContextLoadResult, thread_store};
     use assistant_tool::{ToolRegistry, ToolWorkingSet};
-    use client::CloudUserStore;
     use editor::EditorSettings;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext, VisualTestContext};
@@ -4117,16 +4116,10 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let (client, user_store) =
-            project.read_with(cx, |project, _cx| (project.client(), project.user_store()));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store, cx));
-
         let thread_store = cx
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
-                    cloud_user_store,
                     cx.new(|_| ToolWorkingSet::default()),
                     None,
                     Arc::new(PromptBuilder::new(None).unwrap()),

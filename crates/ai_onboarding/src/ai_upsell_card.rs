@@ -24,11 +24,9 @@ impl AiUpsellCard {
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
                     let client = client.clone();
-                    async move |cx| {
-                        client.authenticate_and_connect(true, cx).await;
-                    }
+                    async move |cx| client.sign_in_with_optional_connect(true, cx).await
                 })
-                .detach();
+                .detach_and_log_err(cx);
             }),
         }
     }

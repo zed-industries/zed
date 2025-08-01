@@ -1,5 +1,5 @@
 use crate::welcome::{ShowWelcome, WelcomePage};
-use client::{Client, CloudUserStore, UserStore};
+use client::{Client, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -220,7 +220,6 @@ struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
-    cloud_user_store: Entity<CloudUserStore>,
     user_store: Entity<UserStore>,
     _settings_subscription: Subscription,
 }
@@ -231,7 +230,6 @@ impl Onboarding {
             workspace: workspace.weak_handle(),
             focus_handle: cx.focus_handle(),
             selected_page: SelectedPage::Basics,
-            cloud_user_store: workspace.app_state().cloud_user_store.clone(),
             user_store: workspace.user_store().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
@@ -365,9 +363,8 @@ impl Onboarding {
                             window
                                 .spawn(cx, async move |cx| {
                                     client
-                                        .authenticate_and_connect(true, &cx)
+                                        .sign_in_with_optional_connect(true, &cx)
                                         .await
-                                        .into_response()
                                         .notify_async_err(cx);
                                 })
                                 .detach();
