@@ -11,8 +11,8 @@
 
 (call_expression
   function: (identifier) @_name (#eq? @_name "css")
-  arguments: (template_string (string_fragment) @injection.content
-                              (#set! injection.language "css"))
+  arguments: (template_string) @injection.content
+                              (#set! injection.language "css")
 )
 
 (call_expression
