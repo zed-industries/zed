@@ -1132,6 +1132,7 @@ pub struct Grammar {
     pub embedding_config: Option<EmbeddingConfig>,
     pub(crate) injection_config: Option<InjectionConfig>,
     pub(crate) override_config: Option<OverrideConfig>,
+    pub rainbow_config: Option<RainbowConfig>,
     pub(crate) debug_variables_config: Option<DebugVariablesConfig>,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
@@ -1274,6 +1275,13 @@ struct BracketsPatternConfig {
     newline_only: bool,
 }
 
+pub struct RainbowConfig {
+    pub query: Query,
+    pub scope_capture_ix: Option<u32>,
+    pub bracket_capture_ix: Option<u32>,
+    pub include_children_patterns: HashSet<usize>,
+}
+
 pub struct DebugVariablesConfig {
     pub query: Query,
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
@@ -1309,6 +1317,7 @@ impl Language {
                     override_config: None,
                     redactions_config: None,
                     runnable_config: None,
+                    rainbow_config: None,
                     error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
                     debug_variables_config: None,
                     ts_language,
@@ -1380,6 +1389,11 @@ impl Language {
             self = self
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
+        }
+        if let Some(query) = queries.rainbow {
+            self = self
+                .with_rainbow_query(query.as_ref())
+                .context("Error loading rainbow query")?;
         }
         if let Some(query) = queries.debugger {
             self = self
@@ -1752,6 +1766,38 @@ impl Language {
                 redaction_capture_ix,
             });
         }
+
+        Ok(self)
+    }
+
+    pub fn with_rainbow_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let query = Query::new(&grammar.ts_language, source)?;
+        let mut scope_capture_ix = None;
+        let mut bracket_capture_ix = None;
+        get_capture_indices(
+            &query,
+            &mut [
+                ("rainbow.scope", &mut scope_capture_ix),
+                ("rainbow.bracket", &mut bracket_capture_ix),
+            ],
+        );
+        
+        let mut include_children_patterns = HashSet::default();
+        for ix in 0..query.pattern_count() {
+            for setting in query.property_settings(ix) {
+                if setting.key.as_ref() == "rainbow.include-children" {
+                    include_children_patterns.insert(ix);
+                }
+            }
+        }
+
+        grammar.rainbow_config = Some(RainbowConfig {
+            query,
+            scope_capture_ix,
+            bracket_capture_ix,
+            include_children_patterns,
+        });
 
         Ok(self)
     }
