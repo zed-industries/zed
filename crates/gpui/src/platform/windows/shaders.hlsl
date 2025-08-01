@@ -1,7 +1,6 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint premultiplied_alpha;
-    uint _pad;
+    uint2 _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);

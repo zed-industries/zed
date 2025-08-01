@@ -175,8 +175,6 @@ impl DirectXRenderer {
     }
 
     fn pre_draw(&self) -> Result<()> {
-        let premultiplied_alpha = 1;
-
         update_buffer(
             &self.devices.device_context,
             self.globals.global_params_buffer[0].as_ref().unwrap(),
@@ -185,8 +183,7 @@ impl DirectXRenderer {
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
-                premultiplied_alpha,
-                ..Default::default()
+                _pad: 0,
             }],
         )?;
         unsafe {
@@ -822,8 +819,7 @@ impl DirectXGlobalElements {
 #[repr(C)]
 struct GlobalParams {
     viewport_size: [f32; 2],
-    premultiplied_alpha: u32,
-    _pad: u32,
+    _pad: u64,
 }
 
 struct PipelineState<T> {
