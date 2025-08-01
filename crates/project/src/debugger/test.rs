@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use dap::client::DebugAdapterClient;
-use gpui::{App, AppContext, Subscription};
+use gpui::{App, Subscription};
 
 use super::session::{Session, SessionStateEvent};
 
@@ -19,14 +19,6 @@ pub fn intercept_debug_sessions<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
                     let client = session.adapter_client().unwrap();
                     register_default_handlers(session, &client, cx);
                     configure(&client);
-                    cx.background_spawn(async move {
-                        client
-                            .fake_event(dap::messages::Events::Initialized(
-                                Some(Default::default()),
-                            ))
-                            .await
-                    })
-                    .detach();
                 }
             })
             .detach();

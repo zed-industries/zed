@@ -1,4 +1,5 @@
 mod avatar;
+mod badge;
 mod banner;
 mod button;
 mod callout;
@@ -34,7 +35,6 @@ mod stack;
 mod sticky_items;
 mod tab;
 mod tab_bar;
-mod theme_preview;
 mod toggle;
 mod tooltip;
 
@@ -42,6 +42,7 @@ mod tooltip;
 mod stories;
 
 pub use avatar::*;
+pub use badge::*;
 pub use banner::*;
 pub use button::*;
 pub use callout::*;
@@ -77,7 +78,6 @@ pub use stack::*;
 pub use sticky_items::*;
 pub use tab::*;
 pub use tab_bar::*;
-pub use theme_preview::*;
 pub use toggle::*;
 pub use tooltip::*;
 

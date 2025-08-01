@@ -438,7 +438,7 @@ fn default_font_fallbacks() -> Option<FontFallbacks> {
 
 impl ThemeSettingsContent {
     /// Sets the theme for the given appearance to the theme with the specified name.
-    pub fn set_theme(&mut self, theme_name: String, appearance: Appearance) {
+    pub fn set_theme(&mut self, theme_name: impl Into<Arc<str>>, appearance: Appearance) {
         if let Some(selection) = self.theme.as_mut() {
             let theme_to_update = match selection {
                 ThemeSelection::Static(theme) => theme,

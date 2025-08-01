@@ -4354,6 +4354,7 @@ mod tests {
                 "menu",
                 "notebook",
                 "notification_panel",
+                "onboarding",
                 "outline",
                 "outline_panel",
                 "pane",

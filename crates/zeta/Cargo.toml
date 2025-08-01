@@ -40,7 +40,6 @@ log.workspace = true
 menu.workspace = true
 postage.workspace = true
 project.workspace = true
-proto.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 serde.workspace = true
@@ -59,9 +58,11 @@ worktree.workspace = true
 zed_actions.workspace = true
 
 [dev-dependencies]
-collections = { workspace = true, features = ["test-support"] }
+call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
+cloud_api_types.workspace = true
+collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
@@ -77,5 +78,4 @@ tree-sitter-rust.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
-call = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

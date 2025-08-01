@@ -295,7 +295,7 @@ mod tests {
                     request: dap_types::StartDebuggingRequestArgumentsRequest::Launch,
                 },
             },
-            Box::new(|_| panic!("Did not expect to hit this code path")),
+            Box::new(|_| {}),
             &mut cx.to_async(),
         )
         .await

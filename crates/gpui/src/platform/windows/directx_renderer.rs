@@ -42,8 +42,8 @@ pub(crate) struct DirectXRenderer {
 pub(crate) struct DirectXDevices {
     adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
-    device: ID3D11Device,
-    device_context: ID3D11DeviceContext,
+    pub(crate) device: ID3D11Device,
+    pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
 }
 
@@ -187,7 +187,7 @@ impl DirectXRenderer {
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
-                ..Default::default()
+                _pad: 0,
             }],
         )?;
         unsafe {
@@ -1441,7 +1441,7 @@ fn report_live_objects(device: &ID3D11Device) -> Result<()> {
 
 const BUFFER_COUNT: usize = 3;
 
-mod shader_resources {
+pub(crate) mod shader_resources {
     use anyhow::Result;
 
     #[cfg(debug_assertions)]
@@ -1454,7 +1454,7 @@ mod shader_resources {
     };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    pub(super) enum ShaderModule {
+    pub(crate) enum ShaderModule {
         Quad,
         Shadow,
         Underline,
@@ -1462,15 +1462,16 @@ mod shader_resources {
         PathSprite,
         MonochromeSprite,
         PolychromeSprite,
+        EmojiRasterization,
     }
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    pub(super) enum ShaderTarget {
+    pub(crate) enum ShaderTarget {
         Vertex,
         Fragment,
     }
 
-    pub(super) struct RawShaderBytes<'t> {
+    pub(crate) struct RawShaderBytes<'t> {
         inner: &'t [u8],
 
         #[cfg(debug_assertions)]
@@ -1478,7 +1479,7 @@ mod shader_resources {
     }
 
     impl<'t> RawShaderBytes<'t> {
-        pub(super) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
+        pub(crate) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
             #[cfg(not(debug_assertions))]
             {
                 Ok(Self::from_bytes(module, target))
@@ -1496,7 +1497,7 @@ mod shader_resources {
             }
         }
 
-        pub(super) fn as_bytes(&'t self) -> &'t [u8] {
+        pub(crate) fn as_bytes(&'t self) -> &'t [u8] {
             self.inner
         }
 
@@ -1531,6 +1532,10 @@ mod shader_resources {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
                 },
+                ShaderModule::EmojiRasterization => match target {
+                    ShaderTarget::Vertex => EMOJI_RASTERIZATION_VERTEX_BYTES,
+                    ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
+                },
             };
             Self { inner: bytes }
         }
@@ -1539,6 +1544,12 @@ mod shader_resources {
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
+            let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
+                "color_text_raster.hlsl"
+            } else {
+                "shaders.hlsl"
+            };
+
             let entry = format!(
                 "{}_{}\0",
                 entry.as_str(),
@@ -1555,7 +1566,7 @@ mod shader_resources {
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("src/platform/windows/shaders.hlsl")
+                .join(&format!("src/platform/windows/{}", shader_name))
                 .canonicalize()?;
 
             let entry_point = PCSTR::from_raw(entry.as_ptr());
@@ -1601,6 +1612,7 @@ mod shader_resources {
                 ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
+                ShaderModule::EmojiRasterization => "emoji_rasterization",
             }
         }
     }

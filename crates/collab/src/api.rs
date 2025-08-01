@@ -100,7 +100,6 @@ impl std::fmt::Display for SystemIdHeader {
 
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
-        .route("/user", get(legacy_update_or_create_authenticated_user))
         .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/users/:id/refresh_llm_tokens", post(refresh_llm_tokens))
@@ -143,51 +142,6 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     }
 
     Ok::<_, Error>(next.run(req).await)
-}
-
-#[derive(Debug, Deserialize)]
-struct AuthenticatedUserParams {
-    github_user_id: i32,
-    github_login: String,
-    github_email: Option<String>,
-    github_name: Option<String>,
-    github_user_created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-struct AuthenticatedUserResponse {
-    user: User,
-    metrics_id: String,
-    feature_flags: Vec<String>,
-}
-
-/// This is a legacy endpoint that is no longer used in production.
-///
-/// It currently only exists to be used when developing Collab locally.
-async fn legacy_update_or_create_authenticated_user(
-    Query(params): Query<AuthenticatedUserParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<AuthenticatedUserResponse>> {
-    let initial_channel_id = app.config.auto_join_channel_id;
-
-    let user = app
-        .db
-        .update_or_create_user_by_github_account(
-            &params.github_login,
-            params.github_user_id,
-            params.github_email.as_deref(),
-            params.github_name.as_deref(),
-            params.github_user_created_at,
-            initial_channel_id,
-        )
-        .await?;
-    let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    Ok(Json(AuthenticatedUserResponse {
-        user,
-        metrics_id,
-        feature_flags,
-    }))
 }
 
 #[derive(Debug, Deserialize)]

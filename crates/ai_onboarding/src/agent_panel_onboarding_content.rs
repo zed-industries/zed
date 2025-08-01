@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
+use cloud_llm_client::Plan;
 use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
 use ui::prelude::*;
@@ -56,15 +57,8 @@ impl AgentPanelOnboarding {
 
 impl Render for AgentPanelOnboarding {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let enrolled_in_trial = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedProTrial)
-        );
-
-        let is_pro_user = matches!(
-            self.user_store.read(cx).current_plan(),
-            Some(proto::Plan::ZedPro)
-        );
+        let enrolled_in_trial = self.user_store.read(cx).plan() == Some(Plan::ZedProTrial);
+        let is_pro_user = self.user_store.read(cx).plan() == Some(Plan::ZedPro);
 
         AgentPanelOnboardingCard::new()
             .child(

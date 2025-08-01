@@ -8612,6 +8612,7 @@ async fn test_autoclose_with_embedded_language(cx: &mut TestAppContext) {
 
     cx.language_registry().add(html_language.clone());
     cx.language_registry().add(javascript_language.clone());
+    cx.executor().run_until_parked();
 
     cx.update_buffer(|buffer, cx| {
         buffer.set_language(Some(html_language), cx);

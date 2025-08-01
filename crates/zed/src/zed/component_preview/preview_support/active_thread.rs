@@ -12,21 +12,19 @@ use ui::{App, Window};
 use workspace::Workspace;
 
 pub fn load_preview_thread_store(
-    workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
     cx: &mut AsyncApp,
 ) -> Task<Result<Entity<ThreadStore>>> {
-    workspace
-        .update(cx, |_, cx| {
-            ThreadStore::load(
-                project.clone(),
-                cx.new(|_| ToolWorkingSet::default()),
-                None,
-                Arc::new(PromptBuilder::new(None).unwrap()),
-                cx,
-            )
-        })
-        .unwrap_or(Task::ready(Err(anyhow!("workspace dropped"))))
+    cx.update(|cx| {
+        ThreadStore::load(
+            project.clone(),
+            cx.new(|_| ToolWorkingSet::default()),
+            None,
+            Arc::new(PromptBuilder::new(None).unwrap()),
+            cx,
+        )
+    })
+    .unwrap_or(Task::ready(Err(anyhow!("workspace dropped"))))
 }
 
 pub fn load_preview_text_thread_store(
