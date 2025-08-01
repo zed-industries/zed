@@ -384,7 +384,7 @@ impl HttpClient for BlockedHttpClient {
 }
 
 #[cfg(feature = "test-support")]
-type FakeHttpHandler = Box<
+type FakeHttpHandler = Arc<
     dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>
         + Send
         + Sync
@@ -393,7 +393,7 @@ type FakeHttpHandler = Box<
 
 #[cfg(feature = "test-support")]
 pub struct FakeHttpClient {
-    handler: Mutex<FakeHttpHandler>,
+    handler: Mutex<Option<FakeHttpHandler>>,
     user_agent: HeaderValue,
 }
 
@@ -408,7 +408,7 @@ impl FakeHttpClient {
             base_url: Mutex::new("http://test.example".into()),
             client: HttpClientWithProxy {
                 client: Arc::new(Self {
-                    handler: Mutex::new(Box::new(move |req| Box::pin(handler(req)))),
+                    handler: Mutex::new(Some(Arc::new(move |req| Box::pin(handler(req))))),
                     user_agent: HeaderValue::from_static(type_name::<Self>()),
                 }),
                 proxy: None,
@@ -434,12 +434,16 @@ impl FakeHttpClient {
         })
     }
 
-    pub fn set_handler<Fut, F>(&self, handler: F)
+    pub fn replace_handler<Fut, F>(&self, new_handler: F)
     where
         Fut: futures::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send + 'static,
-        F: Fn(Request<AsyncBody>) -> Fut + Send + Sync + 'static,
+        F: Fn(FakeHttpHandler, Request<AsyncBody>) -> Fut + Send + Sync + 'static,
     {
-        *self.handler.lock() = Box::new(move |req| Box::pin(handler(req)));
+        let mut handler = self.handler.lock();
+        let old_handler = handler.take().unwrap();
+        *handler = Some(Arc::new(move |req| {
+            Box::pin(new_handler(old_handler.clone(), req))
+        }));
     }
 }
 
@@ -456,7 +460,7 @@ impl HttpClient for FakeHttpClient {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        let future = (self.handler.lock())(req);
+        let future = (self.handler.lock().as_ref().unwrap())(req);
         future
     }
 

@@ -42,10 +42,11 @@ impl FakeServer {
             executor: cx.executor(),
         };
 
-        client.http_client().as_fake().set_handler({
+        client.http_client().as_fake().replace_handler({
             let state = server.state.clone();
-            move |req| {
+            move |old_handler, req| {
                 let state = state.clone();
+                let old_handler = old_handler.clone();
                 async move {
                     let credentials = parse_authorization_header(&req);
                     if credentials
@@ -72,10 +73,7 @@ impl FakeServer {
                                 .into(),
                             )
                             .unwrap()),
-                        _ => Ok(http_client::Response::builder()
-                            .status(404)
-                            .body("Not Found".into())
-                            .unwrap()),
+                        _ => old_handler(req).await,
                     }
                 }
             }
