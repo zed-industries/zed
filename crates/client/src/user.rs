@@ -220,23 +220,27 @@ impl UserStore {
                         Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
                                 let response = client.cloud_client().get_authenticated_user().await;
-                                let mut user = None;
+                                let mut current_user = None;
                                 cx.update(|cx| {
                                     if let Some(response) = response.log_err() {
-                                        user = Some(Arc::new(User {
+                                        let user = Arc::new(User {
                                             id: user_id,
                                             github_login: response.user.github_login.clone().into(),
                                             avatar_uri: response.user.avatar_url.clone().into(),
                                             name: response.user.name.clone(),
-                                        }));
+                                        });
+                                        current_user = Some(user.clone());
                                         this.update(cx, |this, cx| {
+                                            this.by_github_login
+                                                .insert(user.github_login.clone(), user_id);
+                                            this.users.insert(user_id, user);
                                             this.update_authenticated_user(response, cx)
                                         })
                                     } else {
                                         anyhow::Ok(())
                                     }
                                 })??;
-                                current_user_tx.send(user).await.ok();
+                                current_user_tx.send(current_user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }

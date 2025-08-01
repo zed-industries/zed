@@ -7800,6 +7800,7 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "url",
