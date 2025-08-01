@@ -180,7 +180,7 @@ mod tests {
                 remote:
                 remote: Create a pull request for 'test' on GitHub by visiting:
                 remote:      https://example.com/test/test/pull/new/test
-                remote:\n
+                remote:
                 To example.com:test/test.git
                  * [new branch]      test -> test
                 "}
