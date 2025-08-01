@@ -281,8 +281,8 @@ actions!(
         SelectNextDirectory,
         /// Selects the previous directory.
         SelectPrevDirectory,
-        /// Opens a diff view to compare two selected files.
-        CompareSelectedFiles,
+        /// Opens a diff view to compare two marked files.
+        CompareMarkedFiles,
     ]
 );
 
@@ -379,7 +379,7 @@ struct DraggedProjectEntryView {
     selection: SelectedEntry,
     details: EntryDetails,
     click_offset: Point<Pixels>,
-    selections: Arc<BTreeSet<SelectedEntry>>,
+    selections: Arc<[SelectedEntry]>,
 }
 
 struct ItemColors {
@@ -890,7 +890,7 @@ impl ProjectPanel {
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
-            let should_show_compare = !is_dir && self.file_to_diff_abs_paths(cx).is_some();
+            let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -923,10 +923,8 @@ impl ProjectPanel {
                                 menu.action("Fold Directory", Box::new(FoldDirectory))
                             })
                             .when(should_show_compare, |menu| {
-                                menu.separator().action(
-                                    "Compare selected files",
-                                    Box::new(CompareSelectedFiles),
-                                )
+                                menu.separator()
+                                    .action("Compare marked files", Box::new(CompareMarkedFiles))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -2582,44 +2580,40 @@ impl ProjectPanel {
         }
     }
 
-    fn file_to_diff_abs_paths(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
-        let selected_files: Vec<_> = self
+    fn file_abs_paths_to_diff(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
+        let mut selections_abs_path = self
             .marked_entries
             .iter()
             .filter_map(|entry| {
                 let project = self.project.read(cx);
                 let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                let entry_info = worktree.read(cx).entry_for_id(entry.entry_id)?;
-                entry_info
-                    .is_file()
-                    .then_some((worktree, entry_info.path.to_path_buf()))
+                let entry = worktree.read(cx).entry_for_id(entry.entry_id)?;
+                if !entry.is_file() {
+                    return None;
+                }
+                worktree.read(cx).absolutize(&entry.path).ok()
             })
-            .collect();
-        let len = selected_files.len();
-        if len < 2 {
-            return None;
-        }
-        let (worktree1, path1) = &selected_files[len - 2];
-        let (worktree2, path2) = &selected_files[len - 1];
-        let abs_path1 = worktree1.read(cx).absolutize(path1).ok();
-        let abs_path2 = worktree2.read(cx).absolutize(path2).ok();
-        Some((abs_path1?, abs_path2?))
+            .rev();
+
+        let last_path = selections_abs_path.next()?;
+        let previous_to_last = selections_abs_path.next()?;
+        Some((previous_to_last, last_path))
     }
 
-    fn compare_selected_files(
+    fn compare_marked_files(
         &mut self,
-        _: &CompareSelectedFiles,
+        _: &CompareMarkedFiles,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let selected_files = self.file_to_diff_abs_paths(cx);
+        let selected_files = self.file_abs_paths_to_diff(cx);
         if let Some((file_path1, file_path2)) = selected_files {
             self.workspace
                 .update(cx, |workspace, cx| {
                     FileDiffView::open(file_path1, file_path2, workspace, window, cx)
                         .detach_and_log_err(cx);
                 })
-                .log_err();
+                .ok();
         }
     }
 
@@ -3965,11 +3959,9 @@ impl ProjectPanel {
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
-        let selections = Arc::new(self.marked_entries.iter().cloned().collect::<BTreeSet<_>>());
-
         let dragged_selection = DraggedSelection {
             active_selection: selection,
-            marked_selections: selections,
+            marked_selections: Arc::from(self.marked_entries.clone()),
         };
 
         let bg_color = if is_marked {
@@ -4207,31 +4199,31 @@ impl ProjectPanel {
                 }),
             )
             .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                cx.listener(move |project_panel, event: &gpui::ClickEvent, window, cx| {
                     if event.is_right_click() || event.first_focus()
                         || show_editor
                     {
                         return;
                     }
                     if event.standard_click() {
-                        this.mouse_down = false;
+                        project_panel.mouse_down = false;
                     }
                     cx.stop_propagation();
 
-                    if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
-                        let current_selection = this.index_for_selection(selection);
+                    if let Some(selection) = project_panel.selection.filter(|_| event.modifiers().shift) {
+                        let current_selection = project_panel.index_for_selection(selection);
                         let clicked_entry = SelectedEntry {
                             entry_id,
                             worktree_id,
                         };
-                        let target_selection = this.index_for_selection(clicked_entry);
+                        let target_selection = project_panel.index_for_selection(clicked_entry);
                         if let Some(((_, _, source_index), (_, _, target_index))) =
                             current_selection.zip(target_selection)
                         {
                             let range_start = source_index.min(target_index);
                             let range_end = source_index.max(target_index) + 1;
                             let mut new_selections = Vec::new();
-                            this.for_each_visible_entry(
+                            project_panel.for_each_visible_entry(
                                 range_start..range_end,
                                 window,
                                 cx,
@@ -4244,32 +4236,32 @@ impl ProjectPanel {
                             );
 
                             for selection in &new_selections {
-                                if !this.marked_entries.contains(selection) {
-                                    this.marked_entries.push(*selection);
+                                if !project_panel.marked_entries.contains(selection) {
+                                    project_panel.marked_entries.push(*selection);
                                 }
                             }
 
-                            this.selection = Some(clicked_entry);
-                            if !this.marked_entries.contains(&clicked_entry) {
-                                this.marked_entries.push(clicked_entry);
+                            project_panel.selection = Some(clicked_entry);
+                            if !project_panel.marked_entries.contains(&clicked_entry) {
+                                project_panel.marked_entries.push(clicked_entry);
                             }
                         }
                     } else if event.modifiers().secondary() {
                         if event.click_count() > 1 {
-                            this.split_entry(entry_id, cx);
+                            project_panel.split_entry(entry_id, cx);
                         } else {
-                            this.selection = Some(selection);
-                            if let Some(position) = this.marked_entries.iter().position(|e| *e == selection) {
-                                this.marked_entries.remove(position);
+                            project_panel.selection = Some(selection);
+                            if let Some(position) = project_panel.marked_entries.iter().position(|e| *e == selection) {
+                                project_panel.marked_entries.remove(position);
                             } else {
-                                this.marked_entries.push(selection);
+                                project_panel.marked_entries.push(selection);
                             }
                         }
                     } else if kind.is_dir() {
-                        this.marked_entries.clear();
+                        project_panel.marked_entries.clear();
                         if is_sticky {
-                            if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                                this.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
+                            if let Some((_, _, index)) = project_panel.index_for_entry(entry_id, worktree_id) {
+                                project_panel.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
@@ -4285,16 +4277,16 @@ impl ProjectPanel {
                             }
                         }
                         if event.modifiers().alt {
-                            this.toggle_expand_all(entry_id, window, cx);
+                            project_panel.toggle_expand_all(entry_id, window, cx);
                         } else {
-                            this.toggle_expanded(entry_id, window, cx);
+                            project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
                         let click_count = event.click_count();
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
-                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }
                 }),
             )
@@ -5225,7 +5217,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
-                .on_action(cx.listener(Self::compare_selected_files))
+                .on_action(cx.listener(Self::compare_marked_files))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))

@@ -3068,9 +3068,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         panel.update(cx, |this, cx| {
             let drag = DraggedSelection {
                 active_selection: this.selection.unwrap(),
-                marked_selections: Arc::new(
-                    this.marked_entries.iter().cloned().collect::<BTreeSet<_>>(),
-                ),
+                marked_selections: this.marked_entries.clone().into(),
             };
             let target_entry = this
                 .project
@@ -5564,10 +5562,10 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
                 worktree_id,
                 entry_id: child_file.id,
             },
-            marked_selections: Arc::new(BTreeSet::from([SelectedEntry {
+            marked_selections: Arc::new([SelectedEntry {
                 worktree_id,
                 entry_id: child_file.id,
-            }])),
+            }]),
         };
         let result =
             panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
@@ -5606,7 +5604,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
                 worktree_id,
                 entry_id: child_file.id,
             },
-            marked_selections: Arc::new(BTreeSet::from([
+            marked_selections: Arc::new([
                 SelectedEntry {
                     worktree_id,
                     entry_id: child_file.id,
@@ -5615,7 +5613,7 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
                     worktree_id,
                     entry_id: sibling_file.id,
                 },
-            ])),
+            ]),
         };
         let result =
             panel.highlight_entry_for_selection_drag(parent_dir, worktree, &dragged_selection, cx);
@@ -5845,16 +5843,11 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-    cx.simulate_modifiers_change(gpui::Modifiers {
-        control: true,
-        ..Default::default()
-    });
-
     select_path_with_mark(&panel, "root/file1.txt", cx);
     select_path_with_mark(&panel, "root/file2.txt", cx);
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.compare_selected_files(&CompareSelectedFiles, window, cx);
+        panel.compare_marked_files(&CompareMarkedFiles, window, cx);
     });
     cx.executor().run_until_parked();
 
@@ -5907,7 +5900,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     // Test 1: When only one file is selected, there should be no compare option
     select_path(&panel, "root/file1.txt", cx);
 
-    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    let selected_files = panel.update(cx, |panel, cx| panel.file_abs_paths_to_diff(cx));
     assert_eq!(
         selected_files, None,
         "Should not have compare option when only one file is selected"
@@ -5917,7 +5910,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     select_path_with_mark(&panel, "root/file1.txt", cx);
     select_path_with_mark(&panel, "root/file2.txt", cx);
 
-    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    let selected_files = panel.update(cx, |panel, cx| panel.file_abs_paths_to_diff(cx));
     assert!(
         selected_files.is_some(),
         "Should have files selected for comparison"
@@ -5933,7 +5926,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     // Test 3: Selecting a directory shouldn't count as a comparable file
     select_path_with_mark(&panel, "root/dir1", cx);
 
-    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    let selected_files = panel.update(cx, |panel, cx| panel.file_abs_paths_to_diff(cx));
     assert!(
         selected_files.is_some(),
         "Directory selection should not affect comparable files"
@@ -5949,7 +5942,7 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     // Test 4: Selecting one more file
     select_path_with_mark(&panel, "root/dir2/file3.txt", cx);
 
-    let selected_files = panel.update(cx, |panel, cx| panel.file_to_diff_abs_paths(cx));
+    let selected_files = panel.update(cx, |panel, cx| panel.file_abs_paths_to_diff(cx));
     assert!(
         selected_files.is_some(),
         "Directory selection should not affect comparable files"
