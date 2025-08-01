@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::{Client, zed_urls};
+use cloud_llm_client::Plan;
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, List, Vector, VectorName, prelude::*};
 
@@ -10,13 +11,15 @@ use crate::{BulletItem, SignInStatus};
 pub struct AiUpsellCard {
     pub sign_in_status: SignInStatus,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub user_plan: Option<Plan>,
 }
 
 impl AiUpsellCard {
-    pub fn new(client: Arc<Client>) -> Self {
+    pub fn new(client: Arc<Client>, user_plan: Option<Plan>) -> Self {
         let status = *client.status().borrow();
 
         Self {
+            user_plan,
             sign_in_status: status.into(),
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
@@ -34,6 +37,7 @@ impl AiUpsellCard {
 impl RenderOnce for AiUpsellCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let pro_section = v_flex()
+            .flex_grow()
             .w_full()
             .gap_1()
             .child(
@@ -56,6 +60,7 @@ impl RenderOnce for AiUpsellCard {
             );
 
         let free_section = v_flex()
+            .flex_grow()
             .w_full()
             .gap_1()
             .child(
@@ -71,7 +76,7 @@ impl RenderOnce for AiUpsellCard {
             )
             .child(
                 List::new()
-                    .child(BulletItem::new("50 prompts with the Claude models"))
+                    .child(BulletItem::new("50 prompts with Claude models"))
                     .child(BulletItem::new("2,000 accepted edit predictions")),
             );
 
@@ -132,22 +137,28 @@ impl RenderOnce for AiUpsellCard {
 
         v_flex()
             .relative()
-            .p_6()
-            .pt_4()
+            .p_4()
+            .pt_3()
             .border_1()
             .border_color(cx.theme().colors().border)
             .rounded_lg()
             .overflow_hidden()
             .child(grid_bg)
             .child(gradient_bg)
-            .child(Headline::new("Try Zed AI"))
-            .child(Label::new(DESCRIPTION).color(Color::Muted).mb_2())
+            .child(Label::new("Try Zed AI").size(LabelSize::Large))
+            .child(
+                div()
+                    .max_w_3_4()
+                    .mb_2()
+                    .child(Label::new(DESCRIPTION).color(Color::Muted)),
+            )
             .child(
                 h_flex()
+                    .w_full()
                     .mt_1p5()
                     .mb_2p5()
                     .items_start()
-                    .gap_12()
+                    .gap_6()
                     .child(free_section)
                     .child(pro_section),
             )
@@ -183,6 +194,7 @@ impl Component for AiUpsellCard {
                         AiUpsellCard {
                             sign_in_status: SignInStatus::SignedOut,
                             sign_in: Arc::new(|_, _| {}),
+                            user_plan: None,
                         }
                         .into_any_element(),
                     ),
@@ -191,6 +203,7 @@ impl Component for AiUpsellCard {
                         AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
+                            user_plan: None,
                         }
                         .into_any_element(),
                     ),
