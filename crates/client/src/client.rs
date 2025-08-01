@@ -973,7 +973,20 @@ impl Client {
             self.set_status(Status::Reauthenticating, cx);
         }
 
-        let mut credentials = self.state.read().credentials.clone();
+        let mut credentials = None;
+
+        if let Some(old_credentials) = self.state.read().credentials.clone() {
+            self.cloud_client.set_credentials(
+                old_credentials.user_id as u32,
+                old_credentials.access_token.clone(),
+            );
+
+            // Fetch the authenticated user with the old credentials, to ensure they are still valid.
+            if self.cloud_client.get_authenticated_user().await.is_ok() {
+                credentials = Some(old_credentials);
+            }
+        }
+
         if credentials.is_none() && try_provider {
             if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
                 self.cloud_client.set_credentials(
