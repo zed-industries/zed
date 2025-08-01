@@ -6,8 +6,11 @@ use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prel
 use workspace::{
     NewFile, Open, Workspace, WorkspaceId,
     item::{Item, ItemEvent},
+    with_active_or_new_workspace,
 };
 use zed_actions::{Extensions, OpenSettings, agent, command_palette};
+
+use crate::OpenOnboarding;
 
 actions!(
     zed,
@@ -216,7 +219,38 @@ impl Render for WelcomePage {
                                                 div().child(
                                                     Button::new("welcome-exit", "Return to Setup")
                                                         .full_width()
-                                                        .label_size(LabelSize::XSmall),
+                                                        .label_size(LabelSize::XSmall)
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                OpenOnboarding.boxed_clone(),
+                                                                cx,
+                                                            );
+
+                                                            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                                                                let Some((welcome_id, _)) = workspace
+                                                                    .active_pane()
+                                                                    .read(cx)
+                                                                    .items()
+                                                                    .enumerate()
+                                                                    .find_map(|(idx, item)| {
+                                                                        let _ = item.downcast::<WelcomePage>()?;
+                                                                        Some((item.item_id(), idx))
+                                                                    })
+                                                                else {
+                                                                    return;
+                                                                };
+
+                                                                workspace.active_pane().update(cx, |pane, cx| {
+                                                                    pane.remove_item(
+                                                                        welcome_id,
+                                                                        false,
+                                                                        false,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            });
+                                                        }),
                                                 ),
                                             ),
                                     ),

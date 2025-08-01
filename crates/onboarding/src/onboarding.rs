@@ -347,7 +347,41 @@ impl Onboarding {
                                     ]),
                             )
                             .child(
-                                ButtonLike::new("skip_all").child(Label::new("Skip All").ml_1()),
+                                ButtonLike::new("skip_all")
+                                    .child(Label::new("Skip All").ml_1())
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(ShowWelcome.boxed_clone(), cx);
+
+                                        with_active_or_new_workspace(
+                                            cx,
+                                            |workspace, window, cx| {
+                                                let Some((onboarding_id, _onboarding_idx)) =
+                                                    workspace
+                                                        .active_pane()
+                                                        .read(cx)
+                                                        .items()
+                                                        .enumerate()
+                                                        .find_map(|(idx, item)| {
+                                                            let _ =
+                                                                item.downcast::<Onboarding>()?;
+                                                            Some((item.item_id(), idx))
+                                                        })
+                                                else {
+                                                    return;
+                                                };
+
+                                                workspace.active_pane().update(cx, |pane, cx| {
+                                                    pane.remove_item(
+                                                        onboarding_id,
+                                                        false,
+                                                        false,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                });
+                                            },
+                                        );
+                                    }),
                             ),
                     ),
             )

@@ -48,6 +48,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_registry = ThemeRegistry::global(cx);
 
     let current_theme_name = theme_selection.theme(appearance);
+    let theme_mode = theme_selection.mode().unwrap_or_default();
 
     // let theme_mode = theme_selection.mode();
     // TODO: Clean this up once the "System" button inside the
@@ -136,7 +137,8 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                             move |_, _, cx| {
                                 toggle_system_theme_mode(theme.clone(), appearance, cx);
                             }
-                        }),
+                        })
+                        .selected(theme_mode == ThemeMode::System),
                     ],
                 )
                 .selected_index(selected_index)
