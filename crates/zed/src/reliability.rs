@@ -9,6 +9,7 @@ use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
+use reqwest_client::ReqwestClient;
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
@@ -221,6 +222,7 @@ pub fn init(
                                     log::error!("failed to deserialize panic file {:?}", file);
                                     None
                                 });
+                            // TODO: upload minidump
 
                             if let Some(mut panic) = panic {
                                 panic.session_id = session_id.clone();
@@ -511,6 +513,13 @@ async fn upload_previous_panics(
                 });
 
             if let Some(panic) = panic {
+                let minidump = paths::logs_dir()
+                    .join(&panic.session_id)
+                    .with_extension("dmp");
+                if minidump.exists() && upload_minidump(http.clone(), minidump, Some(panic)).is_ok() {
+                    fs::remove_file(minidump_path);
+                }
+
                 if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
                     continue;
                 }
@@ -522,7 +531,43 @@ async fn upload_previous_panics(
             .context("error removing panic")
             .log_err();
     }
+
+    // loop back over the directory again to upload any minidumps that are missing panics
+    while let Some(child) = children.next().await {
+        let child = child?;
+        let child_path = child.path();
+        if child_path.extension() != Some(OsStr::new("dmp")) {
+            continue;
+        }
+        if upload_minidump(http.clone(), minidump, None).is_ok() {
+            fs::remove_file(child_path);
+        }
+    }
+
     Ok(most_recent_panic)
+}
+
+async fn upload_minidump(http: &Arc<HttpClientWithUrl>, minidump: &Path, panic: Option<&Panic>) -> Result<()> {
+    let (_, tokio_handle) = http.as_real_client()?
+
+    let http = http.clone();
+    tokio_handle
+        .spawn(async move {
+            let (real_client, _tokio_handle) = http.as_real_client().unwrap();
+            let form = reqwest::multipart::Form::new()
+                .file("upload_file_minidump", minidump_path)
+                .await
+                .unwrap();
+            // TODO: append fields from the panic
+            real_client
+                .post(SENTRY_MINIDUMP_ENDPOINT)
+                .multipart(form)
+                .send()
+                .await?
+            anyhow::Ok(())
+        })
+        .await
+        .log_err()
 }
 
 async fn upload_panic(

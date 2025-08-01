@@ -85,9 +85,15 @@ pub trait HttpClient: 'static + Send + Sync {
 
     fn proxy(&self) -> Option<&Url>;
 
+<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
+||||||| parent of 55ed03f762 (Add uploading)
+=======
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        None
+>>>>>>> 55ed03f762 (Add uploading)
     }
 }
 
@@ -135,31 +141,20 @@ impl HttpClient for HttpClientWithProxy {
     fn type_name(&self) -> &'static str {
         self.client.type_name()
     }
+<<<<<<< HEAD
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
     }
 }
+||||||| parent of 55ed03f762 (Add uploading)
+}
+=======
+>>>>>>> 55ed03f762 (Add uploading)
 
-impl HttpClient for Arc<HttpClientWithProxy> {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send(req)
-    }
-
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        self.client.user_agent()
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        self.client.as_real_client()
     }
 
     #[cfg(feature = "test-support")]
@@ -275,6 +270,7 @@ impl HttpClientWithUrl {
     }
 }
 
+<<<<<<< HEAD
 impl HttpClient for Arc<HttpClientWithUrl> {
     fn send(
         &self,
@@ -301,6 +297,30 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     }
 }
 
+||||||| parent of 55ed03f762 (Add uploading)
+impl HttpClient for Arc<HttpClientWithUrl> {
+    fn send(
+        &self,
+        req: Request<AsyncBody>,
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
+        self.client.send(req)
+    }
+
+    fn user_agent(&self) -> Option<&HeaderValue> {
+        self.client.user_agent()
+    }
+
+    fn proxy(&self) -> Option<&Url> {
+        self.client.proxy.as_ref()
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.client.type_name()
+    }
+}
+
+=======
+>>>>>>> 55ed03f762 (Add uploading)
 impl HttpClient for HttpClientWithUrl {
     fn send(
         &self,
@@ -321,9 +341,15 @@ impl HttpClient for HttpClientWithUrl {
         self.client.type_name()
     }
 
+<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
+||||||| parent of 55ed03f762 (Add uploading)
+=======
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        self.client.as_real_client()
+>>>>>>> 55ed03f762 (Add uploading)
     }
 }
 
