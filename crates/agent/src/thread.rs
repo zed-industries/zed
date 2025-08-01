@@ -12,7 +12,7 @@ use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use client::{ModelRequestUsage, RequestUsage};
+use client::{CloudUserStore, ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
@@ -374,6 +374,7 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
+    cloud_user_store: Entity<CloudUserStore>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
@@ -444,6 +445,7 @@ pub struct ExceededWindowError {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
+        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
@@ -470,6 +472,7 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
+            cloud_user_store,
             prompt_builder,
             tools: tools.clone(),
             last_restore_checkpoint: None,
@@ -503,6 +506,7 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
+        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
@@ -603,6 +607,7 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             project: project.clone(),
+            cloud_user_store,
             prompt_builder,
             tools: tools.clone(),
             tool_use,
@@ -3255,16 +3260,14 @@ impl Thread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            project.user_store().update(cx, |user_store, cx| {
-                user_store.update_model_request_usage(
-                    ModelRequestUsage(RequestUsage {
-                        amount: amount as i32,
-                        limit,
-                    }),
-                    cx,
-                )
-            })
+        self.cloud_user_store.update(cx, |cloud_user_store, cx| {
+            cloud_user_store.update_model_request_usage(
+                ModelRequestUsage(RequestUsage {
+                    amount: amount as i32,
+                    limit,
+                }),
+                cx,
+            )
         });
     }
 
@@ -3883,6 +3886,7 @@ fn main() {{
                     thread.id.clone(),
                     serialized,
                     thread.project.clone(),
+                    thread.cloud_user_store.clone(),
                     thread.tools.clone(),
                     thread.prompt_builder.clone(),
                     thread.project_context.clone(),
@@ -5479,10 +5483,16 @@ fn main() {{
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let (client, user_store) =
+            project.read_with(cx, |project, _cx| (project.client(), project.user_store()));
+        let cloud_user_store =
+            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store, cx));
+
         let thread_store = cx
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
+                    cloud_user_store,
                     cx.new(|_| ToolWorkingSet::default()),
                     None,
                     Arc::new(PromptBuilder::new(None).unwrap()),
