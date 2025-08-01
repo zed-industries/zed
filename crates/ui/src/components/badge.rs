@@ -32,7 +32,7 @@ impl RenderOnce for Badge {
             .pl_1()
             .pr_2()
             .border_1()
-            .border_color(cx.theme().colors().border)
+            .border_color(cx.theme().colors().border.opacity(0.6))
             .bg(cx.theme().colors().element_background)
             .rounded_sm()
             .overflow_hidden()
