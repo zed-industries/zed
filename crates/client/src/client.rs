@@ -1391,8 +1391,6 @@ impl Client {
             access_token: String,
         }
 
-        // Use the collab server's admin API to retrieve the ID
-        // of the impersonated user.
         let url = self
             .http
             .build_zed_cloud_url("/internal/users/impersonate", &[])?;
