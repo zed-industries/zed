@@ -18,7 +18,6 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use util::ConnectionResult;
 use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
 
 use crate::headless::ZetaCliAppState;
@@ -330,20 +329,8 @@ fn main() {
                     context_args,
                 } => {
                     cx.spawn(async move |cx| {
-                        let connection_result =
-                            app_state.client.authenticate_and_connect(true, cx).await;
-                        match connection_result {
-                            ConnectionResult::Timeout => {
-                                return Err(anyhow!("Timeout while connecting"));
-                            }
-                            ConnectionResult::ConnectionReset => {
-                                return Err(anyhow!("Connection reset"));
-                            }
-                            ConnectionResult::Result(Err(err)) => return Err(err),
-                            ConnectionResult::Result(Ok(())) => {}
-                        }
-
                         let app_version = cx.update(|cx| AppVersion::global(cx))?;
+                        app_state.client.sign_in(true, cx).await?;
                         let llm_token = LlmApiToken::default();
                         llm_token.refresh(&app_state.client).await?;
 
