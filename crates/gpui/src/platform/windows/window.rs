@@ -360,6 +360,7 @@ impl WindowsWindow {
             validation_number,
             main_receiver,
             main_thread_id_win32,
+            disable_direct_composition,
         } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -375,8 +376,6 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
-            .is_ok_and(|value| value == "true" || value == "1");
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
