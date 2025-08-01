@@ -406,7 +406,9 @@ impl AgentConfiguration {
         SwitchField::new(
             "always-allow-tool-actions-switch",
             "Allow running commands without asking for confirmation",
-            "The agent can perform potentially destructive actions without asking for your confirmation.",
+            Some(
+                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
+            ),
             always_allow_tool_actions,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -424,7 +426,7 @@ impl AgentConfiguration {
         SwitchField::new(
             "single-file-review",
             "Enable single-file agent reviews",
-            "Agent edits are also displayed in single-file editors for review.",
+            Some("Agent edits are also displayed in single-file editors for review.".into()),
             single_file_review,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -442,7 +444,9 @@ impl AgentConfiguration {
         SwitchField::new(
             "sound-notification",
             "Play sound when finished generating",
-            "Hear a notification sound when the agent is done generating changes or needs your input.",
+            Some(
+                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
+            ),
             play_sound_when_agent_done,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -460,7 +464,9 @@ impl AgentConfiguration {
         SwitchField::new(
             "modifier-send",
             "Use modifier to submit a message",
-            "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.",
+            Some(
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+            ),
             use_modifier_to_send,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
