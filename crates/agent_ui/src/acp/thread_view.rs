@@ -2628,7 +2628,7 @@ mod tests {
     use agent_client_protocol::SessionId;
     use editor::EditorSettings;
     use fs::FakeFs;
-    use gpui::{SemanticVersion, TestAppContext};
+    use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
     use settings::SettingsStore;
 
     use super::*;
@@ -2637,26 +2637,7 @@ mod tests {
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                AcpThreadView::new(
-                    Rc::new(StubAgentServer::default()),
-                    workspace.downgrade(),
-                    project,
-                    Rc::new(RefCell::new(MessageHistory::default())),
-                    1,
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-        cx.run_until_parked();
+        let (thread_view, cx) = setup_thread_view(StubAgentServer::default(), cx).await;
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -2682,26 +2663,8 @@ mod tests {
     async fn test_notification_for_error(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs, [], cx).await;
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                AcpThreadView::new(
-                    Rc::new(StubAgentServer::new(SabatourAgentConnection)),
-                    workspace.downgrade(),
-                    project,
-                    Rc::new(RefCell::new(MessageHistory::default())),
-                    1,
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-        cx.run_until_parked();
+        let (thread_view, cx) =
+            setup_thread_view(StubAgentServer::new(SabatourAgentConnection), cx).await;
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -2721,6 +2684,33 @@ mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    async fn setup_thread_view(
+        agent: impl AgentServer + 'static,
+        cx: &mut TestAppContext,
+    ) -> (Entity<AcpThreadView>, &mut VisualTestContext) {
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(agent),
+                    workspace.downgrade(),
+                    project,
+                    Rc::new(RefCell::new(MessageHistory::default())),
+                    1,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+        cx.run_until_parked();
+        (thread_view, cx)
     }
 
     struct StubAgentServer<C> {
