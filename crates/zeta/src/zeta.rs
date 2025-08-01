@@ -1588,8 +1588,8 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
             .zeta
             .read(cx)
             .user_store
-            .read_with(cx, |cloud_user_store, _cx| {
-                cloud_user_store.account_too_young() || cloud_user_store.has_overdue_invoices()
+            .read_with(cx, |user_store, _cx| {
+                user_store.account_too_young() || user_store.has_overdue_invoices()
             })
         {
             return;
