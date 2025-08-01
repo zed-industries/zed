@@ -358,6 +358,7 @@ impl ButtonStyle {
 #[derive(Default, PartialEq, Clone, Copy)]
 pub enum ButtonSize {
     Large,
+    Medium,
     #[default]
     Default,
     Compact,
@@ -368,6 +369,7 @@ impl ButtonSize {
     pub fn rems(self) -> Rems {
         match self {
             ButtonSize::Large => rems_from_px(32.),
+            ButtonSize::Medium => rems_from_px(28.),
             ButtonSize::Default => rems_from_px(22.),
             ButtonSize::Compact => rems_from_px(18.),
             ButtonSize::None => rems_from_px(16.),
@@ -573,7 +575,7 @@ impl RenderOnce for ButtonLike {
             })
             .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Large | ButtonSize::Medium => this.px(DynamicSpacing::Base06.rems(cx)),
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
