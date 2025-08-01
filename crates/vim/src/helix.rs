@@ -23,6 +23,8 @@ actions!(
         HelixInsert,
         /// Appends at the end of the selection.
         HelixAppend,
+        /// Yanks the current selection or character if no selection.
+        HelixYank,
         /// Goes to the location of the last modification.
         HelixGotoLastModification,
     ]
@@ -445,6 +447,47 @@ impl Vim {
             });
         });
         self.switch_mode(Mode::HelixNormal, true, window, cx);
+    }
+
+    pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let has_selection = editor
+                .selections
+                .all_adjusted(cx)
+                .iter()
+                .any(|selection| !selection.is_empty());
+
+            if !has_selection {
+                // If no selection, expand to current character (like 'v' does)
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let head = selection.head();
+                        let new_head = movement::saturating_right(map, head);
+                        selection.set_tail(head, SelectionGoal::None);
+                        selection.set_head(new_head, SelectionGoal::None);
+                    });
+                });
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        selection.collapse_to(selection.start, SelectionGoal::None);
+                    });
+                });
+            } else {
+                // Yank the selection(s)
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+            }
+        });
     }
 
     pub fn helix_goto_last_modification(
