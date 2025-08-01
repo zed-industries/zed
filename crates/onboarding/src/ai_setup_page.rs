@@ -43,7 +43,7 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
-    let privacy_bag = || Badge::new("Privacy").icon(IconName::ShieldCheck);
+    let privacy_badge = || Badge::new("Privacy").icon(IconName::ShieldCheck);
 
     v_flex()
         .relative()
@@ -73,7 +73,7 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                                         .size(IconSize::XSmall),
                                 ),
                         )
-                        .child(privacy_bag()),
+                        .child(privacy_badge()),
                 )
                 .child(
                     Label::new("Re-enable it any time in Settings.")
@@ -87,7 +87,7 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                         .justify_between()
                         .child(Label::new("We don't train models using your data"))
                         .child(
-                            h_flex().gap_1().child(privacy_bag()).child(
+                            h_flex().gap_1().child(privacy_badge()).child(
                                 Button::new("learn_more", "Learn More")
                                     .style(ButtonStyle::Outlined)
                                     .label_size(LabelSize::Small)
