@@ -47,7 +47,7 @@ impl Vim {
             return;
         }
         self.stop_recording_immediately(action.boxed_clone(), cx);
-        self.switch_mode(Mode::HelixNormal, false, window, cx);
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
         return;
     }
 
