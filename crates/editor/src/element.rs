@@ -4985,10 +4985,18 @@ impl EditorElement {
                     .iter()
                     .any(|p| p.map_or(false, |p| display_row_range.contains(&p.row())))
                 {
-                    // Position controls at the end of the previous line to avoid covering diff content
-                    let control_row = if display_row_range.start.0 > 0 {
-                        display_row_range.start.0 - 1
+                    // Get controls positioning from editor state
+                    let controls_above = editor.read(cx).diff_hunk_controls_above();
+
+                    let control_row = if controls_above {
+                        // Position controls one line above the diff hunk to avoid covering diff content
+                        if display_row_range.start.0 > 0 {
+                            display_row_range.start.0 - 1
+                        } else {
+                            display_row_range.start.0
+                        }
                     } else {
+                        // Position controls at the start of the diff hunk (original behavior)
                         display_row_range.start.0
                     };
                     let y = control_row as f32 * line_height + text_hitbox.bounds.top()

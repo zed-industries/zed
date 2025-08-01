@@ -1126,6 +1126,7 @@ pub struct Editor {
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
+    diff_hunk_controls_above: bool,
     serialize_dirty_buffers: bool,
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
@@ -2137,6 +2138,7 @@ impl Editor {
             git_blame_inline_enabled: full_mode
                 && ProjectSettings::get_global(cx).git.inline_blame_enabled(),
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
+            diff_hunk_controls_above: true,
             serialize_dirty_buffers: !is_minimap
                 && ProjectSettings::get_global(cx)
                     .session
@@ -23641,6 +23643,12 @@ struct LineManipulationResult {
     pub line_count_after: usize,
 }
 
+impl Editor {
+    pub fn diff_hunk_controls_above(&self) -> bool {
+        self.diff_hunk_controls_above
+    }
+}
+
 fn render_diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
@@ -23651,20 +23659,28 @@ fn render_diff_hunk_controls(
     _window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    h_flex()
+    // Get controls positioning from editor state
+    let controls_above = editor.read(cx).diff_hunk_controls_above();
+    let mut container = h_flex()
         .h(line_height)
         .mr_1()
         .gap_1()
         .px_0p5()
         .py_0p5()
         .border_x_1()
-        .border_t_1()
         .border_color(cx.theme().colors().border_variant)
-        .rounded_t_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .shadow_md();
+
+    if controls_above {
+        container = container.border_t_1().rounded_t_lg();
+    } else {
+        container = container.border_b_1().rounded_b_lg();
+    }
+
+    container
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
                 .size(ButtonSize::Compact)

@@ -791,20 +791,29 @@ fn render_diff_hunk_controls(
 ) -> AnyElement {
     let editor = editor.clone();
 
-    h_flex()
+    // Get controls positioning from editor state
+    let controls_above = editor.read(cx).diff_hunk_controls_above();
+
+    let mut container = h_flex()
         .h(line_height)
         .mr_0p5()
         .gap_1()
         .px_0p5()
         .py_0p5()
         .border_x_1()
-        .border_t_1()
         .border_color(cx.theme().colors().border)
-        .rounded_t_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .shadow_md();
+
+    if controls_above {
+        container = container.border_t_1().rounded_t_md();
+    } else {
+        container = container.border_b_1().rounded_b_md();
+    }
+
+    container
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
                 .size(ButtonSize::Compact)
