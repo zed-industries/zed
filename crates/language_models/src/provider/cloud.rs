@@ -210,10 +210,7 @@ impl State {
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client
-                .authenticate_and_connect(true, &cx)
-                .await
-                .into_response()?;
+            client.sign_in(true, &cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }
@@ -632,11 +629,6 @@ impl CloudLanguageModel {
                         .and_then(|plan| plan.to_str().ok())
                         .and_then(|plan| cloud_llm_client::Plan::from_str(plan).ok())
                     {
-                        let plan = match plan {
-                            cloud_llm_client::Plan::ZedFree => proto::Plan::Free,
-                            cloud_llm_client::Plan::ZedPro => proto::Plan::ZedPro,
-                            cloud_llm_client::Plan::ZedProTrial => proto::Plan::ZedProTrial,
-                        };
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }
                 }

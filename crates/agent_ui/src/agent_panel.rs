@@ -44,7 +44,7 @@ use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{CloudUserStore, DisableAiSettings, UserStore, zed_urls};
-use cloud_llm_client::{CompletionIntent, UsageLimit};
+use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -60,7 +60,6 @@ use language_model::{
 };
 use project::{Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
-use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
@@ -2301,7 +2300,7 @@ impl AgentPanel {
         let plan = self.user_store.read(cx).current_plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        matches!(plan, Some(Plan::Free)) && has_previous_trial
+        matches!(plan, Some(Plan::ZedFree)) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2916,7 +2915,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let error_message = match plan {
             Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            Plan::ZedProTrial | Plan::Free => "Upgrade to Zed Pro for more prompts.",
+            Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
         };
 
         let icon = Icon::new(IconName::XCircle)

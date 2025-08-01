@@ -180,11 +180,9 @@ impl Render for TitleBar {
             children.push(self.banner.clone().into_any_element())
         }
 
-        let is_authenticated = self.cloud_user_store.read(cx).is_authenticated();
         let status = self.client.status();
         let status = &*status.borrow();
-
-        let show_sign_in = !is_authenticated || !matches!(status, client::Status::Connected { .. });
+        let user = self.user_store.read(cx).current_user();
 
         children.push(
             h_flex()
@@ -194,10 +192,10 @@ impl Render for TitleBar {
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
-                    show_sign_in && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(is_authenticated, |parent| {
+                .when(user.is_some(), |parent| {
                     parent.child(self.render_user_menu_button(cx))
                 })
                 .into_any_element(),
@@ -621,11 +619,7 @@ impl TitleBar {
                 let client = client.clone();
                 window
                     .spawn(cx, async move |cx| {
-                        client
-                            .authenticate_and_connect(true, &cx)
-                            .await
-                            .into_response()
-                            .notify_async_err(cx);
+                        client.sign_in(true, &cx).await.notify_async_err(cx);
                     })
                     .detach();
             })

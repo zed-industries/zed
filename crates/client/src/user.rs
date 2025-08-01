@@ -1,6 +1,7 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
+use cloud_api_client::PlanInfo;
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
     MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
@@ -20,7 +21,7 @@ use std::{
     sync::{Arc, Weak},
 };
 use text::ReplicaId;
-use util::TryFutureExt as _;
+use util::{ResultExt, TryFutureExt as _};
 
 pub type UserId = u64;
 
@@ -110,12 +111,12 @@ pub struct UserStore {
     by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    current_plan: Option<proto::Plan>,
+    current_plan_info: Option<PlanInfo>,
     trial_started_at: Option<DateTime<Utc>>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    accepted_tos_at: Option<Option<DateTime<Utc>>>,
+    accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -185,7 +186,7 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
-            current_plan: None,
+            current_plan_info: None,
             trial_started_at: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
@@ -218,29 +219,25 @@ impl UserStore {
                         return Ok(());
                     };
                     match status {
-                        Status::Connected { .. } => {
+                        Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let fetch_user = if let Ok(fetch_user) =
-                                    this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
-                                {
-                                    fetch_user
-                                } else {
-                                    break;
-                                };
-                                let fetch_private_user_info =
-                                    client.request(proto::GetPrivateUserInfo {}).log_err();
-                                let (user, info) =
-                                    futures::join!(fetch_user, fetch_private_user_info);
-
+                                let response = client.cloud_client().get_authenticated_user().await;
+                                let mut user = None;
                                 cx.update(|cx| {
-                                    if let Some(info) = info {
-                                        let staff =
-                                            info.staff && !*feature_flags::ZED_DISABLE_STAFF;
-                                        cx.update_flags(staff, info.flags);
+                                    if let Some(response) = response.log_err() {
+                                        let staff = response.user.is_staff
+                                            && !*feature_flags::ZED_DISABLE_STAFF;
+                                        cx.update_flags(staff, response.feature_flags);
                                         client.telemetry.set_authenticated_user_info(
-                                            Some(info.metrics_id.clone()),
+                                            Some(response.user.metrics_id.clone()),
                                             staff,
                                         );
+                                        user = Some(Arc::new(User {
+                                            id: user_id,
+                                            github_login: response.user.github_login.into(),
+                                            avatar_uri: response.user.avatar_url.into(),
+                                            name: response.user.name.into(),
+                                        }));
 
                                         this.update(cx, |this, cx| {
                                             let accepted_tos_at = {
@@ -249,14 +246,15 @@ impl UserStore {
                                                 {
                                                     None
                                                 } else {
-                                                    info.accepted_tos_at
+                                                    response.user.accepted_tos_at
                                                 }
 
                                                 #[cfg(not(debug_assertions))]
-                                                info.accepted_tos_at
+                                                response.user.accepted_tos_at
                                             };
 
-                                            this.set_current_user_accepted_tos_at(accepted_tos_at);
+                                            this.accepted_tos_at = Some(accepted_tos_at);
+                                            this.current_plan_info = Some(response.plan);
                                             cx.emit(Event::PrivateUserInfoUpdated);
                                         })
                                     } else {
@@ -348,18 +346,19 @@ impl UserStore {
         message: TypedEnvelope<proto::UpdateUserPlan>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        this.update(&mut cx, |this, cx| {
-            this.current_plan = Some(message.payload.plan());
-            this.trial_started_at = message
-                .payload
-                .trial_started_at
-                .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
-            this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
-            this.account_too_young = message.payload.account_too_young;
+        // todo!()
+        // this.update(&mut cx, |this, cx| {
+        //     this.current_plan = Some(message.payload.plan());
+        //     this.trial_started_at = message
+        //         .payload
+        //         .trial_started_at
+        //         .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
+        //     this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
+        //     this.account_too_young = message.payload.account_too_young;
 
-            cx.emit(Event::PlanUpdated);
-            cx.notify();
-        })?;
+        //     cx.emit(Event::PlanUpdated);
+        //     cx.notify();
+        // })?;
         Ok(())
     }
 
@@ -719,20 +718,20 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-    pub fn current_plan(&self) -> Option<proto::Plan> {
+    pub fn current_plan(&self) -> Option<cloud_llm_client::Plan> {
         #[cfg(debug_assertions)]
         if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
             return match plan.as_str() {
-                "free" => Some(proto::Plan::Free),
-                "trial" => Some(proto::Plan::ZedProTrial),
-                "pro" => Some(proto::Plan::ZedPro),
+                "free" => Some(cloud_llm_client::Plan::ZedFree),
+                "trial" => Some(cloud_llm_client::Plan::ZedProTrial),
+                "pro" => Some(cloud_llm_client::Plan::ZedPro),
                 _ => {
                     panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
                 }
             };
         }
 
-        self.current_plan
+        self.current_plan_info.as_ref().map(|info| info.plan)
     }
 
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
@@ -766,21 +765,16 @@ impl UserStore {
         cx.spawn(async move |this, cx| -> anyhow::Result<()> {
             let client = client.upgrade().context("client not found")?;
             let response = client
-                .request(proto::AcceptTermsOfService {})
+                .cloud_client()
+                .accept_terms_of_service()
                 .await
                 .context("error accepting tos")?;
             this.update(cx, |this, cx| {
-                this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                this.accepted_tos_at = Some(response.user.accepted_tos_at);
                 cx.emit(Event::PrivateUserInfoUpdated);
             })?;
             Ok(())
         })
-    }
-
-    fn set_current_user_accepted_tos_at(&mut self, accepted_tos_at: Option<u64>) {
-        self.accepted_tos_at = Some(
-            accepted_tos_at.and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0)),
-        );
     }
 
     fn load_users(

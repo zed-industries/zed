@@ -370,11 +370,7 @@ impl Onboarding {
                             let client = Client::global(cx);
                             window
                                 .spawn(cx, async move |cx| {
-                                    client
-                                        .authenticate_and_connect(true, &cx)
-                                        .await
-                                        .into_response()
-                                        .notify_async_err(cx);
+                                    client.sign_in(true, &cx).await.notify_async_err(cx);
                                 })
                                 .detach();
                         })

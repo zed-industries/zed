@@ -164,20 +164,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(
-                    async move |cx| match client.authenticate_and_connect(true, &cx).await {
-                        ConnectionResult::Timeout => {
-                            log::error!("Initial authentication timed out");
-                        }
-                        ConnectionResult::ConnectionReset => {
-                            log::error!("Initial authentication connection reset");
-                        }
-                        ConnectionResult::Result(r) => {
-                            r.log_err();
-                        }
-                    },
-                )
-                .detach();
+                cx.spawn(async move |cx| client.sign_in(true, &cx).await)
+                    .detach_and_log_err(cx);
             }
         }
     });
@@ -729,7 +717,7 @@ impl Client {
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
-                        match client.authenticate_and_connect(true, &cx).await {
+                        match client.connect(true, &cx).await {
                             ConnectionResult::Timeout => {
                                 log::error!("client connect attempt timed out")
                             }
@@ -900,17 +888,16 @@ impl Client {
     }
 
     #[async_recursion(?Send)]
-    pub async fn authenticate_and_connect(
+    pub async fn connect(
         self: &Arc<Self>,
         try_provider: bool,
         cx: &AsyncApp,
     ) -> ConnectionResult<()> {
         let was_disconnected = match *self.status().borrow() {
-            Status::SignedOut => true,
+            Status::SignedOut | Status::Authenticated => true,
             Status::ConnectionError
             | Status::ConnectionLost
             | Status::Authenticating { .. }
-            | Status::Authenticated
             | Status::AuthenticationError
             | Status::Reauthenticating { .. }
             | Status::ReconnectionError { .. } => false,
@@ -967,7 +954,7 @@ impl Client {
                         if credentials.read_from_provider {
                             self.credentials_provider.delete_credentials(cx).await.log_err();
                             self.set_status(Status::SignedOut, cx);
-                            self.authenticate_and_connect(false, cx).await
+                            self.connect(false, cx).await
                         } else {
                             self.set_status(Status::ConnectionError, cx);
                             ConnectionResult::Result(Err(EstablishConnectionError::Unauthorized).context("client auth and connect"))
@@ -995,6 +982,7 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
+        // todo!("validate that credentials are still valid")
         if matches!(*self.status().borrow(), Status::UpgradeRequired) {
             return Err(anyhow!("upgrade required"));
         } else if self.status().borrow().is_signed_out() {
@@ -1768,7 +1756,7 @@ mod tests {
         });
         let auth_and_connect = cx.spawn({
             let client = client.clone();
-            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+            |cx| async move { client.connect(false, &cx).await }
         });
         executor.run_until_parked();
         assert!(matches!(status.next().await, Some(Status::Connecting)));
@@ -1845,7 +1833,7 @@ mod tests {
 
         let _authenticate = cx.spawn({
             let client = client.clone();
-            move |cx| async move { client.authenticate_and_connect(false, &cx).await }
+            move |cx| async move { client.connect(false, &cx).await }
         });
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 1);
@@ -1853,7 +1841,7 @@ mod tests {
 
         let _authenticate = cx.spawn({
             let client = client.clone();
-            |cx| async move { client.authenticate_and_connect(false, &cx).await }
+            |cx| async move { client.connect(false, &cx).await }
         });
         executor.run_until_parked();
         assert_eq!(*auth_count.lock(), 2);

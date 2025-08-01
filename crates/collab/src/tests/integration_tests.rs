@@ -1286,7 +1286,7 @@ async fn test_calls_on_multiple_connections(
     client_b1.disconnect(&cx_b1.to_async());
     executor.advance_clock(RECEIVE_TIMEOUT);
     client_b1
-        .authenticate_and_connect(false, &cx_b1.to_async())
+        .connect(false, &cx_b1.to_async())
         .await
         .into_response()
         .unwrap();
@@ -1667,7 +1667,7 @@ async fn test_project_reconnect(
     // Client A reconnects. Their project is re-shared, and client B re-joins it.
     server.allow_connections();
     client_a
-        .authenticate_and_connect(false, &cx_a.to_async())
+        .connect(false, &cx_a.to_async())
         .await
         .into_response()
         .unwrap();
@@ -1796,7 +1796,7 @@ async fn test_project_reconnect(
     // Client B reconnects. They re-join the room and the remaining shared project.
     server.allow_connections();
     client_b
-        .authenticate_and_connect(false, &cx_b.to_async())
+        .connect(false, &cx_b.to_async())
         .await
         .into_response()
         .unwrap();
@@ -5738,7 +5738,7 @@ async fn test_contacts(
 
     server.allow_connections();
     client_c
-        .authenticate_and_connect(false, &cx_c.to_async())
+        .connect(false, &cx_c.to_async())
         .await
         .into_response()
         .unwrap();
@@ -6269,7 +6269,7 @@ async fn test_contact_requests(
         client.disconnect(&cx.to_async());
         client.clear_contacts(cx).await;
         client
-            .authenticate_and_connect(false, &cx.to_async())
+            .connect(false, &cx.to_async())
             .await
             .into_response()
             .unwrap();

@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{CloudUserStore, ModelRequestUsage, RequestUsage};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
@@ -37,7 +37,6 @@ use project::{
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
 };
 use prompt_store::{ModelContext, PromptBuilder};
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
