@@ -162,6 +162,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn test_push_new_branch_pull_request() {
@@ -174,17 +175,16 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: [
-                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
-                "remote:",
-                "remote: Create a pull request for 'test' on GitHub by visiting:",
-                "remote:      https://example.com/test/test/pull/new/test",
-                "remote:\n",
-                "To example.com:test/test.git",
-                " * [new branch]      test -> test",
-                "",
-            ]
-            .join("\n"),
+            stderr: indoc! { "
+                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+                remote:
+                remote: Create a pull request for 'test' on GitHub by visiting:
+                remote:      https://example.com/test/test/pull/new/test
+                remote:\n
+                To example.com:test/test.git
+                 * [new branch]      test -> test
+                "}
+            .to_string(),
         };
 
         let msg = format_output(&action, output);
@@ -208,18 +208,17 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: [
-                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
-                "remote:",
-                "remote: To create a merge request for test, visit:",
-                "remote:   https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test",
-                "remote:",
-                "To example.com:test/test.git",
-                " * [new branch]      test -> test",
-                "",
-            ]
-            .join("\n"),
-        };
+            stderr: indoc! {"
+                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+                remote:
+                remote: To create a merge request for test, visit:
+                remote:   https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test
+                remote:
+                To example.com:test/test.git
+                 * [new branch]      test -> test
+                "}
+            .to_string()
+            };
 
         let msg = format_output(&action, output);
 
@@ -245,17 +244,16 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: [
-                "Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)",
-                "remote:",
-                "remote: View merge request for test:",
-                "remote:    https://example.com/test/test/-/merge_requests/99999",
-                "remote:",
-                "To example.com:test/test.git",
-                " + 80bd3c83be...e03d499d2e test -> test",
-                "",
-            ]
-            .join("\n"),
+            stderr: indoc! {"
+                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+                remote:
+                remote: View merge request for test:
+                remote:    https://example.com/test/test/-/merge_requests/99999
+                remote:
+                To example.com:test/test.git
+                    + 80bd3c83be...e03d499d2e test -> test
+                "}
+            .to_string(),
         };
 
         let msg = format_output(&action, output);
@@ -279,12 +277,12 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: [
-                "To http://example.com/test/test.git",
-                " * [new branch]      test -> test",
-                "",
-            ]
-            .join("\n"),
+            stderr: indoc! { "
+                To http://example.com/test/test.git
+                 * [new branch]      test -> test
+                ",
+            }
+            .to_string(),
         };
 
         let msg = format_output(&action, output);
