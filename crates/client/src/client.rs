@@ -975,7 +975,8 @@ impl Client {
 
         let mut credentials = None;
 
-        if let Some(old_credentials) = self.state.read().credentials.clone() {
+        let old_credentials = self.state.read().credentials.clone();
+        if let Some(old_credentials) = old_credentials {
             self.cloud_client.set_credentials(
                 old_credentials.user_id as u32,
                 old_credentials.access_token.clone(),
