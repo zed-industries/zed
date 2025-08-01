@@ -206,30 +206,32 @@ impl TestServer {
             move |req| {
                 let name = name.clone();
                 async move {
-                    let credentials = parse_authorization_header(&req);
-                    if credentials
-                        != Some(Credentials {
-                            user_id: user_id.to_proto(),
-                            access_token: ACCESS_TOKEN.into(),
-                        })
-                    {
-                        return Ok(http_client::Response::builder()
-                            .status(401)
-                            .body("Unauthorized".into())
-                            .unwrap());
-                    }
-
                     match (req.method(), req.uri().path()) {
-                        (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
-                            .status(200)
-                            .body(
-                                serde_json::to_string(&make_get_authenticated_user_response(
-                                    user_id.0, name,
-                                ))
-                                .unwrap()
-                                .into(),
-                            )
-                            .unwrap()),
+                        (&Method::GET, "/client/users/me") => {
+                            let credentials = parse_authorization_header(&req);
+                            if credentials
+                                != Some(Credentials {
+                                    user_id: user_id.to_proto(),
+                                    access_token: ACCESS_TOKEN.into(),
+                                })
+                            {
+                                return Ok(http_client::Response::builder()
+                                    .status(401)
+                                    .body("Unauthorized".into())
+                                    .unwrap());
+                            }
+
+                            Ok(http_client::Response::builder()
+                                .status(200)
+                                .body(
+                                    serde_json::to_string(&make_get_authenticated_user_response(
+                                        user_id.0, name,
+                                    ))
+                                    .unwrap()
+                                    .into(),
+                                )
+                                .unwrap())
+                        }
                         _ => Ok(http_client::Response::builder()
                             .status(404)
                             .body("Not Found".into())

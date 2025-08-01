@@ -48,31 +48,33 @@ impl FakeServer {
                 let state = state.clone();
                 let old_handler = old_handler.clone();
                 async move {
-                    let credentials = parse_authorization_header(&req);
-                    if credentials
-                        != Some(Credentials {
-                            user_id: client_user_id,
-                            access_token: state.lock().access_token.to_string(),
-                        })
-                    {
-                        return Ok(http_client::Response::builder()
-                            .status(401)
-                            .body("Unauthorized".into())
-                            .unwrap());
-                    }
-
                     match (req.method(), req.uri().path()) {
-                        (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
-                            .status(200)
-                            .body(
-                                serde_json::to_string(&make_get_authenticated_user_response(
-                                    client_user_id as i32,
-                                    format!("user-{client_user_id}"),
-                                ))
-                                .unwrap()
-                                .into(),
-                            )
-                            .unwrap()),
+                        (&Method::GET, "/client/users/me") => {
+                            let credentials = parse_authorization_header(&req);
+                            if credentials
+                                != Some(Credentials {
+                                    user_id: client_user_id,
+                                    access_token: state.lock().access_token.to_string(),
+                                })
+                            {
+                                return Ok(http_client::Response::builder()
+                                    .status(401)
+                                    .body("Unauthorized".into())
+                                    .unwrap());
+                            }
+
+                            Ok(http_client::Response::builder()
+                                .status(200)
+                                .body(
+                                    serde_json::to_string(&make_get_authenticated_user_response(
+                                        client_user_id as i32,
+                                        format!("user-{client_user_id}"),
+                                    ))
+                                    .unwrap()
+                                    .into(),
+                                )
+                                .unwrap())
+                        }
                         _ => old_handler(req).await,
                     }
                 }
