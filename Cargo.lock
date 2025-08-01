@@ -12807,6 +12807,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "python_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20306,6 +20320,7 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
+ "python_ui",
  "recent_projects",
  "release_channel",
  "remote",
