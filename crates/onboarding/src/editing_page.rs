@@ -120,31 +120,31 @@ fn write_buffer_font_family(font_family: SharedString, cx: &mut App) {
 
 fn read_font_ligatures(cx: &App) -> bool {
     ThemeSettings::get_global(cx)
-        .ui_font
+        .buffer_font
         .features
         .is_calt_enabled()
         .unwrap_or(true)
 }
 
-// todo! this doesn't work
 fn write_font_ligatures(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
     let bit = if enabled { 1 } else { 0 };
 
     update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
         let mut features = theme_settings
-            .ui_font_features
-            .as_ref()
+            .buffer_font_features
+            .as_mut()
             .map(|features| features.tag_value_list().to_vec())
             .unwrap_or_default();
 
         if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {
             features[calt_index].1 = bit;
+            dbg!(&features[calt_index]);
         } else {
             features.push(("calt".into(), bit));
         }
 
-        theme_settings.ui_font_features = Some(FontFeatures(Arc::new(features)));
+        theme_settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
     });
 }
 
