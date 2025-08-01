@@ -149,6 +149,9 @@ pub struct PredictEditsBody {
     pub can_collect_data: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub diagnostic_groups: Option<Vec<(String, serde_json::Value)>>,
+    /// SHA of git HEAD commit at time of prediction.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub git_head_sha: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -34,7 +34,7 @@ use language::{
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use postage::watch;
-use project::Project;
+use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
@@ -400,6 +400,14 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
+        let git_head_sha = if let (true, Some(project), Some(file)) =
+            (can_collect_data, project, snapshot.file())
+        {
+            git_head_sha_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+        } else {
+            None
+        };
+
         let full_path: Arc<Path> = snapshot
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
@@ -415,6 +423,7 @@ impl Zeta {
             cursor_point,
             make_events_prompt,
             can_collect_data,
+            git_head_sha,
             cx,
         );
 
@@ -1155,6 +1164,26 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
+fn git_head_sha_for_file(
+    project: &Entity<Project>,
+    project_path: &ProjectPath,
+    cx: &App,
+) -> Option<String> {
+    let git_store = project.read(cx).git_store().read(cx);
+    if let Some((repository, _repo_path)) =
+        git_store.repository_and_path_for_project_path(project_path, cx)
+    {
+        let repository = repository.read(cx);
+        let head_sha = repository
+            .head_commit
+            .as_ref()
+            .map(|head_commit| head_commit.sha.to_string());
+        head_sha
+    } else {
+        None
+    }
+}
+
 pub struct GatherContextOutput {
     pub body: PredictEditsBody,
     pub editable_range: Range<usize>,
@@ -1167,6 +1196,7 @@ pub fn gather_context(
     cursor_point: language::Point,
     make_events_prompt: impl FnOnce() -> String + Send + 'static,
     can_collect_data: bool,
+    git_head_sha: Option<String>,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     let local_lsp_store =
@@ -1216,6 +1246,7 @@ pub fn gather_context(
                 outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
+                git_head_sha,
             };
 
             Ok(GatherContextOutput {
