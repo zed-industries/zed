@@ -35,6 +35,7 @@ pub(crate) fn swap_rgba_pa_to_bgra(color: &mut [u8]) {
 
 /// An RGBA color
 #[derive(PartialEq, Clone, Copy, Default)]
+#[repr(C)]
 pub struct Rgba {
     /// The red component of the color, in the range 0.0 to 1.0
     pub r: f32,

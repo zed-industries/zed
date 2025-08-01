@@ -121,9 +121,10 @@ impl Dismissable for ZedPredictUpsell {
 }
 
 pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    match user_store.read(cx).current_user_has_accepted_terms() {
-        Some(true) => !ZedPredictUpsell::dismissed(),
-        Some(false) | None => true,
+    if user_store.read(cx).has_accepted_terms_of_service() {
+        !ZedPredictUpsell::dismissed()
+    } else {
+        true
     }
 }
 
@@ -226,12 +227,9 @@ pub struct Zeta {
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    /// Whether the terms of service have been accepted.
-    tos_accepted: bool,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
     user_store: Entity<UserStore>,
-    _user_store_subscription: Subscription,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
@@ -306,22 +304,7 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
-            tos_accepted: user_store
-                .read(cx)
-                .current_user_has_accepted_terms()
-                .unwrap_or(false),
             update_required: false,
-            _user_store_subscription: cx.subscribe(&user_store, |this, user_store, event, cx| {
-                match event {
-                    client::user::Event::PrivateUserInfoUpdated => {
-                        this.tos_accepted = user_store
-                            .read(cx)
-                            .current_user_has_accepted_terms()
-                            .unwrap_or(false);
-                    }
-                    _ => {}
-                }
-            }),
             license_detection_watchers: HashMap::default(),
             user_store,
         }
@@ -1588,7 +1571,12 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
     }
 
     fn needs_terms_acceptance(&self, cx: &App) -> bool {
-        !self.zeta.read(cx).tos_accepted
+        !self
+            .zeta
+            .read(cx)
+            .user_store
+            .read(cx)
+            .has_accepted_terms_of_service()
     }
 
     fn is_refreshing(&self) -> bool {
@@ -1603,7 +1591,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         _debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        if !self.zeta.read(cx).tos_accepted {
+        if self.needs_terms_acceptance(cx) {
             return;
         }
 
@@ -1615,7 +1603,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
             .zeta
             .read(cx)
             .user_store
-            .read_with(cx, |user_store, _| {
+            .read_with(cx, |user_store, _cx| {
                 user_store.account_too_young() || user_store.has_overdue_invoices()
             })
         {
@@ -1832,13 +1820,14 @@ fn tokens_for_bytes(bytes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use client::UserStore;
     use client::test::FakeServer;
     use clock::FakeSystemClock;
+    use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
     use language::Point;
-    use rpc::proto;
     use settings::SettingsStore;
 
     use super::*;
@@ -2042,41 +2031,51 @@ mod tests {
             <|editable_region_end|>
             ```"};
 
-        let http_client = FakeHttpClient::create(move |_| async move {
-            Ok(http_client::Response::builder()
-                .status(200)
-                .body(
-                    serde_json::to_string(&PredictEditsResponse {
-                        request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
-                            .unwrap(),
-                        output_excerpt: completion_response.to_string(),
-                    })
-                    .unwrap()
-                    .into(),
-                )
-                .unwrap())
+        let http_client = FakeHttpClient::create(move |req| async move {
+            match (req.method(), req.uri().path()) {
+                (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&CreateLlmTokenResponse {
+                            token: LlmToken("the-llm-token".to_string()),
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap()),
+                (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
+                    .status(200)
+                    .body(
+                        serde_json::to_string(&PredictEditsResponse {
+                            request_id: Uuid::parse_str("7e86480f-3536-4d2c-9334-8213e3445d45")
+                                .unwrap(),
+                            output_excerpt: completion_response.to_string(),
+                        })
+                        .unwrap()
+                        .into(),
+                    )
+                    .unwrap()),
+                _ => Ok(http_client::Response::builder()
+                    .status(404)
+                    .body("Not Found".into())
+                    .unwrap()),
+            }
         });
 
         let client = cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client, cx));
         cx.update(|cx| {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
-        let server = FakeServer::for_client(42, &client, cx).await;
+        // Construct the fake server to authenticate.
+        let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task = zeta.update(cx, |zeta, cx| {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
-
-        server.receive::<proto::GetUsers>().await.unwrap();
-        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
-        server.respond(
-            token_request.receipt(),
-            proto::GetLlmTokenResponse { token: "".into() },
-        );
 
         let completion = completion_task.await.unwrap().unwrap();
         buffer.update(cx, |buffer, cx| {
@@ -2094,20 +2093,36 @@ mod tests {
         cx: &mut TestAppContext,
     ) -> Vec<(Range<Point>, String)> {
         let completion_response = completion_response.to_string();
-        let http_client = FakeHttpClient::create(move |_| {
+        let http_client = FakeHttpClient::create(move |req| {
             let completion = completion_response.clone();
             async move {
-                Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(
-                        serde_json::to_string(&PredictEditsResponse {
-                            request_id: Uuid::new_v4(),
-                            output_excerpt: completion,
-                        })
-                        .unwrap()
-                        .into(),
-                    )
-                    .unwrap())
+                match (req.method(), req.uri().path()) {
+                    (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::to_string(&CreateLlmTokenResponse {
+                                token: LlmToken("the-llm-token".to_string()),
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap()),
+                    (&Method::POST, "/predict_edits/v2") => Ok(http_client::Response::builder()
+                        .status(200)
+                        .body(
+                            serde_json::to_string(&PredictEditsResponse {
+                                request_id: Uuid::new_v4(),
+                                output_excerpt: completion,
+                            })
+                            .unwrap()
+                            .into(),
+                        )
+                        .unwrap()),
+                    _ => Ok(http_client::Response::builder()
+                        .status(404)
+                        .body("Not Found".into())
+                        .unwrap()),
+                }
             }
         });
 
@@ -2115,9 +2130,10 @@ mod tests {
         cx.update(|cx| {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
-        let server = FakeServer::for_client(42, &client, cx).await;
+        // Construct the fake server to authenticate.
+        let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
@@ -2125,13 +2141,6 @@ mod tests {
         let completion_task = zeta.update(cx, |zeta, cx| {
             zeta.request_completion(None, &buffer, cursor, false, cx)
         });
-
-        server.receive::<proto::GetUsers>().await.unwrap();
-        let token_request = server.receive::<proto::GetLlmToken>().await.unwrap();
-        server.respond(
-            token_request.receipt(),
-            proto::GetLlmTokenResponse { token: "".into() },
-        );
 
         let completion = completion_task.await.unwrap().unwrap();
         completion

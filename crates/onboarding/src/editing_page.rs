@@ -143,7 +143,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorVsCode)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
@@ -169,7 +169,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorCursor)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
@@ -349,7 +349,7 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(SwitchField::new(
             "onboarding-enable-inlay-hints",
             "Inlay Hints",
-            "See parameter names for function and method calls inline.",
+            Some("See parameter names for function and method calls inline.".into()),
             if read_inlay_hints(cx) {
                 ui::ToggleState::Selected
             } else {
@@ -362,7 +362,7 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(SwitchField::new(
             "onboarding-git-blame-switch",
             "Git Blame",
-            "See who committed each line on a given file.",
+            Some("See who committed each line on a given file.".into()),
             if read_git_blame(cx) {
                 ui::ToggleState::Selected
             } else {

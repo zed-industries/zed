@@ -90,10 +90,7 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
             let new_provider = all_language_settings(None, cx).edit_predictions.provider;
 
             if new_provider != provider {
-                let tos_accepted = user_store
-                    .read(cx)
-                    .current_user_has_accepted_terms()
-                    .unwrap_or(false);
+                let tos_accepted = user_store.read(cx).has_accepted_terms_of_service();
 
                 telemetry::event!(
                     "Edit Prediction Provider Changed",
@@ -244,7 +241,7 @@ fn assign_edit_prediction_provider(
             }
         }
         EditPredictionProvider::Zed => {
-            if client.status().borrow().is_connected() {
+            if user_store.read(cx).current_user().is_some() {
                 let mut worktree = None;
 
                 if let Some(buffer) = &singleton_buffer {

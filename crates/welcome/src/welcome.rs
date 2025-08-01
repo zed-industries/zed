@@ -21,7 +21,6 @@ pub use multibuffer_hint::*;
 
 mod base_keymap_picker;
 mod multibuffer_hint;
-mod welcome_ui;
 
 actions!(
     welcome,

@@ -114,7 +114,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "proto",
  "rand 0.8.5",
  "ref-cast",
  "rope",
@@ -355,10 +354,10 @@ name = "ai_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
+ "cloud_llm_client",
  "component",
  "gpui",
  "language_model",
- "proto",
  "serde",
  "smallvec",
  "telemetry",
@@ -1073,17 +1072,6 @@ dependencies = [
  "futures-lite 2.6.0",
  "rustix 0.38.44",
  "tracing",
-]
-
-[[package]]
-name = "async-recursion"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2971,7 +2959,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 0.3.2",
  "async-tungstenite",
  "base64 0.22.1",
  "chrono",
@@ -7813,6 +7800,7 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "url",
@@ -9084,7 +9072,6 @@ dependencies = [
  "open_router",
  "partial-json-fixer",
  "project",
- "proto",
  "release_channel",
  "schemars",
  "serde",
@@ -9822,7 +9809,7 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "collections",
  "editor",
  "fs",
@@ -10922,14 +10909,21 @@ dependencies = [
 name = "onboarding"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anyhow",
+ "client",
  "command_palette_hooks",
+ "component",
  "db",
+ "documented",
  "editor",
  "feature_flags",
  "fs",
  "gpui",
+ "itertools 0.14.0",
  "language",
+ "language_model",
+ "menu",
  "project",
  "schemars",
  "serde",
@@ -10937,6 +10931,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "vim_mode_setting",
  "workspace",
  "workspace-hack",
  "zed_actions",
@@ -16183,7 +16178,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_slash_command",
- "async-recursion 1.1.1",
+ "async-recursion",
  "breadcrumbs",
  "client",
  "collections",
@@ -18594,7 +18589,6 @@ dependencies = [
  "serde",
  "settings",
  "telemetry",
- "theme",
  "ui",
  "util",
  "vim_mode_setting",
@@ -19609,7 +19603,7 @@ version = "0.1.0"
 dependencies = [
  "any_vec",
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "bincode",
  "call",
  "client",
@@ -20134,7 +20128,7 @@ dependencies = [
  "async-io",
  "async-lock",
  "async-process",
- "async-recursion 1.1.1",
+ "async-recursion",
  "async-task",
  "async-trait",
  "blocking",
@@ -20567,6 +20561,7 @@ dependencies = [
  "call",
  "client",
  "clock",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -20587,7 +20582,6 @@ dependencies = [
  "menu",
  "postage",
  "project",
- "proto",
  "regex",
  "release_channel",
  "reqwest_client",
