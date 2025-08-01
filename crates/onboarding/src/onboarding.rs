@@ -22,7 +22,7 @@ use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
-    open_new, with_active_or_new_workspace,
+    open_new, register_serializable_item, with_active_or_new_workspace,
 };
 
 mod ai_setup_page;
@@ -197,6 +197,7 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+    register_serializable_item::<Onboarding>(cx);
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
@@ -593,4 +594,107 @@ pub async fn handle_import_vscode_settings(
         zlog::info!("Imported {source} settings from {}", path.display());
     })
     .ok();
+}
+
+impl workspace::SerializableItem for Onboarding {
+    fn serialized_item_kind() -> &'static str {
+        "OnboardingPage"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "onboarding_pages",
+            &persistence::ONBOARDING_PAGES,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        window.spawn(cx, async move |cx| {
+            if persistence::ONBOARDING_PAGES
+                .get_onboarding_page(item_id, workspace_id)?
+                .is_some()
+            {
+                workspace.update(cx, |workspace, cx| Onboarding::new(workspace, cx))
+            } else {
+                Err(anyhow::anyhow!("No onboarding page to deserialize"))
+            }
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut ui::Context<Self>,
+    ) -> Option<gpui::Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        Some(cx.background_spawn(async move {
+            persistence::ONBOARDING_PAGES
+                .save_onboarding_page(item_id, workspace_id)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, _event: &Self::Event) -> bool {
+        false
+    }
+}
+
+mod persistence {
+    use db::{define_connection, query, sqlez_macros::sql};
+    use workspace::WorkspaceDb;
+
+    define_connection! {
+        pub static ref ONBOARDING_PAGES: OnboardingPagesDb<WorkspaceDb> =
+            &[sql!(
+                CREATE TABLE onboarding_pages (
+                    workspace_id INTEGER,
+                    item_id INTEGER UNIQUE,
+
+                    PRIMARY KEY(workspace_id, item_id),
+                    FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                    ON DELETE CASCADE
+                ) STRICT;
+            )];
+    }
+
+    impl OnboardingPagesDb {
+        query! {
+            pub async fn save_onboarding_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id)
+                VALUES (?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_onboarding_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<Option<workspace::ItemId>> {
+                SELECT item_id
+                FROM onboarding_pages
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
+    }
 }
