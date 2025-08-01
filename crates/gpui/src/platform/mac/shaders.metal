@@ -110,22 +110,26 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Apply content_mask corner radii clipping
   float clip_alpha = 1.0;
-  float clip_sdf = 0.0;
+  float clip_sdf = 1.0;
+  float2 clip_half_size = float2(0.0, 0.0);
+  float clip_corner_radius = 0.0;
   ContentMask_ScaledPixels content_mask = quad.content_mask;
   if (content_mask.corner_radii.top_left > quad.corner_radii.top_left ||
       content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
       content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
       content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
-    float2 clip_half_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height) / 2.0;
+    clip_half_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height) / 2.0;
     float2 clip_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + clip_half_size;
     float2 clip_center_to_point = input.position.xy - clip_center;
-    float clip_corner_radius = pick_corner_radius(clip_center_to_point, content_mask.corner_radii);
+    clip_corner_radius = pick_corner_radius(clip_center_to_point, content_mask.corner_radii);
     float2 clip_corner_center_to_point = fabs(clip_center_to_point) - clip_half_size + clip_corner_radius;
     clip_sdf = quad_sdf_impl(clip_corner_center_to_point, clip_corner_radius);
     clip_alpha = saturate(antialias_threshold - clip_sdf);
+
+    background_color.a *= clip_alpha;
+    border_color.a *= clip_alpha;
   }
 
-  float4 cliped_background_color = background_color * float4(1.0, 1.0, 1.0, clip_alpha);
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -138,7 +142,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       quad.border_widths.right == 0.0 &&
       quad.border_widths.bottom == 0.0 &&
       unrounded) {
-    return cliped_background_color;
+    return background_color;
   }
 
   float2 size = float2(quad.bounds.size.width, quad.bounds.size.height);
@@ -185,7 +189,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
     straight_border_inner_corner_to_point.x > 0.0 ||
     straight_border_inner_corner_to_point.y > 0.0;
 
-
   // Whether the point is far enough inside the quad, such that the pixels are
   // not affected by the straight border.
   bool is_within_inner_straight_border =
@@ -194,7 +197,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Fast path for points that must be part of the background
   if (is_within_inner_straight_border && !is_near_rounded_corner) {
-    return cliped_background_color;
+    return background_color;
   }
 
   // Signed distance of the point to the outside edge of the quad's border
@@ -229,8 +232,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 color = background_color;
   if (border_sdf < antialias_threshold) {
-    float4 border_color = input.border_color;
-
     // Dashed border logic when border_style == 1
     if (quad.border_style == 1) {
       // Position along the perimeter in "dash space", where each dash
