@@ -438,6 +438,7 @@ mod test {
     #[gpui::test]
     async fn test_word_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // «
         // ˇ
         // »
@@ -499,6 +500,7 @@ mod test {
     #[gpui::test]
     async fn test_delete(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // test delete a selection
         cx.set_state(
@@ -579,6 +581,7 @@ mod test {
     #[gpui::test]
     async fn test_f_and_t(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state(
             indoc! {"
@@ -612,6 +615,7 @@ mod test {
     #[gpui::test]
     async fn test_newline_char(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         cx.set_state("aa«\nˇ»bb cc", Mode::HelixNormal);
 
@@ -629,6 +633,7 @@ mod test {
     #[gpui::test]
     async fn test_insert_selected(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         cx.set_state(
             indoc! {"
             «The ˇ»quick brown
@@ -651,6 +656,7 @@ mod test {
     #[gpui::test]
     async fn test_append(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
         // test from the end of the selection
         cx.set_state(
             indoc! {"
@@ -693,6 +699,7 @@ mod test {
     #[gpui::test]
     async fn test_replace(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // No selection (single character)
         cx.set_state("ˇaa", Mode::HelixNormal);
@@ -719,6 +726,7 @@ mod test {
     #[gpui::test]
     async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
 
         // First copy some text to clipboard
         cx.set_state("«hello worldˇ»", Mode::HelixNormal);
