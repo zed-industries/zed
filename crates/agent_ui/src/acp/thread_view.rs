@@ -2668,7 +2668,7 @@ mod tests {
         init_test(cx);
 
         let (thread_view, cx) =
-            setup_thread_view(StubAgentServer::new(SabatourAgentConnection), cx).await;
+            setup_thread_view(StubAgentServer::new(SaboteurAgentConnection), cx).await;
 
         let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
         message_editor.update_in(cx, |editor, window, cx| {
@@ -2907,11 +2907,11 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct SabatourAgentConnection;
+    struct SaboteurAgentConnection;
 
-    impl AgentConnection for SabatourAgentConnection {
+    impl AgentConnection for SaboteurAgentConnection {
         fn name(&self) -> &'static str {
-            "SabatourAgentConnection"
+            "SaboteurAgentConnection"
         }
 
         fn new_thread(
