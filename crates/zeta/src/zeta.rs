@@ -1182,12 +1182,20 @@ fn git_info_for_file(
             .branch
             .as_ref()
             .map(|branch| branch.name().to_string());
-        if head_sha.is_none() && branch_name.is_none() {
+        let remote_origin_url = repository.remote_origin_url.clone();
+        let remote_upstream_url = repository.remote_upstream_url.clone();
+        if head_sha.is_none()
+            && branch_name.is_none()
+            && remote_origin_url.is_none()
+            && remote_upstream_url.is_none()
+        {
             return None;
         }
         Some(PredictEditsGitInfo {
             head_sha,
             branch_name,
+            remote_origin_url,
+            remote_upstream_url,
         })
     } else {
         None

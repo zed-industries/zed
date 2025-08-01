@@ -162,6 +162,12 @@ pub struct PredictEditsGitInfo {
     /// Name of the current branch at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub branch_name: Option<String>,
+    /// URL of the remote called `origin`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_origin_url: Option<String>,
+    /// URL of the remote called `upstream`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub remote_upstream_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
