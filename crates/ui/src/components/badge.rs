@@ -42,12 +42,7 @@ impl RenderOnce for Badge {
                     .color(Color::Muted),
             )
             .child(Divider::vertical().color(DividerColor::Border))
-            .child(
-                Label::new(self.label.clone())
-                    .size(LabelSize::XSmall)
-                    .buffer_font(cx)
-                    .ml_1(),
-            )
+            .child(Label::new(self.label.clone()).size(LabelSize::Small).ml_1())
     }
 }
 
