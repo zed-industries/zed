@@ -22,7 +22,7 @@ use workspace::{
     dock::DockPosition,
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
-    open_new, with_active_or_new_workspace,
+    open_new, register_serializable_item, with_active_or_new_workspace,
 };
 
 mod ai_setup_page;
@@ -197,6 +197,7 @@ pub fn init(cx: &mut App) {
         .detach();
     })
     .detach();
+    register_serializable_item::<Onboarding>(cx);
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
@@ -245,6 +246,12 @@ impl Onboarding {
             user_store: workspace.user_store().clone(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         })
+    }
+
+    fn set_page(&mut self, page: SelectedPage, cx: &mut Context<Self>) {
+        self.selected_page = page;
+        cx.notify();
+        cx.emit(ItemEvent::UpdateTab);
     }
 
     fn render_nav_buttons(
@@ -306,8 +313,7 @@ impl Onboarding {
                     IntoElement::into_any_element,
                 ))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.selected_page = page;
-                    cx.notify();
+                    this.set_page(page, cx);
                 }))
         })
     }
@@ -470,16 +476,13 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.selected_page = SelectedPage::Basics;
-                cx.notify();
+                this.set_page(SelectedPage::Basics, cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.selected_page = SelectedPage::Editing;
-                cx.notify();
+                this.set_page(SelectedPage::Editing, cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.selected_page = SelectedPage::AiSetup;
-                cx.notify();
+                this.set_page(SelectedPage::AiSetup, cx);
             }))
             .child(
                 h_flex()
@@ -593,4 +596,126 @@ pub async fn handle_import_vscode_settings(
         zlog::info!("Imported {source} settings from {}", path.display());
     })
     .ok();
+}
+
+impl workspace::SerializableItem for Onboarding {
+    fn serialized_item_kind() -> &'static str {
+        "OnboardingPage"
+    }
+
+    fn cleanup(
+        workspace_id: workspace::WorkspaceId,
+        alive_items: Vec<workspace::ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<()>> {
+        workspace::delete_unloaded_items(
+            alive_items,
+            workspace_id,
+            "onboarding_pages",
+            &persistence::ONBOARDING_PAGES,
+            cx,
+        )
+    }
+
+    fn deserialize(
+        _project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: workspace::WorkspaceId,
+        item_id: workspace::ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> gpui::Task<gpui::Result<Entity<Self>>> {
+        window.spawn(cx, async move |cx| {
+            if let Some(page_number) =
+                persistence::ONBOARDING_PAGES.get_onboarding_page(item_id, workspace_id)?
+            {
+                let page = match page_number {
+                    0 => Some(SelectedPage::Basics),
+                    1 => Some(SelectedPage::Editing),
+                    2 => Some(SelectedPage::AiSetup),
+                    _ => None,
+                };
+                workspace.update(cx, |workspace, cx| {
+                    let onboarding_page = Onboarding::new(workspace, cx);
+                    if let Some(page) = page {
+                        zlog::info!("Onboarding page {page:?} loaded");
+                        onboarding_page.update(cx, |onboarding_page, cx| {
+                            onboarding_page.set_page(page, cx);
+                        })
+                    }
+                    onboarding_page
+                })
+            } else {
+                Err(anyhow::anyhow!("No onboarding page to deserialize"))
+            }
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: workspace::ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut ui::Context<Self>,
+    ) -> Option<gpui::Task<gpui::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let page_number = self.selected_page as u16;
+        Some(cx.background_spawn(async move {
+            persistence::ONBOARDING_PAGES
+                .save_onboarding_page(item_id, workspace_id, page_number)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        event == &ItemEvent::UpdateTab
+    }
+}
+
+mod persistence {
+    use db::{define_connection, query, sqlez_macros::sql};
+    use workspace::WorkspaceDb;
+
+    define_connection! {
+        pub static ref ONBOARDING_PAGES: OnboardingPagesDb<WorkspaceDb> =
+            &[
+                sql!(
+                    CREATE TABLE onboarding_pages (
+                        workspace_id INTEGER,
+                        item_id INTEGER UNIQUE,
+                        page_number INTEGER,
+
+                        PRIMARY KEY(workspace_id, item_id),
+                        FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+                        ON DELETE CASCADE
+                    ) STRICT;
+                ),
+            ];
+    }
+
+    impl OnboardingPagesDb {
+        query! {
+            pub async fn save_onboarding_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId,
+                page_number: u16
+            ) -> Result<()> {
+                INSERT OR REPLACE INTO onboarding_pages(item_id, workspace_id, page_number)
+                VALUES (?, ?, ?)
+            }
+        }
+
+        query! {
+            pub fn get_onboarding_page(
+                item_id: workspace::ItemId,
+                workspace_id: workspace::WorkspaceId
+            ) -> Result<Option<u16>> {
+                SELECT page_number
+                FROM onboarding_pages
+                WHERE item_id = ? AND workspace_id = ?
+            }
+        }
+    }
 }
