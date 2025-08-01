@@ -6,19 +6,35 @@ use ui::{
     IntoElement, RenderOnce, component_prelude::Documented, prelude::*, utils::inner_corner_radius,
 };
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ThemePreviewStyle {
+    Bordered,
+    Borderless,
+}
+
 /// Shows a preview of a theme as an abstract illustration
 /// of a thumbnail-sized editor.
 #[derive(IntoElement, RegisterComponent, Documented)]
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
     seed: f32,
+    style: ThemePreviewStyle,
 }
 
 impl ThemePreviewTile {
     pub const CORNER_RADIUS: Pixels = px(8.0);
 
     pub fn new(theme: Arc<Theme>, seed: f32) -> Self {
-        Self { theme, seed }
+        Self {
+            theme,
+            seed,
+            style: ThemePreviewStyle::Bordered,
+        }
+    }
+
+    pub fn style(mut self, size: ThemePreviewStyle) -> Self {
+        self.style = style;
+        self
     }
 }
 
@@ -159,14 +175,18 @@ impl RenderOnce for ThemePreviewTile {
 
         div()
             .size_full()
-            .rounded(root_radius)
             .p(root_padding)
+            .when(self.style == ThemePreviewStyle::Bordered, |this| {
+                this.rounded(root_radius)
+            })
             .child(
                 div()
                     .size_full()
-                    .rounded(inner_radius)
-                    .border(child_border)
-                    .border_color(color.border)
+                    .when(self.style == ThemePreviewStyle::Bordered, |this| {
+                        this.rounded(inner_radius)
+                            .border(child_border)
+                            .border_color(color.border)
+                    })
                     .bg(color.background)
                     .child(content),
             )
