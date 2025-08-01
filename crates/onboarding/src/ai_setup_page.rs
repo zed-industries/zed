@@ -87,7 +87,7 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Badge::new("Privacy").icon(IconName::FileLock))
+                                .child(Badge::new("Privacy").icon(IconName::ShieldCheck))
                                 .child(
                                     Button::new("learn_more", "Learn More")
                                         .style(ButtonStyle::Outlined)

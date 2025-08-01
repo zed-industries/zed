@@ -235,6 +235,7 @@ pub enum IconName {
     Server,
     Settings,
     SettingsAlt,
+    ShieldCheck,
     Shift,
     Slash,
     SlashSquare,
