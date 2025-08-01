@@ -799,7 +799,7 @@ impl DirectWriteState {
         // GetAlphaTextureBounds() supposedly returns an empty RECT, but I haven't tested that yet.
         if !unsafe { IsRectEmpty(&bounds) }.as_bool() {
             Ok(Bounds {
-                origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
+                origin: point(bounds.left.into(), bounds.top.into()),
                 size: size(
                     (bounds.right - bounds.left).into(),
                     (bounds.bottom - bounds.top).into(),
@@ -817,7 +817,7 @@ impl DirectWriteState {
                 })
             } else {
                 Ok(Bounds {
-                    origin: point((bounds.left as i32).into(), (bounds.top as i32).into()),
+                    origin: point(bounds.left.into(), bounds.top.into()),
                     size: size(
                         (bounds.right - bounds.left).into(),
                         (bounds.bottom - bounds.top).into(),
@@ -1279,8 +1279,9 @@ impl Drop for DirectWriteState {
 struct GlyphLayerTexture {
     run_color: Rgba,
     bounds: Bounds<i32>,
-    texture: ID3D11Texture2D,
     texture_view: ID3D11ShaderResourceView,
+    // holding on to the texture to not RAII drop it
+    _texture: ID3D11Texture2D,
 }
 
 impl GlyphLayerTexture {
@@ -1341,8 +1342,8 @@ impl GlyphLayerTexture {
         Ok(GlyphLayerTexture {
             run_color,
             bounds,
-            texture,
             texture_view,
+            _texture: texture,
         })
     }
 }
