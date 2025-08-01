@@ -113,10 +113,7 @@ impl ContextServer {
                     } else {
                         root_working_directory.clone()
                     };
-                println!(
-                    "[cx-server] configured working_directory: {:?}",
-                    &working_directory
-                );
+
                 Client::stdio(
                     client::ContextServerId(self.id.0.clone()),
                     client::ModelContextServerBinary {
