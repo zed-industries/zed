@@ -2,22 +2,31 @@ use crate::stdout_is_a_pty;
 use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::{TelemetrySettings, telemetry};
+use client::{
+    TelemetrySettings,
+    telemetry::{self, SENTRY_MINIDUMP_ENDPOINT},
+};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
-use reqwest_client::ReqwestClient;
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
     ffi::{OsStr, c_void},
-    sync::{Arc, atomic::Ordering},
+    fs,
+    io::Write,
+    panic,
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    thread,
 };
-use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
@@ -38,7 +47,7 @@ pub fn init_panic_hook(
         if prior_panic_count > 0 {
             // Give the panic-ing thread time to write the panic file
             loop {
-                std::thread::yield_now();
+                thread::yield_now();
             }
         }
         crashes::handle_panic();
@@ -138,7 +147,7 @@ pub fn init_panic_hook(
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-                let panic_file = std::fs::OpenOptions::new()
+                let panic_file = fs::OpenOptions::new()
                     .append(true)
                     .create(true)
                     .open(&panic_file_path)
@@ -516,8 +525,17 @@ async fn upload_previous_panics(
                 let minidump = paths::logs_dir()
                     .join(&panic.session_id)
                     .with_extension("dmp");
-                if minidump.exists() && upload_minidump(http.clone(), minidump, Some(panic)).is_ok() {
-                    fs::remove_file(minidump_path);
+                if minidump.exists()
+                    && let Some(endpoint) = SENTRY_MINIDUMP_ENDPOINT.to_owned()
+                    && upload_minidump(
+                        http.clone(),
+                        endpoint,
+                        minidump.clone(),
+                        Some(panic.clone()),
+                    )
+                    .await
+                {
+                    fs::remove_file(minidump).ok();
                 }
 
                 if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
@@ -527,7 +545,7 @@ async fn upload_previous_panics(
         }
 
         // We've done what we can, delete the file
-        std::fs::remove_file(child_path)
+        fs::remove_file(child_path)
             .context("error removing panic")
             .log_err();
     }
@@ -539,35 +557,45 @@ async fn upload_previous_panics(
         if child_path.extension() != Some(OsStr::new("dmp")) {
             continue;
         }
-        if upload_minidump(http.clone(), minidump, None).is_ok() {
-            fs::remove_file(child_path);
+        if let Some(endpoint) = SENTRY_MINIDUMP_ENDPOINT.to_owned()
+            && upload_minidump(http.clone(), endpoint, child_path.clone(), None).await
+        {
+            fs::remove_file(child_path).ok();
         }
     }
 
     Ok(most_recent_panic)
 }
 
-async fn upload_minidump(http: &Arc<HttpClientWithUrl>, minidump: &Path, panic: Option<&Panic>) -> Result<()> {
-    let (_, tokio_handle) = http.as_real_client()?
-
-    let http = http.clone();
+async fn upload_minidump(
+    http: Arc<HttpClientWithUrl>,
+    sentry_upload_url: String,
+    minidump: PathBuf,
+    panic: Option<Panic>,
+) -> bool {
+    let (_, tokio_handle) = http.as_real_client().unwrap();
     tokio_handle
         .spawn(async move {
             let (real_client, _tokio_handle) = http.as_real_client().unwrap();
-            let form = reqwest::multipart::Form::new()
-                .file("upload_file_minidump", minidump_path)
+            let mut form = reqwest::multipart::Form::new()
+                .file("upload_file_minidump", minidump)
                 .await
                 .unwrap();
-            // TODO: append fields from the panic
+            if let Some(panic) = panic {
+                form = form
+                    .text("platform", "rust")
+                    .text("release", format!("{}-{}", panic.release_channel, panic.app_version);
+                // TODO: tack on more fields
+            }
             real_client
-                .post(SENTRY_MINIDUMP_ENDPOINT)
+                .post(sentry_upload_url)
                 .multipart(form)
                 .send()
-                .await?
-            anyhow::Ok(())
+                .await
         })
         .await
         .log_err()
+        .is_some()
 }
 
 async fn upload_panic(
