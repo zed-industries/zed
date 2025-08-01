@@ -4985,8 +4985,13 @@ impl EditorElement {
                     .iter()
                     .any(|p| p.map_or(false, |p| display_row_range.contains(&p.row())))
                 {
-                    let y = display_row_range.start.as_f32() * line_height
-                        + text_hitbox.bounds.top()
+                    // Position controls at the end of the previous line to avoid covering diff content
+                    let control_row = if display_row_range.start.0 > 0 {
+                        display_row_range.start.0 - 1
+                    } else {
+                        display_row_range.start.0
+                    };
+                    let y = control_row as f32 * line_height + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
 
                     let mut element = render_diff_hunk_controls(

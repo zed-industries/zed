@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{ButtonSize, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -796,17 +796,18 @@ fn render_diff_hunk_controls(
         .mr_0p5()
         .gap_1()
         .px_0p5()
-        .pb_1()
+        .py_0p5()
         .border_x_1()
-        .border_b_1()
+        .border_t_1()
         .border_color(cx.theme().colors().border)
-        .rounded_b_md()
+        .rounded_t_md()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
+                .size(ButtonSize::Compact)
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(
@@ -835,6 +836,7 @@ fn render_diff_hunk_controls(
                     }
                 }),
             Button::new(("keep", row as u64), "Keep")
+                .size(ButtonSize::Compact)
                 .key_binding(
                     KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), window, cx)
                         .map(|kb| kb.size(rems_from_px(12.))),

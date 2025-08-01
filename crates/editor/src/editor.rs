@@ -23656,17 +23656,18 @@ fn render_diff_hunk_controls(
         .mr_1()
         .gap_1()
         .px_0p5()
-        .pb_1()
+        .py_0p5()
         .border_x_1()
-        .border_b_1()
+        .border_t_1()
         .border_color(cx.theme().colors().border_variant)
-        .rounded_b_lg()
+        .rounded_t_lg()
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
             Button::new(("stage", row as u64), "Stage")
+                .size(ButtonSize::Compact)
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
@@ -23694,6 +23695,7 @@ fn render_diff_hunk_controls(
                 })
         } else {
             Button::new(("unstage", row as u64), "Unstage")
+                .size(ButtonSize::Compact)
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
@@ -23722,6 +23724,7 @@ fn render_diff_hunk_controls(
         })
         .child(
             Button::new(("restore", row as u64), "Restore")
+                .size(ButtonSize::Compact)
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {
