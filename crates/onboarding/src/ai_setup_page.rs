@@ -43,6 +43,8 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
+    let privacy_bag = || Badge::new("Privacy").icon(IconName::ShieldCheck);
+
     v_flex()
         .relative()
         .pt_2()
@@ -71,7 +73,7 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                                         .size(IconSize::XSmall),
                                 ),
                         )
-                        .child(Badge::new("PRIVACY").icon(IconName::FileLock)),
+                        .child(privacy_bag()),
                 )
                 .child(
                     Label::new("Re-enable it any time in Settings.")
@@ -85,22 +87,17 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                         .justify_between()
                         .child(Label::new("We don't train models using your data"))
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Badge::new("Privacy").icon(IconName::ShieldCheck))
-                                .child(
-                                    Button::new("learn_more", "Learn More")
-                                        .style(ButtonStyle::Outlined)
-                                        .label_size(LabelSize::Small)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .on_click(|_, _, cx| {
-                                            cx.open_url(
-                                                "https://zed.dev/docs/ai/privacy-and-security",
-                                            );
-                                        }),
-                                ),
+                            h_flex().gap_1().child(privacy_bag()).child(
+                                Button::new("learn_more", "Learn More")
+                                    .style(ButtonStyle::Outlined)
+                                    .label_size(LabelSize::Small)
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .on_click(|_, _, cx| {
+                                        cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
+                                    }),
+                            ),
                         ),
                 )
                 .child(
