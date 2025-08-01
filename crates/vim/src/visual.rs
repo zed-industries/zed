@@ -197,6 +197,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window);
+            let is_helix_mode = HelixModeSetting::get_global(cx).0;
             if vim.mode == Mode::VisualBlock
                 && !matches!(
                     motion,
@@ -207,7 +208,7 @@ impl Vim {
             {
                 let is_up_or_down = matches!(motion, Motion::Up { .. } | Motion::Down { .. });
                 vim.visual_block_motion(is_up_or_down, editor, window, cx, |map, point, goal| {
-                    motion.move_point(map, point, goal, times, &text_layout_details)
+                    motion.move_point(map, point, goal, times, &text_layout_details, is_helix_mode)
                 })
             } else {
                 editor.change_selections(Default::default(), window, cx, |s| {
@@ -236,10 +237,12 @@ impl Vim {
                             selection.goal,
                             times,
                             &text_layout_details,
+                            is_helix_mode,
                         ) else {
                             return;
                         };
 
+                        log::info!("Motion new head:{:?}", new_head);
                         selection.set_head(new_head, goal);
 
                         // ensure the current character is included in the selection.
@@ -263,6 +266,11 @@ impl Vim {
                         } else if !was_reversed && selection.reversed {
                             selection.end = movement::right(map, selection.end);
                         }
+                        log::info!(
+                            "Selection: tail={:?} head={:?}",
+                            selection.start,
+                            selection.end
+                        );
                     })
                 });
             }

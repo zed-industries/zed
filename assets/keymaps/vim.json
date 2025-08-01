@@ -349,6 +349,7 @@
       "shift-p": ["vim::Paste", { "before": true }],
       "u": "vim::Undo",
       "ctrl-r": "vim::Redo",
+      "shift-r": "editor::Paste",
       "f": ["vim::PushFindForward", { "before": false, "multiline": true }],
       "t": ["vim::PushFindForward", { "before": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
