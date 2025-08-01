@@ -114,7 +114,6 @@ pub struct UserStore {
     trial_started_at: Option<DateTime<Utc>>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
-    has_overdue_invoices: Option<bool>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     accepted_tos_at: Option<Option<DateTime<Utc>>>,
     contacts: Vec<Arc<Contact>>,
@@ -190,7 +189,6 @@ impl UserStore {
             trial_started_at: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
-            has_overdue_invoices: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -358,7 +356,6 @@ impl UserStore {
                 .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
             this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
             this.account_too_young = message.payload.account_too_young;
-            this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
             cx.emit(Event::PlanUpdated);
             cx.notify();
@@ -753,11 +750,6 @@ impl UserStore {
     /// Returns whether the user's account is too new to use the service.
     pub fn account_too_young(&self) -> bool {
         self.account_too_young.unwrap_or(false)
-    }
-
-    /// Returns whether the current user has overdue invoices and usage should be blocked.
-    pub fn has_overdue_invoices(&self) -> bool {
-        self.has_overdue_invoices.unwrap_or(false)
     }
 
     pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
