@@ -7,7 +7,6 @@ pub mod user;
 pub mod zed_urls;
 
 use anyhow::{Context as _, Result, anyhow};
-use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
     error::Error as WebsocketError,
@@ -162,7 +161,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
         let client = client.clone();
         move |_: &SignIn, cx| {
             if let Some(client) = client.upgrade() {
-                cx.spawn(async move |cx| client.sign_in(true, &cx).await)
+                cx.spawn(async move |cx| client.sign_in_with_optional_connect(true, &cx).await)
                     .detach_and_log_err(cx);
             }
         }
@@ -885,7 +884,6 @@ impl Client {
             .is_some()
     }
 
-    #[async_recursion(?Send)]
     pub async fn connect(
         self: &Arc<Self>,
         try_provider: bool,
@@ -960,6 +958,22 @@ impl Client {
                 self.set_status(Status::ConnectionError, cx);
                 ConnectionResult::Timeout
             }
+        }
+    }
+
+    /// Performs a sign-in and also connects to Collab.
+    ///
+    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
+    /// to `sign_in` when we're ready to remove auto-connection to Collab.
+    pub async fn sign_in_with_optional_connect(
+        self: &Arc<Self>,
+        try_provider: bool,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        match self.connect(try_provider, cx).await {
+            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
+            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
+            ConnectionResult::Result(result) => result.context("client auth and connect"),
         }
     }
 

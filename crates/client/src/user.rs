@@ -319,23 +319,22 @@ impl UserStore {
 
     async fn handle_update_plan(
         this: Entity<Self>,
-        message: TypedEnvelope<proto::UpdateUserPlan>,
+        _message: TypedEnvelope<proto::UpdateUserPlan>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        // todo!()
-        // this.update(&mut cx, |this, cx| {
-        //     this.current_plan = Some(message.payload.plan());
-        //     this.trial_started_at = message
-        //         .payload
-        //         .trial_started_at
-        //         .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
-        //     this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
-        //     this.account_too_young = message.payload.account_too_young;
+        let client = this
+            .read_with(&cx, |this, _| this.client.upgrade())?
+            .context("client was dropped")?;
 
-        //     cx.emit(Event::PlanUpdated);
-        //     cx.notify();
-        // })?;
-        Ok(())
+        let response = client
+            .cloud_client()
+            .get_authenticated_user()
+            .await
+            .context("failed to fetch authenticated user")?;
+
+        this.update(&mut cx, |this, cx| {
+            this.update_authenticated_user(response, cx);
+        })
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {

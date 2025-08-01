@@ -1078,17 +1078,6 @@ dependencies = [
 
 [[package]]
 name = "async-recursion"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "async-recursion"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b43422f69d8ff38f95f1b2bb76517c91589a924d1559a0e935d7c8ce0274c11"
@@ -2972,7 +2961,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 0.3.2",
  "async-tungstenite",
  "base64 0.22.1",
  "chrono",
@@ -9823,7 +9811,7 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "collections",
  "editor",
  "fs",
@@ -16188,7 +16176,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_slash_command",
- "async-recursion 1.1.1",
+ "async-recursion",
  "breadcrumbs",
  "client",
  "collections",
@@ -19613,7 +19601,7 @@ version = "0.1.0"
 dependencies = [
  "any_vec",
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "bincode",
  "call",
  "client",
@@ -20138,7 +20126,7 @@ dependencies = [
  "async-io",
  "async-lock",
  "async-process",
- "async-recursion 1.1.1",
+ "async-recursion",
  "async-task",
  "async-trait",
  "blocking",

@@ -616,7 +616,10 @@ impl TitleBar {
                 let client = client.clone();
                 window
                     .spawn(cx, async move |cx| {
-                        client.sign_in(true, &cx).await.notify_async_err(cx);
+                        client
+                            .sign_in_with_optional_connect(true, &cx)
+                            .await
+                            .notify_async_err(cx);
                     })
                     .detach();
             })
