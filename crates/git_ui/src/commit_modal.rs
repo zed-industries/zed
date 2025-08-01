@@ -442,7 +442,7 @@ impl CommitModal {
                         .size(ui::ButtonSize::Compact)
                         .child(
                             div()
-                                .child(Label::new(commit_label).size(LabelSize::Small))
+                                .child(Label::new(commit_label.clone()).size(LabelSize::Small))
                                 .mr_0p5(),
                         )
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -462,10 +462,11 @@ impl CommitModal {
                         .disabled(!can_commit)
                         .tooltip({
                             let focus_handle = focus_handle.clone();
+                            let tooltip = tooltip.clone();
                             move |window, cx| {
                                 if can_commit {
                                     Tooltip::with_meta_in(
-                                        tooltip,
+                                        tooltip.clone(),
                                         Some(&git::Commit),
                                         format!(
                                             "git commit{}{}",
@@ -477,7 +478,7 @@ impl CommitModal {
                                         cx,
                                     )
                                 } else {
-                                    Tooltip::simple(tooltip, cx)
+                                    Tooltip::simple(tooltip.clone(), cx)
                                 }
                             }
                         }),

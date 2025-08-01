@@ -3155,35 +3155,46 @@ impl GitPanel {
             .anchor(Corner::TopRight)
     }
 
-    pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
+    pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, String) {
         if self.has_unstaged_conflicts() {
-            (false, "You must resolve conflicts before committing")
+            (
+                false,
+                "You must resolve conflicts before committing".to_string(),
+            )
         } else if !self.has_staged_changes() && !self.has_tracked_changes() {
-            (false, "No changes to commit")
+            (false, "No changes to commit".to_string())
         } else if self.pending_commit.is_some() {
-            (false, "Commit in progress")
+            (false, "Commit in progress".to_string())
         } else if !self.has_commit_message(cx) {
-            (false, "No commit message")
+            (false, "No commit message".to_string())
         } else if !self.has_write_access(cx) {
-            (false, "You do not have write access to this project")
+            (
+                false,
+                "You do not have write access to this project".to_string(),
+            )
         } else {
             (true, self.commit_button_title())
         }
     }
 
-    pub fn commit_button_title(&self) -> &'static str {
-        if self.amend_pending {
-            if self.has_staged_changes() {
+    pub fn commit_button_title(&self) -> String {
+        let file_count = if self.has_staged_changes() {
+            self.total_staged_count()
+        } else {
+            self.tracked_count
+        };
+
+        if file_count == 0 {
+            "No changes".to_string()
+        } else {
+            let file_word = if file_count == 1 { "file" } else { "files" };
+            let action = if self.amend_pending {
                 "Amend"
             } else {
-                "Amend Tracked"
-            }
-        } else {
-            if self.has_staged_changes() {
                 "Commit"
-            } else {
-                "Commit Tracked"
-            }
+            };
+
+            format!("{} {} {}", action, file_count, file_word)
         }
     }
 
@@ -3441,7 +3452,7 @@ impl GitPanel {
                 .size(ui::ButtonSize::Compact)
                 .child(
                     div()
-                        .child(Label::new(title).size(LabelSize::Small))
+                        .child(Label::new(title.clone()).size(LabelSize::Small))
                         .mr_0p5(),
                 )
                 .on_click({
@@ -3463,10 +3474,11 @@ impl GitPanel {
                 .disabled(!can_commit || self.modal_open)
                 .tooltip({
                     let handle = commit_tooltip_focus_handle.clone();
+                    let tooltip = tooltip.clone();
                     move |window, cx| {
                         if can_commit {
                             Tooltip::with_meta_in(
-                                tooltip,
+                                tooltip.clone(),
                                 Some(&git::Commit),
                                 format!(
                                     "git commit{}{}",
@@ -3478,7 +3490,7 @@ impl GitPanel {
                                 cx,
                             )
                         } else {
-                            Tooltip::simple(tooltip, cx)
+                            Tooltip::simple(tooltip.clone(), cx)
                         }
                     }
                 }),
