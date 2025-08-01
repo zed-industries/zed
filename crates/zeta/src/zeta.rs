@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -400,10 +400,10 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
-        let git_head_sha = if let (true, Some(project), Some(file)) =
+        let git_info = if let (true, Some(project), Some(file)) =
             (can_collect_data, project, snapshot.file())
         {
-            git_head_sha_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
         } else {
             None
         };
@@ -423,7 +423,7 @@ impl Zeta {
             cursor_point,
             make_events_prompt,
             can_collect_data,
-            git_head_sha,
+            git_info,
             cx,
         );
 
@@ -1164,11 +1164,11 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
-fn git_head_sha_for_file(
+fn git_info_for_file(
     project: &Entity<Project>,
     project_path: &ProjectPath,
     cx: &App,
-) -> Option<String> {
+) -> Option<PredictEditsGitInfo> {
     let git_store = project.read(cx).git_store().read(cx);
     if let Some((repository, _repo_path)) =
         git_store.repository_and_path_for_project_path(project_path, cx)
@@ -1178,7 +1178,17 @@ fn git_head_sha_for_file(
             .head_commit
             .as_ref()
             .map(|head_commit| head_commit.sha.to_string());
-        head_sha
+        let branch_name = repository
+            .branch
+            .as_ref()
+            .map(|branch| branch.name().to_string());
+        if head_sha.is_none() && branch_name.is_none() {
+            return None;
+        }
+        Some(PredictEditsGitInfo {
+            head_sha,
+            branch_name,
+        })
     } else {
         None
     }
@@ -1196,7 +1206,7 @@ pub fn gather_context(
     cursor_point: language::Point,
     make_events_prompt: impl FnOnce() -> String + Send + 'static,
     can_collect_data: bool,
-    git_head_sha: Option<String>,
+    git_info: Option<PredictEditsGitInfo>,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     let local_lsp_store =
@@ -1246,7 +1256,7 @@ pub fn gather_context(
                 outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
-                git_head_sha,
+                git_info,
             };
 
             Ok(GatherContextOutput {

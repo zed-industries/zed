@@ -149,9 +149,19 @@ pub struct PredictEditsBody {
     pub can_collect_data: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub diagnostic_groups: Option<Vec<(String, serde_json::Value)>>,
+    /// Info about the git repository state, only present when can_collect_data is true.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub git_info: Option<PredictEditsGitInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsGitInfo {
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub git_head_sha: Option<String>,
+    pub head_sha: Option<String>,
+    /// Name of the current branch at time of prediction.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub branch_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
