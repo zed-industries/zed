@@ -349,13 +349,11 @@ impl Onboarding {
                             .child(
                                 ButtonLike::new("skip_all")
                                     .child(Label::new("Skip All").ml_1())
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(ShowWelcome.boxed_clone(), cx);
-
+                                    .on_click(|_, _, cx| {
                                         with_active_or_new_workspace(
                                             cx,
                                             |workspace, window, cx| {
-                                                let Some((onboarding_id, _onboarding_idx)) =
+                                                let Some((onboarding_id, onboarding_idx)) =
                                                     workspace
                                                         .active_pane()
                                                         .read(cx)
@@ -371,6 +369,32 @@ impl Onboarding {
                                                 };
 
                                                 workspace.active_pane().update(cx, |pane, cx| {
+                                                    // Get the index here to get around the borrow checker
+                                                    let idx = pane.items().enumerate().find_map(
+                                                        |(idx, item)| {
+                                                            let _ =
+                                                                item.downcast::<WelcomePage>()?;
+                                                            Some(idx)
+                                                        },
+                                                    );
+
+                                                    if let Some(idx) = idx {
+                                                        pane.activate_item(
+                                                            idx, true, true, window, cx,
+                                                        );
+                                                    } else {
+                                                        let item =
+                                                            Box::new(WelcomePage::new(window, cx));
+                                                        pane.add_item(
+                                                            item,
+                                                            true,
+                                                            true,
+                                                            Some(onboarding_idx),
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    }
+
                                                     pane.remove_item(
                                                         onboarding_id,
                                                         false,
