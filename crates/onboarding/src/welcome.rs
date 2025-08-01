@@ -4,10 +4,13 @@ use gpui::{
 };
 use ui::{ButtonLike, Divider, DividerColor, KeyBinding, Vector, VectorName, prelude::*};
 use workspace::{
-    NewFile, Open, Workspace, WorkspaceId,
+    NewFile, Open, WorkspaceId,
     item::{Item, ItemEvent},
+    with_active_or_new_workspace,
 };
-use zed_actions::{Extensions, OpenSettings, command_palette};
+use zed_actions::{Extensions, OpenSettings, agent, command_palette};
+
+use crate::{Onboarding, OpenOnboarding};
 
 actions!(
     zed,
@@ -55,8 +58,7 @@ const CONTENT: (Section<4>, Section<3>) = (
             SectionEntry {
                 icon: IconName::ZedAssistant,
                 title: "View AI Settings",
-                // TODO: use proper action
-                action: &NoAction,
+                action: &agent::OpenSettings,
             },
             SectionEntry {
                 icon: IconName::Blocks,
@@ -217,7 +219,64 @@ impl Render for WelcomePage {
                                                 div().child(
                                                     Button::new("welcome-exit", "Return to Setup")
                                                         .full_width()
-                                                        .label_size(LabelSize::XSmall),
+                                                        .label_size(LabelSize::XSmall)
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                OpenOnboarding.boxed_clone(),
+                                                                cx,
+                                                            );
+
+                                                            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                                                                let Some((welcome_id, welcome_idx)) = workspace
+                                                                    .active_pane()
+                                                                    .read(cx)
+                                                                    .items()
+                                                                    .enumerate()
+                                                                    .find_map(|(idx, item)| {
+                                                                        let _ = item.downcast::<WelcomePage>()?;
+                                                                        Some((item.item_id(), idx))
+                                                                    })
+                                                                else {
+                                                                    return;
+                                                                };
+
+                                                                workspace.active_pane().update(cx, |pane, cx| {
+                                                                    // Get the index here to get around the borrow checker
+                                                                    let idx = pane.items().enumerate().find_map(
+                                                                        |(idx, item)| {
+                                                                            let _ =
+                                                                                item.downcast::<Onboarding>()?;
+                                                                            Some(idx)
+                                                                        },
+                                                                    );
+
+                                                                    if let Some(idx) = idx {
+                                                                        pane.activate_item(
+                                                                            idx, true, true, window, cx,
+                                                                        );
+                                                                    } else {
+                                                                        let item =
+                                                                            Box::new(Onboarding::new(workspace, cx));
+                                                                        pane.add_item(
+                                                                            item,
+                                                                            true,
+                                                                            true,
+                                                                            Some(welcome_idx),
+                                                                            window,
+                                                                            cx,
+                                                                        );
+                                                                    }
+
+                                                                    pane.remove_item(
+                                                                        welcome_id,
+                                                                        false,
+                                                                        false,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            });
+                                                        }),
                                                 ),
                                             ),
                                     ),
@@ -228,12 +287,14 @@ impl Render for WelcomePage {
 }
 
 impl WelcomePage {
-    pub fn new(cx: &mut Context<Workspace>) -> Entity<Self> {
-        let this = cx.new(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-        });
+    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, window, |_, _, cx| cx.notify())
+                .detach();
 
-        this
+            WelcomePage { focus_handle }
+        })
     }
 }
 

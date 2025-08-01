@@ -576,7 +576,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                         .icon_position(IconPosition::Start)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(
-                                zed_actions::agent::OpenConfiguration.boxed_clone(),
+                                zed_actions::agent::OpenSettings.boxed_clone(),
                                 cx,
                             );
                         }),

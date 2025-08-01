@@ -580,6 +580,9 @@ pub struct AcpThread {
 pub enum AcpThreadEvent {
     NewEntry,
     EntryUpdated(usize),
+    ToolAuthorizationRequired,
+    Stopped,
+    Error,
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -671,6 +674,18 @@ impl AcpThread {
                 AgentThreadEntry::UserMessage(_) => return false,
                 AgentThreadEntry::ToolCall(call) if call.diffs().next().is_some() => return true,
                 AgentThreadEntry::ToolCall(_) | AgentThreadEntry::AssistantMessage(_) => {}
+            }
+        }
+
+        false
+    }
+
+    pub fn used_tools_since_last_user_message(&self) -> bool {
+        for entry in self.entries.iter().rev() {
+            match entry {
+                AgentThreadEntry::UserMessage(..) => return false,
+                AgentThreadEntry::AssistantMessage(..) => continue,
+                AgentThreadEntry::ToolCall(..) => return true,
             }
         }
 
@@ -880,6 +895,7 @@ impl AcpThread {
         };
 
         self.upsert_tool_call_inner(tool_call, status, cx);
+        cx.emit(AcpThreadEvent::ToolAuthorizationRequired);
         rx
     }
 
@@ -1015,12 +1031,18 @@ impl AcpThread {
             .log_err();
         }));
 
-        async move {
-            match rx.await {
-                Ok(Err(e)) => Err(e)?,
-                _ => Ok(()),
+        cx.spawn(async move |this, cx| match rx.await {
+            Ok(Err(e)) => {
+                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Error))
+                    .log_err();
+                Err(e)?
             }
-        }
+            _ => {
+                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Stopped))
+                    .log_err();
+                Ok(())
+            }
+        })
         .boxed()
     }
 

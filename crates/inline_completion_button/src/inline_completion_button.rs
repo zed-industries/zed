@@ -246,12 +246,15 @@ impl Render for InlineCompletionButton {
                 };
 
                 if zeta::should_show_upsell_modal(&self.user_store, cx) {
-                    let tooltip_meta =
-                        match self.user_store.read(cx).current_user_has_accepted_terms() {
-                            Some(true) => "Choose a Plan",
-                            Some(false) => "Accept the Terms of Service",
-                            None => "Sign In",
-                        };
+                    let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
+                        if self.user_store.read(cx).has_accepted_terms_of_service() {
+                            "Choose a Plan"
+                        } else {
+                            "Accept the Terms of Service"
+                        }
+                    } else {
+                        "Sign In"
+                    };
 
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
@@ -387,9 +390,9 @@ impl InlineCompletionButton {
             language: None,
             file: None,
             edit_prediction_provider: None,
+            user_store,
             popover_menu_handle,
             fs,
-            user_store,
         }
     }
 

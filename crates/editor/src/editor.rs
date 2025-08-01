@@ -56,7 +56,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, ParticipantIndex};
+use client::{Collaborator, DisableAiSettings, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -1305,6 +1305,7 @@ impl Default for SelectionHistoryMode {
 ///
 /// Similarly, you might want to disable scrolling if you don't want the viewport to
 /// move.
+#[derive(Clone)]
 pub struct SelectionEffects {
     nav_history: Option<bool>,
     completions: bool,
@@ -2944,10 +2945,12 @@ impl Editor {
             }
         }
 
+        let selection_anchors = self.selections.disjoint_anchors();
+
         if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
-                    &self.selections.disjoint_anchors(),
+                    &selection_anchors,
                     self.selections.line_mode,
                     self.cursor_shape,
                     cx,
@@ -2964,9 +2967,8 @@ impl Editor {
         self.select_next_state = None;
         self.select_prev_state = None;
         self.select_syntax_node_history.try_clear();
-        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), buffer);
-        self.snippet_stack
-            .invalidate(&self.selections.disjoint_anchors(), buffer);
+        self.invalidate_autoclose_regions(&selection_anchors, buffer);
+        self.snippet_stack.invalidate(&selection_anchors, buffer);
         self.take_rename(false, window, cx);
 
         let newest_selection = self.selections.newest_anchor();
@@ -4047,7 +4049,8 @@ impl Editor {
                             // then don't insert that closing bracket again; just move the selection
                             // past the closing bracket.
                             let should_skip = selection.end == region.range.end.to_point(&snapshot)
-                                && text.as_ref() == region.pair.end.as_str();
+                                && text.as_ref() == region.pair.end.as_str()
+                                && snapshot.contains_str_at(region.range.end, text.as_ref());
                             if should_skip {
                                 let anchor = snapshot.anchor_after(selection.end);
                                 new_selections
@@ -4973,13 +4976,17 @@ impl Editor {
         })
     }
 
-    /// Remove any autoclose regions that no longer contain their selection.
+    /// Remove any autoclose regions that no longer contain their selection or have invalid anchors in ranges.
     fn invalidate_autoclose_regions(
         &mut self,
         mut selections: &[Selection<Anchor>],
         buffer: &MultiBufferSnapshot,
     ) {
         self.autoclose_regions.retain(|state| {
+            if !state.range.start.is_valid(buffer) || !state.range.end.is_valid(buffer) {
+                return false;
+            }
+
             let mut i = 0;
             while let Some(selection) = selections.get(i) {
                 if selection.end.cmp(&state.range.start, buffer).is_lt() {
@@ -5891,18 +5898,20 @@ impl Editor {
             text: new_text[common_prefix_len..].into(),
         });
 
-        self.transact(window, cx, |this, window, cx| {
+        self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {
                 snippet.text = new_text.to_string();
-                this.insert_snippet(&ranges, snippet, window, cx).log_err();
+                editor
+                    .insert_snippet(&ranges, snippet, window, cx)
+                    .log_err();
             } else {
-                this.buffer.update(cx, |buffer, cx| {
+                editor.buffer.update(cx, |multi_buffer, cx| {
                     let auto_indent = match completion.insert_text_mode {
                         Some(InsertTextMode::AS_IS) => None,
-                        _ => this.autoindent_mode.clone(),
+                        _ => editor.autoindent_mode.clone(),
                     };
                     let edits = ranges.into_iter().map(|range| (range, new_text.as_str()));
-                    buffer.edit(edits, auto_indent, cx);
+                    multi_buffer.edit(edits, auto_indent, cx);
                 });
             }
             for (buffer, edits) in linked_edits {
@@ -5921,8 +5930,9 @@ impl Editor {
                 })
             }
 
-            this.refresh_inline_completion(true, false, window, cx);
+            editor.refresh_inline_completion(true, false, window, cx);
         });
+        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), &snapshot);
 
         let show_new_completions_on_confirm = completion
             .confirm
@@ -7048,7 +7058,7 @@ impl Editor {
     }
 
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
-        if self.edit_prediction_provider.is_none() {
+        if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
         } else {
             let selection = self.selections.newest_anchor();
@@ -9562,27 +9572,46 @@ impl Editor {
             // Check whether the just-entered snippet ends with an auto-closable bracket.
             if self.autoclose_regions.is_empty() {
                 let snapshot = self.buffer.read(cx).snapshot(cx);
-                for selection in &mut self.selections.all::<Point>(cx) {
+                let mut all_selections = self.selections.all::<Point>(cx);
+                for selection in &mut all_selections {
                     let selection_head = selection.head();
                     let Some(scope) = snapshot.language_scope_at(selection_head) else {
                         continue;
                     };
 
                     let mut bracket_pair = None;
-                    let next_chars = snapshot.chars_at(selection_head).collect::<String>();
-                    let prev_chars = snapshot
-                        .reversed_chars_at(selection_head)
-                        .collect::<String>();
-                    for (pair, enabled) in scope.brackets() {
-                        if enabled
-                            && pair.close
-                            && prev_chars.starts_with(pair.start.as_str())
-                            && next_chars.starts_with(pair.end.as_str())
-                        {
-                            bracket_pair = Some(pair.clone());
-                            break;
+                    let max_lookup_length = scope
+                        .brackets()
+                        .map(|(pair, _)| {
+                            pair.start
+                                .as_str()
+                                .chars()
+                                .count()
+                                .max(pair.end.as_str().chars().count())
+                        })
+                        .max();
+                    if let Some(max_lookup_length) = max_lookup_length {
+                        let next_text = snapshot
+                            .chars_at(selection_head)
+                            .take(max_lookup_length)
+                            .collect::<String>();
+                        let prev_text = snapshot
+                            .reversed_chars_at(selection_head)
+                            .take(max_lookup_length)
+                            .collect::<String>();
+
+                        for (pair, enabled) in scope.brackets() {
+                            if enabled
+                                && pair.close
+                                && prev_text.starts_with(pair.start.as_str())
+                                && next_text.starts_with(pair.end.as_str())
+                            {
+                                bracket_pair = Some(pair.clone());
+                                break;
+                            }
                         }
                     }
+
                     if let Some(pair) = bracket_pair {
                         let snapshot_settings = snapshot.language_settings_at(selection_head, cx);
                         let autoclose_enabled =

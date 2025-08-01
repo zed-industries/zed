@@ -1742,7 +1742,7 @@ impl SshRemoteConnection {
             }
         });
 
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             let result = futures::select! {
                 result = stdin_task.fuse() => {
                     result.context("stdin")
