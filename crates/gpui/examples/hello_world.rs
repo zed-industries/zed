@@ -1,6 +1,6 @@
 use gpui::{
     App, Application, Bounds, Context, SharedString, Window, WindowBounds, WindowOptions, div,
-    prelude::*, px, rgb, size,
+    prelude::*, px, rgb, rgba, size,
 };
 
 struct HelloWorld {
@@ -24,15 +24,32 @@ impl Render for HelloWorld {
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
             .child(
-                div().rounded_2xl().overflow_hidden().shadow_2xl().child(
-                    div()
-                        .bg(gpui::black())
-                        .text_color(gpui::white())
-                        .text_base()
-                        .py_2()
-                        .px_7()
-                        .child("Let build applications with GPUI."),
-                ),
+                div()
+                    .rounded_2xl()
+                    .overflow_hidden()
+                    .shadow_2xl()
+                    .child(
+                        div()
+                            .bg(gpui::black())
+                            .text_color(gpui::white())
+                            .text_base()
+                            .text_center()
+                            .pt_2()
+                            .pb_1()
+                            .px_7()
+                            .child("Let build applications with GPUI."),
+                    )
+                    .child(
+                        div()
+                            .bg(rgba(0x222222FF))
+                            .text_color(gpui::white())
+                            .text_center()
+                            .text_sm()
+                            .pt_1()
+                            .pb_2()
+                            .px_7()
+                            .child("The fast, productive UI framework for Rust"),
+                    ),
             )
             .child(
                 div()
