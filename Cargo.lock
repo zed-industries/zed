@@ -20607,6 +20607,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeta_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "debug_adapter_extension",
+ "extension",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "language",
+ "language_extension",
+ "language_model",
+ "language_models",
+ "languages",
+ "node_runtime",
+ "paths",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "settings",
+ "shellexpand 2.1.2",
+ "smol",
+ "terminal_view",
+ "util",
+ "watch",
+ "workspace-hack",
+ "zeta",
+]
+
+[[package]]
 name = "zip"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
