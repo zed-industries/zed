@@ -18,6 +18,9 @@ async fn test_notifications(
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
 
+    // Wait for authentication/connection to Collab to be established.
+    executor.run_until_parked();
+
     let notification_events_a = Arc::new(Mutex::new(Vec::new()));
     let notification_events_b = Arc::new(Mutex::new(Vec::new()));
     client_a.notification_store().update(cx_a, |_, cx| {
