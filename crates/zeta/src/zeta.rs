@@ -424,12 +424,13 @@ impl Zeta {
         let full_path_str = full_path.to_string_lossy().to_string();
         let cursor_point = cursor.to_point(&snapshot);
         let cursor_offset = cursor_point.to_offset(&snapshot);
+        let make_events_prompt = move || prompt_for_events(&events, MAX_EVENT_TOKENS);
         let gather_task = gather_context(
             project,
             full_path_str,
             &snapshot,
             cursor_point,
-            events,
+            make_events_prompt,
             can_collect_data,
             cx,
         );
@@ -1181,7 +1182,7 @@ pub fn gather_context(
     full_path_str: String,
     snapshot: &BufferSnapshot,
     cursor_point: language::Point,
-    events: VecDeque<Event>,
+    make_events_prompt: impl FnOnce() -> String + Send + 'static,
     can_collect_data: bool,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
@@ -1221,7 +1222,7 @@ pub fn gather_context(
                 MAX_REWRITE_TOKENS,
                 MAX_CONTEXT_TOKENS,
             );
-            let input_events = prompt_for_events(&events, MAX_EVENT_TOKENS);
+            let input_events = make_events_prompt();
             let input_outline = prompt_for_outline(&snapshot);
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 

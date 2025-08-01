@@ -13,7 +13,6 @@ use language_model::LlmApiToken;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
-use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::str::FromStr;
@@ -36,13 +35,12 @@ enum Commands {
     Context(ContextArgs),
     Predict {
         #[arg(long)]
-        predict_edits_body: Option<PathBuf>,
+        predict_edits_body: Option<FileOrStdin>,
         #[clap(flatten)]
         context_args: Option<ContextArgs>,
     },
 }
 
-// todo! Need a way to provide events (edit history etc)
 #[derive(Debug, Args)]
 #[group(requires = "worktree")]
 struct ContextArgs {
@@ -52,6 +50,34 @@ struct ContextArgs {
     cursor: CursorPosition,
     #[arg(long)]
     use_language_server: bool,
+    #[arg(long)]
+    events: Option<FileOrStdin>,
+}
+
+#[derive(Debug, Clone)]
+enum FileOrStdin {
+    File(PathBuf),
+    Stdin,
+}
+
+impl FileOrStdin {
+    async fn read_to_string(&self) -> Result<String, std::io::Error> {
+        match self {
+            FileOrStdin::File(path) => smol::fs::read_to_string(path).await,
+            FileOrStdin::Stdin => smol::unblock(|| std::io::read_to_string(std::io::stdin())).await,
+        }
+    }
+}
+
+impl FromStr for FileOrStdin {
+    type Err = <PathBuf as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "-" => Ok(Self::Stdin),
+            _ => Ok(Self::File(PathBuf::from_str(s)?)),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -96,6 +122,7 @@ async fn get_context(
         worktree: worktree_path,
         cursor,
         use_language_server,
+        events,
     } = args;
 
     let worktree_path = worktree_path.canonicalize()?;
@@ -109,7 +136,7 @@ async fn get_context(
         (Some(project), Some(lsp_open_handle), buffer)
     } else {
         let abs_path = worktree_path.join(&cursor.path);
-        let content = std::fs::read_to_string(&abs_path)?;
+        let content = smol::fs::read_to_string(&abs_path).await?;
         let buffer = cx.new(|cx| Buffer::local(content, cx))?;
         (None, None, buffer)
     };
@@ -141,7 +168,10 @@ async fn get_context(
         }
     }
 
-    let events = VecDeque::new();
+    let events = match events {
+        Some(events) => events.read_to_string().await?,
+        None => String::new(),
+    };
     let can_collect_data = false;
     cx.update(|cx| {
         gather_context(
@@ -149,7 +179,7 @@ async fn get_context(
             full_path_str,
             &snapshot,
             clipped_cursor,
-            events,
+            move || events,
             can_collect_data,
             cx,
         )
@@ -296,7 +326,7 @@ fn main() {
                     .await
                     .map(|output| serde_json::to_string_pretty(&output.body).unwrap()),
                 Commands::Predict {
-                    predict_edits_body: predict_edits_body_file,
+                    predict_edits_body,
                     context_args,
                 } => {
                     cx.spawn(async move |cx| {
@@ -317,17 +347,17 @@ fn main() {
                         let llm_token = LlmApiToken::default();
                         llm_token.refresh(&app_state.client).await?;
 
-                        let predict_edits_body = if let Some(content) = predict_edits_body_file {
-                            let context_string = smol::fs::read_to_string(content).await?;
-                            serde_json::from_str(&context_string)?
-                        } else if let Some(context_args) = context_args {
-                            get_context(context_args, &app_state, cx).await?.body
-                        } else {
-                            return Err(anyhow!(
-                                "Expected either --predict-edits-body-file \
+                        let predict_edits_body =
+                            if let Some(predict_edits_body) = predict_edits_body {
+                                serde_json::from_str(&predict_edits_body.read_to_string().await?)?
+                            } else if let Some(context_args) = context_args {
+                                get_context(context_args, &app_state, cx).await?.body
+                            } else {
+                                return Err(anyhow!(
+                                    "Expected either --predict-edits-body-file \
                                     or the required args of the `context` command."
-                            ));
-                        };
+                                ));
+                            };
 
                         let (response, _usage) =
                             Zeta::perform_predict_edits(PerformPredictEditsParams {
