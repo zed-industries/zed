@@ -316,7 +316,7 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                     ],
                 )
                 .when_some(base_keymap, |this, base_keymap| this.selected_index(base_keymap))
-                .button_width(rems_from_px(220.))
+                .button_width(rems_from_px(216.))
                 .size(ui::ToggleButtonGroupSize::Medium)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
