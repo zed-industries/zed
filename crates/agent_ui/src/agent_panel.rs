@@ -43,7 +43,7 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{UserStore, zed_urls};
+use client::{CloudUserStore, UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
@@ -427,6 +427,7 @@ impl ActiveView {
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
+    cloud_user_store: Entity<CloudUserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
@@ -486,6 +487,7 @@ impl AgentPanel {
                     let project = workspace.project().clone();
                     ThreadStore::load(
                         project,
+                        workspace.app_state().cloud_user_store.clone(),
                         tools.clone(),
                         prompt_store.clone(),
                         prompt_builder.clone(),
@@ -553,6 +555,7 @@ impl AgentPanel {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
+        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let project = workspace.project();
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
@@ -579,7 +582,7 @@ impl AgentPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
-                user_store.clone(),
+                cloud_user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -706,6 +709,7 @@ impl AgentPanel {
             active_view,
             workspace,
             user_store,
+            cloud_user_store,
             project: project.clone(),
             fs: fs.clone(),
             language_registry,
@@ -848,7 +852,7 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
+                self.cloud_user_store.clone(),
                 context_store.clone(),
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1122,7 +1126,7 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
+                self.cloud_user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1821,8 +1825,8 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let user_store = self.user_store.read(cx);
-        let usage = user_store.model_request_usage();
+        let cloud_user_store = self.cloud_user_store.read(cx);
+        let usage = cloud_user_store.model_request_usage();
 
         let account_url = zed_urls::account_url(cx);
 

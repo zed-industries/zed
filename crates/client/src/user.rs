@@ -113,7 +113,6 @@ pub struct UserStore {
     current_plan: Option<proto::Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     trial_started_at: Option<DateTime<Utc>>,
-    model_request_usage: Option<ModelRequestUsage>,
     is_usage_based_billing_enabled: Option<bool>,
     account_too_young: Option<bool>,
     has_overdue_invoices: Option<bool>,
@@ -191,7 +190,6 @@ impl UserStore {
             current_plan: None,
             subscription_period: None,
             trial_started_at: None,
-            model_request_usage: None,
             is_usage_based_billing_enabled: None,
             account_too_young: None,
             has_overdue_invoices: None,
@@ -371,25 +369,10 @@ impl UserStore {
             this.account_too_young = message.payload.account_too_young;
             this.has_overdue_invoices = message.payload.has_overdue_invoices;
 
-            if let Some(usage) = message.payload.usage {
-                // limits are always present even though they are wrapped in Option
-                this.model_request_usage = usage
-                    .model_requests_usage_limit
-                    .and_then(|limit| {
-                        RequestUsage::from_proto(usage.model_requests_usage_amount, limit)
-                    })
-                    .map(ModelRequestUsage);
-            }
-
             cx.emit(Event::PlanUpdated);
             cx.notify();
         })?;
         Ok(())
-    }
-
-    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
-        self.model_request_usage = Some(usage);
-        cx.notify();
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -774,10 +757,6 @@ impl UserStore {
 
     pub fn usage_based_billing_enabled(&self) -> Option<bool> {
         self.is_usage_based_billing_enabled
-    }
-
-    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
-        self.model_request_usage
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
