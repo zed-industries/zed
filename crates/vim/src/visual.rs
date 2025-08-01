@@ -10,7 +10,9 @@ use gpui::{Context, Window, actions};
 use language::{Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 use search::BufferSearchBar;
+use settings::Settings;
 use util::ResultExt;
+use vim_mode_setting::HelixModeSetting;
 use workspace::searchable::Direction;
 
 use crate::{
