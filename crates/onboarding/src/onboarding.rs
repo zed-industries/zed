@@ -6,8 +6,8 @@ use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, SharedString, Subscription, Task, WeakEntity,
-    Window, actions,
+    FocusHandle, Focusable, IntoElement, KeyContext, Render, SharedString, Subscription, Task,
+    WeakEntity, Window, actions,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -62,6 +62,18 @@ actions!(
     [
         /// Opens the onboarding view.
         OpenOnboarding
+    ]
+);
+
+actions!(
+    onboarding,
+    [
+        /// Activates the Basics page.
+        ActivateBasicsPage,
+        /// Activates the Editing page.
+        ActivateEditingPage,
+        /// Activates the AI Setup page.
+        ActivateAISetupPage,
     ]
 );
 
@@ -235,67 +247,69 @@ impl Onboarding {
         })
     }
 
-    fn render_nav_button(
+    fn render_nav_buttons(
         &mut self,
-        page: SelectedPage,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let text = match page {
-            SelectedPage::Basics => "Basics",
-            SelectedPage::Editing => "Editing",
-            SelectedPage::AiSetup => "AI Setup",
-        };
+    ) -> [impl IntoElement; 3] {
+        let pages = [
+            SelectedPage::Basics,
+            SelectedPage::Editing,
+            SelectedPage::AiSetup,
+        ];
 
-        let binding = match page {
-            SelectedPage::Basics => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-1").unwrap()], cx)
-                    .map(|kb| kb.size(rems_from_px(12.)))
-            }
-            SelectedPage::Editing => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-2").unwrap()], cx)
-                    .map(|kb| kb.size(rems_from_px(12.)))
-            }
-            SelectedPage::AiSetup => {
-                KeyBinding::new(vec![gpui::Keystroke::parse("cmd-3").unwrap()], cx)
-                    .map(|kb| kb.size(rems_from_px(12.)))
-            }
-        };
+        let text = ["Basics", "Editing", "AI Setup"];
 
-        let selected = self.selected_page == page;
+        let actions: [&dyn Action; 3] = [
+            &ActivateBasicsPage,
+            &ActivateEditingPage,
+            &ActivateAISetupPage,
+        ];
 
-        h_flex()
-            .id(text)
-            .relative()
-            .w_full()
-            .gap_2()
-            .px_2()
-            .py_0p5()
-            .justify_between()
-            .rounded_sm()
-            .when(selected, |this| {
-                this.child(
-                    div()
-                        .h_4()
-                        .w_px()
-                        .bg(cx.theme().colors().text_accent)
-                        .absolute()
-                        .left_0(),
-                )
-            })
-            .hover(|style| style.bg(cx.theme().colors().element_hover))
-            .child(Label::new(text).map(|this| {
-                if selected {
-                    this.color(Color::Default)
-                } else {
-                    this.color(Color::Muted)
-                }
-            }))
-            .child(binding)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.selected_page = page;
-                cx.notify();
-            }))
+        let mut binding = actions.map(|action| {
+            KeyBinding::for_action_in(action, &self.focus_handle, window, cx)
+                .map(|kb| kb.size(rems_from_px(12.)))
+        });
+
+        pages.map(|page| {
+            let i = page as usize;
+            let selected = self.selected_page == page;
+            h_flex()
+                .id(text[i])
+                .relative()
+                .w_full()
+                .gap_2()
+                .px_2()
+                .py_0p5()
+                .justify_between()
+                .rounded_sm()
+                .when(selected, |this| {
+                    this.child(
+                        div()
+                            .h_4()
+                            .w_px()
+                            .bg(cx.theme().colors().text_accent)
+                            .absolute()
+                            .left_0(),
+                    )
+                })
+                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                .child(Label::new(text[i]).map(|this| {
+                    if selected {
+                        this.color(Color::Default)
+                    } else {
+                        this.color(Color::Muted)
+                    }
+                }))
+                .child(binding[i].take().map_or(
+                    gpui::Empty.into_any_element(),
+                    IntoElement::into_any_element,
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.selected_page = page;
+                    cx.notify();
+                }))
+        })
     }
 
     fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -335,14 +349,7 @@ impl Onboarding {
                                     .border_y_1()
                                     .border_color(cx.theme().colors().border_variant.opacity(0.5))
                                     .gap_1()
-                                    .children([
-                                        self.render_nav_button(SelectedPage::Basics, window, cx)
-                                            .into_element(),
-                                        self.render_nav_button(SelectedPage::Editing, window, cx)
-                                            .into_element(),
-                                        self.render_nav_button(SelectedPage::AiSetup, window, cx)
-                                            .into_element(),
-                                    ]),
+                                    .children(self.render_nav_buttons(window, cx)),
                             )
                             .child(
                                 ButtonLike::new("skip_all")
@@ -454,9 +461,26 @@ impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         h_flex()
             .image_cache(gpui::retain_all("onboarding-page"))
-            .key_context("onboarding-page")
+            .key_context({
+                let mut ctx = KeyContext::new_with_defaults();
+                ctx.add("Onboarding");
+                ctx
+            })
+            .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
+                this.selected_page = SelectedPage::Basics;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
+                this.selected_page = SelectedPage::Editing;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
+                this.selected_page = SelectedPage::AiSetup;
+                cx.notify();
+            }))
             .child(
                 h_flex()
                     .max_w(rems_from_px(1100.))

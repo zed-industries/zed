@@ -153,10 +153,8 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         new_appearance: Appearance,
         cx: &mut App,
     ) {
-        appearance_state.update(cx, |appearance, _| {
-            *appearance = new_appearance;
-        });
         let fs = <dyn Fs>::global(cx);
+        appearance_state.write(cx, new_appearance);
 
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
             if settings.theme.as_ref().and_then(ThemeSelection::mode) == Some(ThemeMode::System) {
