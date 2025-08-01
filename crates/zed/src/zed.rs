@@ -336,7 +336,7 @@ pub fn initialize_workspace(
         let edit_prediction_button = cx.new(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 app_state.fs.clone(),
-                app_state.user_store.clone(),
+                app_state.cloud_user_store.clone(),
                 inline_completion_menu_handle.clone(),
                 cx,
             )
