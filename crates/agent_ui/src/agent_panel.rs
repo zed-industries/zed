@@ -697,6 +697,7 @@ impl AgentPanel {
         let onboarding = cx.new(|cx| {
             AgentPanelOnboarding::new(
                 user_store.clone(),
+                cloud_user_store.clone(),
                 client,
                 |_window, cx| {
                     OnboardingUpsell::set_dismissed(true, cx);
