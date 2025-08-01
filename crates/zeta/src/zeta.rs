@@ -16,7 +16,7 @@ pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
-use client::{Client, CloudUserStore, EditPredictionUsage, UserStore};
+use client::{Client, CloudUserStore, EditPredictionUsage};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
@@ -120,10 +120,11 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
-    match user_store.read(cx).current_user_has_accepted_terms() {
-        Some(true) => !ZedPredictUpsell::dismissed(),
-        Some(false) | None => true,
+pub fn should_show_upsell_modal(cloud_user_store: &Entity<CloudUserStore>, cx: &App) -> bool {
+    if cloud_user_store.read(cx).has_accepted_tos() {
+        !ZedPredictUpsell::dismissed()
+    } else {
+        true
     }
 }
 
@@ -1804,6 +1805,7 @@ fn tokens_for_bytes(bytes: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use client::UserStore;
     use client::test::FakeServer;
     use clock::FakeSystemClock;
     use cloud_api_types::{
