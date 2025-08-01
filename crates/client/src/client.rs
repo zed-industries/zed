@@ -7,14 +7,13 @@ pub mod telemetry;
 pub mod user;
 pub mod zed_urls;
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
     client::IntoClientRequest,
     error::Error as WebsocketError,
     http::{HeaderValue, Request, StatusCode},
 };
-use chrono::{DateTime, Utc};
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use credentials_provider::CredentialsProvider;
@@ -23,7 +22,7 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{AsyncBody, HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -1379,96 +1378,31 @@ impl Client {
         self: &Arc<Self>,
         http: Arc<HttpClientWithUrl>,
         login: String,
-        mut api_token: String,
+        api_token: String,
     ) -> Result<Credentials> {
-        #[derive(Deserialize)]
-        struct AuthenticatedUserResponse {
-            user: User,
+        #[derive(Serialize)]
+        struct ImpersonateUserBody {
+            github_login: String,
         }
 
         #[derive(Deserialize)]
-        struct User {
-            id: u64,
+        struct ImpersonateUserResponse {
+            user_id: u64,
+            access_token: String,
         }
 
-        let github_user = {
-            #[derive(Deserialize)]
-            struct GithubUser {
-                id: i32,
-                login: String,
-                created_at: DateTime<Utc>,
-            }
-
-            let request = {
-                let mut request_builder =
-                    Request::get(&format!("https://api.github.com/users/{login}"));
-                if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
-                    request_builder =
-                        request_builder.header("Authorization", format!("Bearer {}", github_token));
-                }
-
-                request_builder.body(AsyncBody::empty())?
-            };
-
-            let mut response = http
-                .send(request)
-                .await
-                .context("error fetching GitHub user")?;
-
-            let mut body = Vec::new();
-            response
-                .body_mut()
-                .read_to_end(&mut body)
-                .await
-                .context("error reading GitHub user")?;
-
-            if !response.status().is_success() {
-                let text = String::from_utf8_lossy(body.as_slice());
-                bail!(
-                    "status error {}, response: {text:?}",
-                    response.status().as_u16()
-                );
-            }
-
-            serde_json::from_slice::<GithubUser>(body.as_slice()).map_err(|err| {
-                log::error!("Error deserializing: {:?}", err);
-                log::error!(
-                    "GitHub API response text: {:?}",
-                    String::from_utf8_lossy(body.as_slice())
-                );
-                anyhow!("error deserializing GitHub user")
-            })?
-        };
-
-        let query_params = [
-            ("github_login", &github_user.login),
-            ("github_user_id", &github_user.id.to_string()),
-            (
-                "github_user_created_at",
-                &github_user.created_at.to_rfc3339(),
-            ),
-        ];
-
-        // Use the collab server's admin API to retrieve the ID
-        // of the impersonated user.
-        let mut url = self.rpc_url(http.clone(), None).await?;
-        url.set_path("/user");
-        url.set_query(Some(
-            &query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        key,
-                        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
-                    )
-                })
-                .collect::<Vec<String>>()
-                .join("&"),
-        ));
-        let request: http_client::Request<AsyncBody> = Request::get(url.as_str())
-            .header("Authorization", format!("token {api_token}"))
-            .body("".into())?;
+        let url = self
+            .http
+            .build_zed_cloud_url("/internal/users/impersonate", &[])?;
+        let request = Request::post(url.as_str())
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {api_token}"))
+            .body(
+                serde_json::to_string(&ImpersonateUserBody {
+                    github_login: login,
+                })?
+                .into(),
+            )?;
 
         let mut response = http.send(request).await?;
         let mut body = String::new();
@@ -1479,13 +1413,11 @@ impl Client {
             response.status().as_u16(),
             body,
         );
-        let response: AuthenticatedUserResponse = serde_json::from_str(&body)?;
+        let response: ImpersonateUserResponse = serde_json::from_str(&body)?;
 
-        // Use the admin API token to authenticate as the impersonated user.
-        api_token.insert_str(0, "ADMIN_TOKEN:");
         Ok(Credentials {
-            user_id: response.user.id,
-            access_token: api_token,
+            user_id: response.user_id,
+            access_token: response.access_token,
         })
     }
 
