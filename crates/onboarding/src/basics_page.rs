@@ -48,7 +48,10 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_registry = ThemeRegistry::global(cx);
 
     let current_theme_name = theme_selection.theme(appearance);
-    let theme_mode = theme_selection.mode();
+
+    // let theme_mode = theme_selection.mode();
+    // TODO: Clean this up once the "System" button inside the
+    // toggle button group is done
 
     let selected_index = match appearance {
         Appearance::Light => 0,
