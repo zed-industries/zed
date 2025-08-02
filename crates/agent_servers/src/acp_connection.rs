@@ -18,6 +18,7 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     _io_task: Task<Result<()>>,
+    _child: smol::process::Child,
 }
 
 pub struct AcpSession {
@@ -71,13 +72,15 @@ impl AcpConnection {
             })
             .await?;
 
-        // todo! check version
+        // todo! check version and try old acp
+        // todo! if child exits, display error in thread view
 
         Ok(Self {
             auth_methods: response.auth_methods,
             connection: connection.into(),
             server_name,
             sessions,
+            _child: child,
             _io_task: io_task,
         })
     }
@@ -96,7 +99,6 @@ impl AgentConnection for AcpConnection {
         cx.spawn(async move |cx| {
             let response = conn
                 .new_session(acp::NewSessionRequest {
-                    // todo! Zed MCP server?
                     mcp_servers: vec![],
                     cwd,
                 })
