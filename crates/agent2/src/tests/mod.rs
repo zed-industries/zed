@@ -1,7 +1,6 @@
 use super::*;
 use crate::templates::Templates;
 use client::{Client, UserStore};
-use fs::FakeFs;
 use gpui::{AppContext, Entity, TestAppContext};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -209,9 +208,6 @@ struct AgentTest {
 async fn setup(cx: &mut TestAppContext) -> AgentTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
-    let fs = FakeFs::new(cx.executor().clone());
-    // let project = Project::test(fs.clone(), [], cx).await;
-    // let action_log = cx.new(|_| ActionLog::new(project.clone()));
     let templates = Templates::new();
     let agent = cx.new(|_| Thread::new(templates));
 
@@ -236,7 +232,7 @@ async fn setup(cx: &mut TestAppContext) -> AgentTest {
             let provider = models.provider(&model.provider_id()).unwrap();
             let authenticated = provider.authenticate(cx);
 
-            cx.spawn(async move |cx| {
+            cx.spawn(async move |_cx| {
                 authenticated.await.unwrap();
                 model
             })
