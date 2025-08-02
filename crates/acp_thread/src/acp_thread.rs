@@ -654,6 +654,10 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn session_id(&self) -> &acp::SessionId {
+        &self.session_id
+    }
+
     pub fn status(&self) -> ThreadStatus {
         if self.send_task.is_some() {
             if self.waiting_for_tool_confirmation() {

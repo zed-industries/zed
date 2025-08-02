@@ -33,16 +33,17 @@ pub struct AgentConnection(pub Entity<Agent>);
 
 impl ModelSelector for AgentConnection {
     fn list_models(&self, cx: &mut AsyncApp) -> Task<Result<Vec<Arc<dyn LanguageModel>>>> {
-        let result = cx.update(|cx| {
-            let registry = LanguageModelRegistry::read_global(cx);
-            let models = registry.available_models(cx).collect::<Vec<_>>();
-            if models.is_empty() {
-                Err(anyhow::anyhow!("No models available"))
-            } else {
-                Ok(models)
-            }
-        });
-        Task::ready(result.unwrap_or_else(|e| Err(anyhow::anyhow!("Failed to update: {}", e))))
+        cx.spawn(async move |cx| {
+            cx.update(|cx| {
+                let registry = LanguageModelRegistry::read_global(cx);
+                let models = registry.available_models(cx).collect::<Vec<_>>();
+                if models.is_empty() {
+                    Err(anyhow::anyhow!("No models available"))
+                } else {
+                    Ok(models)
+                }
+            })?
+        })
     }
 
     fn select_model(
@@ -52,17 +53,19 @@ impl ModelSelector for AgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<()>> {
         let agent = self.0.clone();
-        let result = agent.update(cx, |agent, cx| {
-            if let Some(thread) = agent.sessions.get(session_id) {
-                thread.update(cx, |thread, _| {
-                    thread.selected_model = model;
-                });
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Session not found"))
-            }
-        });
-        Task::ready(result.unwrap_or_else(|e| Err(anyhow::anyhow!("Failed to update: {}", e))))
+        let session_id = session_id.clone();
+        cx.spawn(async move |cx| {
+            agent.update(cx, |agent, cx| {
+                if let Some(thread) = agent.sessions.get(&session_id) {
+                    thread.update(cx, |thread, _| {
+                        thread.selected_model = model;
+                    });
+                    Ok(())
+                } else {
+                    Err(anyhow::anyhow!("Session not found"))
+                }
+            })?
+        })
     }
 
     fn selected_model(
@@ -71,21 +74,14 @@ impl ModelSelector for AgentConnection {
         cx: &mut AsyncApp,
     ) -> Task<Result<Arc<dyn LanguageModel>>> {
         let agent = self.0.clone();
-        let thread_result = agent
-            .read_with(cx, |agent, _| agent.sessions.get(session_id).cloned())
-            .ok()
-            .flatten()
-            .ok_or_else(|| anyhow::anyhow!("Session not found"));
-
-        match thread_result {
-            Ok(thread) => {
-                let selected = thread
-                    .read_with(cx, |thread, _| thread.selected_model.clone())
-                    .unwrap_or_else(|e| panic!("Failed to read thread: {}", e));
-                Task::ready(Ok(selected))
-            }
-            Err(e) => Task::ready(Err(e)),
-        }
+        let session_id = session_id.clone();
+        cx.spawn(async move |cx| {
+            let thread = agent
+                .read_with(cx, |agent, _| agent.sessions.get(&session_id).cloned())?
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
+            let selected = thread.read_with(cx, |thread, _| thread.selected_model.clone())?;
+            Ok(selected)
+        })
     }
 }
 
