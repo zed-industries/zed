@@ -391,7 +391,7 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::ContentBlock(content) => Self::ContentBlock {
+            acp::ToolCallContent::Content { content } => Self::ContentBlock {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
@@ -619,6 +619,7 @@ impl Error for LoadError {}
 
 impl AcpThread {
     pub fn new(
+        title: impl Into<SharedString>,
         connection: Rc<dyn AgentConnection>,
         project: Entity<Project>,
         session_id: acp::SessionId,
@@ -631,7 +632,7 @@ impl AcpThread {
             shared_buffers: Default::default(),
             entries: Default::default(),
             plan: Default::default(),
-            title: connection.name().into(),
+            title: title.into(),
             project,
             send_task: None,
             connection,
@@ -653,6 +654,10 @@ impl AcpThread {
 
     pub fn entries(&self) -> &[AgentThreadEntry] {
         &self.entries
+    }
+
+    pub fn session_id(&self) -> &acp::SessionId {
+        &self.session_id
     }
 
     pub fn status(&self) -> ThreadStatus {
@@ -697,14 +702,14 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<()> {
         match update {
-            acp::SessionUpdate::UserMessage(content_block) => {
-                self.push_user_content_block(content_block, cx);
+            acp::SessionUpdate::UserMessageChunk { content } => {
+                self.push_user_content_block(content, cx);
             }
-            acp::SessionUpdate::AgentMessageChunk(content_block) => {
-                self.push_assistant_content_block(content_block, false, cx);
+            acp::SessionUpdate::AgentMessageChunk { content } => {
+                self.push_assistant_content_block(content, false, cx);
             }
-            acp::SessionUpdate::AgentThoughtChunk(content_block) => {
-                self.push_assistant_content_block(content_block, true, cx);
+            acp::SessionUpdate::AgentThoughtChunk { content } => {
+                self.push_assistant_content_block(content, true, cx);
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
                 self.upsert_tool_call(tool_call, cx);
@@ -973,10 +978,6 @@ impl AcpThread {
         cx.notify();
     }
 
-    pub fn authenticate(&self, cx: &mut App) -> impl use<> + Future<Output = Result<()>> {
-        self.connection.authenticate(cx)
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn send_raw(
         &mut self,
@@ -1018,7 +1019,7 @@ impl AcpThread {
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
-                            acp::PromptArguments {
+                            acp::PromptRequest {
                                 prompt: message,
                                 session_id: this.session_id.clone(),
                             },
@@ -1620,9 +1621,15 @@ mod tests {
                 connection,
                 child_status: io_task,
                 current_thread: thread_rc,
+                auth_methods: [acp::AuthMethod {
+                    id: acp::AuthMethodId("acp-old-no-id".into()),
+                    label: "Log in".into(),
+                    description: None,
+                }],
             };
 
             AcpThread::new(
+                "test",
                 Rc::new(connection),
                 project,
                 acp::SessionId("test".into()),

@@ -83,14 +83,18 @@ impl McpServer {
     }
 
     pub fn add_tool<T: McpServerTool + Clone + 'static>(&mut self, tool: T) {
-        let output_schema = schemars::schema_for!(T::Output);
-        let unit_schema = schemars::schema_for!(());
+        let mut settings = schemars::generate::SchemaSettings::draft07();
+        settings.inline_subschemas = true;
+        let mut generator = settings.into_generator();
+
+        let output_schema = generator.root_schema_for::<T::Output>();
+        let unit_schema = generator.root_schema_for::<T::Output>();
 
         let registered_tool = RegisteredTool {
             tool: Tool {
                 name: T::NAME.into(),
                 description: Some(tool.description().into()),
-                input_schema: schemars::schema_for!(T::Input).into(),
+                input_schema: generator.root_schema_for::<T::Input>().into(),
                 output_schema: if output_schema == unit_schema {
                     None
                 } else {

@@ -232,7 +232,8 @@ impl AcpThreadView {
             {
                 Err(e) => {
                     let mut cx = cx.clone();
-                    if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
+                    // todo! remove duplication
+                    if e.downcast_ref::<acp_thread::AuthRequired>().is_some() {
                         this.update(&mut cx, |this, cx| {
                             this.thread_state = ThreadState::Unauthenticated { connection };
                             cx.notify();
@@ -675,13 +676,18 @@ impl AcpThreadView {
         Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
     }
 
-    fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn authenticate(
+        &mut self,
+        method: acp::AuthMethodId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
             return;
         };
 
         self.last_error.take();
-        let authenticate = connection.authenticate(cx);
+        let authenticate = connection.authenticate(method, cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
             let agent = self.agent.clone();
@@ -2380,22 +2386,26 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { .. } => {
-                    v_flex()
-                        .p_2()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .child(self.render_pending_auth_state())
-                        .child(
-                            h_flex().mt_1p5().justify_center().child(
-                                Button::new("sign-in", format!("Sign in to {}", self.agent.name()))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.authenticate(window, cx)
-                                    })),
-                            ),
-                        )
-                }
+                ThreadState::Unauthenticated { connection } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_pending_auth_state())
+                    .child(h_flex().mt_1p5().justify_center().children(
+                        connection.auth_methods().into_iter().map(|method| {
+                            Button::new(
+                                SharedString::from(method.id.0.clone()),
+                                method.label.clone(),
+                            )
+                            .on_click({
+                                let method_id = method.id.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.authenticate(method_id.clone(), window, cx)
+                                })
+                            })
+                        }),
+                    )),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
@@ -2834,10 +2844,6 @@ mod tests {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn name(&self) -> &'static str {
-            "StubAgentConnection"
-        }
-
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -2853,17 +2859,27 @@ mod tests {
                     .into(),
             );
             let thread = cx
-                .new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))
+                .new(|cx| {
+                    AcpThread::new("New Thread", self.clone(), project, session_id.clone(), cx)
+                })
                 .unwrap();
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn auth_methods(&self) -> &[agent_client_protocol::AuthMethod] {
+            todo!()
+        }
+
+        fn authenticate(
+            &self,
+            _method: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<gpui::Result<()>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             let mut tasks = vec![];
@@ -2910,10 +2926,6 @@ mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
-        fn name(&self) -> &'static str {
-            "SaboteurAgentConnection"
-        }
-
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -2921,15 +2933,23 @@ mod tests {
             cx: &mut gpui::AsyncApp,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx
-                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
+                .new(|cx| AcpThread::new("New Thread", self, project, SessionId("test".into()), cx))
                 .unwrap()))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn auth_methods(&self) -> &[agent_client_protocol::AuthMethod] {
+            todo!()
+        }
+
+        fn authenticate(
+            &self,
+            _method: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(&self, _params: acp::PromptRequest, _cx: &mut App) -> Task<gpui::Result<()>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 

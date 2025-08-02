@@ -5,11 +5,11 @@ use anyhow::{Context as _, Result};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
-use crate::{AcpThread, AgentConnection};
+use crate::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 pub struct OldAcpClientDelegate {
@@ -351,28 +351,15 @@ fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatu
     }
 }
 
-#[derive(Debug)]
-pub struct Unauthenticated;
-
-impl Error for Unauthenticated {}
-impl fmt::Display for Unauthenticated {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unauthenticated")
-    }
-}
-
 pub struct OldAcpAgentConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
     pub child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
+    pub auth_methods: [acp::AuthMethod; 1],
 }
 
 impl AgentConnection for OldAcpAgentConnection {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -391,13 +378,13 @@ impl AgentConnection for OldAcpAgentConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(Unauthenticated)
+                anyhow::bail!(AuthRequired)
             }
 
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.clone(), project, session_id, cx)
+                    AcpThread::new("Gemini", self.clone(), project, session_id, cx)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
@@ -405,7 +392,11 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &self.auth_methods
+    }
+
+    fn authenticate(&self, _method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
         let task = self
             .connection
             .request_any(acp_old::AuthenticateParams.into_any());
@@ -415,7 +406,7 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let chunks = params
             .prompt
             .into_iter()

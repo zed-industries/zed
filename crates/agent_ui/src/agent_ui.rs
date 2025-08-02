@@ -150,7 +150,7 @@ enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
-    Codex,
+    NativeAgent,
 }
 
 impl ExternalAgent {
@@ -158,7 +158,7 @@ impl ExternalAgent {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::Codex => Rc::new(agent_servers::Codex),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer),
         }
     }
 }
