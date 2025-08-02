@@ -1136,7 +1136,7 @@ unsafe extern "system" fn window_procedure(
     }
     let inner = unsafe { &*ptr };
     let result = if let Some(inner) = inner.upgrade() {
-        handle_msg(hwnd, msg, wparam, lparam, &inner)
+        inner.handle_msg(hwnd, msg, wparam, lparam)
     } else {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     };
