@@ -171,7 +171,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
     editor
         .register_action(cx.listener(
             |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.show_inline_completion(&Default::default(), window, cx);
+                editor.show_edit_prediction(&Default::default(), window, cx);
             },
         ))
         .detach();

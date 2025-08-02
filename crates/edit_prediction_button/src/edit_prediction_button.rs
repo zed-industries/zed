@@ -57,7 +57,7 @@ pub struct InlineCompletionButton {
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    edit_prediction_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn edit_prediction::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -469,7 +469,7 @@ impl InlineCompletionButton {
                 IconPosition::Start,
                 None,
                 move |_, cx| {
-                    toggle_show_inline_completions_for_language(language.clone(), fs.clone(), cx)
+                    toggle_show_edit_predictions_for_language(language.clone(), fs.clone(), cx)
                 },
             );
         }
@@ -479,7 +479,7 @@ impl InlineCompletionButton {
         let globally_enabled = settings.show_edit_predictions(None, cx);
         menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
             let fs = fs.clone();
-            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx)
+            move |_, cx| toggle_edit_predictions_globally(fs.clone(), cx)
         });
 
         let provider = settings.edit_predictions.provider;
@@ -904,7 +904,7 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "inline_completions { "disabled_globs": [] }"
+            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
                 file.edit_predictions
                     .get_or_insert_with(Default::default)
@@ -942,7 +942,7 @@ async fn open_disabled_globs_setting_in_editor(
     anyhow::Ok(())
 }
 
-fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
+fn toggle_edit_predictions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
     let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_edit_predictions = Some(!show_edit_predictions)
@@ -957,7 +957,7 @@ fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredicti
     });
 }
 
-fn toggle_show_inline_completions_for_language(
+fn toggle_show_edit_predictions_for_language(
     language: Arc<Language>,
     fs: Arc<dyn Fs>,
     cx: &mut App,

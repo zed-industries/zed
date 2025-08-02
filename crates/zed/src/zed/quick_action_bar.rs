@@ -381,7 +381,7 @@ impl Render for QuickActionBar {
                             }
 
                             if has_edit_prediction_provider {
-                                let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                                let mut edit_prediction_entry = ContextMenuEntry::new("Edit Predictions")
                                     .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
                                     .disabled(!edit_predictions_enabled_at_cursor)
                                     .action(
@@ -401,12 +401,12 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
+                                    edit_prediction_entry = edit_prediction_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
 
-                                menu = menu.item(inline_completion_entry);
+                                menu = menu.item(edit_prediction_entry);
                             }
 
                             menu = menu.separator();

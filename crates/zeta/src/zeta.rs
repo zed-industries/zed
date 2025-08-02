@@ -8,8 +8,8 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use edit_prediction::DataCollectionState;
 pub use init::*;
-use inline_completion::DataCollectionState;
 use license_detection::LICENSE_FILES_TO_CHECK;
 pub use license_detection::is_license_eligible_for_data_collection;
 pub use rate_completion_modal::*;
@@ -1522,7 +1522,7 @@ impl ZetaInlineCompletionProvider {
     }
 }
 
-impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
+impl edit_prediction::EditPredictionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
         "zed-predict"
     }
@@ -1723,7 +1723,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         &mut self,
         _buffer: Entity<Buffer>,
         _cursor_position: language::Anchor,
-        _direction: inline_completion::Direction,
+        _direction: edit_prediction::Direction,
         _cx: &mut Context<Self>,
     ) {
         // Right now we don't support cycling.
@@ -1754,7 +1754,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<inline_completion::InlineCompletion> {
+    ) -> Option<edit_prediction::InlineCompletion> {
         let CurrentInlineCompletion {
             buffer_id,
             completion,
@@ -1803,7 +1803,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
             }
         }
 
-        Some(inline_completion::InlineCompletion {
+        Some(edit_prediction::InlineCompletion {
             id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),
@@ -1833,7 +1833,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
+    async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
         let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
             to_completion_edits(
@@ -2014,7 +2014,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_inline_completion_end_of_buffer(cx: &mut TestAppContext) {
+    async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);

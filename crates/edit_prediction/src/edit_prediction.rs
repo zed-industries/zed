@@ -7,7 +7,7 @@ use project::Project;
 
 // TODO: Find a better home for `Direction`.
 //
-// This should live in an ancestor crate of `editor` and `inline_completion`,
+// This should live in an ancestor crate of `editor` and `edit_prediction`,
 // but at time of writing there isn't an obvious spot.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Direction {

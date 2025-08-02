@@ -1,6 +1,6 @@
+use edit_prediction::EditPredictionProvider;
 use gpui::{Entity, prelude::*};
 use indoc::indoc;
-use inline_completion::EditPredictionProvider;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
 use project::Project;
 use std::ops::Range;
@@ -11,7 +11,7 @@ use crate::{
 };
 
 #[gpui::test]
-async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
+async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -20,7 +20,7 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
@@ -33,7 +33,7 @@ async fn test_inline_completion_insert(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
+async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -42,7 +42,7 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
     cx.set_state("let pi = ˇ\"foo\";");
 
     propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
@@ -55,7 +55,7 @@ async fn test_inline_completion_modification(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
+async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -77,7 +77,7 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), Point::new(4, 3));
     });
@@ -107,7 +107,7 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), Point::new(1, 3));
     });
@@ -124,7 +124,7 @@ async fn test_inline_completion_jump_button(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext) {
+async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -148,7 +148,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), edit_location);
     });
@@ -176,7 +176,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
         line
     "});
     cx.editor(|editor, _, _| {
-        assert!(editor.active_inline_completion.is_none());
+        assert!(editor.active_edit_prediction.is_none());
     });
 
     // Cursor is 3+ lines below the proposed edit
@@ -196,7 +196,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), edit_location);
     });
@@ -224,7 +224,7 @@ async fn test_inline_completion_invalidation_range(cx: &mut gpui::TestAppContext
         line ˇ5
     "});
     cx.editor(|editor, _, _| {
-        assert!(editor.active_inline_completion.is_none());
+        assert!(editor.active_edit_prediction.is_none());
     });
 }
 
@@ -234,7 +234,7 @@ fn assert_editor_active_edit_completion(
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
-            .active_inline_completion
+            .active_edit_prediction
             .as_ref()
             .expect("editor has no active completion");
 
@@ -252,7 +252,7 @@ fn assert_editor_active_move_completion(
 ) {
     cx.editor(|editor, _, cx| {
         let completion_state = editor
-            .active_inline_completion
+            .active_edit_prediction
             .as_ref()
             .expect("editor has no active completion");
 
@@ -283,7 +283,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+            provider.set_edit_prediction(Some(edit_prediction::InlineCompletion {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -303,14 +303,11 @@ fn assign_editor_completion_provider(
 
 #[derive(Default, Clone)]
 pub struct FakeInlineCompletionProvider {
-    pub completion: Option<inline_completion::InlineCompletion>,
+    pub completion: Option<edit_prediction::InlineCompletion>,
 }
 
 impl FakeInlineCompletionProvider {
-    pub fn set_inline_completion(
-        &mut self,
-        completion: Option<inline_completion::InlineCompletion>,
-    ) {
+    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::InlineCompletion>) {
         self.completion = completion;
     }
 }
@@ -355,7 +352,7 @@ impl EditPredictionProvider for FakeInlineCompletionProvider {
         &mut self,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
-        _direction: inline_completion::Direction,
+        _direction: edit_prediction::Direction,
         _cx: &mut gpui::Context<Self>,
     ) {
     }
@@ -369,7 +366,7 @@ impl EditPredictionProvider for FakeInlineCompletionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<inline_completion::InlineCompletion> {
+    ) -> Option<edit_prediction::InlineCompletion> {
         self.completion.clone()
     }
 }
