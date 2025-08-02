@@ -562,8 +562,9 @@ mod tests {
             language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
             state
         })
     }

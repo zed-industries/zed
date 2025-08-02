@@ -1444,6 +1444,7 @@ mod tests {
             language::init(cx);
             TelemetrySettings::register(cx);
             agent_settings::AgentSettings::register(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
         });
     }
@@ -1458,6 +1459,7 @@ mod tests {
             language::init(cx);
             TelemetrySettings::register(cx);
             agent_settings::AgentSettings::register(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
         });
     }

@@ -4263,6 +4263,7 @@ pub mod tests {
             client::init_settings(cx);
             editor::init(cx);
             workspace::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
             crate::init(cx);
         });

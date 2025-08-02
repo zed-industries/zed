@@ -4081,6 +4081,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
             AgentSettings::register(cx);
             prompt_store::init(cx);

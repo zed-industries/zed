@@ -774,6 +774,7 @@ mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             DebuggerSettings::register(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
             state
         })

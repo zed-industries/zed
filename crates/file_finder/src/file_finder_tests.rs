@@ -2657,8 +2657,9 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         language::init(cx);
         super::init(cx);
         editor::init(cx);
-        workspace::init_settings(cx);
+        client::DisableAiSettings::register(cx);
         Project::init_settings(cx);
+        workspace::init_settings(cx);
         state
     })
 }

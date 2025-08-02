@@ -6893,8 +6893,9 @@ outline: struct OutlineEntryExcerpt
 
             language::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
             project_search::init(cx);
             super::init(cx);
         });

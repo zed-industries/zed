@@ -5576,6 +5576,7 @@ name = "file_finder"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -7165,6 +7166,7 @@ name = "go_to_line"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "editor",
  "gpui",
  "indoc",
@@ -11152,6 +11154,7 @@ dependencies = [
 name = "outline"
 version = "0.1.0"
 dependencies = [
+ "client",
  "editor",
  "fuzzy",
  "gpui",
@@ -11180,6 +11183,7 @@ name = "outline_panel"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "db",
  "editor",
@@ -12463,6 +12467,7 @@ name = "project_symbols"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "editor",
  "futures 0.3.31",
  "fuzzy",
@@ -13082,6 +13087,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
+ "client",
  "dap",
  "editor",
  "extension_host",
@@ -15951,6 +15957,7 @@ name = "tab_switcher"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "ctor",
  "editor",
@@ -16056,6 +16063,7 @@ name = "tasks_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "editor",
  "file_icons",
@@ -16068,6 +16076,7 @@ dependencies = [
  "project",
  "serde",
  "serde_json",
+ "settings",
  "task",
  "tree-sitter-rust",
  "tree-sitter-typescript",

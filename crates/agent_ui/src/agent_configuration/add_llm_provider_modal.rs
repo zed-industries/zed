@@ -570,8 +570,9 @@ mod tests {
         cx.update(|cx| {
             let store = SettingsStore::test(cx);
             cx.set_global(store);
-            workspace::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
             language_settings::init(cx);
             EditorSettings::register(cx);

@@ -5973,6 +5973,7 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
         editor::init(cx);
         crate::init(cx);
         workspace::init(app_state.clone(), cx);
+        client::DisableAiSettings::register(cx);
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {

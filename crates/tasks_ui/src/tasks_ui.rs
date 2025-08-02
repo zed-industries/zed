@@ -398,6 +398,7 @@ mod tests {
     use language::{Language, LanguageConfig};
     use project::{BasicContextProvider, FakeFs, Project, task_store::TaskStore};
     use serde_json::json;
+    use settings::Settings as _;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
     use util::path;
@@ -605,8 +606,9 @@ mod tests {
             language::init(cx);
             crate::init(cx);
             editor::init(cx);
-            workspace::init_settings(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
+            workspace::init_settings(cx);
             TaskStore::init(None);
             state
         })

@@ -3325,6 +3325,7 @@ mod tests {
         cx.set_global(settings_store);
         language::init(cx);
         agent_settings::init(cx);
+        client::DisableAiSettings::register(cx);
         Project::init_settings(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);

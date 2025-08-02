@@ -28,6 +28,7 @@ workspace.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+client.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
