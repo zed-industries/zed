@@ -1444,14 +1444,15 @@ fn paragraph(
                     return None;
                 }
 
-                let paragraph_start_row = paragraph_start.row();
-                if paragraph_start_row.0 != 0 {
+                let paragraph_start_buffer_point = paragraph_start.to_point(map);
+                if paragraph_start_buffer_point.row != 0 {
                     let previous_paragraph_last_line_start =
-                        Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                        Point::new(paragraph_start_buffer_point.row - 1, 0).to_display_point(map);
                     paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
                 }
             } else {
-                let mut start_row = paragraph_end_row.0 + 1;
+                let paragraph_end_buffer_point = paragraph_end.to_point(map);
+                let mut start_row = paragraph_end_buffer_point.row + 1;
                 if i > 0 {
                     start_row += 1;
                 }
