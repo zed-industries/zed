@@ -1,4 +1,4 @@
-use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
+use crate::{CompletionDiffElement, EditPrediction, EditPredictionRating, Zeta};
 use editor::Editor;
 use gpui::{App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, actions, prelude::*};
 use language::language_settings;
@@ -34,7 +34,7 @@ pub struct RateCompletionModal {
 }
 
 struct ActiveCompletion {
-    completion: InlineCompletion,
+    completion: EditPrediction,
     feedback_editor: Entity<Editor>,
 }
 
@@ -157,7 +157,7 @@ impl RateCompletionModal {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Positive,
+                    EditPredictionRating::Positive,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -189,7 +189,7 @@ impl RateCompletionModal {
             self.zeta.update(cx, |zeta, cx| {
                 zeta.rate_completion(
                     &active.completion,
-                    InlineCompletionRating::Negative,
+                    EditPredictionRating::Negative,
                     active.feedback_editor.read(cx).text(cx),
                     cx,
                 );
@@ -250,7 +250,7 @@ impl RateCompletionModal {
 
     pub fn select_completion(
         &mut self,
-        completion: Option<InlineCompletion>,
+        completion: Option<EditPrediction>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Self>,

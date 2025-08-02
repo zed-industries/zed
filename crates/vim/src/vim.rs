@@ -1741,11 +1741,11 @@ impl Vim {
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
 
-            let hide_inline_completions = match vim.mode {
+            let hide_edit_predictions = match vim.mode {
                 Mode::Insert | Mode::Replace => false,
                 _ => true,
             };
-            editor.set_inline_completions_hidden_for_vim_mode(hide_inline_completions, window, cx);
+            editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
     }

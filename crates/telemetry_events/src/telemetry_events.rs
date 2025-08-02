@@ -94,8 +94,8 @@ impl Display for AssistantPhase {
 pub enum Event {
     Flexible(FlexibleEvent),
     Editor(EditorEvent),
-    InlineCompletion(InlineCompletionEvent),
-    InlineCompletionRating(InlineCompletionRatingEvent),
+    EditPrediction(EditPredictionEvent),
+    EditPredictionRating(EditPredictionRatingEvent),
     Call(CallEvent),
     Assistant(AssistantEventData),
     Cpu(CpuEvent),
@@ -132,7 +132,7 @@ pub struct EditorEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InlineCompletionEvent {
+pub struct EditPredictionEvent {
     /// Provider of the completion suggestion (e.g. copilot, supermaven)
     pub provider: String,
     pub suggestion_accepted: bool,
@@ -140,14 +140,14 @@ pub struct InlineCompletionEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum InlineCompletionRating {
+pub enum EditPredictionRating {
     Positive,
     Negative,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InlineCompletionRatingEvent {
-    pub rating: InlineCompletionRating,
+pub struct EditPredictionRatingEvent {
+    pub rating: EditPredictionRating,
     pub input_events: Arc<str>,
     pub input_excerpt: Arc<str>,
     pub output_excerpt: Arc<str>,

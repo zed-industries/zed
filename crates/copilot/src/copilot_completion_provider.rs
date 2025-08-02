@@ -1,7 +1,7 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
+use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
-use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use project::Project;
 use settings::Settings;
@@ -210,7 +210,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion> {
+    ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -241,7 +241,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(InlineCompletion {
+                Some(EditPrediction {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,
@@ -343,7 +343,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             // Since we have both, the copilot suggestion is not shown inline
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
@@ -355,7 +355,7 @@ mod tests {
                 .unwrap()
                 .detach();
             assert!(!editor.context_menu_visible());
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.completion_a\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
         });
@@ -389,7 +389,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             // Since only the copilot is available, it's shown inline
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
@@ -400,7 +400,7 @@ mod tests {
         executor.run_until_parked();
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
         });
@@ -418,25 +418,25 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
             // Canceling should remove the active Copilot suggestion.
             editor.cancel(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.c\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
             // After canceling, tabbing shouldn't insert the previously shown suggestion.
             editor.tab(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.c   \ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c   \ntwo\nthree\n");
 
             // When undoing the previously active suggestion is shown again.
             editor.undo(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
         });
@@ -444,25 +444,25 @@ mod tests {
         // If an edit occurs outside of this editor, the suggestion is still correctly interpolated.
         cx.update_buffer(|buffer, cx| buffer.edit([(5..5, "o")], None, cx));
         cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
             // AcceptEditPrediction when there is an active suggestion inserts it.
             editor.accept_edit_prediction(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.copilot2\ntwo\nthree\n");
 
             // When undoing the previously active suggestion is shown again.
             editor.undo(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
 
             // Hide suggestion.
             editor.cancel(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.co\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.co\ntwo\nthree\n");
         });
@@ -471,7 +471,7 @@ mod tests {
         // we won't make it visible.
         cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
         cx.update_editor(|editor, _, cx| {
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
         });
@@ -498,19 +498,19 @@ mod tests {
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.text(cx), "fn foo() {\n  \n}");
 
             // Tabbing inside of leading whitespace inserts indentation without accepting the suggestion.
             editor.tab(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "fn foo() {\n    \n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
 
             // Using AcceptEditPrediction again accepts the suggestion.
             editor.accept_edit_prediction(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "fn foo() {\n    let x = 4;\n}");
             assert_eq!(editor.display_text(cx), "fn foo() {\n    let x = 4;\n}");
         });
@@ -575,17 +575,17 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
 
             // Accepting next word should accept the non-word and copilot suggestion should be gone
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
         });
@@ -617,11 +617,11 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
 
             // Accepting the first word (non-word) of the suggestion should only accept the first word and still show the rest.
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. \ntwo\nthree\n");
             assert_eq!(
                 editor.display_text(cx),
@@ -629,8 +629,8 @@ mod tests {
             );
 
             // Accepting next word should accept the next word and copilot suggestion should still exist
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\ntwo\nthree\n");
             assert_eq!(
                 editor.display_text(cx),
@@ -638,8 +638,8 @@ mod tests {
             );
 
             // Accepting the whitespace should accept the non-word/whitespaces with newline and copilot suggestion should be gone
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one.123. copilot\n 456\ntwo\nthree\n");
             assert_eq!(
                 editor.display_text(cx),
@@ -692,29 +692,29 @@ mod tests {
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\ntw\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\nt\nthree\n");
 
             editor.backspace(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\n\nthree\n");
 
             // Deleting across the original suggestion range invalidates it.
             editor.backspace(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\nthree\n");
             assert_eq!(editor.text(cx), "one\nthree\n");
 
             // Undoing the deletion restores the suggestion.
             editor.undo(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\n\nthree\n");
         });
@@ -775,7 +775,7 @@ mod tests {
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(
                 editor.display_text(cx),
                 "\n\na = 1\nb = 2 + a\n\n\n\nc = 3\nd = 4\n"
@@ -797,7 +797,7 @@ mod tests {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
             });
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(
                 editor.display_text(cx),
                 "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4\n"
@@ -806,7 +806,7 @@ mod tests {
 
             // Type a character, ensuring we don't even try to interpolate the previous suggestion.
             editor.handle_input(" ", window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(
                 editor.display_text(cx),
                 "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 \n"
@@ -817,7 +817,7 @@ mod tests {
         // Ensure the new suggestion is displayed when the debounce timeout expires.
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         _ = editor.update(cx, |editor, _, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(
                 editor.display_text(cx),
                 "\n\na = 1\nb = 2\n\n\n\nc = 3\nd = 4 + c\n"
@@ -880,7 +880,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\ntw\nthree\n");
         });
@@ -907,7 +907,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
             assert_eq!(editor.text(cx), "one\ntwo\nthree\n");
         });
@@ -934,7 +934,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_inline_completion(),);
+            assert!(!editor.has_active_edit_prediction(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
     }
@@ -1023,7 +1023,7 @@ mod tests {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges([Point::new(0, 0)..Point::new(0, 0)])
             });
-            editor.refresh_inline_completion(true, false, window, cx);
+            editor.refresh_edit_prediction(true, false, window, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
@@ -1033,7 +1033,7 @@ mod tests {
             editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 s.select_ranges([Point::new(5, 0)..Point::new(5, 0)])
             });
-            editor.refresh_inline_completion(true, false, window, cx);
+            editor.refresh_edit_prediction(true, false, window, cx);
         });
 
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);

@@ -580,7 +580,7 @@ fn for_snowflake(
                 },
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::InlineCompletion(e) => (
+            Event::EditPrediction(e) => (
                 format!(
                     "Edit Prediction {}",
                     if e.suggestion_accepted {
@@ -591,7 +591,7 @@ fn for_snowflake(
                 ),
                 serde_json::to_value(e).unwrap(),
             ),
-            Event::InlineCompletionRating(e) => (
+            Event::EditPredictionRating(e) => (
                 "Edit Prediction Rated".to_string(),
                 serde_json::to_value(e).unwrap(),
             ),

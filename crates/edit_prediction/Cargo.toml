@@ -1,5 +1,5 @@
 [package]
-name = "inline_completion"
+name = "edit_prediction"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/inline_completion.rs"
+path = "src/edit_prediction.rs"
 
 [dependencies]
 client.workspace = true

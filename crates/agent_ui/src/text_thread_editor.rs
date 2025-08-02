@@ -12,7 +12,7 @@ use assistant_slash_commands::{
 use client::{proto, zed_urls};
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use editor::{
-    Anchor, Editor, EditorEvent, MenuInlineCompletionsPolicy, MultiBuffer, MultiBufferSnapshot,
+    Anchor, Editor, EditorEvent, MenuEditPredictionsPolicy, MultiBuffer, MultiBufferSnapshot,
     RowExt, ToOffset as _, ToPoint,
     actions::{MoveToEndOfLine, Newline, ShowCompletions},
     display_map::{
@@ -254,7 +254,7 @@ impl TextThreadEditor {
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Rc::new(completion_provider)));
-            editor.set_menu_inline_completions_policy(MenuInlineCompletionsPolicy::Never);
+            editor.set_menu_edit_predictions_policy(MenuEditPredictionsPolicy::Never);
             editor.set_collaboration_hub(Box::new(project.clone()));
 
             let show_edit_predictions = all_language_settings(None, cx)

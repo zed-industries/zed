@@ -7,7 +7,7 @@ use project::Project;
 
 // TODO: Find a better home for `Direction`.
 //
-// This should live in an ancestor crate of `editor` and `inline_completion`,
+// This should live in an ancestor crate of `editor` and `edit_prediction`,
 // but at time of writing there isn't an obvious spot.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Direction {
@@ -16,7 +16,7 @@ pub enum Direction {
 }
 
 #[derive(Clone)]
-pub struct InlineCompletion {
+pub struct EditPrediction {
     /// The ID of the completion, if it has one.
     pub id: Option<SharedString>,
     pub edits: Vec<(Range<language::Anchor>, String)>,
@@ -102,10 +102,10 @@ pub trait EditPredictionProvider: 'static + Sized {
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion>;
+    ) -> Option<EditPrediction>;
 }
 
-pub trait InlineCompletionProviderHandle {
+pub trait EditPredictionProviderHandle {
     fn name(&self) -> &'static str;
     fn display_name(&self) -> &'static str;
     fn is_enabled(
@@ -143,10 +143,10 @@ pub trait InlineCompletionProviderHandle {
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut App,
-    ) -> Option<InlineCompletion>;
+    ) -> Option<EditPrediction>;
 }
 
-impl<T> InlineCompletionProviderHandle for Entity<T>
+impl<T> EditPredictionProviderHandle for Entity<T>
 where
     T: EditPredictionProvider,
 {
@@ -233,7 +233,7 @@ where
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut App,
-    ) -> Option<InlineCompletion> {
+    ) -> Option<EditPrediction> {
         self.update(cx, |this, cx| this.suggest(buffer, cursor_position, cx))
     }
 }
