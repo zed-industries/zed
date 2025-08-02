@@ -1,4 +1,4 @@
-use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size};
+use crate::{AssetSource, DevicePixels, IsZero, Result, SharedString, Size, physical_px};
 use resvg::tiny_skia::Pixmap;
 use std::{
     hash::Hash,
@@ -79,16 +79,16 @@ impl SvgRenderer {
         let size = match size {
             SvgSize::Size(size) => size,
             SvgSize::ScaleFactor(scale) => crate::size(
-                DevicePixels((tree.size().width() * scale) as i32),
-                DevicePixels((tree.size().height() * scale) as i32),
+                physical_px((tree.size().width() * scale) as i32),
+                physical_px((tree.size().height() * scale) as i32),
             ),
         };
 
         // Render the SVG to a pixmap with the specified width and height.
-        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into())
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.as_u32(), size.height.as_u32())
             .ok_or(usvg::Error::InvalidSize)?;
 
-        let scale = size.width.0 as f32 / tree.size().width();
+        let scale = size.width.raw() as f32 / tree.size().width();
         let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
 
         resvg::render(&tree, transform, &mut pixmap.as_mut());

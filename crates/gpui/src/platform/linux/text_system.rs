@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
-    ShapedGlyph, ShapedRun, SharedString, Size, point, size,
+    GlyphId, LineLayout, PhysicalPixels, Pixels, PlatformTextSystem, Point, RenderGlyphParams,
+    SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size, physical_px, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
@@ -298,7 +298,10 @@ impl CosmicTextSystemState {
             .with_context(|| format!("no image for {params:?} in font {font:?}"))?;
         Ok(Bounds {
             origin: point(image.placement.left.into(), (-image.placement.top).into()),
-            size: size(image.placement.width.into(), image.placement.height.into()),
+            size: size(
+                PhysicalPixels::from_u32(image.placement.width),
+                PhysicalPixels::from_u32(image.placement.height),
+            ),
         })
     }
 
@@ -308,7 +311,7 @@ impl CosmicTextSystemState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        if glyph_bounds.size.width.0 == 0 || glyph_bounds.size.height.0 == 0 {
+        if glyph_bounds.size.width == physical_px(0) || glyph_bounds.size.height == physical_px(0) {
             anyhow::bail!("glyph bounds are empty");
         } else {
             let bitmap_size = glyph_bounds.size;
@@ -491,8 +494,8 @@ impl From<RectF> for Bounds<f32> {
 impl From<RectI> for Bounds<DevicePixels> {
     fn from(rect: RectI) -> Self {
         Bounds {
-            origin: point(DevicePixels(rect.origin_x()), DevicePixels(rect.origin_y())),
-            size: size(DevicePixels(rect.width()), DevicePixels(rect.height())),
+            origin: point(physical_px(rect.origin_x()), physical_px(rect.origin_y())),
+            size: size(physical_px(rect.width()), physical_px(rect.height())),
         }
     }
 }

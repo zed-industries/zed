@@ -543,7 +543,8 @@ impl TitleBar {
                                     .unwrap_or_else(|| SharedString::from("Unknown screen"));
                                 let resolution = SharedString::from(format!(
                                     "{} × {}",
-                                    meta.resolution.width.0, meta.resolution.height.0
+                                    meta.resolution.width.raw(),
+                                    meta.resolution.height.raw()
                                 ));
                                 this.push_item(ContextMenuItem::CustomEntry {
                                     entry_render: Box::new(move |_, _| {

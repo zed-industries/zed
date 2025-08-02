@@ -181,7 +181,7 @@ fn handle_size_msg(
 
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let new_size = size(DevicePixels(width), DevicePixels(height));
+    let new_size = size(physical_px(width), physical_px(height));
     let scale_factor = lock.scale_factor;
     if lock.restore_from_minimized.is_some() {
         lock.callbacks.request_frame = lock.restore_from_minimized.take();
@@ -470,7 +470,7 @@ fn handle_mouse_down_msg(
     };
     let x = lparam.signed_loword();
     let y = lparam.signed_hiword();
-    let physical_point = point(DevicePixels(x as i32), DevicePixels(y as i32));
+    let physical_point = point(physical_px(x as i32), physical_px(y as i32));
     let click_count = lock.click_state.update(button, physical_point);
     let scale_factor = lock.scale_factor;
     drop(lock);
@@ -974,7 +974,7 @@ fn handle_nc_mouse_down_msg(
             y: lparam.signed_hiword().into(),
         };
         unsafe { ScreenToClient(handle, &mut cursor_point).ok().log_err() };
-        let physical_point = point(DevicePixels(cursor_point.x), DevicePixels(cursor_point.y));
+        let physical_point = point(physical_px(cursor_point.x), physical_px(cursor_point.y));
         let click_count = lock.click_state.update(button, physical_point);
         drop(lock);
 

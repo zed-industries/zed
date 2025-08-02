@@ -3,7 +3,7 @@ use crate::{
     Element, ElementId, Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
     RenderImage, Resource, SMOOTH_SVG_SCALE_FACTOR, SharedString, SharedUri, StyleRefinement,
-    Styled, SvgSize, Task, Window, px, swap_rgba_pa_to_bgra,
+    Styled, SvgSize, Task, Window, swap_rgba_pa_to_bgra,
 };
 use anyhow::{Context as _, Result};
 
@@ -333,19 +333,27 @@ impl Element for Img {
                             }
 
                             let image_size = data.size(frame_index);
-                            style.aspect_ratio =
-                                Some(image_size.width.0 as f32 / image_size.height.0 as f32);
+                            style.aspect_ratio = Some(
+                                image_size.width.unquantize() / image_size.height.unquantize(),
+                            );
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
                                     Length::Definite(DefiniteLength::Absolute(
                                         AbsoluteLength::Pixels(height),
-                                    )) => Length::Definite(
-                                        px(image_size.width.0 as f32 * height.0
-                                            / image_size.height.0 as f32)
-                                        .into(),
+                                    )) => {
+                                        let scale = height
+                                            / image_size.height.to_logical(window.scale_factor());
+
+                                        let width =
+                                            image_size.width.to_logical(window.scale_factor())
+                                                * scale;
+
+                                        Length::Definite(width.into())
+                                    }
+                                    _ => Length::Definite(
+                                        image_size.width.to_logical(window.scale_factor()).into(),
                                     ),
-                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
                                 };
                             }
 
@@ -353,12 +361,18 @@ impl Element for Img {
                                 style.size.height = match style.size.width {
                                     Length::Definite(DefiniteLength::Absolute(
                                         AbsoluteLength::Pixels(width),
-                                    )) => Length::Definite(
-                                        px(image_size.height.0 as f32 * width.0
-                                            / image_size.width.0 as f32)
-                                        .into(),
+                                    )) => {
+                                        let scale = width
+                                            / image_size.width.to_logical(window.scale_factor());
+                                        let height =
+                                            image_size.height.to_logical(window.scale_factor())
+                                                * scale;
+
+                                        Length::Definite(height.into())
+                                    }
+                                    _ => Length::Definite(
+                                        image_size.height.to_logical(window.scale_factor()).into(),
                                     ),
-                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
                                 };
                             }
 

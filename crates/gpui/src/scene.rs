@@ -534,7 +534,7 @@ impl TransformationMatrix {
     pub fn translate(mut self, point: Point<ScaledPixels>) -> Self {
         self.compose(Self {
             rotation_scale: [[1.0, 0.0], [0.0, 1.0]],
-            translation: [point.x.0, point.y.0],
+            translation: [point.x.raw(), point.y.raw()],
         })
     }
 

@@ -76,7 +76,7 @@ use crate::{
     LinuxKeyboardLayout, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
     PlatformInput, PlatformKeyboardLayout, Point, SCROLL_LINES, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, Size, TouchPhase, WindowParams, point, px, size,
+    ScrollWheelEvent, Size, TouchPhase, WindowParams, physical_px, point, px, size,
 };
 use crate::{
     SharedString,
@@ -332,10 +332,10 @@ impl WaylandClientStatePtr {
 
         let text_input = state.text_input.as_ref().unwrap();
         text_input.set_cursor_rectangle(
-            bounds.origin.x.0 as i32,
-            bounds.origin.y.0 as i32,
-            bounds.size.width.0 as i32,
-            bounds.size.height.0 as i32,
+            bounds.origin.x.quantize().raw(),
+            bounds.origin.y.quantize().raw(),
+            bounds.size.width.quantize().raw(),
+            bounds.size.height.quantize().raw(),
         );
         text_input.commit();
     }
@@ -1014,10 +1014,10 @@ impl Dispatch<wl_output::WlOutput, ()> for WaylandClientStatePtr {
                 in_progress_output.scale = Some(factor);
             }
             wl_output::Event::Geometry { x, y, .. } => {
-                in_progress_output.position = Some(point(DevicePixels(x), DevicePixels(y)))
+                in_progress_output.position = Some(point(physical_px(x), physical_px(y)))
             }
             wl_output::Event::Mode { width, height, .. } => {
-                in_progress_output.size = Some(size(DevicePixels(width), DevicePixels(height)))
+                in_progress_output.size = Some(size(physical_px(width), physical_px(height)))
             }
             wl_output::Event::Done => {
                 if let Some(complete) = in_progress_output.complete() {

@@ -8,15 +8,15 @@ use crate::{
     FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler, IsZero,
     KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent, LayoutId,
     LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
-    PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
-    Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
-    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
-    TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
-    WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
-    transparent_black,
+    MouseMoveEvent, MouseUpEvent, Path, PhysicalPixels, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton,
+    PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams,
+    Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles,
+    TaffyLayoutEngine, Task, TextStyle, TextStyleRefinement, TransformationMatrix, Underline,
+    UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls,
+    WindowDecorations, WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
@@ -2869,8 +2869,8 @@ impl Window {
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
         let subpixel_variant = Point {
-            x: (glyph_origin.x.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
-            y: (glyph_origin.y.0.fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            x: (glyph_origin.x.raw().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
+            y: (glyph_origin.y.raw().fract() * SUBPIXEL_VARIANTS as f32).floor() as u8,
         };
         let params = RenderGlyphParams {
             font_id,
@@ -2891,8 +2891,9 @@ impl Window {
                 })?
                 .expect("Callback above only errors or returns Some");
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
+                origin: glyph_origin.map(|px| px.floor())
+                    + raster_bounds.origin.map(PhysicalPixels::unquantize),
+                size: tile.bounds.size.map(PhysicalPixels::unquantize),
             };
             let content_mask = self.content_mask().scale(scale_factor);
             self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -2948,8 +2949,9 @@ impl Window {
                 .expect("Callback above only errors or returns Some");
 
             let bounds = Bounds {
-                origin: glyph_origin.map(|px| px.floor()) + raster_bounds.origin.map(Into::into),
-                size: tile.bounds.size.map(Into::into),
+                origin: glyph_origin.map(|px| px.floor())
+                    + raster_bounds.origin.map(PhysicalPixels::unquantize),
+                size: tile.bounds.size.map(PhysicalPixels::unquantize),
             };
             let content_mask = self.content_mask().scale(scale_factor);
             let opacity = self.element_opacity();
@@ -2986,9 +2988,9 @@ impl Window {
         let bounds = bounds.scale(scale_factor);
         let params = RenderSvgParams {
             path,
-            size: bounds.size.map(|pixels| {
-                DevicePixels::from((pixels.0 * SMOOTH_SVG_SCALE_FACTOR).ceil() as i32)
-            }),
+            size: bounds
+                .size
+                .map(|pixels| (pixels * SMOOTH_SVG_SCALE_FACTOR).ceil().quantize()),
         };
 
         let Some(tile) =
