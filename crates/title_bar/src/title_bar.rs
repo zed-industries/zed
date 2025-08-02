@@ -20,7 +20,8 @@ use crate::application_menu::{
 
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
-use client::{Client, CloudUserStore, UserStore, zed_urls};
+use client::{Client, UserStore, zed_urls};
+use cloud_llm_client::Plan;
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
@@ -28,7 +29,6 @@ use gpui::{
 };
 use onboarding_banner::OnboardingBanner;
 use project::Project;
-use rpc::proto;
 use settings::Settings as _;
 use settings_ui::keybindings;
 use std::sync::Arc;
@@ -126,7 +126,6 @@ pub struct TitleBar {
     platform_titlebar: Entity<PlatformTitleBar>,
     project: Entity<Project>,
     user_store: Entity<UserStore>,
-    cloud_user_store: Entity<CloudUserStore>,
     client: Arc<Client>,
     workspace: WeakEntity<Workspace>,
     application_menu: Option<Entity<ApplicationMenu>>,
@@ -180,11 +179,9 @@ impl Render for TitleBar {
             children.push(self.banner.clone().into_any_element())
         }
 
-        let is_authenticated = self.cloud_user_store.read(cx).is_authenticated();
         let status = self.client.status();
         let status = &*status.borrow();
-
-        let show_sign_in = !is_authenticated || !matches!(status, client::Status::Connected { .. });
+        let user = self.user_store.read(cx).current_user();
 
         children.push(
             h_flex()
@@ -194,10 +191,10 @@ impl Render for TitleBar {
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
-                    show_sign_in && TitleBarSettings::get_global(cx).show_sign_in,
+                    user.is_none() && TitleBarSettings::get_global(cx).show_sign_in,
                     |el| el.child(self.render_sign_in_button(cx)),
                 )
-                .when(is_authenticated, |parent| {
+                .when(user.is_some(), |parent| {
                     parent.child(self.render_user_menu_button(cx))
                 })
                 .into_any_element(),
@@ -248,7 +245,6 @@ impl TitleBar {
     ) -> Self {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
-        let cloud_user_store = workspace.app_state().cloud_user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
 
@@ -296,7 +292,6 @@ impl TitleBar {
             workspace: workspace.weak_handle(),
             project,
             user_store,
-            cloud_user_store,
             client,
             _subscriptions: subscriptions,
             banner,
@@ -622,9 +617,8 @@ impl TitleBar {
                 window
                     .spawn(cx, async move |cx| {
                         client
-                            .authenticate_and_connect(true, &cx)
+                            .sign_in_with_optional_connect(true, &cx)
                             .await
-                            .into_response()
                             .notify_async_err(cx);
                     })
                     .detach();
@@ -632,15 +626,15 @@ impl TitleBar {
     }
 
     pub fn render_user_menu_button(&mut self, cx: &mut Context<Self>) -> impl Element {
-        let cloud_user_store = self.cloud_user_store.read(cx);
-        if let Some(user) = cloud_user_store.authenticated_user() {
-            let has_subscription_period = self.user_store.read(cx).subscription_period().is_some();
-            let plan = self.user_store.read(cx).current_plan().filter(|_| {
+        let user_store = self.user_store.read(cx);
+        if let Some(user) = user_store.current_user() {
+            let has_subscription_period = user_store.subscription_period().is_some();
+            let plan = user_store.plan().filter(|_| {
                 // Since the user might be on the legacy free plan we filter based on whether we have a subscription period.
                 has_subscription_period
             });
 
-            let user_avatar = user.avatar_url.clone();
+            let user_avatar = user.avatar_uri.clone();
             let free_chip_bg = cx
                 .theme()
                 .colors()
@@ -662,13 +656,9 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(proto::Plan::Free) => {
-                                ("Free", Color::Default, free_chip_bg)
-                            }
-                            Some(proto::Plan::ZedProTrial) => {
-                                ("Pro Trial", Color::Accent, pro_chip_bg)
-                            }
-                            Some(proto::Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                            None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
+                            Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
+                            Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
                         };
 
                         menu.custom_entry(

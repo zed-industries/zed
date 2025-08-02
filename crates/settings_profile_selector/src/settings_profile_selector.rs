@@ -42,7 +42,7 @@ impl Focusable for SettingsProfileSelector {
 
 impl Render for SettingsProfileSelector {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().w(rems(22.)).child(self.picker.clone())
     }
 }
 
@@ -332,8 +332,7 @@ mod tests {
 
         cx.update(|_, cx| {
             assert!(!cx.has_global::<ActiveSettingsProfileName>());
-            let theme_settings = ThemeSettings::get_global(cx);
-            assert_eq!(theme_settings.buffer_font_size(cx).0, 10.0);
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
 
         (workspace, cx)

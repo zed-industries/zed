@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use editor::{EditorSettings, ShowMinimap};
 use fs::Fs;
-use gpui::{Action, App, IntoElement, Pixels, Window};
-use language::language_settings::AllLanguageSettings;
+use gpui::{Action, App, FontFeatures, IntoElement, Pixels, Window};
+use language::language_settings::{AllLanguageSettings, FormatOnSave};
 use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
@@ -116,6 +118,53 @@ fn write_buffer_font_family(font_family: SharedString, cx: &mut App) {
     });
 }
 
+fn read_font_ligatures(cx: &App) -> bool {
+    ThemeSettings::get_global(cx)
+        .buffer_font
+        .features
+        .is_calt_enabled()
+        .unwrap_or(true)
+}
+
+fn write_font_ligatures(enabled: bool, cx: &mut App) {
+    let fs = <dyn Fs>::global(cx);
+    let bit = if enabled { 1 } else { 0 };
+
+    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
+        let mut features = theme_settings
+            .buffer_font_features
+            .as_mut()
+            .map(|features| features.tag_value_list().to_vec())
+            .unwrap_or_default();
+
+        if let Some(calt_index) = features.iter().position(|(tag, _)| tag == "calt") {
+            features[calt_index].1 = bit;
+        } else {
+            features.push(("calt".into(), bit));
+        }
+
+        theme_settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+    });
+}
+
+fn read_format_on_save(cx: &App) -> bool {
+    match AllLanguageSettings::get_global(cx).defaults.format_on_save {
+        FormatOnSave::On | FormatOnSave::List(_) => true,
+        FormatOnSave::Off => false,
+    }
+}
+
+fn write_format_on_save(format_on_save: bool, cx: &mut App) {
+    let fs = <dyn Fs>::global(cx);
+
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |language_settings, _| {
+        language_settings.defaults.format_on_save = Some(match format_on_save {
+            true => FormatOnSave::On,
+            false => FormatOnSave::Off,
+        });
+    });
+}
+
 fn render_import_settings_section() -> impl IntoElement {
     v_flex()
         .gap_4()
@@ -143,7 +192,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorVsCode)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
@@ -169,7 +218,7 @@ fn render_import_settings_section() -> impl IntoElement {
                                     .gap_1p5()
                                     .px_1()
                                     .child(
-                                        Icon::new(IconName::Sparkle)
+                                        Icon::new(IconName::EditorCursor)
                                             .color(Color::Muted)
                                             .size(IconSize::XSmall),
                                     )
@@ -312,6 +361,32 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .gap_5()
         .child(Label::new("Popular Settings").size(LabelSize::Large).mt_8())
         .child(render_font_customization_section(window, cx))
+        .child(SwitchField::new(
+            "onboarding-font-ligatures",
+            "Font Ligatures",
+            Some("Combine text characters into their associated symbols.".into()),
+            if read_font_ligatures(cx) {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            |toggle_state, _, cx| {
+                write_font_ligatures(toggle_state == &ToggleState::Selected, cx);
+            },
+        ))
+        .child(SwitchField::new(
+            "onboarding-format-on-save",
+            "Format on Save",
+            Some("Format code automatically when saving.".into()),
+            if read_format_on_save(cx) {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            |toggle_state, _, cx| {
+                write_format_on_save(toggle_state == &ToggleState::Selected, cx);
+            },
+        ))
         .child(
             h_flex()
                 .items_start()
@@ -349,7 +424,7 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(SwitchField::new(
             "onboarding-enable-inlay-hints",
             "Inlay Hints",
-            "See parameter names for function and method calls inline.",
+            Some("See parameter names for function and method calls inline.".into()),
             if read_inlay_hints(cx) {
                 ui::ToggleState::Selected
             } else {
@@ -362,7 +437,7 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
         .child(SwitchField::new(
             "onboarding-git-blame-switch",
             "Git Blame",
-            "See who committed each line on a given file.",
+            Some("See who committed each line on a given file.".into()),
             if read_git_blame(cx) {
                 ui::ToggleState::Selected
             } else {

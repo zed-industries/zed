@@ -42,8 +42,8 @@ pub(crate) struct DirectXRenderer {
 pub(crate) struct DirectXDevices {
     adapter: IDXGIAdapter1,
     dxgi_factory: IDXGIFactory6,
-    device: ID3D11Device,
-    device_context: ID3D11DeviceContext,
+    pub(crate) device: ID3D11Device,
+    pub(crate) device_context: ID3D11DeviceContext,
     dxgi_device: Option<IDXGIDevice>,
 }
 
@@ -88,8 +88,11 @@ struct DirectComposition {
 
 impl DirectXDevices {
     pub(crate) fn new(disable_direct_composition: bool) -> Result<ManuallyDrop<Self>> {
-        let dxgi_factory = get_dxgi_factory().context("Creating DXGI factory")?;
-        let adapter = get_adapter(&dxgi_factory).context("Getting DXGI adapter")?;
+        let debug_layer_available = check_debug_layer_available();
+        let dxgi_factory =
+            get_dxgi_factory(debug_layer_available).context("Creating DXGI factory")?;
+        let adapter =
+            get_adapter(&dxgi_factory, debug_layer_available).context("Getting DXGI adapter")?;
         let (device, device_context) = {
             let mut device: Option<ID3D11Device> = None;
             let mut context: Option<ID3D11DeviceContext> = None;
@@ -99,6 +102,7 @@ impl DirectXDevices {
                 Some(&mut device),
                 Some(&mut context),
                 Some(&mut feature_level),
+                debug_layer_available,
             )
             .context("Creating Direct3D device")?;
             match feature_level {
@@ -183,7 +187,7 @@ impl DirectXRenderer {
                     self.resources.viewport[0].Width,
                     self.resources.viewport[0].Height,
                 ],
-                ..Default::default()
+                _pad: 0,
             }],
         )?;
         unsafe {
@@ -977,25 +981,34 @@ impl Drop for DirectXResources {
 }
 
 #[inline]
-fn get_dxgi_factory() -> Result<IDXGIFactory6> {
+fn check_debug_layer_available() -> bool {
     #[cfg(debug_assertions)]
-    let factory_flag = if unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
-        .log_err()
-        .is_some()
     {
+        unsafe { DXGIGetDebugInterface1::<IDXGIInfoQueue>(0) }
+            .log_err()
+            .is_some()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+#[inline]
+fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
+    let factory_flag = if debug_layer_available {
         DXGI_CREATE_FACTORY_DEBUG
     } else {
+        #[cfg(debug_assertions)]
         log::warn!(
             "Failed to get DXGI debug interface. DirectX debugging features will be disabled."
         );
         DXGI_CREATE_FACTORY_FLAGS::default()
     };
-    #[cfg(not(debug_assertions))]
-    let factory_flag = DXGI_CREATE_FACTORY_FLAGS::default();
     unsafe { Ok(CreateDXGIFactory2(factory_flag)?) }
 }
 
-fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
+fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe {
             dxgi_factory
@@ -1009,7 +1022,10 @@ fn get_adapter(dxgi_factory: &IDXGIFactory6) -> Result<IDXGIAdapter1> {
         }
         // Check to see whether the adapter supports Direct3D 11, but don't
         // create the actual device yet.
-        if get_device(&adapter, None, None, None).log_err().is_some() {
+        if get_device(&adapter, None, None, None, debug_layer_available)
+            .log_err()
+            .is_some()
+        {
             return Ok(adapter);
         }
     }
@@ -1022,11 +1038,13 @@ fn get_device(
     device: Option<*mut Option<ID3D11Device>>,
     context: Option<*mut Option<ID3D11DeviceContext>>,
     feature_level: Option<*mut D3D_FEATURE_LEVEL>,
+    debug_layer_available: bool,
 ) -> Result<()> {
-    #[cfg(debug_assertions)]
-    let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG;
-    #[cfg(not(debug_assertions))]
-    let device_flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
+    let device_flags = if debug_layer_available {
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_DEBUG
+    } else {
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT
+    };
     unsafe {
         D3D11CreateDevice(
             adapter,
@@ -1423,7 +1441,7 @@ fn report_live_objects(device: &ID3D11Device) -> Result<()> {
 
 const BUFFER_COUNT: usize = 3;
 
-mod shader_resources {
+pub(crate) mod shader_resources {
     use anyhow::Result;
 
     #[cfg(debug_assertions)]
@@ -1436,7 +1454,7 @@ mod shader_resources {
     };
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    pub(super) enum ShaderModule {
+    pub(crate) enum ShaderModule {
         Quad,
         Shadow,
         Underline,
@@ -1444,15 +1462,16 @@ mod shader_resources {
         PathSprite,
         MonochromeSprite,
         PolychromeSprite,
+        EmojiRasterization,
     }
 
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-    pub(super) enum ShaderTarget {
+    pub(crate) enum ShaderTarget {
         Vertex,
         Fragment,
     }
 
-    pub(super) struct RawShaderBytes<'t> {
+    pub(crate) struct RawShaderBytes<'t> {
         inner: &'t [u8],
 
         #[cfg(debug_assertions)]
@@ -1460,7 +1479,7 @@ mod shader_resources {
     }
 
     impl<'t> RawShaderBytes<'t> {
-        pub(super) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
+        pub(crate) fn new(module: ShaderModule, target: ShaderTarget) -> Result<Self> {
             #[cfg(not(debug_assertions))]
             {
                 Ok(Self::from_bytes(module, target))
@@ -1478,7 +1497,7 @@ mod shader_resources {
             }
         }
 
-        pub(super) fn as_bytes(&'t self) -> &'t [u8] {
+        pub(crate) fn as_bytes(&'t self) -> &'t [u8] {
             self.inner
         }
 
@@ -1513,6 +1532,10 @@ mod shader_resources {
                     ShaderTarget::Vertex => POLYCHROME_SPRITE_VERTEX_BYTES,
                     ShaderTarget::Fragment => POLYCHROME_SPRITE_FRAGMENT_BYTES,
                 },
+                ShaderModule::EmojiRasterization => match target {
+                    ShaderTarget::Vertex => EMOJI_RASTERIZATION_VERTEX_BYTES,
+                    ShaderTarget::Fragment => EMOJI_RASTERIZATION_FRAGMENT_BYTES,
+                },
             };
             Self { inner: bytes }
         }
@@ -1521,6 +1544,12 @@ mod shader_resources {
     #[cfg(debug_assertions)]
     pub(super) fn build_shader_blob(entry: ShaderModule, target: ShaderTarget) -> Result<ID3DBlob> {
         unsafe {
+            let shader_name = if matches!(entry, ShaderModule::EmojiRasterization) {
+                "color_text_raster.hlsl"
+            } else {
+                "shaders.hlsl"
+            };
+
             let entry = format!(
                 "{}_{}\0",
                 entry.as_str(),
@@ -1537,7 +1566,7 @@ mod shader_resources {
             let mut compile_blob = None;
             let mut error_blob = None;
             let shader_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("src/platform/windows/shaders.hlsl")
+                .join(&format!("src/platform/windows/{}", shader_name))
                 .canonicalize()?;
 
             let entry_point = PCSTR::from_raw(entry.as_ptr());
@@ -1583,6 +1612,7 @@ mod shader_resources {
                 ShaderModule::PathSprite => "path_sprite",
                 ShaderModule::MonochromeSprite => "monochrome_sprite",
                 ShaderModule::PolychromeSprite => "polychrome_sprite",
+                ShaderModule::EmojiRasterization => "emoji_rasterization",
             }
         }
     }
