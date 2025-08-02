@@ -592,6 +592,7 @@ impl Settings for ProjectSettings {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,
+                    working_directory: None,
                 }
             }
         }
