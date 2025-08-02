@@ -82,6 +82,7 @@ impl Vim {
                                 selection.goal,
                                 None,
                                 &text_layout_details,
+                                false,
                             ) {
                                 selection.start = point;
                             }
