@@ -12,6 +12,7 @@ path = "src/agent2.rs"
 workspace = true
 
 [dependencies]
+agent-client-protocol.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
@@ -24,6 +25,7 @@ gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 language_model.workspace = true
 language_models.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 project.workspace = true
 rust-embed.workspace = true
@@ -34,6 +36,7 @@ settings.workspace = true
 smol.workspace = true
 thiserror.workspace = true
 util.workspace = true
+uuid.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
