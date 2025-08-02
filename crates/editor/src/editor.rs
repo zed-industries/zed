@@ -5681,8 +5681,8 @@ impl Editor {
                     if editor.completion_tasks.len() <= 1 {
                         // If there are no more completion tasks and the last menu was empty, we should hide it.
                         let was_hidden = editor.hide_context_menu(window, cx).is_none();
-                        // If it was already hidden and we don't show inline completions in the menu, we should
-                        // also show the inline-completion when available.
+                        // If it was already hidden and we don't show edit predictions in the menu,
+                        // we should also show the edit prediction when available.
                         if was_hidden && editor.show_edit_predictions_in_menu() {
                             editor.update_visible_edit_prediction(window, cx);
                         }
