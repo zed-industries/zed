@@ -1,7 +1,7 @@
 use crate::Editor;
-use collections::HashMap;
 use gpui::{Context, Hsla, Window};
 use language::Bias;
+use std::collections::HashMap;
 use std::ops::Range;
 use text::{Anchor, ToOffset};
 
@@ -12,16 +12,7 @@ pub fn refresh_rainbow_bracket_highlights(
     cx: &mut Context<Editor>,
 ) {
     // Clear existing rainbow highlights for all levels
-    editor.clear_background_highlights::<RainbowLevel0>(cx);
-    editor.clear_background_highlights::<RainbowLevel1>(cx);
-    editor.clear_background_highlights::<RainbowLevel2>(cx);
-    editor.clear_background_highlights::<RainbowLevel3>(cx);
-    editor.clear_background_highlights::<RainbowLevel4>(cx);
-    editor.clear_background_highlights::<RainbowLevel5>(cx);
-    editor.clear_background_highlights::<RainbowLevel6>(cx);
-    editor.clear_background_highlights::<RainbowLevel7>(cx);
-    editor.clear_background_highlights::<RainbowLevel8>(cx);
-    editor.clear_background_highlights::<RainbowLevel9>(cx);
+    clear_current_rainbow_highlights(editor, cx);
 
     let multi_buffer = editor.buffer().read(cx);
     let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -116,6 +107,18 @@ pub fn refresh_rainbow_bracket_highlights(
             }
         }
     }
+}
+
+fn clear_current_rainbow_highlights(editor: &mut Editor, cx: &mut Context<Editor>) {
+    editor.clear_background_highlights::<RainbowLevel1>(cx);
+    editor.clear_background_highlights::<RainbowLevel2>(cx);
+    editor.clear_background_highlights::<RainbowLevel3>(cx);
+    editor.clear_background_highlights::<RainbowLevel4>(cx);
+    editor.clear_background_highlights::<RainbowLevel5>(cx);
+    editor.clear_background_highlights::<RainbowLevel6>(cx);
+    editor.clear_background_highlights::<RainbowLevel7>(cx);
+    editor.clear_background_highlights::<RainbowLevel8>(cx);
+    editor.clear_background_highlights::<RainbowLevel9>(cx);
 }
 
 // Similar to Helix's RainbowScope structure
