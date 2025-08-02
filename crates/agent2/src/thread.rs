@@ -1,12 +1,13 @@
 use crate::templates::Templates;
 use anyhow::{anyhow, Result};
+use cloud_llm_client::{CompletionIntent, CompletionMode};
 use futures::{channel::mpsc, future};
 use gpui::{App, Context, SharedString, Task};
 use language_model::{
-    CompletionIntent, CompletionMode, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolResultContent,
-    LanguageModelToolSchemaFormat, LanguageModelToolUse, MessageContent, Role, StopReason,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
@@ -138,7 +139,10 @@ impl Thread {
                         .update(cx, |thread, _cx| {
                             thread.messages.push(AgentMessage {
                                 role: Role::User,
-                                content: tool_results.into_iter().map(Into::into).collect(),
+                                content: tool_results
+                                    .into_iter()
+                                    .map(MessageContent::ToolResult)
+                                    .collect(),
                             });
                         })
                         .ok();
@@ -187,27 +191,30 @@ impl Thread {
 
         match event {
             Text(new_text) => self.handle_text_event(new_text, cx),
-            Thinking { text, signature } => {
+            Thinking {
+                text: _text,
+                signature: _signature,
+            } => {
                 todo!()
             }
             ToolUse(tool_use) => {
                 return self.handle_tool_use_event(tool_use, cx);
             }
-            StartMessage { role, .. } => {
+            StartMessage { .. } => {
                 self.messages.push(AgentMessage {
-                    role,
+                    role: Role::Assistant,
                     content: Vec::new(),
                 });
             }
             UsageUpdate(_) => {}
             Stop(stop_reason) => self.handle_stop_event(stop_reason),
             StatusUpdate(_completion_request_status) => {}
-            RedactedThinking { data } => todo!(),
+            RedactedThinking { data: _data } => todo!(),
             ToolUseJsonParseError {
-                id,
-                tool_name,
-                raw_input,
-                json_parse_error,
+                id: _id,
+                tool_name: _tool_name,
+                raw_input: _raw_input,
+                json_parse_error: _json_parse_error,
             } => todo!(),
         }
 
@@ -256,7 +263,9 @@ impl Thread {
             }
         });
         if push_new_tool_use {
-            last_message.content.push(tool_use.clone().into());
+            last_message
+                .content
+                .push(MessageContent::ToolUse(tool_use.clone()));
         }
 
         if !tool_use.is_input_complete {
@@ -340,6 +349,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: None,
+            thinking_allowed: false,
         }
     }
 
@@ -373,8 +383,8 @@ where
     }
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
-        assistant_tools::root_schema_for::<Self::Input>(format)
+    fn input_schema(&self, _format: LanguageModelToolSchemaFormat) -> Schema {
+        schemars::schema_for!(Self::Input)
     }
 
     /// Runs the tool with the provided input.
