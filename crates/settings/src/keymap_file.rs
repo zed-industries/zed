@@ -959,19 +959,21 @@ impl<'a> KeybindUpdateTarget<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeybindSource {
     User,
-    Default,
-    Base,
     Vim,
+    Base,
+    #[default]
+    Default,
+    Unknown,
 }
 
 impl KeybindSource {
-    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
-    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
-    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
-    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Base as u32);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Default as u32);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Vim as u32);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::User as u32);
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -979,6 +981,7 @@ impl KeybindSource {
             KeybindSource::Default => "Default",
             KeybindSource::Base => "Base",
             KeybindSource::Vim => "Vim",
+            KeybindSource::Unknown => "Unknown",
         }
     }
 
@@ -988,21 +991,18 @@ impl KeybindSource {
             KeybindSource::Default => Self::DEFAULT,
             KeybindSource::Base => Self::BASE,
             KeybindSource::Vim => Self::VIM,
+            KeybindSource::Unknown => KeyBindingMetaIndex(*self as u32),
         }
     }
 
     pub fn from_meta(index: KeyBindingMetaIndex) -> Self {
-        Self::try_from_meta(index).unwrap()
-    }
-
-    pub fn try_from_meta(index: KeyBindingMetaIndex) -> Result<Self> {
-        Ok(match index {
+        match index {
             Self::USER => KeybindSource::User,
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
-            _ => anyhow::bail!("Invalid keybind source {:?}", index),
-        })
+            _ => KeybindSource::Unknown,
+        }
     }
 }
 
@@ -1014,7 +1014,7 @@ impl From<KeyBindingMetaIndex> for KeybindSource {
 
 impl From<KeybindSource> for KeyBindingMetaIndex {
     fn from(source: KeybindSource) -> Self {
-        return source.meta();
+        source.meta()
     }
 }
 
@@ -1621,6 +1621,46 @@ mod tests {
                 }
             ]"#
             .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_keymap_remove() {
+        zlog::init_test();
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
         );
     }
 }

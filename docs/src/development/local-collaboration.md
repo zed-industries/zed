@@ -1,12 +1,76 @@
 # Local Collaboration
 
-First, make sure you've installed Zed's backend dependencies for your platform:
+First, make sure you've installed Zed's dependencies for your platform:
 
 - [macOS](./macos.md#backend-dependencies)
 - [Linux](./linux.md#backend-dependencies)
 - [Windows](./windows.md#backend-dependencies)
 
 Note that `collab` can be compiled only with MSVC toolchain on Windows
+
+## Backend Dependencies
+
+If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+
+- PostgreSQL
+- LiveKit
+- Foreman
+
+You can install these dependencies natively or run them under Docker.
+
+### MacOS
+
+1. Install [Postgres.app](https://postgresapp.com) or [postgresql via homebrew](https://formulae.brew.sh/formula/postgresql@15):
+
+   ```sh
+   brew install postgresql@15
+   ```
+
+2. Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
+
+   ```sh
+   brew install livekit foreman
+   ```
+
+- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
+
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+
+### Linux
+
+1. Install [Postgres](https://www.postgresql.org/download/linux/)
+
+   ```sh
+   sudo apt-get install postgresql postgresql        # Ubuntu/Debian
+   sudo pacman -S postgresql                         # Arch Linux
+   sudo dnf install postgresql postgresql-server     # RHEL/Fedora
+   sudo zypper install postgresql postgresql-server  # OpenSUSE
+   ```
+
+2. Install [Livekit](https://github.com/livekit/livekit-cli)
+
+   ```sh
+   curl -sSL https://get.livekit.io/cli | bash
+   ```
+
+3. Install [Foreman](https://theforeman.org/manuals/3.15/quickstart_guide.html)
+
+### Windows {#backend-windows}
+
+> This section is still in development. The instructions are not yet complete.
+
+- Install [Postgres](https://www.postgresql.org/download/windows/)
+- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
+
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose.
+
+### Docker {#Docker}
+
+If you have docker or podman available, you can run the backend dependencies inside containers with Docker Compose:
+
+```sh
+docker compose up -d
+```
 
 ## Database setup
 

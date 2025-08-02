@@ -1,10 +1,10 @@
 #![allow(unused, dead_code)]
 
 use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{Plan, UsageLimit};
 use gpui::Global;
 use std::ops::{Deref, DerefMut};
 use ui::prelude::*;
-use zed_llm_client::{Plan, UsageLimit};
 
 /// Debug only: Used for testing various account states
 ///

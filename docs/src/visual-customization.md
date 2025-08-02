@@ -267,7 +267,7 @@ TBD: Centered layout related settings
     "display_in": "active_editor",  // Where to show (active_editor, all_editor)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
-    "max_width_columns": 80         // Maximum width of minimap
+    "max_width_columns": 80,        // Maximum width of minimap
     "current_line_highlight": null  // Highlight current line (null, line, gutter)
   },
 
@@ -448,7 +448,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
-    // Default cursor shape for the terminal (block, bar, underline, hollow)
+    // Default cursor shape for the terminal cursor (block, bar, underline, hollow)
     "cursor_shape": "block",
 
     // Environment variables to add to terminal's process environment

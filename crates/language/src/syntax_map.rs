@@ -297,10 +297,10 @@ impl SyntaxSnapshot {
         let mut first_edit_ix_for_depth = 0;
         let mut prev_depth = 0;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
-        cursor.next(text);
+        cursor.next();
 
         'outer: loop {
-            let depth = cursor.end(text).max_depth;
+            let depth = cursor.end().max_depth;
             if depth > prev_depth {
                 first_edit_ix_for_depth = 0;
                 prev_depth = depth;
@@ -313,7 +313,7 @@ impl SyntaxSnapshot {
                     position: edit_range.start,
                 };
                 if target.cmp(cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&target, Bias::Left, text);
+                    let slice = cursor.slice(&target, Bias::Left);
                     layers.append(slice, text);
                 }
             }
@@ -327,7 +327,6 @@ impl SyntaxSnapshot {
                         language: None,
                     },
                     Bias::Left,
-                    text,
                 );
                 layers.append(slice, text);
                 continue;
@@ -394,10 +393,10 @@ impl SyntaxSnapshot {
             }
 
             layers.push(layer, text);
-            cursor.next(text);
+            cursor.next();
         }
 
-        layers.append(cursor.suffix(text), text);
+        layers.append(cursor.suffix(), text);
         drop(cursor);
         self.layers = layers;
     }
@@ -420,7 +419,7 @@ impl SyntaxSnapshot {
                 let mut cursor = self
                     .layers
                     .filter::<_, ()>(text, |summary| summary.contains_unknown_injections);
-                cursor.next(text);
+                cursor.next();
                 while let Some(layer) = cursor.item() {
                     let SyntaxLayerContent::Pending { language_name } = &layer.content else {
                         unreachable!()
@@ -436,7 +435,7 @@ impl SyntaxSnapshot {
                         resolved_injection_ranges.push(range);
                     }
 
-                    cursor.next(text);
+                    cursor.next();
                 }
                 drop(cursor);
 
@@ -469,7 +468,7 @@ impl SyntaxSnapshot {
 
         let max_depth = self.layers.summary().max_depth;
         let mut cursor = self.layers.cursor::<SyntaxLayerSummary>(text);
-        cursor.next(text);
+        cursor.next();
         let mut layers = SumTree::new(text);
 
         let mut changed_regions = ChangeRegionSet::default();
@@ -514,7 +513,7 @@ impl SyntaxSnapshot {
             };
 
             let mut done = cursor.item().is_none();
-            while !done && position.cmp(&cursor.end(text), text).is_gt() {
+            while !done && position.cmp(&cursor.end(), text).is_gt() {
                 done = true;
 
                 let bounded_position = SyntaxLayerPositionBeforeChange {
@@ -522,16 +521,16 @@ impl SyntaxSnapshot {
                     change: changed_regions.start_position(),
                 };
                 if bounded_position.cmp(cursor.start(), text).is_gt() {
-                    let slice = cursor.slice(&bounded_position, Bias::Left, text);
+                    let slice = cursor.slice(&bounded_position, Bias::Left);
                     if !slice.is_empty() {
                         layers.append(slice, text);
-                        if changed_regions.prune(cursor.end(text), text) {
+                        if changed_regions.prune(cursor.end(), text) {
                             done = false;
                         }
                     }
                 }
 
-                while position.cmp(&cursor.end(text), text).is_gt() {
+                while position.cmp(&cursor.end(), text).is_gt() {
                     let Some(layer) = cursor.item() else { break };
 
                     if changed_regions.intersects(layer, text) {
@@ -555,8 +554,8 @@ impl SyntaxSnapshot {
                         layers.push(layer.clone(), text);
                     }
 
-                    cursor.next(text);
-                    if changed_regions.prune(cursor.end(text), text) {
+                    cursor.next();
+                    if changed_regions.prune(cursor.end(), text) {
                         done = false;
                     }
                 }
@@ -572,7 +571,7 @@ impl SyntaxSnapshot {
                 if layer.range.to_offset(text) == (step_start_byte..step_end_byte)
                     && layer.content.language_id() == step.language.id()
                 {
-                    cursor.next(text);
+                    cursor.next();
                 } else {
                     old_layer = None;
                 }
@@ -918,7 +917,7 @@ impl SyntaxSnapshot {
             }
         });
 
-        cursor.next(buffer);
+        cursor.next();
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 let mut info = None;
@@ -940,7 +939,7 @@ impl SyntaxSnapshot {
                         });
                     }
                 }
-                cursor.next(buffer);
+                cursor.next();
                 if info.is_some() {
                     return info;
                 }

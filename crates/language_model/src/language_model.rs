@@ -11,6 +11,7 @@ pub mod fake_provider;
 use anthropic::{AnthropicError, parse_prompt_too_long};
 use anyhow::{Result, anyhow};
 use client::Client;
+use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyElement, AnyView, App, AsyncApp, SharedString, Task, Window};
@@ -27,7 +28,6 @@ use std::time::Duration;
 use std::{fmt, io};
 use thiserror::Error;
 use util::serde::is_default;
-use zed_llm_client::{CompletionMode, CompletionRequestStatus};
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
@@ -721,7 +721,7 @@ pub enum LanguageModelProviderTosView {
     ThreadEmptyState,
     /// When there are no past interactions in the Agent Panel.
     ThreadFreshStart,
-    PromptEditorPopup,
+    TextThreadPopup,
     Configuration,
 }
 
@@ -798,6 +798,18 @@ impl From<String> for LanguageModelProviderId {
 
 impl From<String> for LanguageModelProviderName {
     fn from(value: String) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<Arc<str>> for LanguageModelProviderId {
+    fn from(value: Arc<str>) -> Self {
+        Self(SharedString::from(value))
+    }
+}
+
+impl From<Arc<str>> for LanguageModelProviderName {
+    fn from(value: Arc<str>) -> Self {
         Self(SharedString::from(value))
     }
 }
