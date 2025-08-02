@@ -13,8 +13,7 @@ mod mac;
         any(target_os = "linux", target_os = "freebsd"),
         any(feature = "x11", feature = "wayland")
     ),
-    target_os = "windows",
-    feature = "macos-blade"
+    all(target_os = "macos", feature = "macos-blade")
 ))]
 mod blade;
 
@@ -26,8 +25,13 @@ mod windows;
 
 #[cfg(all(
     feature = "screen-capture",
-    any(target_os = "linux", target_os = "freebsd"),
-    any(feature = "wayland", feature = "x11"),
+    any(
+        target_os = "windows",
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            any(feature = "wayland", feature = "x11"),
+        )
+    )
 ))]
 pub(crate) mod scap_screen_capture;
 
@@ -80,7 +84,7 @@ pub(crate) use test::*;
 pub(crate) use windows::*;
 
 #[cfg(any(test, feature = "test-support"))]
-pub use test::{TestDispatcher, TestScreenCaptureSource};
+pub use test::{TestDispatcher, TestScreenCaptureSource, TestScreenCaptureStream};
 
 /// Returns a background executor for the current platform.
 pub fn background_executor() -> BackgroundExecutor {
@@ -184,13 +188,12 @@ pub(crate) trait Platform: 'static {
         false
     }
     #[cfg(feature = "screen-capture")]
-    fn screen_capture_sources(
-        &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+    fn screen_capture_sources(&self)
+    -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>>;
     #[cfg(not(feature = "screen-capture"))]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<anyhow::Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<anyhow::Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         let (sources_tx, sources_rx) = oneshot::channel();
         sources_tx
             .send(Err(anyhow::anyhow!(
@@ -288,10 +291,23 @@ pub trait PlatformDisplay: Send + Sync + Debug {
     }
 }
 
+/// Metadata for a given [ScreenCaptureSource]
+#[derive(Clone)]
+pub struct SourceMetadata {
+    /// Opaque identifier of this screen.
+    pub id: u64,
+    /// Human-readable label for this source.
+    pub label: Option<SharedString>,
+    /// Whether this source is the main display.
+    pub is_main: Option<bool>,
+    /// Video resolution of this source.
+    pub resolution: Size<DevicePixels>,
+}
+
 /// A source of on-screen video content that can be captured.
 pub trait ScreenCaptureSource {
-    /// Returns the video resolution of this source.
-    fn resolution(&self) -> Result<Size<DevicePixels>>;
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
 
     /// Start capture video from this source, invoking the given callback
     /// with each frame.
@@ -303,7 +319,10 @@ pub trait ScreenCaptureSource {
 }
 
 /// A video stream captured from a screen.
-pub trait ScreenCaptureStream {}
+pub trait ScreenCaptureStream {
+    /// Returns metadata for this source.
+    fn metadata(&self) -> Result<SourceMetadata>;
+}
 
 /// A frame of video captured from a screen.
 pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
@@ -428,6 +447,8 @@ impl Tiling {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct RequestFrameOptions {
     pub(crate) require_presentation: bool,
+    /// Force refresh of all rendering states when true
+    pub(crate) force_render: bool,
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {

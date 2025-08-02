@@ -512,7 +512,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 fn replace_test_name_parameters(test_name: &str) -> String {
     let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
 
-    pattern.replace_all(test_name, "(.+?)").to_string()
+    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
 }
 
 pub struct TypeScriptLspAdapter {
@@ -863,7 +863,7 @@ impl LspAdapter for EsLintLspAdapter {
             },
             "experimental": {
                 "useFlatConfig": use_flat_config,
-            },
+            }
         });
 
         let override_options = cx.update(|cx| {
@@ -1071,6 +1071,62 @@ mod tests {
                 ("let b", 0),
                 ("function getB()", 0),
                 ("const d", 0),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_generator_function_outline(cx: &mut TestAppContext) {
+        let language = crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
+
+        let text = r#"
+            function normalFunction() {
+                console.log("normal");
+            }
+
+            function* simpleGenerator() {
+                yield 1;
+                yield 2;
+            }
+
+            async function* asyncGenerator() {
+                yield await Promise.resolve(1);
+            }
+
+            function* generatorWithParams(start, end) {
+                for (let i = start; i <= end; i++) {
+                    yield i;
+                }
+            }
+
+            class TestClass {
+                *methodGenerator() {
+                    yield "method";
+                }
+
+                async *asyncMethodGenerator() {
+                    yield "async method";
+                }
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        assert_eq!(
+            outline
+                .items
+                .iter()
+                .map(|item| (item.text.as_str(), item.depth))
+                .collect::<Vec<_>>(),
+            &[
+                ("function normalFunction()", 0),
+                ("function* simpleGenerator()", 0),
+                ("async function* asyncGenerator()", 0),
+                ("function* generatorWithParams( )", 0),
+                ("class TestClass", 0),
+                ("*methodGenerator()", 1),
+                ("async *asyncMethodGenerator()", 1),
             ]
         );
     }

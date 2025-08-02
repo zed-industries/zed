@@ -193,7 +193,6 @@ pub struct CustomBlock {
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
-    pub(crate) render_in_minimap: bool,
 }
 
 #[derive(Clone)]
@@ -205,7 +204,6 @@ pub struct BlockProperties<P> {
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub priority: usize,
-    pub render_in_minimap: bool,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -526,10 +524,10 @@ impl BlockMap {
             // * Isomorphic transforms that end *at* the start of the edit
             // * Below blocks that end at the start of the edit
             // However, if we hit a replace block that ends at the start of the edit we want to reconstruct it.
-            new_transforms.append(cursor.slice(&old_start, Bias::Left, &()), &());
+            new_transforms.append(cursor.slice(&old_start, Bias::Left), &());
             if let Some(transform) = cursor.item() {
                 if transform.summary.input_rows > 0
-                    && cursor.end(&()) == old_start
+                    && cursor.end() == old_start
                     && transform
                         .block
                         .as_ref()
@@ -537,13 +535,13 @@ impl BlockMap {
                 {
                     // Preserve the transform (push and next)
                     new_transforms.push(transform.clone(), &());
-                    cursor.next(&());
+                    cursor.next();
 
                     // Preserve below blocks at end of edit
                     while let Some(transform) = cursor.item() {
                         if transform.block.as_ref().map_or(false, |b| b.place_below()) {
                             new_transforms.push(transform.clone(), &());
-                            cursor.next(&());
+                            cursor.next();
                         } else {
                             break;
                         }
@@ -581,8 +579,8 @@ impl BlockMap {
             let mut new_end = WrapRow(edit.new.end);
             loop {
                 // Seek to the transform starting at or after the end of the edit
-                cursor.seek(&old_end, Bias::Left, &());
-                cursor.next(&());
+                cursor.seek(&old_end, Bias::Left);
+                cursor.next();
 
                 // Extend edit to the end of the discarded transform so it is reconstructed in full
                 let transform_rows_after_edit = cursor.start().0 - old_end.0;
@@ -594,8 +592,8 @@ impl BlockMap {
                     if next_edit.old.start <= cursor.start().0 {
                         old_end = WrapRow(next_edit.old.end);
                         new_end = WrapRow(next_edit.new.end);
-                        cursor.seek(&old_end, Bias::Left, &());
-                        cursor.next(&());
+                        cursor.seek(&old_end, Bias::Left);
+                        cursor.next();
                         edits.next();
                     } else {
                         break;
@@ -610,7 +608,7 @@ impl BlockMap {
             // Discard below blocks at the end of the edit. They'll be reconstructed.
             while let Some(transform) = cursor.item() {
                 if transform.block.as_ref().map_or(false, |b| b.place_below()) {
-                    cursor.next(&());
+                    cursor.next();
                 } else {
                     break;
                 }
@@ -722,7 +720,7 @@ impl BlockMap {
             push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
         }
 
-        new_transforms.append(cursor.suffix(&()), &());
+        new_transforms.append(cursor.suffix(), &());
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -973,7 +971,7 @@ impl BlockMapReader<'_> {
         );
 
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
-        cursor.seek(&start_wrap_row, Bias::Left, &());
+        cursor.seek(&start_wrap_row, Bias::Left);
         while let Some(transform) = cursor.item() {
             if cursor.start().0 > end_wrap_row {
                 break;
@@ -984,7 +982,7 @@ impl BlockMapReader<'_> {
                     return Some(cursor.start().1);
                 }
             }
-            cursor.next(&());
+            cursor.next();
         }
 
         None
@@ -1044,7 +1042,6 @@ impl BlockMapWriter<'_> {
                 render: Arc::new(Mutex::new(block.render)),
                 style: block.style,
                 priority: block.priority,
-                render_in_minimap: block.render_in_minimap,
             });
             self.0.custom_blocks.insert(block_ix, new_block.clone());
             self.0.custom_blocks_by_id.insert(id, new_block);
@@ -1079,7 +1076,6 @@ impl BlockMapWriter<'_> {
                         style: block.style,
                         render: block.render.clone(),
                         priority: block.priority,
-                        render_in_minimap: block.render_in_minimap,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -1297,7 +1293,7 @@ impl BlockSnapshot {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
 
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+        cursor.seek(&BlockRow(rows.start), Bias::Right);
         let transform_output_start = cursor.start().0.0;
         let transform_input_start = cursor.start().1.0;
 
@@ -1329,7 +1325,7 @@ impl BlockSnapshot {
 
     pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows<'_> {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&start_row, Bias::Right, &());
+        cursor.seek(&start_row, Bias::Right);
         let (output_start, input_start) = cursor.start();
         let overshoot = if cursor
             .item()
@@ -1350,9 +1346,9 @@ impl BlockSnapshot {
 
     pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
-        cursor.seek(&BlockRow(rows.start), Bias::Left, &());
-        while cursor.start().0 < rows.start && cursor.end(&()).0 <= rows.start {
-            cursor.next(&());
+        cursor.seek(&BlockRow(rows.start), Bias::Left);
+        while cursor.start().0 < rows.start && cursor.end().0 <= rows.start {
+            cursor.next();
         }
 
         std::iter::from_fn(move || {
@@ -1368,10 +1364,10 @@ impl BlockSnapshot {
                     break;
                 }
                 if let Some(block) = &transform.block {
-                    cursor.next(&());
+                    cursor.next();
                     return Some((start_row, block));
                 } else {
-                    cursor.next(&());
+                    cursor.next();
                 }
             }
             None
@@ -1381,7 +1377,7 @@ impl BlockSnapshot {
     pub fn sticky_header_excerpt(&self, position: f32) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
         let mut cursor = self.transforms.cursor::<BlockRow>(&());
-        cursor.seek(&BlockRow(top_row), Bias::Right, &());
+        cursor.seek(&BlockRow(top_row), Bias::Right);
 
         while let Some(transform) = cursor.item() {
             match &transform.block {
@@ -1390,7 +1386,7 @@ impl BlockSnapshot {
                 }
                 Some(block) if block.is_buffer_header() => return None,
                 _ => {
-                    cursor.prev(&());
+                    cursor.prev();
                     continue;
                 }
             }
@@ -1418,7 +1414,7 @@ impl BlockSnapshot {
         let wrap_row = WrapRow(wrap_point.row());
 
         let mut cursor = self.transforms.cursor::<WrapRow>(&());
-        cursor.seek(&wrap_row, Bias::Left, &());
+        cursor.seek(&wrap_row, Bias::Left);
 
         while let Some(transform) = cursor.item() {
             if let Some(block) = transform.block.as_ref() {
@@ -1429,7 +1425,7 @@ impl BlockSnapshot {
                 break;
             }
 
-            cursor.next(&());
+            cursor.next();
         }
 
         None
@@ -1446,7 +1442,7 @@ impl BlockSnapshot {
 
     pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&range.start, Bias::Right, &());
+        cursor.seek(&range.start, Bias::Right);
 
         let mut longest_row = range.start;
         let mut longest_row_chars = 0;
@@ -1457,7 +1453,7 @@ impl BlockSnapshot {
                 let wrap_start_row = input_start.0 + overshoot;
                 let wrap_end_row = cmp::min(
                     input_start.0 + (range.end.0 - output_start.0),
-                    cursor.end(&()).1.0,
+                    cursor.end().1.0,
                 );
                 let summary = self
                     .wrap_snapshot
@@ -1465,12 +1461,12 @@ impl BlockSnapshot {
                 longest_row = BlockRow(range.start.0 + summary.longest_row);
                 longest_row_chars = summary.longest_row_chars;
             }
-            cursor.next(&());
+            cursor.next();
         }
 
         let cursor_start_row = cursor.start().0;
         if range.end > cursor_start_row {
-            let summary = cursor.summary::<_, TransformSummary>(&range.end, Bias::Right, &());
+            let summary = cursor.summary::<_, TransformSummary>(&range.end, Bias::Right);
             if summary.longest_row_chars > longest_row_chars {
                 longest_row = BlockRow(cursor_start_row.0 + summary.longest_row);
                 longest_row_chars = summary.longest_row_chars;
@@ -1497,7 +1493,7 @@ impl BlockSnapshot {
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&BlockRow(row.0), Bias::Right, &());
+        cursor.seek(&BlockRow(row.0), Bias::Right);
         if let Some(transform) = cursor.item() {
             let (output_start, input_start) = cursor.start();
             let overshoot = row.0 - output_start.0;
@@ -1515,13 +1511,13 @@ impl BlockSnapshot {
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&row, Bias::Right, &());
+        cursor.seek(&row, Bias::Right);
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&row, Bias::Right, &());
+        cursor.seek(&row, Bias::Right);
         let Some(transform) = cursor.item() else {
             return false;
         };
@@ -1533,7 +1529,7 @@ impl BlockSnapshot {
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
-        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
+        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
         cursor.item().map_or(false, |transform| {
             transform
                 .block
@@ -1544,17 +1540,17 @@ impl BlockSnapshot {
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&BlockRow(point.row), Bias::Right, &());
+        cursor.seek(&BlockRow(point.row), Bias::Right);
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
         let mut search_left =
-            (bias == Bias::Left && cursor.start().1.0 > 0) || cursor.end(&()).1 == max_input_row;
+            (bias == Bias::Left && cursor.start().1.0 > 0) || cursor.end().1 == max_input_row;
         let mut reversed = false;
 
         loop {
             if let Some(transform) = cursor.item() {
                 let (output_start_row, input_start_row) = cursor.start();
-                let (output_end_row, input_end_row) = cursor.end(&());
+                let (output_end_row, input_end_row) = cursor.end();
                 let output_start = Point::new(output_start_row.0, 0);
                 let input_start = Point::new(input_start_row.0, 0);
                 let input_end = Point::new(input_end_row.0, 0);
@@ -1588,23 +1584,23 @@ impl BlockSnapshot {
                 }
 
                 if search_left {
-                    cursor.prev(&());
+                    cursor.prev();
                 } else {
-                    cursor.next(&());
+                    cursor.next();
                 }
             } else if reversed {
                 return self.max_point();
             } else {
                 reversed = true;
                 search_left = !search_left;
-                cursor.seek(&BlockRow(point.row), Bias::Right, &());
+                cursor.seek(&BlockRow(point.row), Bias::Right);
             }
         }
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
-        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
+        cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
                 BlockPoint::new(cursor.start().1.0, 0)
@@ -1622,7 +1618,7 @@ impl BlockSnapshot {
 
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        cursor.seek(&BlockRow(block_point.row), Bias::Right, &());
+        cursor.seek(&BlockRow(block_point.row), Bias::Right);
         if let Some(transform) = cursor.item() {
             match transform.block.as_ref() {
                 Some(block) => {
@@ -1634,7 +1630,7 @@ impl BlockSnapshot {
                     } else if bias == Bias::Left {
                         WrapPoint::new(cursor.start().1.0, 0)
                     } else {
-                        let wrap_row = cursor.end(&()).1.0 - 1;
+                        let wrap_row = cursor.end().1.0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     }
                 }
@@ -1654,14 +1650,14 @@ impl BlockChunks<'_> {
     /// Go to the next transform
     fn advance(&mut self) {
         self.input_chunk = Chunk::default();
-        self.transforms.next(&());
+        self.transforms.next();
         while let Some(transform) = self.transforms.item() {
             if transform
                 .block
                 .as_ref()
                 .map_or(false, |block| block.height() == 0)
             {
-                self.transforms.next(&());
+                self.transforms.next();
             } else {
                 break;
             }
@@ -1676,7 +1672,7 @@ impl BlockChunks<'_> {
             let start_output_row = self.transforms.start().0.0;
             if start_output_row < self.max_output_row {
                 let end_input_row = cmp::min(
-                    self.transforms.end(&()).1.0,
+                    self.transforms.end().1.0,
                     start_input_row + (self.max_output_row - start_output_row),
                 );
                 self.input_chunks.seek(start_input_row..end_input_row);
@@ -1700,7 +1696,7 @@ impl<'a> Iterator for BlockChunks<'a> {
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
             let block_start = self.transforms.start().0.0;
-            let mut block_end = self.transforms.end(&()).0.0;
+            let mut block_end = self.transforms.end().0.0;
             self.advance();
             if self.transforms.item().is_none() {
                 block_end -= 1;
@@ -1735,7 +1731,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             }
         }
 
-        let transform_end = self.transforms.end(&()).0.0;
+        let transform_end = self.transforms.end().0.0;
         let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
@@ -1774,15 +1770,15 @@ impl Iterator for BlockRows<'_> {
             self.started = true;
         }
 
-        if self.output_row.0 >= self.transforms.end(&()).0.0 {
-            self.transforms.next(&());
+        if self.output_row.0 >= self.transforms.end().0.0 {
+            self.transforms.next();
             while let Some(transform) = self.transforms.item() {
                 if transform
                     .block
                     .as_ref()
                     .map_or(false, |block| block.height() == 0)
                 {
-                    self.transforms.next(&());
+                    self.transforms.next();
                 } else {
                     break;
                 }
@@ -1976,7 +1972,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1984,7 +1979,6 @@ mod tests {
                 height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -1992,7 +1986,6 @@ mod tests {
                 height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2217,7 +2210,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2225,7 +2217,6 @@ mod tests {
                 height: Some(2),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2233,7 +2224,6 @@ mod tests {
                 height: Some(3),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2322,7 +2312,6 @@ mod tests {
                 render: Arc::new(|_| div().into_any()),
                 height: Some(1),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2330,7 +2319,6 @@ mod tests {
                 render: Arc::new(|_| div().into_any()),
                 height: Some(1),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2370,7 +2358,6 @@ mod tests {
             height: Some(4),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -2424,7 +2411,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2432,7 +2418,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2440,7 +2425,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2455,7 +2439,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2463,7 +2446,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2471,7 +2453,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
@@ -2571,7 +2552,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2579,7 +2559,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2587,7 +2566,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
         let excerpt_blocks_3 = writer.insert(vec![
@@ -2597,7 +2575,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
@@ -2605,7 +2582,6 @@ mod tests {
                 height: Some(1),
                 render: Arc::new(|_| div().into_any()),
                 priority: 0,
-                render_in_minimap: true,
             },
         ]);
 
@@ -2653,7 +2629,6 @@ mod tests {
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }]);
         let blocks_snapshot = block_map.read(wrap_snapshot.clone(), Patch::default());
         let blocks = blocks_snapshot
@@ -3011,7 +2986,6 @@ mod tests {
                                 height: Some(height),
                                 render: Arc::new(|_| div().into_any()),
                                 priority: 0,
-                                render_in_minimap: true,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -3032,7 +3006,6 @@ mod tests {
                             style: props.style,
                             render: Arc::new(|_| div().into_any()),
                             priority: 0,
-                            render_in_minimap: true,
                         }));
 
                     for (block_properties, block_id) in block_properties.iter().zip(block_ids) {
@@ -3557,7 +3530,6 @@ mod tests {
             height: Some(1),
             render: Arc::new(|_| div().into_any()),
             priority: 0,
-            render_in_minimap: true,
         }])[0];
 
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());

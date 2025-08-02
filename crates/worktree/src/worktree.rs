@@ -62,7 +62,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit};
+use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
     ResultExt,
@@ -407,12 +407,12 @@ struct LocalRepositoryEntry {
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<Unit>;
+    type Summary = PathSummary<&'static ()>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path_key().0,
-            item_summary: Unit,
+            item_summary: &(),
         }
     }
 }
@@ -424,12 +424,6 @@ impl KeyedItem for LocalRepositoryEntry {
         self.work_directory.path_key()
     }
 }
-
-//impl LocalRepositoryEntry {
-//    pub fn repo(&self) -> &Arc<dyn GitRepository> {
-//        &self.repo_ptr
-//    }
-//}
 
 impl Deref for LocalRepositoryEntry {
     type Target = WorkDirectory;
@@ -2454,16 +2448,16 @@ impl Snapshot {
         self.entries_by_path = {
             let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(&());
             let mut new_entries_by_path =
-                cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left, &());
+                cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left);
             while let Some(entry) = cursor.item() {
                 if entry.path.starts_with(&removed_entry.path) {
                     self.entries_by_id.remove(&entry.id, &());
-                    cursor.next(&());
+                    cursor.next();
                 } else {
                     break;
                 }
             }
-            new_entries_by_path.append(cursor.suffix(&()), &());
+            new_entries_by_path.append(cursor.suffix(), &());
             new_entries_by_path
         };
 
@@ -2576,7 +2570,6 @@ impl Snapshot {
                 include_ignored,
             },
             Bias::Right,
-            &(),
         );
         Traversal {
             snapshot: self,
@@ -2632,7 +2625,7 @@ impl Snapshot {
         options: ChildEntriesOptions,
     ) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
-        cursor.seek(&TraversalTarget::path(parent_path), Bias::Right, &());
+        cursor.seek(&TraversalTarget::path(parent_path), Bias::Right);
         let traversal = Traversal {
             snapshot: self,
             cursor,
@@ -3056,9 +3049,9 @@ impl BackgroundScannerState {
                 .snapshot
                 .entries_by_path
                 .cursor::<TraversalProgress>(&());
-            new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left, &());
-            removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left, &());
-            new_entries.append(cursor.suffix(&()), &());
+            new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left);
+            removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left);
+            new_entries.append(cursor.suffix(), &());
         }
         self.snapshot.entries_by_path = new_entries;
 
@@ -4925,15 +4918,15 @@ fn build_diff(
     let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(&());
     let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(&());
     let mut last_newly_loaded_dir_path = None;
-    old_paths.next(&());
-    new_paths.next(&());
+    old_paths.next();
+    new_paths.next();
     for path in event_paths {
         let path = PathKey(path.clone());
         if old_paths.item().map_or(false, |e| e.path < path.0) {
-            old_paths.seek_forward(&path, Bias::Left, &());
+            old_paths.seek_forward(&path, Bias::Left);
         }
         if new_paths.item().map_or(false, |e| e.path < path.0) {
-            new_paths.seek_forward(&path, Bias::Left, &());
+            new_paths.seek_forward(&path, Bias::Left);
         }
         loop {
             match (old_paths.item(), new_paths.item()) {
@@ -4949,7 +4942,7 @@ fn build_diff(
                     match Ord::cmp(&old_entry.path, &new_entry.path) {
                         Ordering::Less => {
                             changes.push((old_entry.path.clone(), old_entry.id, Removed));
-                            old_paths.next(&());
+                            old_paths.next();
                         }
                         Ordering::Equal => {
                             if phase == EventsReceivedDuringInitialScan {
@@ -4975,8 +4968,8 @@ fn build_diff(
                                     changes.push((new_entry.path.clone(), new_entry.id, Updated));
                                 }
                             }
-                            old_paths.next(&());
-                            new_paths.next(&());
+                            old_paths.next();
+                            new_paths.next();
                         }
                         Ordering::Greater => {
                             let is_newly_loaded = phase == InitialScan
@@ -4988,13 +4981,13 @@ fn build_diff(
                                 new_entry.id,
                                 if is_newly_loaded { Loaded } else { Added },
                             ));
-                            new_paths.next(&());
+                            new_paths.next();
                         }
                     }
                 }
                 (Some(old_entry), None) => {
                     changes.push((old_entry.path.clone(), old_entry.id, Removed));
-                    old_paths.next(&());
+                    old_paths.next();
                 }
                 (None, Some(new_entry)) => {
                     let is_newly_loaded = phase == InitialScan
@@ -5006,7 +4999,7 @@ fn build_diff(
                         new_entry.id,
                         if is_newly_loaded { Loaded } else { Added },
                     ));
-                    new_paths.next(&());
+                    new_paths.next();
                 }
                 (None, None) => break,
             }
@@ -5255,7 +5248,7 @@ impl<'a> Traversal<'a> {
         start_path: &Path,
     ) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor(&());
-        cursor.seek(&TraversalTarget::path(start_path), Bias::Left, &());
+        cursor.seek(&TraversalTarget::path(start_path), Bias::Left);
         let mut traversal = Self {
             snapshot,
             cursor,
@@ -5282,14 +5275,13 @@ impl<'a> Traversal<'a> {
                 include_ignored: self.include_ignored,
             },
             Bias::Left,
-            &(),
         )
     }
 
     pub fn advance_to_sibling(&mut self) -> bool {
         while let Some(entry) = self.cursor.item() {
             self.cursor
-                .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left, &());
+                .seek_forward(&TraversalTarget::successor(&entry.path), Bias::Left);
             if let Some(entry) = self.cursor.item() {
                 if (self.include_files || !entry.is_file())
                     && (self.include_dirs || !entry.is_dir())
@@ -5307,7 +5299,7 @@ impl<'a> Traversal<'a> {
             return false;
         };
         self.cursor
-            .seek(&TraversalTarget::path(parent_path), Bias::Left, &())
+            .seek(&TraversalTarget::path(parent_path), Bias::Left)
     }
 
     pub fn entry(&self) -> Option<&'a Entry> {
@@ -5326,7 +5318,7 @@ impl<'a> Traversal<'a> {
 
     pub fn end_offset(&self) -> usize {
         self.cursor
-            .end(&())
+            .end()
             .count(self.include_files, self.include_dirs, self.include_ignored)
     }
 }
@@ -5419,7 +5411,7 @@ impl<'a> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget
     }
 }
 
-impl<'a> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for TraversalTarget<'_> {
+impl<'a> SeekTarget<'a, PathSummary<&'static ()>, TraversalProgress<'a>> for TraversalTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         self.cmp_progress(cursor_location)
     }

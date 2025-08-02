@@ -20,14 +20,13 @@ mod thinking_tool;
 mod ui;
 mod web_search_tool;
 
-use std::sync::Arc;
-
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
 use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
+use std::sync::Arc;
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;

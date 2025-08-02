@@ -3,10 +3,12 @@ use std::any::TypeId;
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::DebugPanel;
 use editor::Editor;
-use gpui::{App, DispatchPhase, EntityInputHandler, actions};
+use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use onboarding_modal::DebuggerOnboardingModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use session::DebugSession;
 use settings::Settings;
 use stack_trace_view::StackTraceView;
@@ -85,6 +87,20 @@ actions!(
         ToggleExpandItem,
     ]
 );
+
+/// Extends selection down by a specified number of lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = debugger)]
+#[serde(deny_unknown_fields)]
+/// Set a data breakpoint on the selected variable or memory region.
+pub struct ToggleDataBreakpoint {
+    /// The type of data breakpoint
+    /// Read & Write
+    /// Read
+    /// Write
+    #[serde(default)]
+    pub access_type: Option<dap::DataBreakpointAccessType>,
+}
 
 actions!(
     dev,

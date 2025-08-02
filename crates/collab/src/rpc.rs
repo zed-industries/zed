@@ -23,6 +23,7 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
     body::Body,
@@ -41,7 +42,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::proto::split_repository_update;
+use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -373,7 +374,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
+            .add_request_handler(multi_lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -433,6 +434,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
+            .add_request_handler(forward_mutating_project_request::<proto::Stash>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -748,6 +751,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
@@ -760,9 +764,14 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
+            user_agent=field::Empty,
             geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(user_agent) = user_agent {
+            span.record("user_agent", user_agent);
+        }
+
         if let Some(country_code) = geoip_country_code.as_ref() {
             span.record("geoip_country_code", country_code);
         }
@@ -856,6 +865,7 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
+                                multi_lsp_query_request=field::Empty,
                             );
                             principal.update_span(&span);
                             let span_enter = span.enter();
@@ -1002,7 +1012,26 @@ impl Server {
         Ok(())
     }
 
-    pub async fn update_plan_for_user(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+    pub async fn update_plan_for_user(
+        self: &Arc<Self>,
+        user_id: UserId,
+        update_user_plan: proto::UpdateUserPlan,
+    ) -> Result<()> {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, update_user_plan.clone())
+                .trace_err();
+        }
+
+        Ok(())
+    }
+
+    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
+    /// message on the Collab server.
+    ///
+    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
+    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
         let user = self
             .app_state
             .db
@@ -1018,14 +1047,7 @@ impl Server {
         )
         .await?;
 
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
+        self.update_plan_for_user(user_id, update_user_plan).await
     }
 
     pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
@@ -1158,6 +1180,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     system_id_header: Option<TypedHeader<SystemIdHeader>>,
     ws: WebSocketUpgrade,
@@ -1213,6 +1236,7 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
                     None,
@@ -2306,6 +2330,15 @@ where
     Ok(())
 }
 
+async fn multi_lsp_query(
+    request: MultiLspQuery,
+    response: Response<MultiLspQuery>,
+    session: Session,
+) -> Result<()> {
+    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    forward_mutating_project_request(request, response, session).await
+}
+
 /// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
     request: proto::CreateBufferForPeer,
@@ -2836,60 +2869,115 @@ async fn make_update_user_plan_message(
         account_too_young: Some(account_too_young),
         has_overdue_invoices: billing_customer
             .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: usage.map(|usage| {
-            let plan = match plan {
-                proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-                proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            };
-
-            let model_requests_limit = match plan.model_requests_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
-                    let limit = if plan == zed_llm_client::Plan::ZedProTrial
-                        && feature_flags
-                            .iter()
-                            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-                    {
-                        1_000
-                    } else {
-                        limit
-                    };
-
-                    zed_llm_client::UsageLimit::Limited(limit)
-                }
-                zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
-            };
-
-            proto::SubscriptionUsage {
-                model_requests_usage_amount: usage.model_requests as u32,
-                model_requests_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match model_requests_limit {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-                edit_predictions_usage_amount: usage.edit_predictions as u32,
-                edit_predictions_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match plan.edit_predictions_limit() {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-            }
-        }),
+        usage: Some(
+            usage
+                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
+                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
+        ),
     })
+}
+
+fn model_requests_limit(
+    plan: cloud_llm_client::Plan,
+    feature_flags: &Vec<String>,
+) -> cloud_llm_client::UsageLimit {
+    match plan.model_requests_limit() {
+        cloud_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
+                && feature_flags
+                    .iter()
+                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+            {
+                1_000
+            } else {
+                limit
+            };
+
+            cloud_llm_client::UsageLimit::Limited(limit)
+        }
+        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
+    }
+}
+
+fn subscription_usage_to_proto(
+    plan: proto::Plan,
+    usage: crate::llm::db::subscription_usage::Model,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: usage.model_requests as u32,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: usage.edit_predictions as u32,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
+}
+
+fn make_default_subscription_usage(
+    plan: proto::Plan,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: 0,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: 0,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
 }
 
 async fn update_user_plan(session: &Session) -> Result<()> {
@@ -4112,6 +4200,13 @@ async fn accept_terms_of_service(
     response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
+
+    // When the user accepts the terms of service, we want to refresh their LLM
+    // token to grant access.
+    session
+        .peer
+        .send(session.connection_id, proto::RefreshLlmToken {})?;
+
     Ok(())
 }
 

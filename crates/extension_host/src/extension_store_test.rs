@@ -11,6 +11,7 @@ use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
+use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
@@ -271,7 +272,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    language_extension::init(proxy.clone(), language_registry.clone());
+    language_extension::init(LspAccess::Noop, proxy.clone(), language_registry.clone());
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new(|cx| {
@@ -554,7 +555,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-    language_extension::init(proxy.clone(), language_registry.clone());
+    language_extension::init(
+        LspAccess::ViaLspStore(project.update(cx, |project, _| project.lsp_store())),
+        proxy.clone(),
+        language_registry.clone(),
+    );
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -815,7 +820,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     extension_store
         .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
         .await;
-
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx)

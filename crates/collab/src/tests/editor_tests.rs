@@ -2246,8 +2246,11 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
     });
 }
 
-#[gpui::test(iterations = 10)]
-async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+async fn test_lsp_pull_diagnostics(
+    should_stream_workspace_diagnostic: bool,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
     let mut server = TestServer::start(cx_a.executor()).await;
     let executor = cx_a.executor();
     let client_a = server.create_client(cx_a, "user_a").await;
@@ -2396,12 +2399,25 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     let closure_workspace_diagnostics_pulls_made = workspace_diagnostics_pulls_made.clone();
     let closure_workspace_diagnostics_pulls_result_ids =
         workspace_diagnostics_pulls_result_ids.clone();
+    let (workspace_diagnostic_cancel_tx, closure_workspace_diagnostic_cancel_rx) =
+        smol::channel::bounded::<()>(1);
+    let (closure_workspace_diagnostic_received_tx, workspace_diagnostic_received_rx) =
+        smol::channel::bounded::<()>(1);
+    let expected_workspace_diagnostic_token = lsp::ProgressToken::String(format!(
+        "workspace/diagnostic-{}-1",
+        fake_language_server.server.server_id()
+    ));
+    let closure_expected_workspace_diagnostic_token = expected_workspace_diagnostic_token.clone();
     let mut workspace_diagnostics_pulls_handle = fake_language_server
         .set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
         move |params, _| {
             let workspace_requests_made = closure_workspace_diagnostics_pulls_made.clone();
             let workspace_diagnostics_pulls_result_ids =
                 closure_workspace_diagnostics_pulls_result_ids.clone();
+            let workspace_diagnostic_cancel_rx = closure_workspace_diagnostic_cancel_rx.clone();
+            let workspace_diagnostic_received_tx = closure_workspace_diagnostic_received_tx.clone();
+            let expected_workspace_diagnostic_token =
+                closure_expected_workspace_diagnostic_token.clone();
             async move {
                 let workspace_request_count =
                     workspace_requests_made.fetch_add(1, atomic::Ordering::Release) + 1;
@@ -2410,6 +2426,21 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
                         .lock()
                         .await
                         .extend(params.previous_result_ids.into_iter().map(|id| id.value));
+                }
+                if should_stream_workspace_diagnostic && !workspace_diagnostic_cancel_rx.is_closed()
+                {
+                    assert_eq!(
+                        params.partial_result_params.partial_result_token,
+                        Some(expected_workspace_diagnostic_token)
+                    );
+                    workspace_diagnostic_received_tx.send(()).await.unwrap();
+                    workspace_diagnostic_cancel_rx.recv().await.unwrap();
+                    workspace_diagnostic_cancel_rx.close();
+                    // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#partialResults
+                    // > The final response has to be empty in terms of result values.
+                    return Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                        lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                    ));
                 }
                 Ok(lsp::WorkspaceDiagnosticReportResult::Report(
                     lsp::WorkspaceDiagnosticReport {
@@ -2479,7 +2510,11 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
         },
     );
 
-    workspace_diagnostics_pulls_handle.next().await.unwrap();
+    if should_stream_workspace_diagnostic {
+        workspace_diagnostic_received_rx.recv().await.unwrap();
+    } else {
+        workspace_diagnostics_pulls_handle.next().await.unwrap();
+    }
     assert_eq!(
         1,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
@@ -2503,10 +2538,10 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
             "Expected single diagnostic, but got: {all_diagnostics:?}"
         );
         let diagnostic = &all_diagnostics[0];
-        let expected_messages = [
-            expected_workspace_pull_diagnostics_main_message,
-            expected_pull_diagnostic_main_message,
-        ];
+        let mut expected_messages = vec![expected_pull_diagnostic_main_message];
+        if !should_stream_workspace_diagnostic {
+            expected_messages.push(expected_workspace_pull_diagnostics_main_message);
+        }
         assert!(
             expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
             "Expected {expected_messages:?} on the host, but got: {}",
@@ -2556,6 +2591,70 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
             version: None,
         },
     );
+
+    if should_stream_workspace_diagnostic {
+        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+            token: expected_workspace_diagnostic_token.clone(),
+            value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
+                lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
+                    items: vec![
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                version: None,
+                                full_document_diagnostic_report:
+                                    lsp::FullDocumentDiagnosticReport {
+                                        result_id: Some(format!(
+                                            "workspace_{}",
+                                            workspace_diagnostics_pulls_made
+                                                .fetch_add(1, atomic::Ordering::Release)
+                                                + 1
+                                        )),
+                                        items: vec![lsp::Diagnostic {
+                                            range: lsp::Range {
+                                                start: lsp::Position {
+                                                    line: 0,
+                                                    character: 1,
+                                                },
+                                                end: lsp::Position {
+                                                    line: 0,
+                                                    character: 2,
+                                                },
+                                            },
+                                            severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                            message:
+                                                expected_workspace_pull_diagnostics_main_message
+                                                    .to_string(),
+                                            ..lsp::Diagnostic::default()
+                                        }],
+                                    },
+                            },
+                        ),
+                        lsp::WorkspaceDocumentDiagnosticReport::Full(
+                            lsp::WorkspaceFullDocumentDiagnosticReport {
+                                uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                version: None,
+                                full_document_diagnostic_report:
+                                    lsp::FullDocumentDiagnosticReport {
+                                        result_id: Some(format!(
+                                            "workspace_{}",
+                                            workspace_diagnostics_pulls_made
+                                                .fetch_add(1, atomic::Ordering::Release)
+                                                + 1
+                                        )),
+                                        items: Vec::new(),
+                                    },
+                            },
+                        ),
+                    ],
+                }),
+            ),
+        });
+    };
+
+    let mut workspace_diagnostic_start_count =
+        workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire);
+
     executor.run_until_parked();
     editor_a_main.update(cx_a, |editor, cx| {
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -2599,7 +2698,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     executor.run_until_parked();
     assert_eq!(
-        1,
+        workspace_diagnostic_start_count,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Workspace diagnostics should not be changed as the remote client does not initialize the workspace diagnostics pull"
     );
@@ -2646,7 +2745,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     executor.run_until_parked();
     assert_eq!(
-        1,
+        workspace_diagnostic_start_count,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "The remote client still did not anything to trigger the workspace diagnostics pull"
     );
@@ -2673,6 +2772,75 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
             );
         }
     });
+
+    if should_stream_workspace_diagnostic {
+        fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
+            token: expected_workspace_diagnostic_token.clone(),
+            value: lsp::ProgressParamsValue::WorkspaceDiagnostic(
+                lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
+                    items: vec![lsp::WorkspaceDocumentDiagnosticReport::Full(
+                        lsp::WorkspaceFullDocumentDiagnosticReport {
+                            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                            version: None,
+                            full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
+                                result_id: Some(format!(
+                                    "workspace_{}",
+                                    workspace_diagnostics_pulls_made
+                                        .fetch_add(1, atomic::Ordering::Release)
+                                        + 1
+                                )),
+                                items: vec![lsp::Diagnostic {
+                                    range: lsp::Range {
+                                        start: lsp::Position {
+                                            line: 0,
+                                            character: 1,
+                                        },
+                                        end: lsp::Position {
+                                            line: 0,
+                                            character: 2,
+                                        },
+                                    },
+                                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                    message: expected_workspace_pull_diagnostics_lib_message
+                                        .to_string(),
+                                    ..lsp::Diagnostic::default()
+                                }],
+                            },
+                        },
+                    )],
+                }),
+            ),
+        });
+        workspace_diagnostic_start_count =
+            workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire);
+        workspace_diagnostic_cancel_tx.send(()).await.unwrap();
+        workspace_diagnostics_pulls_handle.next().await.unwrap();
+        executor.run_until_parked();
+        editor_b_lib.update(cx_b, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let all_diagnostics = snapshot
+                .diagnostics_in_range(0..snapshot.len())
+                .collect::<Vec<_>>();
+            let expected_messages = [
+                expected_workspace_pull_diagnostics_lib_message,
+                // TODO bug: the pushed diagnostics are not being sent to the client when they open the corresponding buffer.
+                // expected_push_diagnostic_lib_message,
+            ];
+            assert_eq!(
+                all_diagnostics.len(),
+                1,
+                "Expected pull diagnostics, but got: {all_diagnostics:?}"
+            );
+            for diagnostic in all_diagnostics {
+                assert!(
+                    expected_messages.contains(&diagnostic.diagnostic.message.as_str()),
+                    "The client should get both push and pull messages: {expected_messages:?}, but got: {}",
+                    diagnostic.diagnostic.message
+                );
+            }
+        });
+    };
+
     {
         assert!(
             diagnostics_pulls_result_ids.lock().await.len() > 0,
@@ -2701,7 +2869,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
-        2,
+        workspace_diagnostic_start_count + 1,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "After client lib.rs edits, the workspace diagnostics request should follow"
     );
@@ -2720,7 +2888,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
-        3,
+        workspace_diagnostic_start_count + 2,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "After client main.rs edits, the workspace diagnostics pull should follow"
     );
@@ -2739,7 +2907,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
-        4,
+        workspace_diagnostic_start_count + 3,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "After host main.rs edits, the workspace diagnostics pull should follow"
     );
@@ -2769,7 +2937,7 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
     );
     workspace_diagnostics_pulls_handle.next().await.unwrap();
     assert_eq!(
-        5,
+        workspace_diagnostic_start_count + 4,
         workspace_diagnostics_pulls_made.load(atomic::Ordering::Acquire),
         "Another workspace diagnostics pull should happen after the diagnostics refresh server request"
     );
@@ -2838,6 +3006,19 @@ async fn test_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestApp
             );
         }
     });
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_non_streamed_lsp_pull_diagnostics(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    test_lsp_pull_diagnostics(false, cx_a, cx_b).await;
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_streamed_lsp_pull_diagnostics(cx_a: &mut TestAppContext, cx_b: &mut TestAppContext) {
+    test_lsp_pull_diagnostics(true, cx_a, cx_b).await;
 }
 
 #[gpui::test(iterations = 10)]

@@ -1,8 +1,6 @@
 use crate::{
     burn_mode_tooltip::BurnModeTooltip,
-    language_model_selector::{
-        LanguageModelSelector, ToggleModelSelector, language_model_selector,
-    },
+    language_model_selector::{LanguageModelSelector, language_model_selector},
 };
 use agent_settings::{AgentSettings, CompletionMode};
 use anyhow::Result;
@@ -38,8 +36,7 @@ use language::{
     language_settings::{SoftWrap, all_language_settings},
 };
 use language_model::{
-    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelProviderTosView,
-    LanguageModelRegistry, Role,
+    ConfigurationError, LanguageModelExt, LanguageModelImage, LanguageModelRegistry, Role,
 };
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, popover_menu::PickerPopoverMenu};
@@ -74,6 +71,7 @@ use workspace::{
     pane,
     searchable::{SearchEvent, SearchableItem},
 };
+use zed_actions::agent::ToggleModelSelector;
 
 use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use assistant_context::{
@@ -1256,7 +1254,6 @@ impl TextThreadEditor {
                 ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
-                render_in_minimap: false,
             };
             let mut new_blocks = vec![];
             let mut block_index_to_message = vec![];
@@ -1858,7 +1855,6 @@ impl TextThreadEditor {
                                 .into_any_element()
                         }),
                         priority: 0,
-                        render_in_minimap: false,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -1895,108 +1891,6 @@ impl TextThreadEditor {
     pub fn regenerate_summary(&mut self, cx: &mut Context<Self>) {
         self.context
             .update(cx, |context, cx| context.summarize(true, cx));
-    }
-
-    fn render_notice(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        // This was previously gated behind the `zed-pro` feature flag. Since we
-        // aren't planning to ship that right now, we're just hard-coding this
-        // value to not show the nudge.
-        let nudge = Some(false);
-
-        let model_registry = LanguageModelRegistry::read_global(cx);
-
-        if nudge.map_or(false, |value| value) {
-            Some(
-                h_flex()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().editor_background)
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(Icon::new(IconName::ZedAssistant).color(Color::Accent))
-                            .child(Label::new("Zed AI is here! Get started by signing in →")),
-                    )
-                    .child(
-                        Button::new("sign-in", "Sign in")
-                            .size(ButtonSize::Compact)
-                            .style(ButtonStyle::Filled)
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                let client = this
-                                    .workspace
-                                    .read_with(cx, |workspace, _| workspace.client().clone())
-                                    .log_err();
-
-                                if let Some(client) = client {
-                                    cx.spawn(async move |context_editor, cx| {
-                                        match client.authenticate_and_connect(true, cx).await {
-                                            util::ConnectionResult::Timeout => {
-                                                log::error!("Authentication timeout")
-                                            }
-                                            util::ConnectionResult::ConnectionReset => {
-                                                log::error!("Connection reset")
-                                            }
-                                            util::ConnectionResult::Result(r) => {
-                                                if r.log_err().is_some() {
-                                                    context_editor
-                                                        .update(cx, |_, cx| cx.notify())
-                                                        .ok();
-                                                }
-                                            }
-                                        }
-                                    })
-                                    .detach()
-                                }
-                            })),
-                    )
-                    .into_any_element(),
-            )
-        } else if let Some(configuration_error) =
-            model_registry.configuration_error(model_registry.default_model(), cx)
-        {
-            Some(
-                h_flex()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .bg(cx.theme().colors().editor_background)
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .gap_3()
-                            .child(
-                                Icon::new(IconName::Warning)
-                                    .size(IconSize::Small)
-                                    .color(Color::Warning),
-                            )
-                            .child(Label::new(configuration_error.to_string())),
-                    )
-                    .child(
-                        Button::new("open-configuration", "Configure Providers")
-                            .size(ButtonSize::Compact)
-                            .icon(Some(IconName::SlidersVertical))
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .style(ButtonStyle::Filled)
-                            .on_click({
-                                let focus_handle = self.focus_handle(cx).clone();
-                                move |_event, window, cx| {
-                                    focus_handle.dispatch_action(
-                                        &zed_actions::agent::OpenConfiguration,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }),
-                    )
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
     }
 
     fn render_send_button(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2130,12 +2024,13 @@ impl TextThreadEditor {
             .map(|default| default.model);
         let model_name = match active_model {
             Some(model) => model.name().0,
-            None => SharedString::from("No model selected"),
+            None => SharedString::from("Select Model"),
         };
 
         let active_provider = LanguageModelRegistry::read_global(cx)
             .default_model()
             .map(|default| default.provider);
+
         let provider_icon = match active_provider {
             Some(provider) => provider.icon(),
             None => IconName::Ai,
@@ -2583,20 +2478,7 @@ impl EventEmitter<SearchEvent> for TextThreadEditor {}
 
 impl Render for TextThreadEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let provider = LanguageModelRegistry::read_global(cx)
-            .default_model()
-            .map(|default| default.provider);
-
-        let accept_terms = if self.show_accept_terms {
-            provider.as_ref().and_then(|provider| {
-                provider.render_accept_terms(LanguageModelProviderTosView::PromptEditorPopup, cx)
-            })
-        } else {
-            None
-        };
-
         let language_model_selector = self.language_model_selector_menu_handle.clone();
-        let burn_mode_toggle = self.render_burn_mode_toggle(cx);
 
         v_flex()
             .key_context("ContextEditor")
@@ -2613,28 +2495,12 @@ impl Render for TextThreadEditor {
                 language_model_selector.toggle(window, cx);
             })
             .size_full()
-            .children(self.render_notice(cx))
             .child(
                 div()
                     .flex_grow()
                     .bg(cx.theme().colors().editor_background)
                     .child(self.editor.clone()),
             )
-            .when_some(accept_terms, |this, element| {
-                this.child(
-                    div()
-                        .absolute()
-                        .right_3()
-                        .bottom_12()
-                        .max_w_96()
-                        .py_2()
-                        .px_3()
-                        .elevation_2(cx)
-                        .bg(cx.theme().colors().surface_background)
-                        .occlude()
-                        .child(element),
-                )
-            })
             .children(self.render_last_error(cx))
             .child(
                 h_flex()
@@ -2651,7 +2517,7 @@ impl Render for TextThreadEditor {
                         h_flex()
                             .gap_0p5()
                             .child(self.render_inject_context_menu(cx))
-                            .when_some(burn_mode_toggle, |this, element| this.child(element)),
+                            .children(self.render_burn_mode_toggle(cx)),
                     )
                     .child(
                         h_flex()

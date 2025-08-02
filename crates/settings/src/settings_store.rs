@@ -26,8 +26,8 @@ use util::{
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings, WorktreeId,
-    parse_json_with_comments, update_value_in_json_text,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings,
+    WorktreeId, parse_json_with_comments, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
@@ -122,6 +122,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The settings associated with an enabled settings profile
+    pub profile: Option<&'a T>,
     /// The server's settings.
     pub server: Option<&'a T>,
     /// The project settings, ordered from least specific to most specific.
@@ -141,6 +143,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.profile)
             .chain(self.server)
             .chain(self.project.iter().copied())
     }
@@ -282,6 +285,14 @@ impl SettingsStore {
         }
     }
 
+    pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
+        cx.observe_global::<ActiveSettingsProfileName>(|cx| {
+            Self::update_global(cx, |store, cx| {
+                store.recompute_values(None, cx).log_err();
+            });
+        })
+    }
+
     pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
     where
         C: BorrowAppContext,
@@ -321,6 +332,17 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let mut profile_value = None;
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_settings) = profiles.get(&active_profile.0) {
+                        profile_value = setting_value
+                            .deserialize_setting(profile_settings)
+                            .log_err();
+                    }
+                }
+            }
+
             let server_value = self
                 .raw_server_settings
                 .as_ref()
@@ -340,6 +362,7 @@ impl SettingsStore {
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
+                        profile: profile_value.as_ref(),
                         server: server_value.as_ref(),
                         project: &[],
                     },
@@ -400,6 +423,16 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &Value {
         &self.raw_user_settings
+    }
+
+    /// Get the configured settings profile names.
+    pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
+        self.raw_user_settings
+            .get("profiles")
+            .and_then(|v| v.as_object())
+            .into_iter()
+            .flat_map(|obj| obj.keys())
+            .map(|s| s.as_str())
     }
 
     /// Access the raw JSON value of the global settings.
@@ -532,7 +565,9 @@ impl SettingsStore {
             }))
             .ok();
     }
+}
 
+impl SettingsStore {
     /// Updates the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
     pub fn new_text_for_update<T: Settings>(
@@ -1001,18 +1036,18 @@ impl SettingsStore {
         const ZED_SETTINGS: &str = "ZedSettings";
         let zed_settings_ref = add_new_subschema(&mut generator, ZED_SETTINGS, combined_schema);
 
-        // add `ZedReleaseStageSettings` which is the same as `ZedSettings` except that unknown
-        // fields are rejected.
-        let mut zed_release_stage_settings = zed_settings_ref.clone();
-        zed_release_stage_settings.insert("unevaluatedProperties".to_string(), false.into());
-        let zed_release_stage_settings_ref = add_new_subschema(
+        // add `ZedSettingsOverride` which is the same as `ZedSettings` except that unknown
+        // fields are rejected. This is used for release stage settings and profiles.
+        let mut zed_settings_override = zed_settings_ref.clone();
+        zed_settings_override.insert("unevaluatedProperties".to_string(), false.into());
+        let zed_settings_override_ref = add_new_subschema(
             &mut generator,
-            "ZedReleaseStageSettings",
-            zed_release_stage_settings.to_value(),
+            "ZedSettingsOverride",
+            zed_settings_override.to_value(),
         );
 
         // Remove `"additionalProperties": false` added by `DefaultDenyUnknownFields` so that
-        // unknown fields can be handled by the root schema and `ZedReleaseStageSettings`.
+        // unknown fields can be handled by the root schema and `ZedSettingsOverride`.
         let mut definitions = generator.take_definitions(true);
         definitions
             .get_mut(ZED_SETTINGS)
@@ -1032,15 +1067,20 @@ impl SettingsStore {
             "$schema": meta_schema,
             "title": "Zed Settings",
             "unevaluatedProperties": false,
-            // ZedSettings + settings overrides for each release stage
+            // ZedSettings + settings overrides for each release stage / profiles
             "allOf": [
                 zed_settings_ref,
                 {
                     "properties": {
-                        "dev": zed_release_stage_settings_ref,
-                        "nightly": zed_release_stage_settings_ref,
-                        "stable": zed_release_stage_settings_ref,
-                        "preview": zed_release_stage_settings_ref,
+                        "dev": zed_settings_override_ref,
+                        "nightly": zed_settings_override_ref,
+                        "stable": zed_settings_override_ref,
+                        "preview": zed_settings_override_ref,
+                        "profiles": {
+                            "type": "object",
+                            "description": "Configures any number of settings profiles.",
+                            "additionalProperties": zed_settings_override_ref
+                        }
                     }
                 }
             ],
@@ -1099,6 +1139,16 @@ impl SettingsStore {
                 }
             }
 
+            let mut profile_settings = None;
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_json) = profiles.get(&active_profile.0) {
+                        profile_settings =
+                            setting_value.deserialize_setting(profile_json).log_err();
+                    }
+                }
+            }
+
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
                 if let Some(value) = setting_value
@@ -1109,6 +1159,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
                             project: &[],
                         },
@@ -1161,6 +1212,7 @@ impl SettingsStore {
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
+                                    profile: profile_settings.as_ref(),
                                     server: server_settings.as_ref(),
                                     project: &project_settings_stack.iter().collect::<Vec<_>>(),
                                 },
@@ -1285,6 +1337,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                profile: values
+                    .profile
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 server: values
                     .server

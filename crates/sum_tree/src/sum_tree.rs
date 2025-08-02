@@ -38,20 +38,17 @@ pub trait Summary: Clone {
     type Context;
 
     fn zero(cx: &Self::Context) -> Self;
-
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
 
-/// This type exists because we can't implement Summary for () without causing
-/// type resolution errors
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Unit;
-
-impl Summary for Unit {
+/// Catch-all implementation for when you need something that implements [`Summary`] without a specific type.
+/// We implement it on a &'static, as that avoids blanket impl collisions with `impl<T: Summary> Dimension for T`
+/// (as we also need unit type to be a fill-in dimension)
+impl Summary for &'static () {
     type Context = ();
 
     fn zero(_: &()) -> Self {
-        Unit
+        &()
     }
 
     fn add_summary(&mut self, _: &Self, _: &()) {}
@@ -135,26 +132,6 @@ where
 {
     fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
         self.cmp(&cursor_location.0.0, cx)
-    }
-}
-
-struct End<D>(PhantomData<D>);
-
-impl<D> End<D> {
-    fn new() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<'a, S: Summary, D: Dimension<'a, S>> SeekTarget<'a, S, D> for End<D> {
-    fn cmp(&self, _: &D, _: &S::Context) -> Ordering {
-        Ordering::Greater
-    }
-}
-
-impl<D> fmt::Debug for End<D> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("End").finish()
     }
 }
 
@@ -372,10 +349,10 @@ impl<T: Item> SumTree<T> {
     pub fn items(&self, cx: &<T::Summary as Summary>::Context) -> Vec<T> {
         let mut items = Vec::new();
         let mut cursor = self.cursor::<()>(cx);
-        cursor.next(cx);
+        cursor.next();
         while let Some(item) = cursor.item() {
             items.push(item.clone());
-            cursor.next(cx);
+            cursor.next();
         }
         items
     }
@@ -384,7 +361,7 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<'a, T, S>
+    pub fn cursor<'a, S>(&'a self, cx: &'a <T::Summary as Summary>::Context) -> Cursor<'a, T, S>
     where
         S: Dimension<'a, T::Summary>,
     {
@@ -395,7 +372,7 @@ impl<T: Item> SumTree<T> {
     /// that is returned cannot be used with Rust's iterators.
     pub fn filter<'a, F, U>(
         &'a self,
-        cx: &<T::Summary as Summary>::Context,
+        cx: &'a <T::Summary as Summary>::Context,
         filter_node: F,
     ) -> FilterCursor<'a, F, T, U>
     where
@@ -523,10 +500,6 @@ impl<T: Item> SumTree<T> {
                 *self = Self::from_child_trees(self.clone(), split_tree, cx);
             }
         }
-    }
-
-    pub fn ptr_eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
     }
 
     fn push_tree_recursive(
@@ -686,11 +659,6 @@ impl<T: Item> SumTree<T> {
             } => child_trees.last().unwrap().rightmost_leaf(),
         }
     }
-
-    #[cfg(debug_assertions)]
-    pub fn _debug_entries(&self) -> Vec<&T> {
-        self.iter().collect::<Vec<_>>()
-    }
 }
 
 impl<T: Item + PartialEq> PartialEq for SumTree<T> {
@@ -710,15 +678,15 @@ impl<T: KeyedItem> SumTree<T> {
         let mut replaced = None;
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
-            let mut new_tree = cursor.slice(&item.key(), Bias::Left, cx);
+            let mut new_tree = cursor.slice(&item.key(), Bias::Left);
             if let Some(cursor_item) = cursor.item() {
                 if cursor_item.key() == item.key() {
                     replaced = Some(cursor_item.clone());
-                    cursor.next(cx);
+                    cursor.next();
                 }
             }
             new_tree.push(item, cx);
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
         replaced
@@ -728,14 +696,14 @@ impl<T: KeyedItem> SumTree<T> {
         let mut removed = None;
         *self = {
             let mut cursor = self.cursor::<T::Key>(cx);
-            let mut new_tree = cursor.slice(key, Bias::Left, cx);
+            let mut new_tree = cursor.slice(key, Bias::Left);
             if let Some(item) = cursor.item() {
                 if item.key() == *key {
                     removed = Some(item.clone());
-                    cursor.next(cx);
+                    cursor.next();
                 }
             }
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
         removed
@@ -758,7 +726,7 @@ impl<T: KeyedItem> SumTree<T> {
             let mut new_tree = SumTree::new(cx);
             let mut buffered_items = Vec::new();
 
-            cursor.seek(&T::Key::zero(cx), Bias::Left, cx);
+            cursor.seek(&T::Key::zero(cx), Bias::Left);
             for edit in edits {
                 let new_key = edit.key();
                 let mut old_item = cursor.item();
@@ -768,7 +736,7 @@ impl<T: KeyedItem> SumTree<T> {
                     .map_or(false, |old_item| old_item.key() < new_key)
                 {
                     new_tree.extend(buffered_items.drain(..), cx);
-                    let slice = cursor.slice(&new_key, Bias::Left, cx);
+                    let slice = cursor.slice(&new_key, Bias::Left);
                     new_tree.append(slice, cx);
                     old_item = cursor.item();
                 }
@@ -776,7 +744,7 @@ impl<T: KeyedItem> SumTree<T> {
                 if let Some(old_item) = old_item {
                     if old_item.key() == new_key {
                         removed.push(old_item.clone());
-                        cursor.next(cx);
+                        cursor.next();
                     }
                 }
 
@@ -789,69 +757,24 @@ impl<T: KeyedItem> SumTree<T> {
             }
 
             new_tree.extend(buffered_items, cx);
-            new_tree.append(cursor.suffix(cx), cx);
+            new_tree.append(cursor.suffix(), cx);
             new_tree
         };
 
         removed
     }
 
-    pub fn get(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<&T> {
+    pub fn get<'a>(
+        &'a self,
+        key: &T::Key,
+        cx: &'a <T::Summary as Summary>::Context,
+    ) -> Option<&'a T> {
         let mut cursor = self.cursor::<T::Key>(cx);
-        if cursor.seek(key, Bias::Left, cx) {
+        if cursor.seek(key, Bias::Left) {
             cursor.item()
         } else {
             None
         }
-    }
-
-    #[inline]
-    pub fn contains(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> bool {
-        self.get(key, cx).is_some()
-    }
-
-    pub fn update<F, R>(
-        &mut self,
-        key: &T::Key,
-        cx: &<T::Summary as Summary>::Context,
-        f: F,
-    ) -> Option<R>
-    where
-        F: FnOnce(&mut T) -> R,
-    {
-        let mut cursor = self.cursor::<T::Key>(cx);
-        let mut new_tree = cursor.slice(key, Bias::Left, cx);
-        let mut result = None;
-        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
-            let mut updated = cursor.item().unwrap().clone();
-            result = Some(f(&mut updated));
-            new_tree.push(updated, cx);
-            cursor.next(cx);
-        }
-        new_tree.append(cursor.suffix(cx), cx);
-        drop(cursor);
-        *self = new_tree;
-        result
-    }
-
-    pub fn retain<F: FnMut(&T) -> bool>(
-        &mut self,
-        cx: &<T::Summary as Summary>::Context,
-        mut predicate: F,
-    ) {
-        let mut new_map = SumTree::new(cx);
-
-        let mut cursor = self.cursor::<T::Key>(cx);
-        cursor.next(cx);
-        while let Some(item) = cursor.item() {
-            if predicate(&item) {
-                new_map.push(item.clone(), cx);
-            }
-            cursor.next(cx);
-        }
-        drop(cursor);
-
-        *self = new_map;
     }
 }
 
@@ -1061,14 +984,14 @@ mod tests {
 
                 tree = {
                     let mut cursor = tree.cursor::<Count>(&());
-                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
+                    let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right);
                     if rng.r#gen() {
                         new_tree.extend(new_items, &());
                     } else {
                         new_tree.par_extend(new_items, &());
                     }
-                    cursor.seek(&Count(splice_end), Bias::Right, &());
-                    new_tree.append(cursor.slice(&tree_end, Bias::Right, &()), &());
+                    cursor.seek(&Count(splice_end), Bias::Right);
+                    new_tree.append(cursor.slice(&tree_end, Bias::Right), &());
                     new_tree
                 };
 
@@ -1090,10 +1013,10 @@ mod tests {
                     .collect::<Vec<_>>();
 
                 let mut item_ix = if rng.r#gen() {
-                    filter_cursor.next(&());
+                    filter_cursor.next();
                     0
                 } else {
-                    filter_cursor.prev(&());
+                    filter_cursor.prev();
                     expected_filtered_items.len().saturating_sub(1)
                 };
                 while item_ix < expected_filtered_items.len() {
@@ -1103,19 +1026,19 @@ mod tests {
                     assert_eq!(actual_item, &reference_item);
                     assert_eq!(filter_cursor.start().0, reference_index);
                     log::info!("next");
-                    filter_cursor.next(&());
+                    filter_cursor.next();
                     item_ix += 1;
 
                     while item_ix > 0 && rng.gen_bool(0.2) {
                         log::info!("prev");
-                        filter_cursor.prev(&());
+                        filter_cursor.prev();
                         item_ix -= 1;
 
                         if item_ix == 0 && rng.gen_bool(0.2) {
-                            filter_cursor.prev(&());
+                            filter_cursor.prev();
                             assert_eq!(filter_cursor.item(), None);
                             assert_eq!(filter_cursor.start().0, 0);
-                            filter_cursor.next(&());
+                            filter_cursor.next();
                         }
                     }
                 }
@@ -1124,9 +1047,9 @@ mod tests {
                 let mut before_start = false;
                 let mut cursor = tree.cursor::<Count>(&());
                 let start_pos = rng.gen_range(0..=reference_items.len());
-                cursor.seek(&Count(start_pos), Bias::Right, &());
+                cursor.seek(&Count(start_pos), Bias::Right);
                 let mut pos = rng.gen_range(start_pos..=reference_items.len());
-                cursor.seek_forward(&Count(pos), Bias::Right, &());
+                cursor.seek_forward(&Count(pos), Bias::Right);
 
                 for i in 0..10 {
                     assert_eq!(cursor.start().0, pos);
@@ -1152,13 +1075,13 @@ mod tests {
                     }
 
                     if i < 5 {
-                        cursor.next(&());
+                        cursor.next();
                         if pos < reference_items.len() {
                             pos += 1;
                             before_start = false;
                         }
                     } else {
-                        cursor.prev(&());
+                        cursor.prev();
                         if pos == 0 {
                             before_start = true;
                         }
@@ -1174,11 +1097,11 @@ mod tests {
                 let end_bias = if rng.r#gen() { Bias::Left } else { Bias::Right };
 
                 let mut cursor = tree.cursor::<Count>(&());
-                cursor.seek(&Count(start), start_bias, &());
-                let slice = cursor.slice(&Count(end), end_bias, &());
+                cursor.seek(&Count(start), start_bias);
+                let slice = cursor.slice(&Count(end), end_bias);
 
-                cursor.seek(&Count(start), start_bias, &());
-                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias, &());
+                cursor.seek(&Count(start), start_bias);
+                let summary = cursor.summary::<_, Sum>(&Count(end), end_bias);
 
                 assert_eq!(summary.0, slice.summary().sum);
             }
@@ -1191,19 +1114,19 @@ mod tests {
         let tree = SumTree::<u8>::default();
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
-            cursor.slice(&Count(0), Bias::Right, &()).items(&()),
+            cursor.slice(&Count(0), Bias::Right).items(&()),
             Vec::<u8>::new()
         );
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
@@ -1214,7 +1137,7 @@ mod tests {
         tree.extend(vec![1], &());
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
-            cursor.slice(&Count(0), Bias::Right, &()).items(&()),
+            cursor.slice(&Count(0), Bias::Right).items(&()),
             Vec::<u8>::new()
         );
         assert_eq!(cursor.item(), Some(&1));
@@ -1222,29 +1145,29 @@ mod tests {
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
         let mut cursor = tree.cursor::<IntegersSummary>(&());
-        assert_eq!(cursor.slice(&Count(1), Bias::Right, &()).items(&()), [1]);
+        assert_eq!(cursor.slice(&Count(1), Bias::Right).items(&()), [1]);
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.seek(&Count(0), Bias::Right, &());
+        cursor.seek(&Count(0), Bias::Right);
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             [1]
         );
@@ -1258,80 +1181,80 @@ mod tests {
         tree.extend(vec![1, 2, 3, 4, 5, 6], &());
         let mut cursor = tree.cursor::<IntegersSummary>(&());
 
-        assert_eq!(cursor.slice(&Count(2), Bias::Right, &()).items(&()), [1, 2]);
+        assert_eq!(cursor.slice(&Count(2), Bias::Right).items(&()), [1, 2]);
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
         assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
         assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
         assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
-        cursor.next(&());
-        cursor.next(&());
+        cursor.next();
+        cursor.next();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&6));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&6));
         assert_eq!(cursor.prev_item(), Some(&5));
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 15);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&5));
         assert_eq!(cursor.prev_item(), Some(&4));
         assert_eq!(cursor.next_item(), Some(&6));
         assert_eq!(cursor.start().sum, 10);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&4));
         assert_eq!(cursor.prev_item(), Some(&3));
         assert_eq!(cursor.next_item(), Some(&5));
         assert_eq!(cursor.start().sum, 6);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
         assert_eq!(cursor.next_item(), Some(&4));
         assert_eq!(cursor.start().sum, 3);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&2));
         assert_eq!(cursor.prev_item(), Some(&1));
         assert_eq!(cursor.next_item(), Some(&3));
         assert_eq!(cursor.start().sum, 1);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&2));
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.prev(&());
+        cursor.prev();
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&1));
         assert_eq!(cursor.start().sum, 0);
 
-        cursor.next(&());
+        cursor.next();
         assert_eq!(cursor.item(), Some(&1));
         assert_eq!(cursor.prev_item(), None);
         assert_eq!(cursor.next_item(), Some(&2));
@@ -1340,7 +1263,7 @@ mod tests {
         let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             tree.items(&())
         );
@@ -1349,10 +1272,10 @@ mod tests {
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 21);
 
-        cursor.seek(&Count(3), Bias::Right, &());
+        cursor.seek(&Count(3), Bias::Right);
         assert_eq!(
             cursor
-                .slice(&tree.extent::<Count>(&()), Bias::Right, &())
+                .slice(&tree.extent::<Count>(&()), Bias::Right)
                 .items(&()),
             [4, 5, 6]
         );
@@ -1362,25 +1285,16 @@ mod tests {
         assert_eq!(cursor.start().sum, 21);
 
         // Seeking can bias left or right
-        cursor.seek(&Count(1), Bias::Left, &());
+        cursor.seek(&Count(1), Bias::Left);
         assert_eq!(cursor.item(), Some(&1));
-        cursor.seek(&Count(1), Bias::Right, &());
+        cursor.seek(&Count(1), Bias::Right);
         assert_eq!(cursor.item(), Some(&2));
 
         // Slicing without resetting starts from where the cursor is parked at.
-        cursor.seek(&Count(1), Bias::Right, &());
-        assert_eq!(
-            cursor.slice(&Count(3), Bias::Right, &()).items(&()),
-            vec![2, 3]
-        );
-        assert_eq!(
-            cursor.slice(&Count(6), Bias::Left, &()).items(&()),
-            vec![4, 5]
-        );
-        assert_eq!(
-            cursor.slice(&Count(6), Bias::Right, &()).items(&()),
-            vec![6]
-        );
+        cursor.seek(&Count(1), Bias::Right);
+        assert_eq!(cursor.slice(&Count(3), Bias::Right).items(&()), vec![2, 3]);
+        assert_eq!(cursor.slice(&Count(6), Bias::Left).items(&()), vec![4, 5]);
+        assert_eq!(cursor.slice(&Count(6), Bias::Right).items(&()), vec![6]);
     }
 
     #[test]

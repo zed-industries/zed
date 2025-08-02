@@ -199,6 +199,33 @@ impl Database {
 
     pub async fn get_active_zed_pro_billing_subscriptions(
         &self,
+    ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
+        self.transaction(|tx| async move {
+            let mut rows = billing_subscription::Entity::find()
+                .inner_join(billing_customer::Entity)
+                .select_also(billing_customer::Entity)
+                .filter(
+                    billing_subscription::Column::StripeSubscriptionStatus
+                        .eq(StripeSubscriptionStatus::Active),
+                )
+                .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::ZedPro))
+                .order_by_asc(billing_subscription::Column::Id)
+                .stream(&*tx)
+                .await?;
+
+            let mut subscriptions = HashMap::default();
+            while let Some(row) = rows.next().await {
+                if let (subscription, Some(customer)) = row? {
+                    subscriptions.insert(customer.user_id, (customer, subscription));
+                }
+            }
+            Ok(subscriptions)
+        })
+        .await
+    }
+
+    pub async fn get_active_zed_pro_billing_subscriptions_for_users(
+        &self,
         user_ids: HashSet<UserId>,
     ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
         self.transaction(|tx| {

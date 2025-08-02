@@ -16,7 +16,7 @@ use std::{
 use task::{DEFAULT_REMOTE_SHELL, Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     TaskState, TaskStatus, Terminal, TerminalBuilder,
-    terminal_settings::{self, TerminalSettings, VenvSettings},
+    terminal_settings::{self, ActivateScript, TerminalSettings, VenvSettings},
 };
 use util::{
     ResultExt,
@@ -169,7 +169,7 @@ impl Project {
             .read(cx)
             .get_cli_environment()
             .unwrap_or_default();
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         match self.ssh_details(cx) {
             Some(SshDetails {
@@ -213,17 +213,24 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Result<Entity<Terminal>> {
         let this = &mut *self;
+        let ssh_details = this.ssh_details(cx);
         let path: Option<Arc<Path>> = match &kind {
             TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
-                    Some(Arc::from(cwd.as_ref()))
+                    if ssh_details.is_some() {
+                        Some(Arc::from(cwd.as_ref()))
+                    } else {
+                        let cwd = cwd.to_string_lossy();
+                        let tilde_substituted = shellexpand::tilde(&cwd);
+                        Some(Arc::from(Path::new(tilde_substituted.as_ref())))
+                    }
                 } else {
                     this.active_project_directory(cx)
                 }
             }
         };
-        let ssh_details = this.ssh_details(cx);
+
         let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;
@@ -247,7 +254,7 @@ impl Project {
             .unwrap_or_default();
         // Then extend it with the explicit env variables from the settings, so they take
         // precedence.
-        env.extend(settings.env.clone());
+        env.extend(settings.env);
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
@@ -256,8 +263,11 @@ impl Project {
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
                 if let Some(python_venv_directory) = &python_venv_directory {
-                    python_venv_activate_command =
-                        this.python_activate_command(python_venv_directory, &settings.detect_venv);
+                    python_venv_activate_command = this.python_activate_command(
+                        python_venv_directory,
+                        &settings.detect_venv,
+                        &settings.shell,
+                    );
                 }
 
                 match ssh_details {
@@ -510,10 +520,27 @@ impl Project {
             })
     }
 
+    fn activate_script_kind(shell: Option<&str>) -> ActivateScript {
+        let shell_env = std::env::var("SHELL").ok();
+        let shell_path = shell.or_else(|| shell_env.as_deref());
+        let shell = std::path::Path::new(shell_path.unwrap_or(""))
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
+        match shell {
+            "fish" => ActivateScript::Fish,
+            "tcsh" => ActivateScript::Csh,
+            "nu" => ActivateScript::Nushell,
+            "powershell" | "pwsh" => ActivateScript::PowerShell,
+            _ => ActivateScript::Default,
+        }
+    }
+
     fn python_activate_command(
         &self,
         venv_base_directory: &Path,
         venv_settings: &VenvSettings,
+        shell: &Shell,
     ) -> Option<String> {
         let venv_settings = venv_settings.as_option()?;
         let activate_keyword = match venv_settings.activate_script {
@@ -523,36 +550,62 @@ impl Project {
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
+            terminal_settings::ActivateScript::Pyenv => "pyenv",
             _ => "source",
         };
-        let activate_script_name = match venv_settings.activate_script {
-            terminal_settings::ActivateScript::Default => "activate",
+        let script_kind =
+            if venv_settings.activate_script == terminal_settings::ActivateScript::Default {
+                match shell {
+                    Shell::Program(program) => Self::activate_script_kind(Some(program)),
+                    Shell::WithArguments {
+                        program,
+                        args: _,
+                        title_override: _,
+                    } => Self::activate_script_kind(Some(program)),
+                    Shell::System => Self::activate_script_kind(None),
+                }
+            } else {
+                venv_settings.activate_script
+            };
+
+        let activate_script_name = match script_kind {
+            terminal_settings::ActivateScript::Default
+            | terminal_settings::ActivateScript::Pyenv => "activate",
             terminal_settings::ActivateScript::Csh => "activate.csh",
             terminal_settings::ActivateScript::Fish => "activate.fish",
             terminal_settings::ActivateScript::Nushell => "activate.nu",
             terminal_settings::ActivateScript::PowerShell => "activate.ps1",
         };
-        let path = venv_base_directory
-            .join(match std::env::consts::OS {
-                "windows" => "Scripts",
-                _ => "bin",
-            })
-            .join(activate_script_name)
-            .to_string_lossy()
-            .to_string();
-        let quoted = shlex::try_quote(&path).ok()?;
+
         let line_ending = match std::env::consts::OS {
             "windows" => "\r",
             _ => "\n",
         };
-        smol::block_on(self.fs.metadata(path.as_ref()))
-            .ok()
-            .flatten()?;
 
-        Some(format!(
-            "{} {} ; clear{}",
-            activate_keyword, quoted, line_ending
-        ))
+        if venv_settings.venv_name.is_empty() {
+            let path = venv_base_directory
+                .join(match std::env::consts::OS {
+                    "windows" => "Scripts",
+                    _ => "bin",
+                })
+                .join(activate_script_name)
+                .to_string_lossy()
+                .to_string();
+            let quoted = shlex::try_quote(&path).ok()?;
+            smol::block_on(self.fs.metadata(path.as_ref()))
+                .ok()
+                .flatten()?;
+
+            Some(format!(
+                "{} {} ; clear{}",
+                activate_keyword, quoted, line_ending
+            ))
+        } else {
+            Some(format!(
+                "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
+                name = venv_settings.venv_name
+            ))
+        }
     }
 
     fn activate_python_virtual_environment(
@@ -616,7 +669,7 @@ pub fn wrap_for_ssh(
 
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
-            format!("cd {path}; {env_changes} {to_run}")
+            format!("cd \"{path}\"; {env_changes} {to_run}")
         }
     } else {
         format!("cd; {env_changes} {to_run}")

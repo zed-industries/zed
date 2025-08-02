@@ -327,6 +327,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                    id: None,
                                 }),
                                 cx,
                             );

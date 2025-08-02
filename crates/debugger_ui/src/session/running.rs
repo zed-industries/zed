@@ -1,16 +1,17 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
 pub(crate) mod loaded_source_list;
+pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     ToggleExpandItem,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
+    session::running::memory_view::MemoryView,
 };
 
 use super::DebugPanelItemEvent;
@@ -34,7 +35,7 @@ use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
-    debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
@@ -81,6 +82,7 @@ pub struct RunningState {
     _schedule_serialize: Option<Task<()>>,
     pub(crate) scenario: Option<DebugScenario>,
     pub(crate) scenario_context: Option<DebugScenarioContext>,
+    memory_view: Entity<MemoryView>,
 }
 
 impl RunningState {
@@ -676,14 +678,36 @@ impl RunningState {
         let session_id = session.read(cx).session_id();
         let weak_state = cx.weak_entity();
         let stack_frame_list = cx.new(|cx| {
-            StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
+            StackFrameList::new(
+                workspace.clone(),
+                session.clone(),
+                weak_state.clone(),
+                window,
+                cx,
+            )
         });
 
         let debug_terminal =
             parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
-
-        let variable_list =
-            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
+        let memory_view = cx.new(|cx| {
+            MemoryView::new(
+                session.clone(),
+                workspace.clone(),
+                stack_frame_list.downgrade(),
+                window,
+                cx,
+            )
+        });
+        let variable_list = cx.new(|cx| {
+            VariableList::new(
+                session.clone(),
+                stack_frame_list.clone(),
+                memory_view.clone(),
+                weak_state.clone(),
+                window,
+                cx,
+            )
+        });
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
@@ -770,6 +794,15 @@ impl RunningState {
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 this.serialize_layout(window, cx);
             }),
+            cx.subscribe(
+                &session,
+                |this, session, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown if session.read(cx).is_building() => {
+                        this.shutdown(cx);
+                    }
+                    _ => {}
+                },
+            ),
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
@@ -786,6 +819,7 @@ impl RunningState {
                 &breakpoint_list,
                 &loaded_source_list,
                 &debug_terminal,
+                &memory_view,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -814,6 +848,7 @@ impl RunningState {
         let active_pane = panes.first_pane();
 
         Self {
+            memory_view,
             session,
             workspace,
             focus_handle,
@@ -884,6 +919,7 @@ impl RunningState {
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
         let is_local = project.read(cx).is_local();
+
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -1224,6 +1260,12 @@ impl RunningState {
                 item_kind,
                 cx,
             )),
+            DebuggerPaneItem::MemoryView => Box::new(SubView::new(
+                self.memory_view.focus_handle(cx),
+                self.memory_view.clone().into(),
+                item_kind,
+                cx,
+            )),
         }
     }
 
@@ -1408,7 +1450,14 @@ impl RunningState {
         &self.module_list
     }
 
-    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(
+        &mut self,
+        item: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_pane_item(item, window, cx);
+
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -1420,9 +1469,10 @@ impl RunningState {
                     .map(|view| (view, pane))
             })
             .unwrap();
+
         pane.update(cx, |this, cx| {
             this.activate_item(variable_list_position, true, true, window, cx);
-        })
+        });
     }
 
     #[cfg(test)]
@@ -1459,7 +1509,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
+    pub fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
@@ -1599,9 +1649,21 @@ impl RunningState {
             })
             .log_err();
 
-        self.session.update(cx, |session, cx| {
+        let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-        })
+            matches!(session.mode, session::SessionState::Building(_))
+        });
+
+        if is_building {
+            self.debug_terminal.update(cx, |terminal, cx| {
+                if let Some(view) = terminal.terminal.as_ref() {
+                    view.update(cx, |view, cx| {
+                        view.terminal()
+                            .update(cx, |terminal, _| terminal.kill_active_task())
+                    })
+                }
+            })
+        }
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {

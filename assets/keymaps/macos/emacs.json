@@ -114,7 +114,7 @@
       "ctrl-x o": "workspace::ActivateNextPane", // other-window
       "ctrl-x k": "pane::CloseActiveItem", // kill-buffer
       "ctrl-x 0": "pane::CloseActiveItem", // delete-window
-      "ctrl-x 1": "pane::CloseInactiveItems", // delete-other-windows
+      "ctrl-x 1": "pane::CloseOtherItems", // delete-other-windows
       "ctrl-x 2": "pane::SplitDown", // split-window-below
       "ctrl-x 3": "pane::SplitRight", // split-window-right
       "ctrl-x ctrl-f": "file_finder::Toggle", // find-file

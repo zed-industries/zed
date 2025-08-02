@@ -132,14 +132,7 @@ impl KeyContextView {
     }
 
     fn matches(&self, predicate: &KeyBindingContextPredicate) -> bool {
-        let mut stack = self.context_stack.clone();
-        while !stack.is_empty() {
-            if predicate.eval(&stack) {
-                return true;
-            }
-            stack.pop();
-        }
-        false
+        predicate.depth_of(&self.context_stack).is_some()
     }
 
     fn action_matches(&self, a: &Option<Box<dyn Action>>, b: &dyn Action) -> bool {

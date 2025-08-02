@@ -639,6 +639,12 @@ List of `string` values
 "snippet_sort_order": "bottom"
 ```
 
+4. Do not show snippets in the completion list at all:
+
+```json
+"snippet_sort_order": "none"
+```
+
 ## Editor Scrollbar
 
 - Description: Whether or not to show the editor scrollbar and various elements in it.
@@ -2582,6 +2588,7 @@ List of `integer` column numbers
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
+    "minimum_contrast": 45,
     "option_as_meta": false,
     "button": true,
     "shell": "system",
@@ -2688,6 +2695,54 @@ List of `integer` column numbers
 {
   "terminal": {
     "copy_on_select": true
+  }
+}
+```
+
+### Terminal: Cursor Shape
+
+- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Setting: `cursor_shape`
+- Default: `null` (defaults to block)
+
+**Options**
+
+1. A block that surrounds the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "block"
+  }
+}
+```
+
+2. A vertical bar
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "bar"
+  }
+}
+```
+
+3. An underline / underscore that runs along the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "underline"
+  }
+}
+```
+
+4. A box drawn around the following character
+
+```json
+{
+  "terminal": {
+    "cursor_shape": "hollow"
   }
 }
 ```
@@ -2825,6 +2880,30 @@ See Buffer Font Features
     "line_height": {
       "custom": 2
     }
+  }
+}
+```
+
+### Terminal: Minimum Contrast
+
+- Description: Controls the minimum contrast between foreground and background colors in the terminal. Uses the APCA (Accessible Perceptual Contrast Algorithm) for color adjustments. Set this to 0 to disable this feature.
+- Setting: `minimum_contrast`
+- Default: `45`
+
+**Options**
+
+`integer` values from 0 to 106. Common recommended values:
+
+- `0`: No contrast adjustment
+- `45`: Minimum for large fluent text (default)
+- `60`: Minimum for other content text
+- `75`: Minimum for body text
+- `90`: Preferred for body text
+
+```json
+{
+  "terminal": {
+    "minimum_contrast": 45
   }
 }
 ```
@@ -3336,26 +3415,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Agent
 
-- Description: Customize agent behavior
-- Setting: `agent`
-- Default:
-
-```json
-"agent": {
-  "version": "2",
-  "enabled": true,
-  "button": true,
-  "dock": "right",
-  "default_width": 640,
-  "default_height": 320,
-  "default_view": "thread",
-  "default_model": {
-    "provider": "zed.dev",
-    "model": "claude-sonnet-4"
-  },
-  "single_file_review": true,
-}
-```
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Outline Panel
 

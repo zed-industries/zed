@@ -84,7 +84,7 @@
   "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes horizontally. Defaults to "left"
+  // The direction that you want to split panes vertically. Defaults to "left"
   "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
@@ -197,6 +197,8 @@
   //    "inline"
   // 3. Place snippets at the bottom of the completion list:
   //    "bottom"
+  // 4. Do not show snippets in the completion list:
+  //    "none"
   "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
@@ -362,7 +364,9 @@
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
     // Whether to show the sign in button in the titlebar.
-    "show_sign_in": true
+    "show_sign_in": true,
+    // Whether to show the menus in the titlebar.
+    "show_menus": false
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -687,7 +691,10 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
+    // Default depth to expand outline items in the current file.
+    // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
+    "expand_outlines_with_depth": 100
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -815,7 +822,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
-          "project_notifications": true,
+          "project_notifications": false,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -835,7 +842,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
-          "project_notifications": true,
+          "project_notifications": false,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -1072,6 +1079,10 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
+  // Whether to disable all AI features in Zed.
+  //
+  // Default: false
+  "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
@@ -1133,6 +1144,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -1155,16 +1167,14 @@
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
-      "enabled": true
+      "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
-      // "delay_ms": 600
-      //
+      "delay_ms": 0,
       // Whether or not to display the git commit summary on the same line.
-      // "show_commit_summary": false
-      //
+      "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
-      // "min_column": 0
+      "min_column": 0
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
@@ -1377,11 +1387,11 @@
     // This will be merged with the platform's default font fallbacks
     // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // The weight of the editor font in standard CSS units from 100 to 900.
-    // "font_weight": 400
+    "font_weight": 400,
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
-    // "max_scroll_history_lines": 10000,
+    "max_scroll_history_lines": 10000,
     // The minimum APCA perceptual contrast between foreground and background colors.
     // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
     // especially for dark mode. Values range from 0 to 106.
@@ -1670,6 +1680,10 @@
         "allowed": true
       }
     },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "use_on_type_format": false
+    },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],
       "prettier": {
@@ -1705,6 +1719,7 @@
     "openai": {
       "api_url": "https://api.openai.com/v1"
     },
+    "openai_compatible": {},
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1"
     },
@@ -1855,10 +1870,32 @@
   "read_ssh_config": true,
   // Configures context servers for use by the agent.
   "context_servers": {},
+  // Configures agent servers available in the agent panel.
+  "agent_servers": {},
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
     "dock": "bottom",
     "button": true
-  }
+  },
+  // Configures any number of settings profiles that are temporarily applied on
+  // top of your existing user settings when selected from
+  // `settings profile selector: toggle`.
+  // Examples:
+  // "profiles": {
+  //   "Presenting": {
+  //     "agent_font_size": 20.0,
+  //     "buffer_font_size": 20.0,
+  //     "theme": "One Light",
+  //     "ui_font_size": 20.0
+  //   },
+  //   "Python (ty)": {
+  //     "languages": {
+  //       "Python": {
+  //         "language_servers": ["ty"]
+  //       }
+  //     }
+  //   }
+  // }
+  "profiles": []
 }

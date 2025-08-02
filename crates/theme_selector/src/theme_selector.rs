@@ -385,6 +385,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::Themes),
+                                    id: None,
                                 }),
                                 cx,
                             );

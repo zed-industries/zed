@@ -1,4 +1,5 @@
 pub mod clangd_ext;
+pub mod json_language_server_ext;
 pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
@@ -29,7 +30,7 @@ use clock::Global;
 use collections::{BTreeMap, BTreeSet, HashMap, HashSet, btree_map};
 use futures::{
     AsyncWriteExt, Future, FutureExt, StreamExt,
-    future::{Shared, join_all},
+    future::{Either, Shared, join_all, pending, select},
     select, select_biased,
     stream::FuturesUnordered,
 };
@@ -45,6 +46,7 @@ use language::{
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LanguageToolchainStore, LocalFile, LspAdapter, LspAdapterDelegate, Patch,
     PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -85,9 +87,11 @@ use std::{
     cmp::{Ordering, Reverse},
     convert::TryInto,
     ffi::OsStr,
+    future::ready,
     iter, mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
+    pin::pin,
     rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
@@ -214,6 +218,7 @@ impl LocalLspStore {
 
         let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
@@ -239,14 +244,18 @@ impl LocalLspStore {
                     return Ok(server);
                 }
 
+                let code_action_kinds = adapter.code_action_kinds();
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
                     server_name,
                     binary,
                     &root_path,
-                    adapter.code_action_kinds(),
-                    pending_workspace_folders,
+                    code_action_kinds,
+                    Some(pending_workspace_folders).filter(|_| {
+                        adapter.adapter.workspace_folders_content()
+                            == WorkspaceFoldersContent::SubprojectRoots
+                    }),
                     cx,
                 )
             }
@@ -415,7 +424,7 @@ impl LocalLspStore {
         if settings.as_ref().is_some_and(|b| b.path.is_some()) {
             let settings = settings.unwrap();
 
-            return cx.spawn(async move |_| {
+            return cx.background_spawn(async move {
                 let mut env = delegate.shell_env().await;
                 env.extend(settings.env.unwrap_or_default());
 
@@ -572,8 +581,7 @@ impl LocalLspStore {
                         };
                         let root = server.workspace_folders();
                         Ok(Some(
-                            root.iter()
-                                .cloned()
+                            root.into_iter()
                                 .map(|uri| WorkspaceFolder {
                                     uri,
                                     name: Default::default(),
@@ -1032,6 +1040,7 @@ impl LocalLspStore {
             })
             .detach();
 
+        json_language_server_ext::register_requests(this.clone(), language_server);
         rust_analyzer_ext::register_notifications(this.clone(), language_server);
         clangd_ext::register_notifications(this, language_server, adapter);
     }
@@ -1270,15 +1279,11 @@ impl LocalLspStore {
                 // grouped with the previous transaction in the history
                 // based on the transaction group interval
                 buffer.finalize_last_transaction();
-                let transaction_id = buffer
+                buffer
                     .start_transaction()
                     .context("transaction already open")?;
-                let transaction = buffer
-                    .get_transaction(transaction_id)
-                    .expect("transaction started")
-                    .clone();
                 buffer.end_transaction(cx);
-                buffer.push_transaction(transaction, cx.background_executor().now());
+                let transaction_id = buffer.push_empty_transaction(cx.background_executor().now());
                 buffer.finalize_last_transaction();
                 anyhow::Ok(transaction_id)
             })??;
@@ -2420,36 +2425,12 @@ impl LocalLspStore {
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
-                         attach,
+
                          path,
                          settings,
                      }| {
-                        let server_id = match attach {
-                           language::Attach::InstancePerRoot => {
-                               // todo: handle instance per root proper.
-                               if let Some(server_ids) = self
-                                   .language_server_ids
-                                   .get(&(worktree_id, server_name.clone()))
-                               {
-                                   server_ids.iter().cloned().next().unwrap()
-                               } else {
-                                   let language_name = language.name();
-                                   let adapter = self.languages
-                                       .lsp_adapters(&language_name)
-                                       .into_iter()
-                                       .find(|adapter| &adapter.name() == server_name)
-                                       .expect("To find LSP adapter");
-                                   let server_id = self.start_language_server(
-                                       &worktree,
-                                       delegate.clone(),
-                                       adapter,
-                                       settings,
-                                       cx,
-                                   );
-                                   server_id
-                               }
-                           }
-                           language::Attach::Shared => {
+                        let server_id =
+                           {
                                let uri = Url::from_file_path(
                                    worktree.read(cx).abs_path().join(&path.path),
                                );
@@ -2484,7 +2465,7 @@ impl LocalLspStore {
                                } else {
                                    unreachable!("Language server ID should be available, as it's registered on demand")
                                }
-                           }
+
                         };
                         let lsp_store = self.weak.clone();
                         let server_name = server_node.name();
@@ -3551,7 +3532,8 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
-    lsp_data: HashMap<BufferId, DocumentColorData>,
+    lsp_document_colors: HashMap<BufferId, DocumentColorData>,
+    lsp_code_lens: HashMap<BufferId, CodeLensData>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -3561,6 +3543,7 @@ pub struct DocumentColors {
 }
 
 type DocumentColorTask = Shared<Task<std::result::Result<DocumentColors, Arc<anyhow::Error>>>>;
+type CodeLensTask = Shared<Task<std::result::Result<Vec<CodeAction>, Arc<anyhow::Error>>>>;
 
 #[derive(Debug, Default)]
 struct DocumentColorData {
@@ -3570,8 +3553,15 @@ struct DocumentColorData {
     colors_update: Option<(Global, DocumentColorTask)>,
 }
 
+#[derive(Debug, Default)]
+struct CodeLensData {
+    lens_for_version: Global,
+    lens: HashMap<LanguageServerId, Vec<CodeAction>>,
+    update: Option<(Global, CodeLensTask)>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum ColorFetchStrategy {
+pub enum LspFetchStrategy {
     IgnoreCache,
     UseCache { known_cache_version: Option<usize> },
 }
@@ -3804,7 +3794,8 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            lsp_data: HashMap::default(),
+            lsp_document_colors: HashMap::default(),
+            lsp_code_lens: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
@@ -3861,7 +3852,8 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
-            lsp_data: HashMap::default(),
+            lsp_document_colors: HashMap::default(),
+            lsp_code_lens: HashMap::default(),
             active_entry: None,
             toolchain_store,
             _maintain_workspace_config,
@@ -4162,7 +4154,8 @@ impl LspStore {
                         *refcount
                     };
                     if refcount == 0 {
-                        lsp_store.lsp_data.remove(&buffer_id);
+                        lsp_store.lsp_document_colors.remove(&buffer_id);
+                        lsp_store.lsp_code_lens.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
                         local.buffers_opened_in_servers.remove(&buffer_id);
@@ -4688,35 +4681,11 @@ impl LspStore {
                                 let server_id = node.server_id_or_init(
                                     |LaunchDisposition {
                                          server_name,
-                                         attach,
+
                                          path,
                                          settings,
-                                     }| match attach {
-                                        language::Attach::InstancePerRoot => {
-                                            // todo: handle instance per root proper.
-                                            if let Some(server_ids) = local
-                                                .language_server_ids
-                                                .get(&(worktree_id, server_name.clone()))
-                                            {
-                                                server_ids.iter().cloned().next().unwrap()
-                                            } else {
-                                                let adapter = local
-                                                    .languages
-                                                    .lsp_adapters(&language)
-                                                    .into_iter()
-                                                    .find(|adapter| &adapter.name() == server_name)
-                                                    .expect("To find LSP adapter");
-                                                let server_id = local.start_language_server(
-                                                    &worktree,
-                                                    delegate.clone(),
-                                                    adapter,
-                                                    settings,
-                                                    cx,
-                                                );
-                                                server_id
-                                            }
-                                        }
-                                        language::Attach::Shared => {
+                                     }|
+                                         {
                                             let uri = Url::from_file_path(
                                                 worktree.read(cx).abs_path().join(&path.path),
                                             );
@@ -4745,7 +4714,6 @@ impl LspStore {
                                             }
                                             server_id
                                         }
-                                    },
                                 );
 
                                 if let Some(language_server_id) = server_id {
@@ -4943,7 +4911,7 @@ impl LspStore {
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
             };
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 let response = upstream_client
                     .request(request)
                     .await
@@ -5157,7 +5125,7 @@ impl LspStore {
                 trigger,
                 version: serialize_version(&buffer.read(cx).version()),
             };
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 client
                     .request(request)
                     .await?
@@ -5316,7 +5284,7 @@ impl LspStore {
                 GetDefinitions { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(definitions_task
                     .await
                     .into_iter()
@@ -5389,7 +5357,7 @@ impl LspStore {
                 GetDeclarations { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(declarations_task
                     .await
                     .into_iter()
@@ -5462,7 +5430,7 @@ impl LspStore {
                 GetTypeDefinitions { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(type_definitions_task
                     .await
                     .into_iter()
@@ -5535,7 +5503,7 @@ impl LspStore {
                 GetImplementations { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(implementations_task
                     .await
                     .into_iter()
@@ -5608,7 +5576,7 @@ impl LspStore {
                 GetReferences { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(references_task
                     .await
                     .into_iter()
@@ -5692,7 +5660,7 @@ impl LspStore {
                 },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 Ok(all_actions_task
                     .await
                     .into_iter()
@@ -5702,69 +5670,168 @@ impl LspStore {
         }
     }
 
-    pub fn code_lens(
+    pub fn code_lens_actions(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<CodeAction>>> {
+    ) -> CodeLensTask {
+        let version_queried_for = buffer.read(cx).version();
+        let buffer_id = buffer.read(cx).remote_id();
+
+        if let Some(cached_data) = self.lsp_code_lens.get(&buffer_id) {
+            if !version_queried_for.changed_since(&cached_data.lens_for_version) {
+                let has_different_servers = self.as_local().is_some_and(|local| {
+                    local
+                        .buffers_opened_in_servers
+                        .get(&buffer_id)
+                        .cloned()
+                        .unwrap_or_default()
+                        != cached_data.lens.keys().copied().collect()
+                });
+                if !has_different_servers {
+                    return Task::ready(Ok(cached_data.lens.values().flatten().cloned().collect()))
+                        .shared();
+                }
+            }
+        }
+
+        let lsp_data = self.lsp_code_lens.entry(buffer_id).or_default();
+        if let Some((updating_for, running_update)) = &lsp_data.update {
+            if !version_queried_for.changed_since(&updating_for) {
+                return running_update.clone();
+            }
+        }
+        let buffer = buffer.clone();
+        let query_version_queried_for = version_queried_for.clone();
+        let new_task = cx
+            .spawn(async move |lsp_store, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(30))
+                    .await;
+                let fetched_lens = lsp_store
+                    .update(cx, |lsp_store, cx| lsp_store.fetch_code_lens(&buffer, cx))
+                    .map_err(Arc::new)?
+                    .await
+                    .context("fetching code lens")
+                    .map_err(Arc::new);
+                let fetched_lens = match fetched_lens {
+                    Ok(fetched_lens) => fetched_lens,
+                    Err(e) => {
+                        lsp_store
+                            .update(cx, |lsp_store, _| {
+                                lsp_store.lsp_code_lens.entry(buffer_id).or_default().update = None;
+                            })
+                            .ok();
+                        return Err(e);
+                    }
+                };
+
+                lsp_store
+                    .update(cx, |lsp_store, _| {
+                        let lsp_data = lsp_store.lsp_code_lens.entry(buffer_id).or_default();
+                        if lsp_data.lens_for_version == query_version_queried_for {
+                            lsp_data.lens.extend(fetched_lens.clone());
+                        } else if !lsp_data
+                            .lens_for_version
+                            .changed_since(&query_version_queried_for)
+                        {
+                            lsp_data.lens_for_version = query_version_queried_for;
+                            lsp_data.lens = fetched_lens.clone();
+                        }
+                        lsp_data.update = None;
+                        lsp_data.lens.values().flatten().cloned().collect()
+                    })
+                    .map_err(Arc::new)
+            })
+            .shared();
+        lsp_data.update = Some((version_queried_for, new_task.clone()));
+        new_task
+    }
+
+    fn fetch_code_lens(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<HashMap<LanguageServerId, Vec<CodeAction>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
             let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetCodeLens(
-                    GetCodeLens.to_proto(project_id, buffer_handle.read(cx)),
+                    GetCodeLens.to_proto(project_id, buffer.read(cx)),
                 )),
             });
-            let buffer = buffer_handle.clone();
-            cx.spawn(async move |weak_project, cx| {
-                let Some(project) = weak_project.upgrade() else {
-                    return Ok(Vec::new());
+            let buffer = buffer.clone();
+            cx.spawn(async move |weak_lsp_store, cx| {
+                let Some(lsp_store) = weak_lsp_store.upgrade() else {
+                    return Ok(HashMap::default());
                 };
                 let responses = request_task.await?.responses;
-                let code_lens = join_all(
+                let code_lens_actions = join_all(
                     responses
                         .into_iter()
-                        .filter_map(|lsp_response| match lsp_response.response? {
-                            proto::lsp_response::Response::GetCodeLensResponse(response) => {
-                                Some(response)
-                            }
-                            unexpected => {
-                                debug_panic!("Unexpected response: {unexpected:?}");
-                                None
-                            }
+                        .filter_map(|lsp_response| {
+                            let response = match lsp_response.response? {
+                                proto::lsp_response::Response::GetCodeLensResponse(response) => {
+                                    Some(response)
+                                }
+                                unexpected => {
+                                    debug_panic!("Unexpected response: {unexpected:?}");
+                                    None
+                                }
+                            }?;
+                            let server_id = LanguageServerId::from_proto(lsp_response.server_id);
+                            Some((server_id, response))
                         })
-                        .map(|code_lens_response| {
-                            GetCodeLens.response_from_proto(
-                                code_lens_response,
-                                project.clone(),
-                                buffer.clone(),
-                                cx.clone(),
-                            )
+                        .map(|(server_id, code_lens_response)| {
+                            let lsp_store = lsp_store.clone();
+                            let buffer = buffer.clone();
+                            let cx = cx.clone();
+                            async move {
+                                (
+                                    server_id,
+                                    GetCodeLens
+                                        .response_from_proto(
+                                            code_lens_response,
+                                            lsp_store,
+                                            buffer,
+                                            cx,
+                                        )
+                                        .await,
+                                )
+                            }
                         }),
                 )
                 .await;
 
-                Ok(code_lens
+                let mut has_errors = false;
+                let code_lens_actions = code_lens_actions
                     .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect())
+                    .filter_map(|(server_id, code_lens)| match code_lens {
+                        Ok(code_lens) => Some((server_id, code_lens)),
+                        Err(e) => {
+                            has_errors = true;
+                            log::error!("{e:#}");
+                            None
+                        }
+                    })
+                    .collect::<HashMap<_, _>>();
+                anyhow::ensure!(
+                    !has_errors || !code_lens_actions.is_empty(),
+                    "Failed to fetch code lens"
+                );
+                Ok(code_lens_actions)
             })
         } else {
-            let code_lens_task =
-                self.request_multiple_lsp_locally(buffer_handle, None::<usize>, GetCodeLens, cx);
-            cx.spawn(async move |_, _| {
-                Ok(code_lens_task
-                    .await
-                    .into_iter()
-                    .flat_map(|(_, code_lens)| code_lens)
-                    .collect())
-            })
+            let code_lens_actions_task =
+                self.request_multiple_lsp_locally(buffer, None::<usize>, GetCodeLens, cx);
+            cx.background_spawn(
+                async move { Ok(code_lens_actions_task.await.into_iter().collect()) },
+            )
         }
     }
 
@@ -5977,7 +6044,6 @@ impl LspStore {
 
                         let resolved = Self::resolve_completion_local(
                             server,
-                            &buffer_snapshot,
                             completions.clone(),
                             completion_index,
                         )
@@ -6010,7 +6076,6 @@ impl LspStore {
 
     async fn resolve_completion_local(
         server: Arc<lsp::LanguageServer>,
-        snapshot: &BufferSnapshot,
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
     ) -> Result<()> {
@@ -6055,26 +6120,8 @@ impl LspStore {
             .into_response()
             .context("resolve completion")?;
 
-        if let Some(text_edit) = resolved_completion.text_edit.as_ref() {
-            // Technically we don't have to parse the whole `text_edit`, since the only
-            // language server we currently use that does update `text_edit` in `completionItem/resolve`
-            // is `typescript-language-server` and they only update `text_edit.new_text`.
-            // But we should not rely on that.
-            let edit = parse_completion_text_edit(text_edit, snapshot);
-
-            if let Some(mut parsed_edit) = edit {
-                LineEnding::normalize(&mut parsed_edit.new_text);
-
-                let mut completions = completions.borrow_mut();
-                let completion = &mut completions[completion_index];
-
-                completion.new_text = parsed_edit.new_text;
-                completion.replace_range = parsed_edit.replace_range;
-                if let CompletionSource::Lsp { insert_range, .. } = &mut completion.source {
-                    *insert_range = parsed_edit.insert_range;
-                }
-            }
-        }
+        // We must not use any data such as sortText, filterText, insertText and textEdit to edit `Completion` since they are not suppose change during resolve.
+        // Refer: https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#textDocument_completion
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
@@ -6324,12 +6371,10 @@ impl LspStore {
             }) else {
                 return Task::ready(Ok(None));
             };
-            let snapshot = buffer_handle.read(&cx).snapshot();
 
             cx.spawn(async move |this, cx| {
                 Self::resolve_completion_local(
                     server.clone(),
-                    &snapshot,
                     completions.clone(),
                     completion_index,
                 )
@@ -6597,7 +6642,7 @@ impl LspStore {
 
     pub fn document_colors(
         &mut self,
-        fetch_strategy: ColorFetchStrategy,
+        fetch_strategy: LspFetchStrategy,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Option<DocumentColorTask> {
@@ -6605,11 +6650,11 @@ impl LspStore {
         let buffer_id = buffer.read(cx).remote_id();
 
         match fetch_strategy {
-            ColorFetchStrategy::IgnoreCache => {}
-            ColorFetchStrategy::UseCache {
+            LspFetchStrategy::IgnoreCache => {}
+            LspFetchStrategy::UseCache {
                 known_cache_version,
             } => {
-                if let Some(cached_data) = self.lsp_data.get(&buffer_id) {
+                if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id) {
                     if !version_queried_for.changed_since(&cached_data.colors_for_version) {
                         let has_different_servers = self.as_local().is_some_and(|local| {
                             local
@@ -6642,7 +6687,7 @@ impl LspStore {
             }
         }
 
-        let lsp_data = self.lsp_data.entry(buffer_id).or_default();
+        let lsp_data = self.lsp_document_colors.entry(buffer_id).or_default();
         if let Some((updating_for, running_update)) = &lsp_data.colors_update {
             if !version_queried_for.changed_since(&updating_for) {
                 return Some(running_update.clone());
@@ -6656,14 +6701,14 @@ impl LspStore {
                     .await;
                 let fetched_colors = lsp_store
                     .update(cx, |lsp_store, cx| {
-                        lsp_store.fetch_document_colors_for_buffer(buffer.clone(), cx)
+                        lsp_store.fetch_document_colors_for_buffer(&buffer, cx)
                     })?
                     .await
                     .context("fetching document colors")
                     .map_err(Arc::new);
                 let fetched_colors = match fetched_colors {
                     Ok(fetched_colors) => {
-                        if fetch_strategy != ColorFetchStrategy::IgnoreCache
+                        if fetch_strategy != LspFetchStrategy::IgnoreCache
                             && Some(true)
                                 == buffer
                                     .update(cx, |buffer, _| {
@@ -6679,7 +6724,7 @@ impl LspStore {
                         lsp_store
                             .update(cx, |lsp_store, _| {
                                 lsp_store
-                                    .lsp_data
+                                    .lsp_document_colors
                                     .entry(buffer_id)
                                     .or_default()
                                     .colors_update = None;
@@ -6691,7 +6736,7 @@ impl LspStore {
 
                 lsp_store
                     .update(cx, |lsp_store, _| {
-                        let lsp_data = lsp_store.lsp_data.entry(buffer_id).or_default();
+                        let lsp_data = lsp_store.lsp_document_colors.entry(buffer_id).or_default();
 
                         if lsp_data.colors_for_version == query_version_queried_for {
                             lsp_data.colors.extend(fetched_colors.clone());
@@ -6725,7 +6770,7 @@ impl LspStore {
 
     fn fetch_document_colors_for_buffer(
         &mut self,
-        buffer: Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
@@ -6740,6 +6785,7 @@ impl LspStore {
                     GetDocumentColor {}.to_proto(project_id, buffer.read(cx)),
                 )),
             });
+            let buffer = buffer.clone();
             cx.spawn(async move |project, cx| {
                 let Some(project) = project.upgrade() else {
                     return Ok(HashMap::default());
@@ -6785,8 +6831,8 @@ impl LspStore {
             })
         } else {
             let document_colors_task =
-                self.request_multiple_lsp_locally(&buffer, None::<usize>, GetDocumentColor, cx);
-            cx.spawn(async move |_, _| {
+                self.request_multiple_lsp_locally(buffer, None::<usize>, GetDocumentColor, cx);
+            cx.background_spawn(async move {
                 Ok(document_colors_task
                     .await
                     .into_iter()
@@ -6865,7 +6911,7 @@ impl LspStore {
                 GetSignatureHelp { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 all_actions_task
                     .await
                     .into_iter()
@@ -6942,7 +6988,7 @@ impl LspStore {
                 GetHover { position },
                 cx,
             );
-            cx.spawn(async move |_, _| {
+            cx.background_spawn(async move {
                 all_actions_task
                     .await
                     .into_iter()
@@ -7325,21 +7371,23 @@ impl LspStore {
     }
 
     pub(crate) async fn refresh_workspace_configurations(
-        this: &WeakEntity<Self>,
+        lsp_store: &WeakEntity<Self>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) {
         maybe!(async move {
-            let servers = this
-                .update(cx, |this, cx| {
-                    let Some(local) = this.as_local() else {
+            let mut refreshed_servers = HashSet::default();
+            let servers = lsp_store
+                .update(cx, |lsp_store, cx| {
+                    let toolchain_store = lsp_store.toolchain_store(cx);
+                    let Some(local) = lsp_store.as_local() else {
                         return Vec::default();
                     };
                     local
                         .language_server_ids
                         .iter()
                         .flat_map(|((worktree_id, _), server_ids)| {
-                            let worktree = this
+                            let worktree = lsp_store
                                 .worktree_store
                                 .read(cx)
                                 .worktree_for_id(*worktree_id, cx);
@@ -7355,43 +7403,54 @@ impl LspStore {
                                 )
                             });
 
-                            server_ids.iter().filter_map(move |server_id| {
+                            let fs = fs.clone();
+                            let toolchain_store = toolchain_store.clone();
+                            server_ids.iter().filter_map(|server_id| {
+                                let delegate = delegate.clone()? as Arc<dyn LspAdapterDelegate>;
                                 let states = local.language_servers.get(server_id)?;
 
                                 match states {
                                     LanguageServerState::Starting { .. } => None,
                                     LanguageServerState::Running {
                                         adapter, server, ..
-                                    } => Some((
-                                        adapter.adapter.clone(),
-                                        server.clone(),
-                                        delegate.clone()? as Arc<dyn LspAdapterDelegate>,
-                                    )),
+                                    } => {
+                                        let fs = fs.clone();
+                                        let toolchain_store = toolchain_store.clone();
+                                        let adapter = adapter.clone();
+                                        let server = server.clone();
+                                        refreshed_servers.insert(server.name());
+                                        Some(cx.spawn(async move |_, cx| {
+                                            let settings =
+                                                LocalLspStore::workspace_configuration_for_adapter(
+                                                    adapter.adapter.clone(),
+                                                    fs.as_ref(),
+                                                    &delegate,
+                                                    toolchain_store,
+                                                    cx,
+                                                )
+                                                .await
+                                                .ok()?;
+                                            server
+                                                .notify::<lsp::notification::DidChangeConfiguration>(
+                                                    &lsp::DidChangeConfigurationParams { settings },
+                                                )
+                                                .ok()?;
+                                            Some(())
+                                        }))
+                                    }
                                 }
-                            })
+                            }).collect::<Vec<_>>()
                         })
                         .collect::<Vec<_>>()
                 })
                 .ok()?;
 
-            let toolchain_store = this.update(cx, |this, cx| this.toolchain_store(cx)).ok()?;
-            for (adapter, server, delegate) in servers {
-                let settings = LocalLspStore::workspace_configuration_for_adapter(
-                    adapter,
-                    fs.as_ref(),
-                    &delegate,
-                    toolchain_store.clone(),
-                    cx,
-                )
-                .await
-                .ok()?;
-
-                server
-                    .notify::<lsp::notification::DidChangeConfiguration>(
-                        &lsp::DidChangeConfigurationParams { settings },
-                    )
-                    .ok();
-            }
+            log::info!("Refreshing workspace configurations for servers {refreshed_servers:?}");
+            // TODO this asynchronous job runs concurrently with extension (de)registration and may take enough time for a certain extension
+            // to stop and unregister its language server wrapper.
+            // This is racy : an extension might have already removed all `local.language_servers` state, but here we `.clone()` and hold onto it anyway.
+            // This now causes errors in the logs, we should find a way to remove such servers from the processing everywhere.
+            let _: Vec<Option<()>> = join_all(servers).await;
             Some(())
         })
         .await;
@@ -7585,7 +7644,8 @@ impl LspStore {
             diagnostics,
             |_, _, _| false,
             cx,
-        )
+        )?;
+        Ok(())
     }
 
     pub fn merge_diagnostic_entries(
@@ -7931,7 +7991,7 @@ impl LspStore {
             })
             .collect::<FuturesUnordered<_>>();
 
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let mut responses = Vec::with_capacity(response_results.len());
             while let Some((server_id, response_result)) = response_results.next().await {
                 if let Some(response) = response_result.log_err() {
@@ -9130,7 +9190,39 @@ impl LspStore {
             }
         };
 
-        let lsp::ProgressParamsValue::WorkDone(progress) = progress.value;
+        match progress.value {
+            lsp::ProgressParamsValue::WorkDone(progress) => {
+                self.handle_work_done_progress(
+                    progress,
+                    language_server_id,
+                    disk_based_diagnostics_progress_token,
+                    token,
+                    cx,
+                );
+            }
+            lsp::ProgressParamsValue::WorkspaceDiagnostic(report) => {
+                if let Some(LanguageServerState::Running {
+                    workspace_refresh_task: Some(workspace_refresh_task),
+                    ..
+                }) = self
+                    .as_local_mut()
+                    .and_then(|local| local.language_servers.get_mut(&language_server_id))
+                {
+                    workspace_refresh_task.progress_tx.try_send(()).ok();
+                    self.apply_workspace_diagnostic_report(language_server_id, report, cx)
+                }
+            }
+        }
+    }
+
+    fn handle_work_done_progress(
+        &mut self,
+        progress: lsp::WorkDoneProgress,
+        language_server_id: LanguageServerId,
+        disk_based_diagnostics_progress_token: Option<String>,
+        token: String,
+        cx: &mut Context<Self>,
+    ) {
         let language_server_status =
             if let Some(status) = self.language_server_statuses.get_mut(&language_server_id) {
                 status
@@ -9712,29 +9804,31 @@ impl LspStore {
             } else {
                 let buffers =
                     lsp_store.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-                lsp_store.stop_language_servers_for_buffers(
-                    buffers,
-                    envelope
-                        .payload
-                        .also_servers
-                        .into_iter()
-                        .filter_map(|selector| {
-                            Some(match selector.selector? {
-                                proto::language_server_selector::Selector::ServerId(server_id) => {
-                                    LanguageServerSelector::Id(LanguageServerId::from_proto(
+                lsp_store
+                    .stop_language_servers_for_buffers(
+                        buffers,
+                        envelope
+                            .payload
+                            .also_servers
+                            .into_iter()
+                            .filter_map(|selector| {
+                                Some(match selector.selector? {
+                                    proto::language_server_selector::Selector::ServerId(
                                         server_id,
-                                    ))
-                                }
-                                proto::language_server_selector::Selector::Name(name) => {
-                                    LanguageServerSelector::Name(LanguageServerName(
-                                        SharedString::from(name),
-                                    ))
-                                }
+                                    ) => LanguageServerSelector::Id(LanguageServerId::from_proto(
+                                        server_id,
+                                    )),
+                                    proto::language_server_selector::Selector::Name(name) => {
+                                        LanguageServerSelector::Name(LanguageServerName(
+                                            SharedString::from(name),
+                                        ))
+                                    }
+                                })
                             })
-                        })
-                        .collect(),
-                    cx,
-                );
+                            .collect(),
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
             }
         })?;
 
@@ -10290,9 +10384,9 @@ impl LspStore {
     pub fn stop_language_servers_for_buffers(
         &mut self,
         buffers: Vec<Entity<Buffer>>,
-        also_restart_servers: HashSet<LanguageServerSelector>,
+        also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::StopLanguageServers {
                 project_id,
@@ -10300,7 +10394,7 @@ impl LspStore {
                     .into_iter()
                     .map(|b| b.read(cx).remote_id().to_proto())
                     .collect(),
-                also_servers: also_restart_servers
+                also_servers: also_stop_servers
                     .into_iter()
                     .map(|selector| {
                         let selector = match selector {
@@ -10322,24 +10416,31 @@ impl LspStore {
                     .collect(),
                 all: false,
             });
-            cx.background_spawn(request).detach_and_log_err(cx);
+            cx.background_spawn(async move {
+                let _ = request.await?;
+                Ok(())
+            })
         } else {
-            self.stop_local_language_servers_for_buffers(&buffers, also_restart_servers, cx)
-                .detach();
+            let task =
+                self.stop_local_language_servers_for_buffers(&buffers, also_stop_servers, cx);
+            cx.background_spawn(async move {
+                task.await;
+                Ok(())
+            })
         }
     }
 
     fn stop_local_language_servers_for_buffers(
         &mut self,
         buffers: &[Entity<Buffer>],
-        also_restart_servers: HashSet<LanguageServerSelector>,
+        also_stop_servers: HashSet<LanguageServerSelector>,
         cx: &mut Context<Self>,
     ) -> Task<()> {
         let Some(local) = self.as_local_mut() else {
             return Task::ready(());
         };
         let mut language_server_names_to_stop = BTreeSet::default();
-        let mut language_servers_to_stop = also_restart_servers
+        let mut language_servers_to_stop = also_stop_servers
             .into_iter()
             .flat_map(|selector| match selector {
                 LanguageServerSelector::Id(id) => Some(id),
@@ -10503,7 +10604,7 @@ impl LspStore {
                         code_description: diagnostic
                             .code_description
                             .as_ref()
-                            .map(|d| d.href.clone()),
+                            .and_then(|d| d.href.clone()),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         markdown: adapter.as_ref().and_then(|adapter| {
                             adapter.diagnostic_message_to_markdown(&diagnostic.message)
@@ -10530,7 +10631,7 @@ impl LspStore {
                                     code_description: diagnostic
                                         .code_description
                                         .as_ref()
-                                        .map(|c| c.href.clone()),
+                                        .and_then(|d| d.href.clone()),
                                     severity: DiagnosticSeverity::INFORMATION,
                                     markdown: adapter.as_ref().and_then(|adapter| {
                                         adapter.diagnostic_message_to_markdown(&info.message)
@@ -10671,6 +10772,21 @@ impl LspStore {
         }
 
         // Tell the language server about every open buffer in the worktree that matches the language.
+        // Also check for buffers in worktrees that reused this server
+        let mut worktrees_using_server = vec![key.0];
+        if let Some(local) = self.as_local() {
+            // Find all worktrees that have this server in their language server tree
+            for (worktree_id, servers) in &local.lsp_tree.read(cx).instances {
+                if *worktree_id != key.0 {
+                    for (_, server_map) in &servers.roots {
+                        if server_map.contains_key(&key.1) {
+                            worktrees_using_server.push(*worktree_id);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
             for buffer_handle in buffer_store.buffers() {
@@ -10684,7 +10800,7 @@ impl LspStore {
                     None => continue,
                 };
 
-                if file.worktree.read(cx).id() != key.0
+                if !worktrees_using_server.contains(&file.worktree.read(cx).id())
                     || !self
                         .languages
                         .lsp_adapters(&language.name())
@@ -11221,9 +11337,12 @@ impl LspStore {
     }
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
-        for buffer_lsp_data in self.lsp_data.values_mut() {
-            buffer_lsp_data.colors.remove(&for_server);
-            buffer_lsp_data.cache_version += 1;
+        for buffer_colors in self.lsp_document_colors.values_mut() {
+            buffer_colors.colors.remove(&for_server);
+            buffer_colors.cache_version += 1;
+        }
+        for buffer_lens in self.lsp_code_lens.values_mut() {
+            buffer_lens.lens.remove(&for_server);
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
@@ -11267,13 +11386,13 @@ impl LspStore {
 
     pub fn pull_workspace_diagnostics(&mut self, server_id: LanguageServerId) {
         if let Some(LanguageServerState::Running {
-            workspace_refresh_task: Some((tx, _)),
+            workspace_refresh_task: Some(workspace_refresh_task),
             ..
         }) = self
             .as_local_mut()
             .and_then(|local| local.language_servers.get_mut(&server_id))
         {
-            tx.try_send(()).ok();
+            workspace_refresh_task.refresh_tx.try_send(()).ok();
         }
     }
 
@@ -11289,11 +11408,83 @@ impl LspStore {
             local.language_server_ids_for_buffer(buffer, cx)
         }) {
             if let Some(LanguageServerState::Running {
-                workspace_refresh_task: Some((tx, _)),
+                workspace_refresh_task: Some(workspace_refresh_task),
                 ..
             }) = local.language_servers.get_mut(&server_id)
             {
-                tx.try_send(()).ok();
+                workspace_refresh_task.refresh_tx.try_send(()).ok();
+            }
+        }
+    }
+
+    fn apply_workspace_diagnostic_report(
+        &mut self,
+        server_id: LanguageServerId,
+        report: lsp::WorkspaceDiagnosticReportResult,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace_diagnostics =
+            GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(report, server_id);
+        for workspace_diagnostics in workspace_diagnostics {
+            let LspPullDiagnostics::Response {
+                server_id,
+                uri,
+                diagnostics,
+            } = workspace_diagnostics.diagnostics
+            else {
+                continue;
+            };
+
+            let adapter = self.language_server_adapter_for_id(server_id);
+            let disk_based_sources = adapter
+                .as_ref()
+                .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                .unwrap_or(&[]);
+
+            match diagnostics {
+                PulledDiagnostics::Unchanged { result_id } => {
+                    self.merge_diagnostics(
+                        server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: uri.clone(),
+                            diagnostics: Vec::new(),
+                            version: None,
+                        },
+                        Some(result_id),
+                        DiagnosticSourceKind::Pulled,
+                        disk_based_sources,
+                        |_, _, _| true,
+                        cx,
+                    )
+                    .log_err();
+                }
+                PulledDiagnostics::Changed {
+                    diagnostics,
+                    result_id,
+                } => {
+                    self.merge_diagnostics(
+                        server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: uri.clone(),
+                            diagnostics,
+                            version: workspace_diagnostics.version,
+                        },
+                        result_id,
+                        DiagnosticSourceKind::Pulled,
+                        disk_based_sources,
+                        |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
+                            DiagnosticSourceKind::Pulled => {
+                                let buffer_url = File::from_dyn(buffer.file())
+                                    .map(|f| f.abs_path(cx))
+                                    .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
+                                buffer_url.is_none_or(|buffer_url| buffer_url != uri)
+                            }
+                            DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
+                        },
+                        cx,
+                    )
+                    .log_err();
+                }
             }
         }
     }
@@ -11349,7 +11540,7 @@ fn subscribe_to_binary_statuses(
 fn lsp_workspace_diagnostics_refresh(
     server: Arc<LanguageServer>,
     cx: &mut Context<'_, LspStore>,
-) -> Option<(mpsc::Sender<()>, Task<()>)> {
+) -> Option<WorkspaceRefreshTask> {
     let identifier = match server.capabilities().diagnostic_provider? {
         lsp::DiagnosticServerCapabilities::Options(diagnostic_options) => {
             if !diagnostic_options.workspace_diagnostics {
@@ -11366,19 +11557,22 @@ fn lsp_workspace_diagnostics_refresh(
         }
     };
 
-    let (mut tx, mut rx) = mpsc::channel(1);
-    tx.try_send(()).ok();
+    let (progress_tx, mut progress_rx) = mpsc::channel(1);
+    let (mut refresh_tx, mut refresh_rx) = mpsc::channel(1);
+    refresh_tx.try_send(()).ok();
 
     let workspace_query_language_server = cx.spawn(async move |lsp_store, cx| {
         let mut attempts = 0;
         let max_attempts = 50;
+        let mut requests = 0;
 
         loop {
-            let Some(()) = rx.recv().await else {
+            let Some(()) = refresh_rx.recv().await else {
                 return;
             };
 
             'request: loop {
+                requests += 1;
                 if attempts > max_attempts {
                     log::error!(
                         "Failed to pull workspace diagnostics {max_attempts} times, aborting"
@@ -11407,14 +11601,29 @@ fn lsp_workspace_diagnostics_refresh(
                     return;
                 };
 
+                let token = format!("workspace/diagnostic-{}-{}", server.server_id(), requests);
+
+                progress_rx.try_recv().ok();
+                let timer =
+                    LanguageServer::default_request_timer(cx.background_executor().clone()).fuse();
+                let progress = pin!(progress_rx.recv().fuse());
                 let response_result = server
-                    .request::<lsp::WorkspaceDiagnosticRequest>(lsp::WorkspaceDiagnosticParams {
-                        previous_result_ids,
-                        identifier: identifier.clone(),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                    })
+                    .request_with_timer::<lsp::WorkspaceDiagnosticRequest, _>(
+                        lsp::WorkspaceDiagnosticParams {
+                            previous_result_ids,
+                            identifier: identifier.clone(),
+                            work_done_progress_params: Default::default(),
+                            partial_result_params: lsp::PartialResultParams {
+                                partial_result_token: Some(lsp::ProgressToken::String(token)),
+                            },
+                        },
+                        select(timer, progress).then(|either| match either {
+                            Either::Left((message, ..)) => ready(message).left_future(),
+                            Either::Right(..) => pending::<String>().right_future(),
+                        }),
+                    )
                     .await;
+
                 // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#diagnostic_refresh
                 // >  If a server closes a workspace diagnostic pull request the client should re-trigger the request.
                 match response_result {
@@ -11434,72 +11643,11 @@ fn lsp_workspace_diagnostics_refresh(
                         attempts = 0;
                         if lsp_store
                             .update(cx, |lsp_store, cx| {
-                                let workspace_diagnostics =
-                                    GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(pulled_diagnostics, server.server_id());
-                                for workspace_diagnostics in workspace_diagnostics {
-                                    let LspPullDiagnostics::Response {
-                                        server_id,
-                                        uri,
-                                        diagnostics,
-                                    } = workspace_diagnostics.diagnostics
-                                    else {
-                                        continue;
-                                    };
-
-                                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
-                                    let disk_based_sources = adapter
-                                        .as_ref()
-                                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                                        .unwrap_or(&[]);
-
-                                    match diagnostics {
-                                        PulledDiagnostics::Unchanged { result_id } => {
-                                            lsp_store
-                                                .merge_diagnostics(
-                                                    server_id,
-                                                    lsp::PublishDiagnosticsParams {
-                                                        uri: uri.clone(),
-                                                        diagnostics: Vec::new(),
-                                                        version: None,
-                                                    },
-                                                    Some(result_id),
-                                                    DiagnosticSourceKind::Pulled,
-                                                    disk_based_sources,
-                                                    |_, _, _| true,
-                                                    cx,
-                                                )
-                                                .log_err();
-                                        }
-                                        PulledDiagnostics::Changed {
-                                            diagnostics,
-                                            result_id,
-                                        } => {
-                                            lsp_store
-                                                .merge_diagnostics(
-                                                    server_id,
-                                                    lsp::PublishDiagnosticsParams {
-                                                        uri: uri.clone(),
-                                                        diagnostics,
-                                                        version: workspace_diagnostics.version,
-                                                    },
-                                                    result_id,
-                                                    DiagnosticSourceKind::Pulled,
-                                                    disk_based_sources,
-                                                    |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
-                                                        DiagnosticSourceKind::Pulled => {
-                                                            let buffer_url = File::from_dyn(buffer.file()).map(|f| f.abs_path(cx))
-                                                                .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
-                                                            buffer_url.is_none_or(|buffer_url| buffer_url != uri)
-                                                        },
-                                                        DiagnosticSourceKind::Other
-                                                        | DiagnosticSourceKind::Pushed => true,
-                                                    },
-                                                    cx,
-                                                )
-                                                .log_err();
-                                        }
-                                    }
-                                }
+                                lsp_store.apply_workspace_diagnostic_report(
+                                    server.server_id(),
+                                    pulled_diagnostics,
+                                    cx,
+                                )
                             })
                             .is_err()
                         {
@@ -11512,7 +11660,11 @@ fn lsp_workspace_diagnostics_refresh(
         }
     });
 
-    Some((tx, workspace_query_language_server))
+    Some(WorkspaceRefreshTask {
+        refresh_tx,
+        progress_tx,
+        task: workspace_query_language_server,
+    })
 }
 
 fn resolve_word_completion(snapshot: &BufferSnapshot, completion: &mut Completion) {
@@ -11882,6 +12034,13 @@ impl LanguageServerLogType {
     }
 }
 
+pub struct WorkspaceRefreshTask {
+    refresh_tx: mpsc::Sender<()>,
+    progress_tx: mpsc::Sender<()>,
+    #[allow(dead_code)]
+    task: Task<()>,
+}
+
 pub enum LanguageServerState {
     Starting {
         startup: Task<Option<Arc<LanguageServer>>>,
@@ -11893,7 +12052,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
-        workspace_refresh_task: Option<(mpsc::Sender<()>, Task<()>)>,
+        workspace_refresh_task: Option<WorkspaceRefreshTask>,
     },
 }
 
