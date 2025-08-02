@@ -29,7 +29,7 @@ use lsp::{
     WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
-use paths::{config_dir, tasks_file};
+use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
 use rand::{Rng as _, rngs::StdRng};
@@ -1179,7 +1179,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
 
     let mut new_watched_paths = fs.watched_paths();
-    new_watched_paths.retain(|path| !path.starts_with(config_dir()));
+    new_watched_paths.retain(|path| {
+        !path.starts_with(config_dir()) && !path.starts_with(global_gitignore_path().unwrap())
+    });
     assert_eq!(
         &new_watched_paths,
         &[
@@ -7716,9 +7718,9 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        path!("/root"),
+        path!("/home"),
         json!({
-            "home": {
+            "zed": {
                 ".git": {},
                 "project": {
                     "a.txt": "A"
@@ -7727,9 +7729,8 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
 
-    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/home/zed/project").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
 
@@ -7746,7 +7747,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         assert!(containing.is_none());
     });
 
-    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/home/zed").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
     project
@@ -7766,7 +7767,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .work_directory_abs_path
                 .as_ref(),
-            Path::new(path!("/root/home"))
+            Path::new(path!("/home/zed"))
         );
     });
 }
