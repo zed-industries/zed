@@ -172,7 +172,7 @@ async fn get_context(
         None => String::new(),
     };
     let can_collect_data = false;
-    let git_head_sha = None;
+    let git_info = None;
     cx.update(|cx| {
         gather_context(
             project.as_ref(),
@@ -181,7 +181,7 @@ async fn get_context(
             clipped_cursor,
             move || events,
             can_collect_data,
-            git_head_sha,
+            git_info,
             cx,
         )
     })?
