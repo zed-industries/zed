@@ -31,7 +31,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
 use settings::Settings as _;
-use text::Anchor;
+use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
@@ -61,7 +61,7 @@ pub struct AcpThreadView {
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     message_editor: Entity<Editor>,
-    message_set_from_history: bool,
+    message_set_from_history: Option<BufferSnapshot>,
     _message_editor_subscription: Subscription,
     mention_set: Arc<Mutex<MentionSet>>,
     notifications: Vec<WindowHandle<AgentNotification>>,
@@ -144,14 +144,28 @@ impl AcpThreadView {
             editor
         });
 
-        let message_editor_subscription = cx.subscribe(&message_editor, |this, _, event, _| {
-            if let editor::EditorEvent::BufferEdited = &event {
-                if !this.message_set_from_history {
-                    this.message_history.borrow_mut().reset_position();
+        let message_editor_subscription =
+            cx.subscribe(&message_editor, |this, editor, event, cx| {
+                if let editor::EditorEvent::BufferEdited = &event {
+                    let buffer = editor
+                        .read(cx)
+                        .buffer()
+                        .read(cx)
+                        .as_singleton()
+                        .unwrap()
+                        .read(cx)
+                        .snapshot();
+                    if let Some(message) = this.message_set_from_history.clone()
+                        && message.version() != buffer.version()
+                    {
+                        this.message_set_from_history = None;
+                    }
+
+                    if this.message_set_from_history.is_none() {
+                        this.message_history.borrow_mut().reset_position();
+                    }
                 }
-                this.message_set_from_history = false;
-            }
-        });
+            });
 
         let mention_set = mention_set.clone();
 
@@ -178,7 +192,7 @@ impl AcpThreadView {
             project: project.clone(),
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
-            message_set_from_history: false,
+            message_set_from_history: None,
             _message_editor_subscription: message_editor_subscription,
             mention_set,
             notifications: Vec::new(),
@@ -424,11 +438,21 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.message_set_from_history.is_none() && !self.message_editor.read(cx).is_empty(cx) {
+            self.message_editor.update(cx, |editor, cx| {
+                editor.move_up(&Default::default(), window, cx);
+            });
+            return;
+        }
+
         self.message_set_from_history = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.borrow_mut().prev(),
+            self.message_history
+                .borrow_mut()
+                .prev()
+                .map(|blocks| blocks.as_slice()),
             window,
             cx,
         );
@@ -440,14 +464,35 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.message_set_from_history = Self::set_draft_message(
+        if self.message_set_from_history.is_none() {
+            self.message_editor.update(cx, |editor, cx| {
+                editor.move_down(&Default::default(), window, cx);
+            });
+            return;
+        }
+
+        let mut message_history = self.message_history.borrow_mut();
+        let next_history = message_history.next();
+
+        let set_draft_message = Self::set_draft_message(
             self.message_editor.clone(),
             self.mention_set.clone(),
             self.project.clone(),
-            self.message_history.borrow_mut().next(),
+            Some(
+                next_history
+                    .map(|blocks| blocks.as_slice())
+                    .unwrap_or_else(|| &[]),
+            ),
             window,
             cx,
         );
+        // If we reset the text to an empty string because we ran out of history,
+        // we don't want to mark it as coming from the history
+        self.message_set_from_history = if next_history.is_some() {
+            set_draft_message
+        } else {
+            None
+        };
     }
 
     fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -481,15 +526,13 @@ impl AcpThreadView {
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
         project: Entity<Project>,
-        message: Option<&Vec<acp::ContentBlock>>,
+        message: Option<&[acp::ContentBlock]>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Option<BufferSnapshot> {
         cx.notify();
 
-        let Some(message) = message else {
-            return false;
-        };
+        let message = message?;
 
         let mut text = String::new();
         let mut mentions = Vec::new();
@@ -553,7 +596,8 @@ impl AcpThreadView {
             }
         }
 
-        true
+        let snapshot = snapshot.as_singleton().unwrap().2.clone();
+        Some(snapshot.text)
     }
 
     fn handle_thread_event(
