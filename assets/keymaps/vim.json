@@ -220,6 +220,8 @@
   {
     "context": "vim_mode == normal",
     "bindings": {
+      "i": "vim::InsertBefore",
+      "a": "vim::InsertAfter",
       "ctrl-[": "editor::Cancel",
       ":": "command_palette::Toggle",
       "c": "vim::PushChange",
@@ -353,9 +355,7 @@
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
       "shift-y": "vim::YankLine",
-      "i": "vim::InsertBefore",
       "shift-i": "vim::InsertFirstNonWhitespace",
-      "a": "vim::InsertAfter",
       "shift-a": "vim::InsertEndOfLine",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
@@ -377,6 +377,8 @@
   {
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
+      "i": "vim::HelixInsert",
+      "a": "vim::HelixAppend",
       "ctrl-[": "editor::Cancel",
       ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",

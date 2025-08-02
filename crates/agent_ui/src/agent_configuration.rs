@@ -7,6 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
+use cloud_llm_client::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use extension::ExtensionManifest;
@@ -25,7 +26,6 @@ use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
-use proto::Plan;
 use settings::{Settings, update_settings_file};
 use ui::{
     Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
@@ -180,10 +180,17 @@ impl AgentConfiguration {
         let current_plan = if is_zed_provider {
             self.workspace
                 .upgrade()
-                .and_then(|workspace| workspace.read(cx).user_store().read(cx).current_plan())
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).plan())
         } else {
             None
         };
+
+        let is_signed_in = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.client().status().borrow().is_connected()
+            })
+            .unwrap_or(false);
 
         v_flex()
             .w_full()
@@ -233,8 +240,8 @@ impl AgentConfiguration {
                                                     .size(LabelSize::Large),
                                             )
                                             .map(|this| {
-                                                if is_zed_provider {
-                                                    this.gap_2().child(
+                                                if is_zed_provider && is_signed_in {
+                                                    this.child(
                                                         self.render_zed_plan_info(current_plan, cx),
                                                     )
                                                 } else {
@@ -321,46 +328,62 @@ impl AgentConfiguration {
                     .justify_between()
                     .child(
                         v_flex()
+                            .w_full()
                             .gap_0p5()
-                            .child(Headline::new("LLM Providers"))
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Headline::new("LLM Providers"))
+                                    .child(
+                                        PopoverMenu::new("add-provider-popover")
+                                            .trigger(
+                                                Button::new("add-provider", "Add Provider")
+                                                    .icon_position(IconPosition::Start)
+                                                    .icon(IconName::Plus)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .label_size(LabelSize::Small),
+                                            )
+                                            .anchor(gpui::Corner::TopRight)
+                                            .menu({
+                                                let workspace = self.workspace.clone();
+                                                move |window, cx| {
+                                                    Some(ContextMenu::build(
+                                                        window,
+                                                        cx,
+                                                        |menu, _window, _cx| {
+                                                            menu.header("Compatible APIs").entry(
+                                                                "OpenAI",
+                                                                None,
+                                                                {
+                                                                    let workspace =
+                                                                        workspace.clone();
+                                                                    move |window, cx| {
+                                                                        workspace
+                                                        .update(cx, |workspace, cx| {
+                                                            AddLlmProviderModal::toggle(
+                                                                LlmCompatibleProvider::OpenAi,
+                                                                workspace,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                                    }
+                                                                },
+                                                            )
+                                                        },
+                                                    ))
+                                                }
+                                            }),
+                                    ),
+                            )
                             .child(
                                 Label::new("Add at least one provider to use AI-powered features.")
                                     .color(Color::Muted),
                             ),
-                    )
-                    .child(
-                        PopoverMenu::new("add-provider-popover")
-                            .trigger(
-                                Button::new("add-provider", "Add Provider")
-                                    .icon_position(IconPosition::Start)
-                                    .icon(IconName::Plus)
-                                    .icon_size(IconSize::Small)
-                                    .icon_color(Color::Muted)
-                                    .label_size(LabelSize::Small),
-                            )
-                            .anchor(gpui::Corner::TopRight)
-                            .menu({
-                                let workspace = self.workspace.clone();
-                                move |window, cx| {
-                                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
-                                        menu.header("Compatible APIs").entry("OpenAI", None, {
-                                            let workspace = workspace.clone();
-                                            move |window, cx| {
-                                                workspace
-                                                    .update(cx, |workspace, cx| {
-                                                        AddLlmProviderModal::toggle(
-                                                            LlmCompatibleProvider::OpenAi,
-                                                            workspace,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .log_err();
-                                            }
-                                        })
-                                    }))
-                                }
-                            }),
                     ),
             )
             .child(
@@ -381,9 +404,11 @@ impl AgentConfiguration {
         let fs = self.fs.clone();
 
         SwitchField::new(
-            "single-file-review",
-            "Enable single-file agent reviews",
-            "Agent edits are also displayed in single-file editors for review.",
+            "always-allow-tool-actions-switch",
+            "Allow running commands without asking for confirmation",
+            Some(
+                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
+            ),
             always_allow_tool_actions,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -401,7 +426,7 @@ impl AgentConfiguration {
         SwitchField::new(
             "single-file-review",
             "Enable single-file agent reviews",
-            "Agent edits are also displayed in single-file editors for review.",
+            Some("Agent edits are also displayed in single-file editors for review.".into()),
             single_file_review,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -419,7 +444,9 @@ impl AgentConfiguration {
         SwitchField::new(
             "sound-notification",
             "Play sound when finished generating",
-            "Hear a notification sound when the agent is done generating changes or needs your input.",
+            Some(
+                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
+            ),
             play_sound_when_agent_done,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -437,7 +464,9 @@ impl AgentConfiguration {
         SwitchField::new(
             "modifier-send",
             "Use modifier to submit a message",
-            "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.",
+            Some(
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+            ),
             use_modifier_to_send,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
@@ -479,7 +508,7 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::Free => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
                 Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
                 Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
             };

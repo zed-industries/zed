@@ -1,12 +1,15 @@
 mod agent_api_keys_onboarding;
 mod agent_panel_onboarding_card;
 mod agent_panel_onboarding_content;
+mod ai_upsell_card;
 mod edit_prediction_onboarding_content;
 mod young_account_banner;
 
 pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProviders};
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
+pub use ai_upsell_card::AiUpsellCard;
+use cloud_llm_client::Plan;
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use young_account_banner::YoungAccountBanner;
 
@@ -16,6 +19,7 @@ use client::{Client, UserStore, zed_urls};
 use gpui::{AnyElement, Entity, IntoElement, ParentElement, SharedString};
 use ui::{Divider, List, ListItem, RegisterComponent, TintColor, Tooltip, prelude::*};
 
+#[derive(IntoElement)]
 pub struct BulletItem {
     label: SharedString,
 }
@@ -28,22 +32,32 @@ impl BulletItem {
     }
 }
 
-impl IntoElement for BulletItem {
-    type Element = AnyElement;
+impl RenderOnce for BulletItem {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let line_height = 0.85 * window.line_height();
 
-    fn into_element(self) -> Self::Element {
         ListItem::new("list-item")
             .selectable(false)
-            .start_slot(
-                Icon::new(IconName::Dash)
-                    .size(IconSize::XSmall)
-                    .color(Color::Hidden),
+            .child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_1()
+                    .items_start()
+                    .child(
+                        h_flex().h(line_height).justify_center().child(
+                            Icon::new(IconName::Dash)
+                                .size(IconSize::XSmall)
+                                .color(Color::Hidden),
+                        ),
+                    )
+                    .child(div().w_full().min_w_0().child(Label::new(self.label))),
             )
-            .child(div().w_full().child(Label::new(self.label)))
             .into_any_element()
     }
 }
 
+#[derive(PartialEq)]
 pub enum SignInStatus {
     SignedIn,
     SigningIn,
@@ -66,7 +80,7 @@ impl From<client::Status> for SignInStatus {
 pub struct ZedAiOnboarding {
     pub sign_in_status: SignInStatus,
     pub has_accepted_terms_of_service: bool,
-    pub plan: Option<proto::Plan>,
+    pub plan: Option<Plan>,
     pub account_too_young: bool,
     pub continue_with_zed_ai: Arc<dyn Fn(&mut Window, &mut App)>,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
@@ -86,8 +100,8 @@ impl ZedAiOnboarding {
 
         Self {
             sign_in_status: status.into(),
-            has_accepted_terms_of_service: store.current_user_has_accepted_terms().unwrap_or(false),
-            plan: store.current_plan(),
+            has_accepted_terms_of_service: store.has_accepted_terms_of_service(),
+            plan: store.plan(),
             account_too_young: store.account_too_young(),
             continue_with_zed_ai,
             accept_terms_of_service: Arc::new({
@@ -100,11 +114,9 @@ impl ZedAiOnboarding {
             sign_in: Arc::new(move |_window, cx| {
                 cx.spawn({
                     let client = client.clone();
-                    async move |cx| {
-                        client.authenticate_and_connect(true, cx).await;
-                    }
+                    async move |cx| client.sign_in_with_optional_connect(true, cx).await
                 })
-                .detach();
+                .detach_and_log_err(cx);
             }),
             dismiss_onboarding: None,
         }
@@ -373,7 +385,9 @@ impl ZedAiOnboarding {
             .child(
                 List::new()
                     .child(BulletItem::new("500 prompts with Claude models"))
-                    .child(BulletItem::new("Unlimited edit predictions")),
+                    .child(BulletItem::new(
+                        "Unlimited edit predictions with Zeta, our open-source model",
+                    )),
             )
             .child(
                 Button::new("pro", "Continue with Zed Pro")
@@ -396,9 +410,9 @@ impl RenderOnce for ZedAiOnboarding {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             if self.has_accepted_terms_of_service {
                 match self.plan {
-                    None | Some(proto::Plan::Free) => self.render_free_plan_state(cx),
-                    Some(proto::Plan::ZedProTrial) => self.render_trial_state(cx),
-                    Some(proto::Plan::ZedPro) => self.render_pro_plan_state(cx),
+                    None | Some(Plan::ZedFree) => self.render_free_plan_state(cx),
+                    Some(Plan::ZedProTrial) => self.render_trial_state(cx),
+                    Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
                 }
             } else {
                 self.render_accept_terms_of_service()
@@ -418,7 +432,7 @@ impl Component for ZedAiOnboarding {
         fn onboarding(
             sign_in_status: SignInStatus,
             has_accepted_terms_of_service: bool,
-            plan: Option<proto::Plan>,
+            plan: Option<Plan>,
             account_too_young: bool,
         ) -> AnyElement {
             ZedAiOnboarding {
@@ -453,25 +467,15 @@ impl Component for ZedAiOnboarding {
                     ),
                     single_example(
                         "Free Plan",
-                        onboarding(SignInStatus::SignedIn, true, Some(proto::Plan::Free), false),
+                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedFree), false),
                     ),
                     single_example(
                         "Pro Trial",
-                        onboarding(
-                            SignInStatus::SignedIn,
-                            true,
-                            Some(proto::Plan::ZedProTrial),
-                            false,
-                        ),
+                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedProTrial), false),
                     ),
                     single_example(
                         "Pro Plan",
-                        onboarding(
-                            SignInStatus::SignedIn,
-                            true,
-                            Some(proto::Plan::ZedPro),
-                            false,
-                        ),
+                        onboarding(SignInStatus::SignedIn, true, Some(Plan::ZedPro), false),
                     ),
                 ])
                 .into_any_element(),

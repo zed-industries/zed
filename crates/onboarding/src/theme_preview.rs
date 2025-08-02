@@ -11,22 +11,14 @@ use ui::{
 #[derive(IntoElement, RegisterComponent, Documented)]
 pub struct ThemePreviewTile {
     theme: Arc<Theme>,
-    selected: bool,
     seed: f32,
 }
 
 impl ThemePreviewTile {
-    pub fn new(theme: Arc<Theme>, selected: bool, seed: f32) -> Self {
-        Self {
-            theme,
-            selected,
-            seed,
-        }
-    }
+    pub const CORNER_RADIUS: Pixels = px(8.0);
 
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
+    pub fn new(theme: Arc<Theme>, seed: f32) -> Self {
+        Self { theme, seed }
     }
 }
 
@@ -34,7 +26,7 @@ impl RenderOnce for ThemePreviewTile {
     fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
         let color = self.theme.colors();
 
-        let root_radius = px(8.0);
+        let root_radius = Self::CORNER_RADIUS;
         let root_border = px(2.0);
         let root_padding = px(2.0);
         let child_border = px(1.0);
@@ -43,7 +35,7 @@ impl RenderOnce for ThemePreviewTile {
 
         let item_skeleton = |w: Length, h: Pixels, bg: Hsla| div().w(w).h(h).rounded_full().bg(bg);
 
-        let skeleton_height = px(4.);
+        let skeleton_height = px(2.);
 
         let sidebar_seeded_width = |seed: f32, index: usize| {
             let value = (seed * 1000.0 + index as f32 * 10.0).sin() * 0.5 + 0.5;
@@ -70,12 +62,10 @@ impl RenderOnce for ThemePreviewTile {
             .border_color(color.border_transparent)
             .bg(color.panel_background)
             .child(
-                div()
+                v_flex()
                     .p_2()
-                    .flex()
-                    .flex_col()
                     .size_full()
-                    .gap(px(4.))
+                    .gap_1()
                     .children(sidebar_skeleton),
             );
 
@@ -151,32 +141,19 @@ impl RenderOnce for ThemePreviewTile {
             v_flex()
                 .size_full()
                 .p_1()
-                .gap(px(6.))
+                .gap_1p5()
                 .children(lines)
                 .into_any_element()
         };
 
-        let pane = div()
-            .h_full()
-            .flex_grow()
-            .flex()
-            .flex_col()
-            // .child(
-            //     div()
-            //         .w_full()
-            //         .border_color(color.border)
-            //         .border_b(px(1.))
-            //         .h(relative(0.1))
-            //         .bg(color.tab_bar_background),
-            // )
-            .child(
-                div()
-                    .size_full()
-                    .overflow_hidden()
-                    .bg(color.editor_background)
-                    .p_2()
-                    .child(pseudo_code_skeleton(self.theme.clone(), self.seed)),
-            );
+        let pane = v_flex().h_full().flex_grow().child(
+            div()
+                .size_full()
+                .overflow_hidden()
+                .bg(color.editor_background)
+                .p_2()
+                .child(pseudo_code_skeleton(self.theme.clone(), self.seed)),
+        );
 
         let content = div().size_full().flex().child(sidebar).child(pane);
 
@@ -184,11 +161,6 @@ impl RenderOnce for ThemePreviewTile {
             .size_full()
             .rounded(root_radius)
             .p(root_padding)
-            .border(root_border)
-            .border_color(color.border_transparent)
-            .when(self.selected, |this| {
-                this.border_color(color.border_selected)
-            })
             .child(
                 div()
                     .size_full()
@@ -230,24 +202,14 @@ impl Component for ThemePreviewTile {
                 .p_4()
                 .children({
                     if let Some(one_dark) = one_dark.ok() {
-                        vec![example_group(vec![
-                            single_example(
-                                "Default",
-                                div()
-                                    .w(px(240.))
-                                    .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark.clone(), false, 0.42))
-                                    .into_any_element(),
-                            ),
-                            single_example(
-                                "Selected",
-                                div()
-                                    .w(px(240.))
-                                    .h(px(180.))
-                                    .child(ThemePreviewTile::new(one_dark, true, 0.42))
-                                    .into_any_element(),
-                            ),
-                        ])]
+                        vec![example_group(vec![single_example(
+                            "Default",
+                            div()
+                                .w(px(240.))
+                                .h(px(180.))
+                                .child(ThemePreviewTile::new(one_dark.clone(), 0.42))
+                                .into_any_element(),
+                        )])]
                     } else {
                         vec![]
                     }
@@ -261,12 +223,11 @@ impl Component for ThemePreviewTile {
                                 themes_to_preview
                                     .iter()
                                     .enumerate()
-                                    .map(|(i, theme)| {
-                                        div().w(px(200.)).h(px(140.)).child(ThemePreviewTile::new(
-                                            theme.clone(),
-                                            false,
-                                            0.42,
-                                        ))
+                                    .map(|(_, theme)| {
+                                        div()
+                                            .w(px(200.))
+                                            .h(px(140.))
+                                            .child(ThemePreviewTile::new(theme.clone(), 0.42))
                                     })
                                     .collect::<Vec<_>>(),
                             )

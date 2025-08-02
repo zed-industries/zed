@@ -19,6 +19,7 @@ assistant_slash_commands.workspace = true
 chrono.workspace = true
 client.workspace = true
 clock.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 context_server.workspace = true
 fs.workspace = true
@@ -48,7 +49,6 @@ util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_llm_client.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

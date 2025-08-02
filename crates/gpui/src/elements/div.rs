@@ -1334,7 +1334,6 @@ impl Element for Div {
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
-            state.bounds = bounds;
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
@@ -1706,6 +1705,7 @@ impl Interactivity {
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
                 scroll_handle_state.max_offset = scroll_max;
+                scroll_handle_state.bounds = bounds;
             }
 
             *scroll_offset
@@ -3005,11 +3005,6 @@ impl ScrollHandle {
     /// Return the bounds into which this child is painted
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.borrow().bounds
-    }
-
-    /// Set the bounds into which this child is painted
-    pub(super) fn set_bounds(&self, bounds: Bounds<Pixels>) {
-        self.0.borrow_mut().bounds = bounds;
     }
 
     /// Get the bounds for a specific child.

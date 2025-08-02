@@ -32,7 +32,7 @@ use futures::{
         mpsc::{self, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    future::try_join_all,
+    future::{Shared, try_join_all},
 };
 use gpui::{
     Action, AnyEntity, AnyView, AnyWeakView, App, AsyncApp, AsyncWindowContext, Bounds, Context,
@@ -87,7 +87,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp,
-    collections::hash_map::DefaultHasher,
+    collections::{VecDeque, hash_map::DefaultHasher},
     env,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -1043,6 +1043,13 @@ type PromptForOpenPath = Box<
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>>,
 >;
 
+#[derive(Default)]
+struct DispatchingKeystrokes {
+    dispatched: HashSet<Vec<Keystroke>>,
+    queue: VecDeque<Keystroke>,
+    task: Option<Shared<Task<()>>>,
+}
+
 /// Collects everything project-related for a certain window opened.
 /// In some way, is a counterpart of a window, as the [`WindowHandle`] could be downcast into `Workspace`.
 ///
@@ -1058,7 +1065,6 @@ pub struct Workspace {
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
-    bottom_dock_layout: BottomDockLayout,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
@@ -1080,11 +1086,12 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
-    dispatching_keystrokes: Rc<RefCell<(HashSet<String>, Vec<Keystroke>)>>,
+    dispatching_keystrokes: Rc<RefCell<DispatchingKeystrokes>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
-    _schedule_serialize: Option<Task<()>>,
+    _schedule_serialize_workspace: Option<Task<()>>,
+    _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1097,6 +1104,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    scheduled_tasks: Vec<Task<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1142,6 +1150,8 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
+                    this.update_ssh_paths(cx);
+                    this.serialize_ssh_paths(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.update_history(cx);
@@ -1299,7 +1309,6 @@ impl Workspace {
         )
         .detach();
 
-        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
@@ -1398,7 +1407,6 @@ impl Workspace {
             suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
-            bottom_dock_layout,
             right_dock,
             project: project.clone(),
             follower_states: Default::default(),
@@ -1411,7 +1419,8 @@ impl Workspace {
             app_state,
             _observe_current_user,
             _apply_leader_updates,
-            _schedule_serialize: None,
+            _schedule_serialize_workspace: None,
+            _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -1428,6 +1437,7 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            scheduled_tasks: Vec::new(),
         }
     }
 
@@ -1624,10 +1634,6 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn bottom_dock_layout(&self) -> BottomDockLayout {
-        self.bottom_dock_layout
-    }
-
     pub fn set_bottom_dock_layout(
         &mut self,
         layout: BottomDockLayout,
@@ -1639,7 +1645,6 @@ impl Workspace {
             content.bottom_dock_layout = Some(layout);
         });
 
-        self.bottom_dock_layout = layout;
         cx.notify();
         self.serialize_workspace(window, cx);
     }
@@ -2311,49 +2316,65 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut state = self.dispatching_keystrokes.borrow_mut();
-        if !state.0.insert(action.0.clone()) {
-            cx.propagate();
-            return;
-        }
-        let mut keystrokes: Vec<Keystroke> = action
+        let keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
-        keystrokes.reverse();
+        let _ = self.send_keystrokes_impl(keystrokes, window, cx);
+    }
 
-        state.1.append(&mut keystrokes);
-        drop(state);
+    pub fn send_keystrokes_impl(
+        &mut self,
+        keystrokes: Vec<Keystroke>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Shared<Task<()>> {
+        let mut state = self.dispatching_keystrokes.borrow_mut();
+        if !state.dispatched.insert(keystrokes.clone()) {
+            cx.propagate();
+            return state.task.clone().unwrap();
+        }
+
+        state.queue.extend(keystrokes);
 
         let keystrokes = self.dispatching_keystrokes.clone();
-        window
-            .spawn(cx, async move |cx| {
-                // limit to 100 keystrokes to avoid infinite recursion.
-                for _ in 0..100 {
-                    let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
-                        keystrokes.borrow_mut().0.clear();
-                        return Ok(());
-                    };
-                    cx.update(|window, cx| {
-                        let focused = window.focused(cx);
-                        window.dispatch_keystroke(keystroke.clone(), cx);
-                        if window.focused(cx) != focused {
-                            // dispatch_keystroke may cause the focus to change.
-                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                            // And we need that to happen before the next keystroke to keep vim mode happy...
-                            // (Note that the tests always do this implicitly, so you must manually test with something like:
-                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                            // )
-                            window.draw(cx).clear();
+        if state.task.is_none() {
+            state.task = Some(
+                window
+                    .spawn(cx, async move |cx| {
+                        // limit to 100 keystrokes to avoid infinite recursion.
+                        for _ in 0..100 {
+                            let mut state = keystrokes.borrow_mut();
+                            let Some(keystroke) = state.queue.pop_front() else {
+                                state.dispatched.clear();
+                                state.task.take();
+                                return;
+                            };
+                            drop(state);
+                            cx.update(|window, cx| {
+                                let focused = window.focused(cx);
+                                window.dispatch_keystroke(keystroke.clone(), cx);
+                                if window.focused(cx) != focused {
+                                    // dispatch_keystroke may cause the focus to change.
+                                    // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                                    // And we need that to happen before the next keystroke to keep vim mode happy...
+                                    // (Note that the tests always do this implicitly, so you must manually test with something like:
+                                    //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                                    // )
+                                    window.draw(cx).clear();
+                                }
+                            })
+                            .ok();
                         }
-                    })?;
-                }
 
-                *keystrokes.borrow_mut() = Default::default();
-                anyhow::bail!("over 100 keystrokes passed to send_keystrokes");
-            })
-            .detach_and_log_err(cx);
+                        *keystrokes.borrow_mut() = Default::default();
+                        log::error!("over 100 keystrokes passed to send_keystrokes");
+                    })
+                    .shared(),
+            );
+        }
+        state.task.clone().unwrap()
     }
 
     fn save_all_internal(
@@ -5056,6 +5077,46 @@ impl Workspace {
         }
     }
 
+    fn update_ssh_paths(&mut self, cx: &App) {
+        let project = self.project().read(cx);
+        if !project.is_local() {
+            let paths: Vec<String> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                .collect();
+            if let Some(ssh_project) = &mut self.serialized_ssh_project {
+                ssh_project.paths = paths;
+            }
+        }
+    }
+
+    fn serialize_ssh_paths(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
+        if self._schedule_serialize_ssh_paths.is_none() {
+            self._schedule_serialize_ssh_paths =
+                Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(SERIALIZATION_THROTTLE_TIME)
+                        .await;
+                    this.update_in(cx, |this, window, cx| {
+                        let task = if let Some(ssh_project) = &this.serialized_ssh_project {
+                            let ssh_project_id = ssh_project.id;
+                            let ssh_project_paths = ssh_project.paths.clone();
+                            window.spawn(cx, async move |_| {
+                                persistence::DB
+                                    .update_ssh_project_paths(ssh_project_id, ssh_project_paths)
+                                    .await
+                            })
+                        } else {
+                            Task::ready(Err(anyhow::anyhow!("No SSH project to serialize")))
+                        };
+                        task.detach();
+                        this._schedule_serialize_ssh_paths.take();
+                    })
+                    .log_err();
+                }));
+        }
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -5099,17 +5160,18 @@ impl Workspace {
     }
 
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self._schedule_serialize.is_none() {
-            self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                this.update_in(cx, |this, window, cx| {
-                    this.serialize_workspace_internal(window, cx).detach();
-                    this._schedule_serialize.take();
-                })
-                .log_err();
-            }));
+        if self._schedule_serialize_workspace.is_none() {
+            self._schedule_serialize_workspace =
+                Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(SERIALIZATION_THROTTLE_TIME)
+                        .await;
+                    this.update_in(cx, |this, window, cx| {
+                        this.serialize_workspace_internal(window, cx).detach();
+                        this._schedule_serialize_workspace.take();
+                    })
+                    .log_err();
+                }));
         }
     }
 
@@ -5672,7 +5734,6 @@ impl Workspace {
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
-
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         window.activate_window();
@@ -6221,6 +6282,7 @@ impl Render for Workspace {
             .iter()
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
+        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -6344,7 +6406,7 @@ impl Render for Workspace {
                                     ))
                                 })
                                 .child({
-                                    match self.bottom_dock_layout {
+                                    match bottom_dock_layout {
                                         BottomDockLayout::Full => div()
                                             .flex()
                                             .flex_col()
@@ -6876,10 +6938,13 @@ async fn join_channel_internal(
         match status {
             Status::Connecting
             | Status::Authenticating
+            | Status::Authenticated
             | Status::Reconnecting
             | Status::Reauthenticating => continue,
             Status::Connected { .. } => break 'outer,
-            Status::SignedOut => return Err(ErrorCode::SignedOut.into()),
+            Status::SignedOut | Status::AuthenticationError => {
+                return Err(ErrorCode::SignedOut.into());
+            }
             Status::UpgradeRequired => return Err(ErrorCode::UpgradeRequired.into()),
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
                 return Err(ErrorCode::Disconnected.into());

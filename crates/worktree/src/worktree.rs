@@ -62,7 +62,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet, Unit};
+use sum_tree::{Bias, Edit, KeyedItem, SeekTarget, SumTree, Summary, TreeMap, TreeSet};
 use text::{LineEnding, Rope};
 use util::{
     ResultExt,
@@ -407,12 +407,12 @@ struct LocalRepositoryEntry {
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<Unit>;
+    type Summary = PathSummary<&'static ()>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path_key().0,
-            item_summary: Unit,
+            item_summary: &(),
         }
     }
 }
@@ -424,12 +424,6 @@ impl KeyedItem for LocalRepositoryEntry {
         self.work_directory.path_key()
     }
 }
-
-//impl LocalRepositoryEntry {
-//    pub fn repo(&self) -> &Arc<dyn GitRepository> {
-//        &self.repo_ptr
-//    }
-//}
 
 impl Deref for LocalRepositoryEntry {
     type Target = WorkDirectory;
@@ -5417,7 +5411,7 @@ impl<'a> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget
     }
 }
 
-impl<'a> SeekTarget<'a, PathSummary<Unit>, TraversalProgress<'a>> for TraversalTarget<'_> {
+impl<'a> SeekTarget<'a, PathSummary<&'static ()>, TraversalProgress<'a>> for TraversalTarget<'_> {
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
         self.cmp_progress(cursor_location)
     }

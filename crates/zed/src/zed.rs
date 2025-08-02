@@ -111,6 +111,8 @@ actions!(
         Zoom,
         /// Triggers a test panic for debugging.
         TestPanic,
+        /// Triggers a hard crash for debugging.
+        TestCrash,
     ]
 );
 
@@ -124,9 +126,28 @@ pub fn init(cx: &mut App) {
     cx.on_action(quit);
 
     cx.on_action(|_: &RestoreBanner, cx| title_bar::restore_banner(cx));
-    if ReleaseChannel::global(cx) == ReleaseChannel::Dev || cx.has_flag::<PanicFeatureFlag>() {
-        cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
-    }
+    let flag = cx.wait_for_flag::<PanicFeatureFlag>();
+    cx.spawn(async |cx| {
+        if cx
+            .update(|cx| ReleaseChannel::global(cx) == ReleaseChannel::Dev)
+            .unwrap_or_default()
+            || flag.await
+        {
+            cx.update(|cx| {
+                cx.on_action(|_: &TestPanic, _| panic!("Ran the TestPanic action"));
+                cx.on_action(|_: &TestCrash, _| {
+                    unsafe extern "C" {
+                        fn puts(s: *const i8);
+                    }
+                    unsafe {
+                        puts(0xabad1d3a as *const i8);
+                    }
+                });
+            })
+            .ok();
+        };
+    })
+    .detach();
     cx.on_action(|_: &OpenLog, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_log_file(workspace, window, cx);
@@ -4333,6 +4354,7 @@ mod tests {
                 "menu",
                 "notebook",
                 "notification_panel",
+                "onboarding",
                 "outline",
                 "outline_panel",
                 "pane",
@@ -4345,6 +4367,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "settings_profile_selector",
                 "snippets",
                 "supermaven",
                 "svg",

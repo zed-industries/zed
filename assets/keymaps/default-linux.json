@@ -232,7 +232,7 @@
       "ctrl-n": "agent::NewThread",
       "ctrl-alt-n": "agent::NewTextThread",
       "ctrl-shift-h": "agent::OpenHistory",
-      "ctrl-alt-c": "agent::OpenConfiguration",
+      "ctrl-alt-c": "agent::OpenSettings",
       "ctrl-alt-p": "agent::OpenRulesLibrary",
       "ctrl-i": "agent::ToggleProfileSelector",
       "ctrl-alt-/": "agent::ToggleModelSelector",
@@ -495,7 +495,7 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-ctrl-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
-      "ctrl-m": "editor::MoveToEnclosingBracket",
+      "ctrl-m": "editor::MoveToEnclosingBracket", // from jetbrains
       "ctrl-|": "editor::MoveToEnclosingBracket",
       "ctrl-{": "editor::Fold",
       "ctrl-}": "editor::UnfoldLines",
@@ -598,6 +598,7 @@
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymapEditor",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
+      "ctrl-alt-super-p": "settings_profile_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
       "ctrl-p": "file_finder::Toggle",
       "ctrl-tab": "tab_switcher::Toggle",
@@ -872,8 +873,6 @@
       "tab": "git_panel::FocusEditor",
       "shift-tab": "git_panel::FocusEditor",
       "escape": "git_panel::ToggleFocus",
-      "ctrl-enter": "git::Commit",
-      "ctrl-shift-enter": "git::Amend",
       "alt-enter": "menu::SecondaryConfirm",
       "delete": ["git::RestoreFile", { "skip_prompt": false }],
       "backspace": ["git::RestoreFile", { "skip_prompt": false }],
@@ -910,7 +909,9 @@
       "ctrl-g backspace": "git::RestoreTrackedFiles",
       "ctrl-g shift-backspace": "git::TrashUntrackedFiles",
       "ctrl-space": "git::StageAll",
-      "ctrl-shift-space": "git::UnstageAll"
+      "ctrl-shift-space": "git::UnstageAll",
+      "ctrl-enter": "git::Commit",
+      "ctrl-shift-enter": "git::Amend"
     }
   },
   {
@@ -1166,6 +1167,15 @@
     "bindings": {
       "up": "menu::SelectPrevious",
       "down": "menu::SelectNext"
+    }
+  },
+  {
+    "context": "Onboarding",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-1": "onboarding::ActivateBasicsPage",
+      "ctrl-2": "onboarding::ActivateEditingPage",
+      "ctrl-3": "onboarding::ActivateAISetupPage"
     }
   }
 ]

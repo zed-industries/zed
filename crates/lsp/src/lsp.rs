@@ -29,7 +29,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     io::Write,
-    ops::{Deref, DerefMut},
+    ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -100,7 +100,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
     root_uri: Url,
 }
 
@@ -307,7 +307,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -381,7 +381,7 @@ impl LanguageServer {
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
         root_uri: Url,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -421,14 +421,14 @@ impl LanguageServer {
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(async move |_| {
+                cx.background_spawn(async move {
                     Self::handle_stderr(stderr, io_handlers, stderr_captures)
                         .log_err()
                         .await
                 })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(async move |_| {
+        let input_task = cx.background_spawn(async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
@@ -595,16 +595,26 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
-        let workspace_folders = self
-            .workspace_folders
-            .lock()
-            .iter()
-            .cloned()
-            .map(|uri| WorkspaceFolder {
-                name: Default::default(),
-                uri,
-            })
-            .collect::<Vec<_>>();
+        let workspace_folders = self.workspace_folders.as_ref().map_or_else(
+            || {
+                vec![WorkspaceFolder {
+                    name: Default::default(),
+                    uri: self.root_uri.clone(),
+                }]
+            },
+            |folders| {
+                folders
+                    .lock()
+                    .iter()
+                    .cloned()
+                    .map(|uri| WorkspaceFolder {
+                        name: Default::default(),
+                        uri,
+                    })
+                    .collect()
+            },
+        );
+
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
@@ -836,7 +846,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             let response = self
                 .request::<request::Initialize>(params)
                 .await
@@ -877,39 +887,41 @@ impl LanguageServer {
 
             let server = self.server.clone();
             let name = self.name.clone();
+            let server_id = self.server_id;
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
-                async move {
-                    log::debug!("language server shutdown started");
+            Some(async move {
+                log::debug!("language server shutdown started");
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            match request_result {
-                                ConnectionResult::Timeout => {
-                                    log::warn!("timeout waiting for language server {name} to shutdown");
-                                },
-                                ConnectionResult::ConnectionReset => {},
-                                ConnectionResult::Result(r) => r?,
-                            }
+                select! {
+                    request_result = shutdown_request.fuse() => {
+                        match request_result {
+                            ConnectionResult::Timeout => {
+                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                            },
+                            ConnectionResult::ConnectionReset => {
+                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                            },
+                            ConnectionResult::Result(Err(e)) => {
+                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                            },
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
                     }
 
-                    response_handlers.lock().take();
-                    Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                    outbound_tx.close();
-                    output_done.recv().await;
-                    server.lock().take().map(|mut child| child.kill());
-                    log::debug!("language server shutdown finished");
-
-                    drop(tasks);
-                    anyhow::Ok(())
+                    _ = timer => {
+                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    },
                 }
-                .log_err(),
-            )
+
+                response_handlers.lock().take();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                outbound_tx.close();
+                output_done.recv().await;
+                server.lock().take().map(|mut child| child.kill());
+                drop(tasks);
+                log::debug!("language server shutdown finished");
+                Some(())
+            })
         } else {
             None
         }
@@ -1313,7 +1325,10 @@ impl LanguageServer {
             return;
         }
 
-        let is_new_folder = self.workspace_folders.lock().insert(uri.clone());
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let is_new_folder = workspace_folders.lock().insert(uri.clone());
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1343,7 +1358,10 @@ impl LanguageServer {
         {
             return;
         }
-        let was_removed = self.workspace_folders.lock().remove(&uri);
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let was_removed = workspace_folders.lock().remove(&uri);
         if was_removed {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1358,7 +1376,10 @@ impl LanguageServer {
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
-        let mut workspace_folders = self.workspace_folders.lock();
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let mut workspace_folders = workspace_folders.lock();
 
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
@@ -1387,8 +1408,11 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders(&self) -> impl Deref<Target = BTreeSet<Url>> + '_ {
-        self.workspace_folders.lock()
+    pub fn workspace_folders(&self) -> BTreeSet<Url> {
+        self.workspace_folders.as_ref().map_or_else(
+            || BTreeSet::from_iter([self.root_uri.clone()]),
+            |folders| folders.lock().clone(),
+        )
     }
 
     pub fn register_buffer(
@@ -1533,7 +1557,7 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
-            workspace_folders.clone(),
+            Some(workspace_folders.clone()),
             cx,
             |_| {},
         );
@@ -1552,7 +1576,7 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
-                    workspace_folders,
+                    Some(workspace_folders),
                     cx,
                     move |msg| {
                         notifications_tx

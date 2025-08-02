@@ -1,15 +1,13 @@
 use anyhow::{Context as _, bail};
-use axum::{Extension, Json, Router, extract, routing::post};
 use chrono::{DateTime, Utc};
+use cloud_llm_client::LanguageModelProvider;
 use collections::{HashMap, HashSet};
-use reqwest::StatusCode;
 use sea_orm::ActiveValue;
-use serde::{Deserialize, Serialize};
 use std::{sync::Arc, time::Duration};
 use stripe::{CancellationDetailsReason, EventObject, EventType, ListEvents, SubscriptionStatus};
 use util::{ResultExt, maybe};
-use zed_llm_client::LanguageModelProvider;
 
+use crate::AppState;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -19,7 +17,6 @@ use crate::stripe_client::{
     StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
     StripeSubscriptionId,
 };
-use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
@@ -29,70 +26,6 @@ use crate::{
     },
     stripe_billing::StripeBilling,
 };
-
-pub fn router() -> Router {
-    Router::new().route(
-        "/billing/subscriptions/sync",
-        post(sync_billing_subscription),
-    )
-}
-
-#[derive(Debug, Deserialize)]
-struct SyncBillingSubscriptionBody {
-    github_user_id: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct SyncBillingSubscriptionResponse {
-    stripe_customer_id: String,
-}
-
-async fn sync_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Json(body): extract::Json<SyncBillingSubscriptionBody>,
-) -> Result<Json<SyncBillingSubscriptionResponse>> {
-    let Some(stripe_client) = app.stripe_client.clone() else {
-        log::error!("failed to retrieve Stripe client");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let billing_customer = app
-        .db
-        .get_billing_customer_by_user_id(user.id)
-        .await?
-        .context("billing customer not found")?;
-    let stripe_customer_id = StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
-
-    let subscriptions = stripe_client
-        .list_subscriptions_for_customer(&stripe_customer_id)
-        .await?;
-
-    for subscription in subscriptions {
-        let subscription_id = subscription.id.clone();
-
-        sync_subscription(&app, &stripe_client, subscription)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to sync subscription {subscription_id} for user {}",
-                    user.id,
-                )
-            })?;
-    }
-
-    Ok(Json(SyncBillingSubscriptionResponse {
-        stripe_customer_id: billing_customer.stripe_customer_id.clone(),
-    }))
-}
 
 /// The amount of time we wait in between each poll of Stripe events.
 ///
@@ -154,6 +87,14 @@ async fn poll_stripe_events(
     stripe_client: &Arc<dyn StripeClient>,
     real_stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_events_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-events-polling" && flag.enabled_for_all);
+    if sync_events_using_cloud {
+        return Ok(());
+    }
+
     fn event_type_to_string(event_type: EventType) -> String {
         // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
         // so we need to unquote it.
@@ -636,6 +577,14 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_model_request_usage_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-usage-meters-sync" && flag.enabled_for_all);
+    if sync_model_request_usage_using_cloud {
+        return Ok(());
+    }
+
     log::info!("Stripe usage sync: Starting");
     let started_at = Utc::now();
 
