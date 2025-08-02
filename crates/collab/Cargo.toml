@@ -23,13 +23,14 @@ async-stripe.workspace = true
 async-trait.workspace = true
 async-tungstenite.workspace = true
 aws-config = { version = "1.1.5" }
-aws-sdk-s3 = { version = "1.15.0" }
 aws-sdk-kinesis = "1.51.0"
+aws-sdk-s3 = { version = "1.15.0" }
 axum = { version = "0.6", features = ["json", "headers", "ws"] }
 axum-extra = { version = "0.4", features = ["erased-json"] }
 base64.workspace = true
 chrono.workspace = true
 clock.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 dashmap.workspace = true
 derive_more.workspace = true
@@ -75,7 +76,6 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "re
 util.workspace = true
 uuid.workspace = true
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
 
 [dev-dependencies]
 agent_settings.workspace = true

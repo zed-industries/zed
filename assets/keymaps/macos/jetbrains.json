@@ -97,7 +97,7 @@
       "cmd-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-alt-r": "task::Spawn",
       "cmd-e": "file_finder::Toggle",
-      "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      // "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",

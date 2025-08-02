@@ -71,12 +71,12 @@ use ui::{
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
+use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
-use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -2419,7 +2419,7 @@ impl GitPanel {
                     .committer_name
                     .clone()
                     .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.github_login.clone());
+                    .unwrap_or_else(|| participant.user.github_login.clone().to_string());
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
@@ -2439,7 +2439,7 @@ impl GitPanel {
             .name
             .clone()
             .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.github_login.clone());
+            .unwrap_or_else(|| user.github_login.clone().to_string());
         Some((name, email))
     }
 
