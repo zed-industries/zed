@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
@@ -86,7 +86,7 @@ impl LspAdapter for VtslsLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let env = delegate.shell_env().await;
@@ -211,7 +211,7 @@ impl LspAdapter for VtslsLspAdapter {
         self: Arc<Self>,
         fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let tsdk_path = Self::tsdk_path(fs, delegate).await;

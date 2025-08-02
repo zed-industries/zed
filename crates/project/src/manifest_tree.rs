@@ -28,9 +28,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-pub(crate) use server_tree::{
-    AdapterQuery, LanguageServerTree, LanguageServerTreeNode, LaunchDisposition,
-};
+pub(crate) use server_tree::{LanguageServerTree, LanguageServerTreeNode, LaunchDisposition};
 
 struct WorktreeRoots {
     roots: RootPathTrie<ManifestName>,
@@ -107,24 +105,23 @@ impl ManifestTree {
             worktree_store,
         })
     }
+
     pub(crate) fn root_for_path(
         &mut self,
-        ProjectPath { worktree_id, path }: ProjectPath,
-        manifests: &mut dyn Iterator<Item = ManifestName>,
-        delegate: Arc<dyn ManifestDelegate>,
+        ProjectPath { worktree_id, path }: &ProjectPath,
+        manifest_name: &ManifestName,
+        delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
-    ) -> BTreeMap<ManifestName, ProjectPath> {
-        debug_assert_eq!(delegate.worktree_id(), worktree_id);
-        let mut roots = BTreeMap::from_iter(
-            manifests.map(|manifest| (manifest, (None, LabelPresence::KnownAbsent))),
-        );
-        let worktree_roots = match self.root_points.entry(worktree_id) {
+    ) -> Option<ProjectPath> {
+        debug_assert_eq!(delegate.worktree_id(), *worktree_id);
+        let (mut marked_path, mut current_presence) = (None, LabelPresence::KnownAbsent);
+        let worktree_roots = match self.root_points.entry(*worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
                 let Some(worktree) = self
                     .worktree_store
                     .read(cx)
-                    .worktree_for_id(worktree_id, cx)
+                    .worktree_for_id(*worktree_id, cx)
                 else {
                     return Default::default();
                 };
@@ -133,16 +130,16 @@ impl ManifestTree {
             }
         };
 
-        let key = TriePath::from(&*path);
+        let key = TriePath::from(&**path);
         worktree_roots.read_with(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
-                    if let Some((marked_path, current_presence)) = roots.get_mut(label) {
-                        if *current_presence > *presence {
+                    if label == manifest_name {
+                        if current_presence > *presence {
                             debug_assert!(false, "RootPathTrie precondition violation; while walking the tree label presence is only allowed to increase");
                         }
-                        *marked_path = Some(ProjectPath {worktree_id, path: path.clone()});
-                        *current_presence = *presence;
+                        marked_path = Some(ProjectPath {worktree_id: *worktree_id, path: path.clone()});
+                        current_presence = *presence;
                     }
 
                 }
@@ -150,12 +147,9 @@ impl ManifestTree {
             });
         });
 
-        for (manifest_name, (root_path, presence)) in &mut roots {
-            if *presence == LabelPresence::Present {
-                continue;
-            }
-
-            let depth = root_path
+        if current_presence == LabelPresence::KnownAbsent {
+            // Some part of the path is unexplored.
+            let depth = marked_path
                 .as_ref()
                 .map(|root_path| {
                     path.strip_prefix(&root_path.path)
@@ -165,13 +159,9 @@ impl ManifestTree {
                 })
                 .unwrap_or_else(|| path.components().count() + 1);
 
-            if depth > 0 {
-                let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
-                else {
-                    log::warn!("Manifest provider `{}` not found", manifest_name.as_ref());
-                    continue;
-                };
-
+            if depth > 0
+                && let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
+            {
                 let root = provider.search(ManifestQuery {
                     path: path.clone(),
                     depth,
@@ -182,9 +172,9 @@ impl ManifestTree {
                         let root = TriePath::from(&*known_root);
                         this.roots
                             .insert(&root, manifest_name.clone(), LabelPresence::Present);
-                        *presence = LabelPresence::Present;
-                        *root_path = Some(ProjectPath {
-                            worktree_id,
+                        current_presence = LabelPresence::Present;
+                        marked_path = Some(ProjectPath {
+                            worktree_id: *worktree_id,
                             path: known_root,
                         });
                     }),
@@ -195,15 +185,26 @@ impl ManifestTree {
                 }
             }
         }
-
-        roots
-            .into_iter()
-            .filter_map(|(k, (path, presence))| {
-                let path = path?;
-                presence.eq(&LabelPresence::Present).then(|| (k, path))
-            })
-            .collect()
+        marked_path.filter(|_| current_presence.eq(&LabelPresence::Present))
     }
+
+    pub(crate) fn root_for_path_or_worktree_root(
+        &mut self,
+        project_path: &ProjectPath,
+        manifest_name: Option<&ManifestName>,
+        delegate: &Arc<dyn ManifestDelegate>,
+        cx: &mut App,
+    ) -> ProjectPath {
+        let worktree_id = project_path.worktree_id;
+        // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
+        manifest_name
+            .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
+            .unwrap_or_else(|| ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("")),
+            })
+    }
+
     fn on_worktree_store_event(
         &mut self,
         _: Entity<WorktreeStore>,
@@ -223,6 +224,7 @@ impl ManifestTree {
 pub(crate) struct ManifestQueryDelegate {
     worktree: Snapshot,
 }
+
 impl ManifestQueryDelegate {
     pub fn new(worktree: Snapshot) -> Self {
         Self { worktree }

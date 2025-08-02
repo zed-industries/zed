@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
+use language::{LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::Fs;
@@ -43,7 +43,7 @@ impl LspAdapter for CssLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate

@@ -176,11 +176,13 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             adapters: vec![python_lsp_adapter.clone(), py_lsp_adapter.clone()],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
+            manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
         },
         LanguageInfo {
             name: "rust",
             adapters: vec![rust_lsp_adapter],
             context: Some(rust_context_provider),
+            manifest_name: Some(SharedString::new_static("Cargo.toml").into()),
             ..Default::default()
         },
         LanguageInfo {
@@ -349,6 +351,7 @@ struct LanguageInfo {
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
+    manifest_name: Option<ManifestName>,
 }
 
 fn register_language(
@@ -357,6 +360,7 @@ fn register_language(
     adapters: Vec<Arc<dyn LspAdapter>>,
     context: Option<Arc<dyn ContextProvider>>,
     toolchain: Option<Arc<dyn ToolchainLister>>,
+    manifest_name: Option<ManifestName>,
 ) {
     let config = load_config(name);
     for adapter in adapters {
@@ -367,6 +371,7 @@ fn register_language(
         config.grammar.clone(),
         config.matcher.clone(),
         config.hidden,
+        config.manifest_name,
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),

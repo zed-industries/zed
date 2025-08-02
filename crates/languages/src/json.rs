@@ -8,7 +8,7 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageRegistry, LanguageToolchainStore, LocalFile as _, LspAdapter,
+    ContextProvider, LanguageRegistry, LocalFile as _, LocalLanguageToolchainStore, LspAdapter,
     LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -295,7 +295,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
@@ -391,7 +391,7 @@ impl LspAdapter for JsonLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = self.get_or_init_workspace_config(cx).await?;
@@ -515,7 +515,7 @@ impl LspAdapter for NodeVersionAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
