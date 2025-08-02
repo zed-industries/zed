@@ -87,4 +87,12 @@ interface lsp {
         type-parameter,
         other(s32),
     }
+
+    /// An LSP toolchain.
+    record toolchain {
+        name: string,
+        path: string,
+        language-name: string,
+        as-json: string
+    }
 }

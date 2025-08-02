@@ -4365,6 +4365,7 @@ dependencies = [
  "dap",
  "extension",
  "gpui",
+ "language",
  "serde_json",
  "task",
  "util",
