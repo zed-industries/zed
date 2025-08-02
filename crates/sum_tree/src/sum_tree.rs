@@ -41,16 +41,14 @@ pub trait Summary: Clone {
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
 
-/// This type exists because we can't implement Summary for () without causing
-/// type resolution errors
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct Unit;
-
-impl Summary for Unit {
+/// Catch-all implementation for when you need something that implements [`Summary`] without a specific type.
+/// We implement it on a &'static, as that avoids blanket impl collisions with `impl<T: Summary> Dimension for T`
+/// (as we also need unit type to be a fill-in dimension)
+impl Summary for &'static () {
     type Context = ();
 
     fn zero(_: &()) -> Self {
-        Unit
+        &()
     }
 
     fn add_summary(&mut self, _: &Self, _: &()) {}

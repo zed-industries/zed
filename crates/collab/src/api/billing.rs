@@ -1,23 +1,13 @@
 use anyhow::{Context as _, bail};
-use axum::{Extension, Json, Router, extract, routing::post};
 use chrono::{DateTime, Utc};
+use cloud_llm_client::LanguageModelProvider;
 use collections::{HashMap, HashSet};
-use reqwest::StatusCode;
 use sea_orm::ActiveValue;
-use serde::{Deserialize, Serialize};
-use std::{str::FromStr, sync::Arc, time::Duration};
-use stripe::{
-    BillingPortalSession, CancellationDetailsReason, CreateBillingPortalSession,
-    CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
-    CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
-    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirm,
-    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems,
-    CreateBillingPortalSessionFlowDataType, CustomerId, EventObject, EventType, ListEvents,
-    PaymentMethod, Subscription, SubscriptionId, SubscriptionStatus,
-};
+use std::{sync::Arc, time::Duration};
+use stripe::{CancellationDetailsReason, EventObject, EventType, ListEvents, SubscriptionStatus};
 use util::{ResultExt, maybe};
-use zed_llm_client::LanguageModelProvider;
 
+use crate::AppState;
 use crate::db::billing_subscription::{
     StripeCancellationReason, StripeSubscriptionStatus, SubscriptionKind,
 };
@@ -25,449 +15,17 @@ use crate::llm::db::subscription_usage_meter::{self, CompletionMode};
 use crate::rpc::{ResultExt as _, Server};
 use crate::stripe_client::{
     StripeCancellationDetailsReason, StripeClient, StripeCustomerId, StripeSubscription,
-    StripeSubscriptionId, UpdateCustomerParams,
+    StripeSubscriptionId,
 };
-use crate::{AppState, Error, Result};
 use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
-        BillingSubscriptionId, CreateBillingCustomerParams, CreateBillingSubscriptionParams,
+        CreateBillingCustomerParams, CreateBillingSubscriptionParams,
         CreateProcessedStripeEventParams, UpdateBillingCustomerParams,
         UpdateBillingSubscriptionParams, billing_customer,
     },
     stripe_billing::StripeBilling,
 };
-
-pub fn router() -> Router {
-    Router::new()
-        .route("/billing/subscriptions", post(create_billing_subscription))
-        .route(
-            "/billing/subscriptions/manage",
-            post(manage_billing_subscription),
-        )
-        .route(
-            "/billing/subscriptions/sync",
-            post(sync_billing_subscription),
-        )
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ProductCode {
-    ZedPro,
-    ZedProTrial,
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateBillingSubscriptionBody {
-    github_user_id: i32,
-    product: ProductCode,
-}
-
-#[derive(Debug, Serialize)]
-struct CreateBillingSubscriptionResponse {
-    checkout_session_url: String,
-}
-
-/// Initiates a Stripe Checkout session for creating a billing subscription.
-async fn create_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Json(body): extract::Json<CreateBillingSubscriptionBody>,
-) -> Result<Json<CreateBillingSubscriptionResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let Some(stripe_billing) = app.stripe_billing.clone() else {
-        log::error!("failed to retrieve Stripe billing object");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    if let Some(existing_subscription) = app.db.get_active_billing_subscription(user.id).await? {
-        let is_checkout_allowed = body.product == ProductCode::ZedProTrial
-            && existing_subscription.kind == Some(SubscriptionKind::ZedFree);
-
-        if !is_checkout_allowed {
-            return Err(Error::http(
-                StatusCode::CONFLICT,
-                "user already has an active subscription".into(),
-            ));
-        }
-    }
-
-    let existing_billing_customer = app.db.get_billing_customer_by_user_id(user.id).await?;
-    if let Some(existing_billing_customer) = &existing_billing_customer {
-        if existing_billing_customer.has_overdue_invoices {
-            return Err(Error::http(
-                StatusCode::PAYMENT_REQUIRED,
-                "user has overdue invoices".into(),
-            ));
-        }
-    }
-
-    let customer_id = if let Some(existing_customer) = &existing_billing_customer {
-        let customer_id = StripeCustomerId(existing_customer.stripe_customer_id.clone().into());
-        if let Some(email) = user.email_address.as_deref() {
-            stripe_billing
-                .client()
-                .update_customer(&customer_id, UpdateCustomerParams { email: Some(email) })
-                .await
-                // Update of email address is best-effort - continue checkout even if it fails
-                .context("error updating stripe customer email address")
-                .log_err();
-        }
-        customer_id
-    } else {
-        stripe_billing
-            .find_or_create_customer_by_email(user.email_address.as_deref())
-            .await?
-    };
-
-    let success_url = format!(
-        "{}/account?checkout_complete=1",
-        app.config.zed_dot_dev_url()
-    );
-
-    let checkout_session_url = match body.product {
-        ProductCode::ZedPro => {
-            stripe_billing
-                .checkout_with_zed_pro(&customer_id, &user.github_login, &success_url)
-                .await?
-        }
-        ProductCode::ZedProTrial => {
-            if let Some(existing_billing_customer) = &existing_billing_customer {
-                if existing_billing_customer.trial_started_at.is_some() {
-                    return Err(Error::http(
-                        StatusCode::FORBIDDEN,
-                        "user already used free trial".into(),
-                    ));
-                }
-            }
-
-            let feature_flags = app.db.get_user_flags(user.id).await?;
-
-            stripe_billing
-                .checkout_with_zed_pro_trial(
-                    &customer_id,
-                    &user.github_login,
-                    feature_flags,
-                    &success_url,
-                )
-                .await?
-        }
-    };
-
-    Ok(Json(CreateBillingSubscriptionResponse {
-        checkout_session_url,
-    }))
-}
-
-#[derive(Debug, PartialEq, Deserialize)]
-#[serde(rename_all = "snake_case")]
-enum ManageSubscriptionIntent {
-    /// The user intends to manage their subscription.
-    ///
-    /// This will open the Stripe billing portal without putting the user in a specific flow.
-    ManageSubscription,
-    /// The user intends to update their payment method.
-    UpdatePaymentMethod,
-    /// The user intends to upgrade to Zed Pro.
-    UpgradeToPro,
-    /// The user intends to cancel their subscription.
-    Cancel,
-    /// The user intends to stop the cancellation of their subscription.
-    StopCancellation,
-}
-
-#[derive(Debug, Deserialize)]
-struct ManageBillingSubscriptionBody {
-    github_user_id: i32,
-    intent: ManageSubscriptionIntent,
-    /// The ID of the subscription to manage.
-    subscription_id: BillingSubscriptionId,
-    redirect_to: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ManageBillingSubscriptionResponse {
-    billing_portal_session_url: Option<String>,
-}
-
-/// Initiates a Stripe customer portal session for managing a billing subscription.
-async fn manage_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Json(body): extract::Json<ManageBillingSubscriptionBody>,
-) -> Result<Json<ManageBillingSubscriptionResponse>> {
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let Some(stripe_client) = app.real_stripe_client.clone() else {
-        log::error!("failed to retrieve Stripe client");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    let Some(stripe_billing) = app.stripe_billing.clone() else {
-        log::error!("failed to retrieve Stripe billing object");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    let customer = app
-        .db
-        .get_billing_customer_by_user_id(user.id)
-        .await?
-        .context("billing customer not found")?;
-    let customer_id = CustomerId::from_str(&customer.stripe_customer_id)
-        .context("failed to parse customer ID")?;
-
-    let subscription = app
-        .db
-        .get_billing_subscription_by_id(body.subscription_id)
-        .await?
-        .context("subscription not found")?;
-    let subscription_id = SubscriptionId::from_str(&subscription.stripe_subscription_id)
-        .context("failed to parse subscription ID")?;
-
-    if body.intent == ManageSubscriptionIntent::StopCancellation {
-        let updated_stripe_subscription = Subscription::update(
-            &stripe_client,
-            &subscription_id,
-            stripe::UpdateSubscription {
-                cancel_at_period_end: Some(false),
-                ..Default::default()
-            },
-        )
-        .await?;
-
-        app.db
-            .update_billing_subscription(
-                subscription.id,
-                &UpdateBillingSubscriptionParams {
-                    stripe_cancel_at: ActiveValue::set(
-                        updated_stripe_subscription
-                            .cancel_at
-                            .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
-                            .map(|time| time.naive_utc()),
-                    ),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        return Ok(Json(ManageBillingSubscriptionResponse {
-            billing_portal_session_url: None,
-        }));
-    }
-
-    let flow = match body.intent {
-        ManageSubscriptionIntent::ManageSubscription => None,
-        ManageSubscriptionIntent::UpgradeToPro => {
-            let zed_pro_price_id: stripe::PriceId =
-                stripe_billing.zed_pro_price_id().await?.try_into()?;
-            let zed_free_price_id: stripe::PriceId =
-                stripe_billing.zed_free_price_id().await?.try_into()?;
-
-            let stripe_subscription =
-                Subscription::retrieve(&stripe_client, &subscription_id, &[]).await?;
-
-            let is_on_zed_pro_trial = stripe_subscription.status == SubscriptionStatus::Trialing
-                && stripe_subscription.items.data.iter().any(|item| {
-                    item.price
-                        .as_ref()
-                        .map_or(false, |price| price.id == zed_pro_price_id)
-                });
-            if is_on_zed_pro_trial {
-                let payment_methods = PaymentMethod::list(
-                    &stripe_client,
-                    &stripe::ListPaymentMethods {
-                        customer: Some(stripe_subscription.customer.id()),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-                let has_payment_method = !payment_methods.data.is_empty();
-                if !has_payment_method {
-                    return Err(Error::http(
-                        StatusCode::BAD_REQUEST,
-                        "missing payment method".into(),
-                    ));
-                }
-
-                // If the user is already on a Zed Pro trial and wants to upgrade to Pro, we just need to end their trial early.
-                Subscription::update(
-                    &stripe_client,
-                    &stripe_subscription.id,
-                    stripe::UpdateSubscription {
-                        trial_end: Some(stripe::Scheduled::now()),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-
-                return Ok(Json(ManageBillingSubscriptionResponse {
-                    billing_portal_session_url: None,
-                }));
-            }
-
-            let subscription_item_to_update = stripe_subscription
-                .items
-                .data
-                .iter()
-                .find_map(|item| {
-                    let price = item.price.as_ref()?;
-
-                    if price.id == zed_free_price_id {
-                        Some(item.id.clone())
-                    } else {
-                        None
-                    }
-                })
-                .context("No subscription item to update")?;
-
-            Some(CreateBillingPortalSessionFlowData {
-                type_: CreateBillingPortalSessionFlowDataType::SubscriptionUpdateConfirm,
-                subscription_update_confirm: Some(
-                    CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirm {
-                        subscription: subscription.stripe_subscription_id,
-                        items: vec![
-                            CreateBillingPortalSessionFlowDataSubscriptionUpdateConfirmItems {
-                                id: subscription_item_to_update.to_string(),
-                                price: Some(zed_pro_price_id.to_string()),
-                                quantity: Some(1),
-                            },
-                        ],
-                        discounts: None,
-                    },
-                ),
-                ..Default::default()
-            })
-        }
-        ManageSubscriptionIntent::UpdatePaymentMethod => Some(CreateBillingPortalSessionFlowData {
-            type_: CreateBillingPortalSessionFlowDataType::PaymentMethodUpdate,
-            after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
-                type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
-                redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                    return_url: format!(
-                        "{}{path}",
-                        app.config.zed_dot_dev_url(),
-                        path = body.redirect_to.unwrap_or_else(|| "/account".to_string())
-                    ),
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }),
-        ManageSubscriptionIntent::Cancel => {
-            if subscription.kind == Some(SubscriptionKind::ZedFree) {
-                return Err(Error::http(
-                    StatusCode::BAD_REQUEST,
-                    "free subscription cannot be canceled".into(),
-                ));
-            }
-
-            Some(CreateBillingPortalSessionFlowData {
-                type_: CreateBillingPortalSessionFlowDataType::SubscriptionCancel,
-                after_completion: Some(CreateBillingPortalSessionFlowDataAfterCompletion {
-                    type_: stripe::CreateBillingPortalSessionFlowDataAfterCompletionType::Redirect,
-                    redirect: Some(CreateBillingPortalSessionFlowDataAfterCompletionRedirect {
-                        return_url: format!("{}/account", app.config.zed_dot_dev_url()),
-                    }),
-                    ..Default::default()
-                }),
-                subscription_cancel: Some(
-                    stripe::CreateBillingPortalSessionFlowDataSubscriptionCancel {
-                        subscription: subscription.stripe_subscription_id,
-                        retention: None,
-                    },
-                ),
-                ..Default::default()
-            })
-        }
-        ManageSubscriptionIntent::StopCancellation => unreachable!(),
-    };
-
-    let mut params = CreateBillingPortalSession::new(customer_id);
-    params.flow_data = flow;
-    let return_url = format!("{}/account", app.config.zed_dot_dev_url());
-    params.return_url = Some(&return_url);
-
-    let session = BillingPortalSession::create(&stripe_client, params).await?;
-
-    Ok(Json(ManageBillingSubscriptionResponse {
-        billing_portal_session_url: Some(session.url),
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-struct SyncBillingSubscriptionBody {
-    github_user_id: i32,
-}
-
-#[derive(Debug, Serialize)]
-struct SyncBillingSubscriptionResponse {
-    stripe_customer_id: String,
-}
-
-async fn sync_billing_subscription(
-    Extension(app): Extension<Arc<AppState>>,
-    extract::Json(body): extract::Json<SyncBillingSubscriptionBody>,
-) -> Result<Json<SyncBillingSubscriptionResponse>> {
-    let Some(stripe_client) = app.stripe_client.clone() else {
-        log::error!("failed to retrieve Stripe client");
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
-    let user = app
-        .db
-        .get_user_by_github_user_id(body.github_user_id)
-        .await?
-        .context("user not found")?;
-
-    let billing_customer = app
-        .db
-        .get_billing_customer_by_user_id(user.id)
-        .await?
-        .context("billing customer not found")?;
-    let stripe_customer_id = StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
-
-    let subscriptions = stripe_client
-        .list_subscriptions_for_customer(&stripe_customer_id)
-        .await?;
-
-    for subscription in subscriptions {
-        let subscription_id = subscription.id.clone();
-
-        sync_subscription(&app, &stripe_client, subscription)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to sync subscription {subscription_id} for user {}",
-                    user.id,
-                )
-            })?;
-    }
-
-    Ok(Json(SyncBillingSubscriptionResponse {
-        stripe_customer_id: billing_customer.stripe_customer_id.clone(),
-    }))
-}
 
 /// The amount of time we wait in between each poll of Stripe events.
 ///
@@ -529,6 +87,14 @@ async fn poll_stripe_events(
     stripe_client: &Arc<dyn StripeClient>,
     real_stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_events_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-events-polling" && flag.enabled_for_all);
+    if sync_events_using_cloud {
+        return Ok(());
+    }
+
     fn event_type_to_string(event_type: EventType) -> String {
         // Calling `to_string` on `stripe::EventType` members gives us a quoted string,
         // so we need to unquote it.
@@ -902,7 +468,7 @@ async fn handle_customer_subscription_event(
 
     // When the user's subscription changes, push down any changes to their plan.
     rpc_server
-        .update_plan_for_user(billing_customer.user_id)
+        .update_plan_for_user_legacy(billing_customer.user_id)
         .await
         .trace_err();
 
@@ -1011,6 +577,14 @@ async fn sync_model_request_usage_with_stripe(
     llm_db: &Arc<LlmDatabase>,
     stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
+    let feature_flags = app.db.list_feature_flags().await?;
+    let sync_model_request_usage_using_cloud = feature_flags
+        .iter()
+        .any(|flag| flag.flag == "cloud-stripe-usage-meters-sync" && flag.enabled_for_all);
+    if sync_model_request_usage_using_cloud {
+        return Ok(());
+    }
+
     log::info!("Stripe usage sync: Starting");
     let started_at = Utc::now();
 

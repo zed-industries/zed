@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{App, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
@@ -11,7 +12,7 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
-use crate::json::JsonTaskProvider;
+use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
 
 mod bash;
 mod c;
@@ -52,6 +53,12 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         ))
     });
 
+struct BasedPyrightFeatureFlag;
+
+impl FeatureFlag for BasedPyrightFeatureFlag {
+    const NAME: &'static str = "basedpyright";
+}
+
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
@@ -88,6 +95,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PythonLspAdapter::new(node.clone()));
+    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::default());
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -227,6 +235,20 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             registration.toolchain,
         );
     }
+
+    let mut basedpyright_lsp_adapter = Some(basedpyright_lsp_adapter);
+    cx.observe_flag::<BasedPyrightFeatureFlag, _>({
+        let languages = languages.clone();
+        move |enabled, _| {
+            if enabled {
+                if let Some(adapter) = basedpyright_lsp_adapter.take() {
+                    languages
+                        .register_available_lsp_adapter(adapter.name(), move || adapter.clone());
+                }
+            }
+        }
+    })
+    .detach();
 
     // Register globally available language servers.
     //

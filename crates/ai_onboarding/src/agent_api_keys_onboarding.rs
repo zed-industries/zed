@@ -93,7 +93,7 @@ impl Render for ApiKeysWithProviders {
                                 div()
                                     .w_full()
                                     .child(
-                                        Label::new("Or start now using API keys from your environment for the following providers:")
+                                        Label::new("Start now using API keys from your environment for the following providers:")
                                             .color(Color::Muted)
                                     )
                             )
@@ -129,17 +129,14 @@ impl RenderOnce for ApiKeysWithoutProviders {
                     .child(Divider::horizontal()),
             )
             .child(List::new().child(BulletItem::new(
-                "You can also use AI in Zed by bringing your own API keys",
+                "Add your own keys to use AI without signing in.",
             )))
             .child(
                 Button::new("configure-providers", "Configure Providers")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click(move |_, window, cx| {
-                        window.dispatch_action(
-                            zed_actions::agent::OpenConfiguration.boxed_clone(),
-                            cx,
-                        );
+                        window.dispatch_action(zed_actions::agent::OpenSettings.boxed_clone(), cx);
                     }),
             )
     }

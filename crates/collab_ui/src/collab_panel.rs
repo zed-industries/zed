@@ -940,7 +940,7 @@ impl CollabPanel {
             room.read(cx).local_participant().role == proto::ChannelRole::Admin
         });
 
-        ListItem::new(SharedString::from(user.github_login.clone()))
+        ListItem::new(user.github_login.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
             .toggle_state(is_selected)
@@ -2331,7 +2331,7 @@ impl CollabPanel {
                                 let client = this.client.clone();
                                 cx.spawn_in(window, async move |_, cx| {
                                     client
-                                        .authenticate_and_connect(true, &cx)
+                                        .connect(true, &cx)
                                         .await
                                         .into_response()
                                         .notify_async_err(cx);
@@ -2583,7 +2583,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let online = contact.online;
         let busy = contact.busy || calling;
-        let github_login = SharedString::from(contact.user.github_login.clone());
+        let github_login = contact.user.github_login.clone();
         let item = ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
@@ -2662,7 +2662,7 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let github_login = SharedString::from(user.github_login.clone());
+        let github_login = user.github_login.clone();
         let user_id = user.id;
         let is_response_pending = self.user_store.read(cx).is_contact_request_pending(user);
         let color = if is_response_pending {

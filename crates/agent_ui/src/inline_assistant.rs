@@ -48,7 +48,7 @@ use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::{RangeExt, ResultExt, maybe};
 use workspace::{ItemHandle, Toast, Workspace, dock::Panel, notifications::NotificationId};
-use zed_actions::agent::OpenConfiguration;
+use zed_actions::agent::OpenSettings;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -345,7 +345,7 @@ impl InlineAssistant {
                     if let Some(answer) = answer {
                         if answer == 0 {
                             cx.update(|window, cx| {
-                                window.dispatch_action(Box::new(OpenConfiguration), cx)
+                                window.dispatch_action(Box::new(OpenSettings), cx)
                             })
                             .ok();
                         }

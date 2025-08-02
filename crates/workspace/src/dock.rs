@@ -374,12 +374,6 @@ impl Dock {
             })
     }
 
-    pub fn first_enabled_panel_idx_excluding(&self, exclude_name: &str, cx: &App) -> Option<usize> {
-        self.panel_entries.iter().position(|entry| {
-            entry.panel.persistent_name() != exclude_name && entry.panel.enabled(cx)
-        })
-    }
-
     fn active_panel_entry(&self) -> Option<&PanelEntry> {
         self.active_panel_index
             .and_then(|index| self.panel_entries.get(index))
@@ -940,6 +934,10 @@ impl Render for PanelButtons {
 
         h_flex()
             .gap_1()
+            .when(
+                has_buttons && dock.position == DockPosition::Bottom,
+                |this| this.child(Divider::vertical().color(DividerColor::Border)),
+            )
             .children(buttons)
             .when(has_buttons && dock.position == DockPosition::Left, |this| {
                 this.child(Divider::vertical().color(DividerColor::Border))

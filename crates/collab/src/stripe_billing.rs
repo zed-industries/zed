@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context as _, anyhow};
+use anyhow::anyhow;
 use chrono::Utc;
 use collections::HashMap;
 use stripe::SubscriptionStatus;
@@ -9,18 +9,13 @@ use uuid::Uuid;
 
 use crate::Result;
 use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::AGENT_EXTENDED_TRIAL_FEATURE_FLAG;
 use crate::stripe_client::{
-    RealStripeClient, StripeAutomaticTax, StripeBillingAddressCollection,
-    StripeCheckoutSessionMode, StripeCheckoutSessionPaymentMethodCollection, StripeClient,
-    StripeCreateCheckoutSessionLineItems, StripeCreateCheckoutSessionParams,
-    StripeCreateCheckoutSessionSubscriptionData, StripeCreateMeterEventParams,
+    RealStripeClient, StripeAutomaticTax, StripeClient, StripeCreateMeterEventParams,
     StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
-    StripeCustomerId, StripeCustomerUpdate, StripeCustomerUpdateAddress, StripeCustomerUpdateName,
-    StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
+    StripeCustomerId, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
     StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
-    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, StripeTaxIdCollection,
-    UpdateSubscriptionItems, UpdateSubscriptionParams,
+    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
+    UpdateSubscriptionParams,
 };
 
 pub struct StripeBilling {
@@ -212,95 +207,6 @@ impl StripeBilling {
             .await?;
 
         Ok(())
-    }
-
-    pub async fn checkout_with_zed_pro(
-        &self,
-        customer_id: &StripeCustomerId,
-        github_login: &str,
-        success_url: &str,
-    ) -> Result<String> {
-        let zed_pro_price_id = self.zed_pro_price_id().await?;
-
-        let mut params = StripeCreateCheckoutSessionParams::default();
-        params.mode = Some(StripeCheckoutSessionMode::Subscription);
-        params.customer = Some(customer_id);
-        params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
-            price: Some(zed_pro_price_id.to_string()),
-            quantity: Some(1),
-        }]);
-        params.success_url = Some(success_url);
-        params.billing_address_collection = Some(StripeBillingAddressCollection::Required);
-        params.customer_update = Some(StripeCustomerUpdate {
-            address: Some(StripeCustomerUpdateAddress::Auto),
-            name: Some(StripeCustomerUpdateName::Auto),
-            shipping: None,
-        });
-        params.tax_id_collection = Some(StripeTaxIdCollection { enabled: true });
-
-        let session = self.client.create_checkout_session(params).await?;
-        Ok(session.url.context("no checkout session URL")?)
-    }
-
-    pub async fn checkout_with_zed_pro_trial(
-        &self,
-        customer_id: &StripeCustomerId,
-        github_login: &str,
-        feature_flags: Vec<String>,
-        success_url: &str,
-    ) -> Result<String> {
-        let zed_pro_price_id = self.zed_pro_price_id().await?;
-
-        let eligible_for_extended_trial = feature_flags
-            .iter()
-            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG);
-
-        let trial_period_days = if eligible_for_extended_trial { 60 } else { 14 };
-
-        let mut subscription_metadata = std::collections::HashMap::new();
-        if eligible_for_extended_trial {
-            subscription_metadata.insert(
-                "promo_feature_flag".to_string(),
-                AGENT_EXTENDED_TRIAL_FEATURE_FLAG.to_string(),
-            );
-        }
-
-        let mut params = StripeCreateCheckoutSessionParams::default();
-        params.subscription_data = Some(StripeCreateCheckoutSessionSubscriptionData {
-            trial_period_days: Some(trial_period_days),
-            trial_settings: Some(StripeSubscriptionTrialSettings {
-                end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
-                    missing_payment_method:
-                        StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel,
-                },
-            }),
-            metadata: if !subscription_metadata.is_empty() {
-                Some(subscription_metadata)
-            } else {
-                None
-            },
-        });
-        params.mode = Some(StripeCheckoutSessionMode::Subscription);
-        params.payment_method_collection =
-            Some(StripeCheckoutSessionPaymentMethodCollection::IfRequired);
-        params.customer = Some(customer_id);
-        params.client_reference_id = Some(github_login);
-        params.line_items = Some(vec![StripeCreateCheckoutSessionLineItems {
-            price: Some(zed_pro_price_id.to_string()),
-            quantity: Some(1),
-        }]);
-        params.success_url = Some(success_url);
-        params.billing_address_collection = Some(StripeBillingAddressCollection::Required);
-        params.customer_update = Some(StripeCustomerUpdate {
-            address: Some(StripeCustomerUpdateAddress::Auto),
-            name: Some(StripeCustomerUpdateName::Auto),
-            shipping: None,
-        });
-        params.tax_id_collection = Some(StripeTaxIdCollection { enabled: true });
-
-        let session = self.client.create_checkout_session(params).await?;
-        Ok(session.url.context("no checkout session URL")?)
     }
 
     pub async fn subscribe_to_zed_free(

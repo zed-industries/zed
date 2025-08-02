@@ -12,7 +12,7 @@ use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
-use git_ui::diff_view::DiffView;
+use git_ui::file_diff_view::FileDiffView;
 use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use recent_projects::{SshSettings, open_ssh_project};
@@ -262,7 +262,7 @@ pub async fn open_paths_with_positions(
         let old_path = Path::new(&diff_pair[0]).canonicalize()?;
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
-            DiffView::open(old_path, new_path, workspace, window, cx)
+            FileDiffView::open(old_path, new_path, workspace, window, cx)
         }) {
             if let Some(diff_view) = diff_view.await.log_err() {
                 items.push(Some(Ok(Box::new(diff_view))))
