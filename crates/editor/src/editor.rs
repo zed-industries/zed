@@ -6996,6 +6996,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
@@ -7053,6 +7057,7 @@ impl Editor {
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
         if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
+            self.discard_inline_completion(false, cx);
         } else {
             let selection = self.selections.newest_anchor();
             let cursor = selection.head();
@@ -7670,6 +7675,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
