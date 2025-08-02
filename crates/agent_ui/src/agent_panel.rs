@@ -1954,40 +1954,54 @@ impl AgentPanel {
                                     this
                                 }
                             })
-                            .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                                this.separator()
-                                    .header("External Agents")
-                                    .item(
-                                        ContextMenuEntry::new("New Gemini Thread")
-                                            .icon(IconName::AiGemini)
-                                            .icon_color(Color::Muted)
-                                            .handler(move |window, cx| {
-                                                window.dispatch_action(
-                                                    NewExternalAgentThread {
-                                                        agent: Some(crate::ExternalAgent::Gemini),
-                                                    }
-                                                    .boxed_clone(),
-                                                    cx,
-                                                );
-                                            }),
-                                    )
-                                    .item(
-                                        ContextMenuEntry::new("New Claude Code Thread")
-                                            .icon(IconName::AiClaude)
-                                            .icon_color(Color::Muted)
-                                            .handler(move |window, cx| {
-                                                window.dispatch_action(
-                                                    NewExternalAgentThread {
-                                                        agent: Some(
-                                                            crate::ExternalAgent::ClaudeCode,
-                                                        ),
-                                                    }
-                                                    .boxed_clone(),
-                                                    cx,
-                                                );
-                                            }),
-                                    )
-                            });
+                            // Temporarily removed feature flag check for testing
+                            // .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            //     this
+                            .separator()
+                            .header("External Agents")
+                            .item(
+                                ContextMenuEntry::new("New Gemini Thread")
+                                    .icon(IconName::AiGemini)
+                                    .icon_color(Color::Muted)
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewExternalAgentThread {
+                                                agent: Some(crate::ExternalAgent::Gemini),
+                                            }
+                                            .boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Claude Code Thread")
+                                    .icon(IconName::AiClaude)
+                                    .icon_color(Color::Muted)
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewExternalAgentThread {
+                                                agent: Some(crate::ExternalAgent::ClaudeCode),
+                                            }
+                                            .boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Native Agent Thread")
+                                    .icon(IconName::ZedAssistant)
+                                    .icon_color(Color::Muted)
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewExternalAgentThread {
+                                                agent: Some(crate::ExternalAgent::NativeAgent),
+                                            }
+                                            .boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            );
+                        // });
                         menu
                     }))
                 }
@@ -2594,63 +2608,87 @@ impl AgentPanel {
                                         ),
                                     ),
                             )
-                            .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
-                                this.child(
-                                    h_flex()
-                                        .w_full()
-                                        .gap_2()
-                                        .child(
-                                            NewThreadButton::new(
-                                                "new-gemini-thread-btn",
-                                                "New Gemini Thread",
-                                                IconName::AiGemini,
-                                            )
-                                            // .keybinding(KeyBinding::for_action_in(
-                                            //     &OpenHistory,
-                                            //     &self.focus_handle(cx),
-                                            //     window,
-                                            //     cx,
-                                            // ))
-                                            .on_click(
-                                                |window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(NewExternalAgentThread {
-                                                            agent: Some(
-                                                                crate::ExternalAgent::Gemini,
-                                                            ),
-                                                        }),
-                                                        cx,
-                                                    )
-                                                },
-                                            ),
+                            // Temporarily removed feature flag check for testing
+                            // .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
+                            //     this
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .child(
+                                        NewThreadButton::new(
+                                            "new-gemini-thread-btn",
+                                            "New Gemini Thread",
+                                            IconName::AiGemini,
                                         )
-                                        .child(
-                                            NewThreadButton::new(
-                                                "new-claude-thread-btn",
-                                                "New Claude Code Thread",
-                                                IconName::AiClaude,
-                                            )
-                                            // .keybinding(KeyBinding::for_action_in(
-                                            //     &OpenHistory,
-                                            //     &self.focus_handle(cx),
-                                            //     window,
-                                            //     cx,
-                                            // ))
-                                            .on_click(
-                                                |window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(NewExternalAgentThread {
-                                                            agent: Some(
-                                                                crate::ExternalAgent::ClaudeCode,
-                                                            ),
-                                                        }),
-                                                        cx,
-                                                    )
-                                                },
-                                            ),
+                                        // .keybinding(KeyBinding::for_action_in(
+                                        //     &OpenHistory,
+                                        //     &self.focus_handle(cx),
+                                        //     window,
+                                        //     cx,
+                                        // ))
+                                        .on_click(
+                                            |window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(NewExternalAgentThread {
+                                                        agent: Some(crate::ExternalAgent::Gemini),
+                                                    }),
+                                                    cx,
+                                                )
+                                            },
                                         ),
-                                )
-                            }),
+                                    )
+                                    .child(
+                                        NewThreadButton::new(
+                                            "new-claude-thread-btn",
+                                            "New Claude Code Thread",
+                                            IconName::AiClaude,
+                                        )
+                                        // .keybinding(KeyBinding::for_action_in(
+                                        //     &OpenHistory,
+                                        //     &self.focus_handle(cx),
+                                        //     window,
+                                        //     cx,
+                                        // ))
+                                        .on_click(
+                                            |window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(NewExternalAgentThread {
+                                                        agent: Some(
+                                                            crate::ExternalAgent::ClaudeCode,
+                                                        ),
+                                                    }),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
+                                    )
+                                    .child(
+                                        NewThreadButton::new(
+                                            "new-native-agent-thread-btn",
+                                            "New Native Agent Thread",
+                                            IconName::ZedAssistant,
+                                        )
+                                        // .keybinding(KeyBinding::for_action_in(
+                                        //     &OpenHistory,
+                                        //     &self.focus_handle(cx),
+                                        //     window,
+                                        //     cx,
+                                        // ))
+                                        .on_click(
+                                            |window, cx| {
+                                                window.dispatch_action(
+                                                    Box::new(NewExternalAgentThread {
+                                                        agent: Some(
+                                                            crate::ExternalAgent::NativeAgent,
+                                                        ),
+                                                    }),
+                                                    cx,
+                                                )
+                                            },
+                                        ),
+                                    ),
+                            ), // })
                     )
                     .when_some(configuration_error.as_ref(), |this, err| {
                         this.child(self.render_configuration_error(err, &focus_handle, window, cx))
