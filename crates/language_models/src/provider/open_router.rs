@@ -591,7 +591,7 @@ fn add_message_content_part(
 }
 
 pub struct OpenRouterEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
+    tool_calls_by_index: HashMap<i32, RawToolCall>,
 }
 
 impl OpenRouterEventMapper {

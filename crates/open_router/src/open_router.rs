@@ -336,7 +336,7 @@ pub struct ResponseMessageDelta {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    pub index: usize,
+    pub index: i32,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
 }
