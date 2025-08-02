@@ -1,5 +1,6 @@
 use super::*;
-use client::{proto::language_server_prompt_request, Client, UserStore};
+use crate::templates::Templates;
+use client::{Client, UserStore};
 use fs::FakeFs;
 use gpui::{AppContext, Entity, TestAppContext};
 use language_model::{
@@ -27,7 +28,7 @@ async fn test_echo(cx: &mut TestAppContext) {
         .await;
     agent.update(cx, |agent, _cx| {
         assert_eq!(
-            agent.messages.last().unwrap().content,
+            agent.messages().last().unwrap().content,
             vec![MessageContent::Text("Hello".to_string())]
         );
     });
@@ -74,7 +75,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     );
     agent.update(cx, |agent, _cx| {
         assert!(agent
-            .messages
+            .messages()
             .last()
             .unwrap()
             .content
@@ -170,7 +171,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     }
 
     agent.update(cx, |agent, _cx| {
-        let last_message = agent.messages.last().unwrap();
+        let last_message = agent.messages().last().unwrap();
         let text = last_message
             .content
             .iter()
