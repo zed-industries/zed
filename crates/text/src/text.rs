@@ -37,7 +37,7 @@ use std::{
 };
 pub use subscription::*;
 pub use sum_tree::Bias;
-use sum_tree::{FilterCursor, SumTree, TreeMap, TreeSet};
+use sum_tree::{Dimensions, FilterCursor, SumTree, TreeMap, TreeSet};
 use undo_map::UndoMap;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1071,7 +1071,9 @@ impl Buffer {
         let mut insertion_offset = 0;
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>(&cx);
+        let mut old_fragments = self
+            .fragments
+            .cursor::<Dimensions<VersionedFullOffset, usize>>(&cx);
         let mut new_fragments =
             old_fragments.slice(&VersionedFullOffset::Offset(ranges[0].start), Bias::Left);
         new_ropes.append(new_fragments.summary().text);
@@ -1298,7 +1300,9 @@ impl Buffer {
         self.snapshot.undo_map.insert(undo);
 
         let mut edits = Patch::default();
-        let mut old_fragments = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut old_fragments = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let mut new_fragments = SumTree::new(&None);
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
@@ -1561,7 +1565,9 @@ impl Buffer {
         D: TextDimension,
     {
         // get fragment ranges
-        let mut cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut cursor = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let offset_ranges = self
             .fragment_ids_for_edits(edit_ids.into_iter())
             .into_iter()
@@ -2232,7 +2238,9 @@ impl BufferSnapshot {
     {
         let anchors = anchors.into_iter();
         let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>(&());
-        let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+        let mut fragment_cursor = self
+            .fragments
+            .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
         let mut text_cursor = self.visible_text.cursor(0);
         let mut position = D::zero(&());
 
@@ -2318,7 +2326,9 @@ impl BufferSnapshot {
                 );
             };
 
-            let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>(&None);
+            let mut fragment_cursor = self
+                .fragments
+                .cursor::<Dimensions<Option<&Locator>, usize>>(&None);
             fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
@@ -2476,7 +2486,7 @@ impl BufferSnapshot {
         };
         let mut cursor = self
             .fragments
-            .cursor::<(Option<&Locator>, FragmentTextSummary)>(&None);
+            .cursor::<Dimensions<Option<&Locator>, FragmentTextSummary>>(&None);
 
         let start_fragment_id = self.fragment_id_for_anchor(&range.start);
         cursor.seek(&Some(start_fragment_id), Bias::Left);

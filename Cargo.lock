@@ -3557,6 +3557,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
+ "sum_tree",
  "task",
  "theme",
  "ui",

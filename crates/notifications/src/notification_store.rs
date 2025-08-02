@@ -6,7 +6,7 @@ use db::smol::stream::StreamExt;
 use gpui::{App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, Task};
 use rpc::{Notification, TypedEnvelope, proto};
 use std::{ops::Range, sync::Arc};
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Dimensions, SumTree};
 use time::OffsetDateTime;
 use util::ResultExt;
 
@@ -360,7 +360,9 @@ impl NotificationStore {
         is_new: bool,
         cx: &mut Context<NotificationStore>,
     ) {
-        let mut cursor = self.notifications.cursor::<(NotificationId, Count)>(&());
+        let mut cursor = self
+            .notifications
+            .cursor::<Dimensions<NotificationId, Count>>(&());
         let mut new_notifications = SumTree::default();
         let mut old_range = 0..0;
 
