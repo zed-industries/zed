@@ -1,6 +1,8 @@
+use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::Result;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use language_model::{LanguageModel, LanguageModelRegistry};
 use project::Project;
 use std::collections::HashMap;
 use std::path::Path;
@@ -26,7 +28,66 @@ impl Agent {
 }
 
 /// Wrapper struct that implements the AgentConnection trait
+#[derive(Clone)]
 pub struct AgentConnection(pub Entity<Agent>);
+
+impl ModelSelector for AgentConnection {
+    fn list_models(&self, cx: &mut AsyncApp) -> Task<Result<Vec<Arc<dyn LanguageModel>>>> {
+        let result = cx.update(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            let models = registry.available_models(cx).collect::<Vec<_>>();
+            if models.is_empty() {
+                Err(anyhow::anyhow!("No models available"))
+            } else {
+                Ok(models)
+            }
+        });
+        Task::ready(result.unwrap_or_else(|e| Err(anyhow::anyhow!("Failed to update: {}", e))))
+    }
+
+    fn select_model(
+        &self,
+        session_id: &acp::SessionId,
+        model: Arc<dyn LanguageModel>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<()>> {
+        let agent = self.0.clone();
+        let result = agent.update(cx, |agent, cx| {
+            if let Some(thread) = agent.sessions.get(session_id) {
+                thread.update(cx, |thread, _| {
+                    thread.selected_model = model;
+                });
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Session not found"))
+            }
+        });
+        Task::ready(result.unwrap_or_else(|e| Err(anyhow::anyhow!("Failed to update: {}", e))))
+    }
+
+    fn selected_model(
+        &self,
+        session_id: &acp::SessionId,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Arc<dyn LanguageModel>>> {
+        let agent = self.0.clone();
+        let thread_result = agent
+            .read_with(cx, |agent, _| agent.sessions.get(session_id).cloned())
+            .ok()
+            .flatten()
+            .ok_or_else(|| anyhow::anyhow!("Session not found"));
+
+        match thread_result {
+            Ok(thread) => {
+                let selected = thread
+                    .read_with(cx, |thread, _| thread.selected_model.clone())
+                    .unwrap_or_else(|e| panic!("Failed to read thread: {}", e));
+                Task::ready(Ok(selected))
+            }
+            Err(e) => Task::ready(Err(e)),
+        }
+    }
+}
 
 impl acp_thread::AgentConnection for AgentConnection {
     fn new_thread(
@@ -42,7 +103,13 @@ impl acp_thread::AgentConnection for AgentConnection {
             // Create Thread and store in Agent
             let (session_id, _thread) =
                 agent.update(cx, |agent, cx: &mut gpui::Context<Agent>| {
-                    let thread = cx.new(|_| Thread::new(agent.templates.clone()));
+                    // Fetch default model
+                    let default_model = LanguageModelRegistry::read_global(cx)
+                        .available_models(cx)
+                        .next()
+                        .unwrap_or_else(|| panic!("No default model available"));
+
+                    let thread = cx.new(|_| Thread::new(agent.templates.clone(), default_model));
                     let session_id = acp::SessionId(uuid::Uuid::new_v4().to_string().into());
                     agent.sessions.insert(session_id.clone(), thread.clone());
                     (session_id, thread)
@@ -50,7 +117,9 @@ impl acp_thread::AgentConnection for AgentConnection {
 
             // Create AcpThread
             let acp_thread = cx.update(|cx| {
-                cx.new(|cx| acp_thread::AcpThread::new("agent2", self, project, session_id, cx))
+                cx.new(|cx| {
+                    acp_thread::AcpThread::new("agent2", self.clone(), project, session_id, cx)
+                })
             })?;
 
             Ok(acp_thread)
@@ -65,11 +134,15 @@ impl acp_thread::AgentConnection for AgentConnection {
         Task::ready(Ok(()))
     }
 
+    fn model_selector(&self) -> Option<Rc<dyn ModelSelector>> {
+        Some(Rc::new(self.clone()) as Rc<dyn ModelSelector>)
+    }
+
     fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let session_id = params.session_id.clone();
         let agent = self.0.clone();
 
-        cx.spawn(|cx| async move {
+        cx.spawn(async move |cx| {
             // Get thread
             let thread: Entity<Thread> = agent
                 .read_with(cx, |agent, _| agent.sessions.get(&session_id).cloned())?
@@ -78,13 +151,12 @@ impl acp_thread::AgentConnection for AgentConnection {
             // Convert prompt to message
             let message = convert_prompt_to_message(params.prompt);
 
-            // TODO: Get model from somewhere - for now use a placeholder
-            log::warn!("Model selection not implemented - need to get from UI context");
+            // Get model using the ModelSelector capability (always available for agent2)
+            // Get the selected model from the thread directly
+            let model = thread.read_with(cx, |thread, _| thread.selected_model.clone())?;
 
             // Send to thread
-            // thread.update(&mut cx, |thread, cx| {
-            //     thread.send(model, message, cx)
-            // })?;
+            thread.update(cx, |thread, cx| thread.send(model, message, cx))?;
 
             Ok(())
         })

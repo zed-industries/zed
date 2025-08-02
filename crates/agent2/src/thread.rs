@@ -37,12 +37,13 @@ pub struct Thread {
     system_prompts: Vec<Arc<dyn Prompt>>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     templates: Arc<Templates>,
+    pub selected_model: Arc<dyn LanguageModel>,
     // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
 }
 
 impl Thread {
-    pub fn new(templates: Arc<Templates>) -> Self {
+    pub fn new(templates: Arc<Templates>, default_model: Arc<dyn LanguageModel>) -> Self {
         Self {
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
@@ -50,6 +51,7 @@ impl Thread {
             running_turn: None,
             tools: BTreeMap::default(),
             templates,
+            selected_model: default_model,
         }
     }
 
