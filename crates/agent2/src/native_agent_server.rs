@@ -35,15 +35,22 @@ impl AgentServer for NativeAgentServer {
         _project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
+        log::info!(
+            "NativeAgentServer::connect called for path: {:?}",
+            _root_dir
+        );
         cx.spawn(async move |cx| {
+            log::debug!("Creating templates for native agent");
             // Create templates (you might want to load these from files or resources)
             let templates = Templates::new();
 
             // Create the native agent
+            log::debug!("Creating native agent entity");
             let agent = cx.update(|cx| cx.new(|_| NativeAgent::new(templates)))?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);
+            log::info!("NativeAgentServer connection established successfully");
 
             Ok(Rc::new(connection) as Rc<dyn acp_thread::AgentConnection>)
         })
