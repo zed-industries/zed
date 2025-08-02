@@ -1,4 +1,6 @@
 use super::*;
+use anyhow::Result;
+use gpui::{App, SharedString, Task};
 
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]

@@ -3,4 +3,7 @@ mod templates;
 mod thread;
 mod tools;
 
+#[cfg(test)]
+mod tests;
+
 pub use thread::*;
