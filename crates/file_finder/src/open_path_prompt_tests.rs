@@ -4,6 +4,7 @@ use gpui::{AppContext, Entity, TestAppContext, VisualTestContext};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use serde_json::json;
+use settings::Settings as _;
 use ui::rems;
 use util::{path, paths::PathStyle};
 use workspace::{AppState, Workspace};
@@ -347,8 +348,9 @@ fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         language::init(cx);
         super::init(cx);
         editor::init(cx);
-        workspace::init_settings(cx);
+        client::DisableAiSettings::register(cx);
         Project::init_settings(cx);
+        workspace::init_settings(cx);
         state
     })
 }

@@ -5110,12 +5110,12 @@ mod tests {
             cx.set_global(settings_store);
             AgentSettings::register(cx);
             WorktreeSettings::register(cx);
-            workspace::init_settings(cx);
             theme::init(LoadThemes::JustBase, cx);
             language::init(cx);
             editor::init(cx);
-            Project::init_settings(cx);
             client::DisableAiSettings::register(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
             crate::init(cx);
         });
     }

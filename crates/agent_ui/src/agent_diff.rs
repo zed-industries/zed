@@ -1908,19 +1908,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_multibuffer_agent_diff(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            prompt_store::init(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            EditorSettings::register(cx);
-            language_model::init_settings(cx);
-        });
+        cx.update(init_test);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -2065,20 +2053,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_singleton_agent_diff(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-            AgentSettings::register(cx);
-            prompt_store::init(cx);
-            thread_store::init(cx);
-            workspace::init_settings(cx);
-            ThemeSettings::register(cx);
-            EditorSettings::register(cx);
-            language_model::init_settings(cx);
-            workspace::register_project_item::<Editor>(cx);
-        });
+        cx.update(init_test);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -2373,5 +2348,21 @@ mod tests {
             })
         });
         cx.run_until_parked();
+    }
+
+    fn init_test(cx: &mut App) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        client::DisableAiSettings::register(cx);
+        Project::init_settings(cx);
+        AgentSettings::register(cx);
+        prompt_store::init(cx);
+        thread_store::init(cx);
+        workspace::init_settings(cx);
+        ThemeSettings::register(cx);
+        EditorSettings::register(cx);
+        language_model::init_settings(cx);
+        workspace::register_project_item::<Editor>(cx);
     }
 }

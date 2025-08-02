@@ -278,7 +278,7 @@ mod tests {
     use lsp::OneOf;
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{Settings as _, SettingsStore};
     use std::{path::Path, sync::Arc};
     use util::path;
 
@@ -424,6 +424,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(SemanticVersion::default(), cx);
             language::init(cx);
+            client::DisableAiSettings::register(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
             editor::init(cx);

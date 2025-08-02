@@ -1537,7 +1537,7 @@ pub mod tests {
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
-    use settings::SettingsStore;
+    use settings::{Settings as _, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
@@ -2915,6 +2915,7 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        client::DisableAiSettings::register(cx);
         workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);
