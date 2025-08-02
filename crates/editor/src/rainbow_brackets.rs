@@ -117,210 +117,142 @@ pub fn refresh_rainbow_bracket_highlights(
     }
 }
 
+// Similar to Helix's RainbowScope structure
+#[derive(Debug)]
+struct RainbowScope {
+    end_byte: usize,
+    node: Option<usize>, // node ID, similar to Helix's Option<Node>
+    level: usize,
+}
+
 fn collect_rainbow_highlights(
     buffer: &language::BufferSnapshot,
     rainbow_config: &language::RainbowConfig,
     highlights_by_level: &mut HashMap<usize, Vec<Range<Anchor>>>,
 ) {
-    #[derive(Debug)]
-    struct RainbowScope {
-        end_byte: usize,
-        node_id: Option<usize>,
-        pattern_ix: usize,
-        level: usize,
-    }
+    let mut scope_stack = Vec::<RainbowScope>::new();
 
-    #[derive(Debug)]
-    struct CaptureInfo<'a> {
-        byte_pos: usize,
-        is_scope: bool,
-        node: language::Node<'a>,
-        pattern_ix: usize,
-    }
+    // TODO: Currently we can't use tree-sitter queries properly due to API limitations
+    // in Zed. The proper implementation would use syntax.matches() but that's not
+    // publicly accessible. For now, we have to iterate through the tree manually.
 
-    let mut all_captures = Vec::new();
-
-    // Process each syntax layer
+    // This is a temporary workaround until we can access the query matching API
     for layer in buffer.syntax_layers() {
         let tree = layer.node();
 
-        // Collect all nodes and check them against the query
-        let mut stack = vec![(tree, 0)];
-        let mut visited_nodes = collections::HashSet::default();
+        // Walk the tree and match against the rainbow query
+        // In the future, this should use proper query matching like Helix does
+        walk_tree_for_rainbow(
+            tree,
+            buffer,
+            rainbow_config,
+            &mut scope_stack,
+            highlights_by_level,
+        );
+    }
+}
 
-        while let Some((node, depth)) = stack.pop() {
-            let node_id = node.id();
-            if !visited_nodes.insert(node_id) {
-                continue;
-            }
+// Temporary tree walking function until we can use proper query matching
+fn walk_tree_for_rainbow(
+    node: language::Node,
+    buffer: &language::BufferSnapshot,
+    rainbow_config: &language::RainbowConfig,
+    scope_stack: &mut Vec<RainbowScope>,
+    highlights_by_level: &mut HashMap<usize, Vec<Range<Anchor>>>,
+) {
+    let byte_range = node.byte_range();
 
-            // Use query cursor to check if this node matches
-            language::with_query_cursor(|cursor| {
-                cursor.set_byte_range(node.byte_range());
-
-                // Check if this node matches any pattern in the rainbow query
-                // We'll use a simplified approach to check for matches
-                let rope = buffer.as_rope();
-                let node_text = {
-                    let byte_range = node.byte_range();
-                    rope.chunks_in_range(byte_range)
-                        .collect::<String>()
-                        .into_bytes()
-                };
-
-                // Try to match starting at this node
-                let mut matched = false;
-
-                // Check if this node matches our query patterns
-                // For now, we'll use a simple heuristic based on node kind
-                if let Some(scope_ix) = rainbow_config.scope_capture_ix {
-                    // Check if this is a scope node
-                    let is_scope_node = match node.kind() {
-                        // JavaScript scopes
-                        "object"
-                        | "array"
-                        | "arguments"
-                        | "formal_parameters"
-                        | "statement_block"
-                        | "parenthesized_expression"
-                        | "call_expression"
-                        | "type_parameters"
-                        | "type_arguments"
-                        | "jsx_element"
-                        | "jsx_self_closing_element" => true,
-                        // Rust scopes from the rainbow.scm file
-                        "declaration_list"
-                        | "field_declaration_list"
-                        | "field_initializer_list"
-                        | "enum_variant_list"
-                        | "block"
-                        | "match_block"
-                        | "use_list"
-                        | "struct_pattern"
-                        | "ordered_field_declaration_list"
-                        | "parameters"
-                        | "tuple_type"
-                        | "tuple_expression"
-                        | "tuple_pattern"
-                        | "tuple_struct_pattern"
-                        | "unit_type"
-                        | "unit_expression"
-                        | "visibility_modifier"
-                        | "token_repetition_pattern"
-                        | "bracketed_type"
-                        | "for_lifetimes"
-                        | "array_type"
-                        | "array_expression"
-                        | "index_expression"
-                        | "slice_pattern"
-                        | "attribute_item"
-                        | "inner_attribute_item"
-                        | "token_tree_pattern"
-                        | "macro_definition"
-                        | "closure_parameters" => true,
-                        _ => false,
-                    };
-
-                    if is_scope_node {
-                        all_captures.push(CaptureInfo {
-                            byte_pos: node.start_byte(),
-                            is_scope: true,
-                            node,
-                            pattern_ix: 0, // Simplified - we'd need to match actual pattern
-                        });
-                        matched = true;
-                    }
-                }
-
-                if let Some(bracket_ix) = rainbow_config.bracket_capture_ix {
-                    // Check if this is a bracket node
-                    let is_bracket_node = matches!(
-                        node.kind(),
-                        "[" | "]" | "{" | "}" | "(" | ")" | "<" | ">" | "#" | "|"
-                    );
-
-                    if is_bracket_node {
-                        all_captures.push(CaptureInfo {
-                            byte_pos: node.start_byte(),
-                            is_scope: false,
-                            node,
-                            pattern_ix: 0,
-                        });
-                        matched = true;
-                    }
-                }
-            });
-
-            // Add children to stack
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    stack.push((child, depth + 1));
-                }
-            }
-        }
+    // Pop any scopes that end before this node begins
+    while scope_stack
+        .last()
+        .is_some_and(|scope| byte_range.start >= scope.end_byte)
+    {
+        scope_stack.pop();
     }
 
-    // Sort captures by byte position to process them in order
-    all_captures.sort_by_key(|c| c.byte_pos);
+    // TODO: This is where we would use the actual query match result
+    // For now, we check if this node should be a scope or bracket based on the query
 
-    // Process captures to assign rainbow levels
-    let mut scope_stack = Vec::<RainbowScope>::new();
+    // Temporary: Check if this node matches a scope pattern
+    // In proper implementation, this would come from query match results
+    if rainbow_config.scope_capture_ix.is_some() && is_potential_scope_node(node.kind()) {
+        scope_stack.push(RainbowScope {
+            end_byte: byte_range.end,
+            node: Some(node.id()),
+            level: scope_stack.len(),
+        });
+    }
 
-    for capture in all_captures {
-        let byte_range = capture.node.byte_range();
-
-        // Pop any scopes that have ended
-        while scope_stack
-            .last()
-            .is_some_and(|scope| byte_range.start >= scope.end_byte)
-        {
-            scope_stack.pop();
-        }
-
-        if capture.is_scope {
-            // This is a scope capture - push it onto the stack
-            let node_id = if rainbow_config
-                .include_children_patterns
-                .contains(&capture.pattern_ix)
-            {
-                None
+    // Check if this node is a bracket
+    if rainbow_config.bracket_capture_ix.is_some() && is_bracket_node(node.kind()) {
+        if let Some(scope) = scope_stack.last() {
+            // Check if this bracket should be highlighted
+            let should_highlight = if let Some(scope_node_id) = scope.node {
+                // Only highlight if bracket is a direct child of the scope node
+                node.parent()
+                    .map_or(false, |parent| parent.id() == scope_node_id)
             } else {
-                Some(capture.node.id())
+                // include-children mode: highlight all brackets in this scope
+                true
             };
 
-            scope_stack.push(RainbowScope {
-                end_byte: byte_range.end,
-                node_id,
-                pattern_ix: capture.pattern_ix,
-                level: scope_stack.len(),
-            });
-        } else {
-            // This is a bracket capture - assign it a color based on the current scope
-            if let Some(scope) = scope_stack.last() {
-                let should_highlight = if let Some(scope_node_id) = scope.node_id {
-                    // Only highlight if bracket is direct child of scope
-                    capture
-                        .node
-                        .parent()
-                        .map_or(false, |parent| parent.id() == scope_node_id)
-                } else {
-                    // include-children mode: highlight all brackets in scope
-                    true
-                };
+            if should_highlight {
+                let start = buffer.anchor_after(byte_range.start);
+                let end = buffer.anchor_before(byte_range.end);
+                let range = start..end;
 
-                if should_highlight {
-                    let start = buffer.anchor_after(byte_range.start);
-                    let end = buffer.anchor_before(byte_range.end);
-                    let range = start..end;
-
-                    highlights_by_level
-                        .entry(scope.level % 10)
-                        .or_default()
-                        .push(range);
-                }
+                highlights_by_level
+                    .entry(scope.level % 10)
+                    .or_default()
+                    .push(range);
             }
         }
     }
+
+    // Recurse to children
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            walk_tree_for_rainbow(
+                child,
+                buffer,
+                rainbow_config,
+                scope_stack,
+                highlights_by_level,
+            );
+        }
+    }
+}
+
+// Temporary helper until we can use query results
+// This is not ideal - we should be using the actual query matches
+fn is_potential_scope_node(kind: &str) -> bool {
+    // This function exists only because we can't access the proper query matching API
+    // In a proper implementation, this would be determined by the rainbow.scm query
+    matches!(
+        kind,
+        // Common scope nodes across languages
+        "block"
+            | "statement_block"
+            | "compound_statement"
+            | "object"
+            | "array"
+            | "list"
+            | "arguments"
+            | "parameters"
+            | "formal_parameters"
+            | "parenthesized_expression"
+            | "tuple_expression"
+            | "declaration_list"
+            | "field_declaration_list"
+            | "call_expression"
+            | "function_call"
+    ) || kind.contains("block")
+        || kind.contains("list")
+        || kind.contains("expression")
+}
+
+fn is_bracket_node(kind: &str) -> bool {
+    matches!(kind, "[" | "]" | "{" | "}" | "(" | ")" | "<" | ">")
 }
 
 fn get_rainbow_color_0(_theme: &theme::Theme) -> Hsla {
