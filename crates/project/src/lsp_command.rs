@@ -350,7 +350,7 @@ impl LspCommand for PrepareRename {
             }
             Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
                 let snapshot = buffer.snapshot();
-                let (range, _) = snapshot.surrounding_word(self.position);
+                let (range, _) = snapshot.surrounding_word(self.position, false);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
                 Ok(PrepareRenameResponse::Success(range))
             }
@@ -2269,7 +2269,7 @@ impl LspCommand for GetCompletions {
                     // the range based on the syntax tree.
                     None => {
                         if self.position != clipped_position {
-                            log::info!("completion out of expected range");
+                            log::info!("completion out of expected range ");
                             return false;
                         }
 
@@ -2297,7 +2297,7 @@ impl LspCommand for GetCompletions {
                             range_for_token
                                 .get_or_insert_with(|| {
                                     let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(offset);
+                                    let (range, kind) = snapshot.surrounding_word(offset, true);
                                     let range = if kind == Some(CharKind::Word) {
                                         range
                                     } else {
@@ -2483,7 +2483,9 @@ pub(crate) fn parse_completion_text_edit(
         let start = snapshot.clip_point_utf16(range.start, Bias::Left);
         let end = snapshot.clip_point_utf16(range.end, Bias::Left);
         if start != range.start.0 || end != range.end.0 {
-            log::info!("completion out of expected range");
+            log::info!(
+                "completion out of expected range, start: {start:?}, end: {end:?}, range: {range:?}"
+            );
             return None;
         }
         snapshot.anchor_before(start)..snapshot.anchor_after(end)

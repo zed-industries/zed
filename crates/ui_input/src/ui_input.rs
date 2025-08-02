@@ -97,6 +97,10 @@ impl SingleLineInput {
     pub fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
+
+    pub fn text(&self, cx: &App) -> String {
+        self.editor().read(cx).text(cx)
+    }
 }
 
 impl Render for SingleLineInput {
@@ -135,6 +139,7 @@ impl Render for SingleLineInput {
         let editor_style = EditorStyle {
             background: theme_color.ghost_element_background,
             local_player: cx.theme().players().local(),
+            syntax: cx.theme().syntax().clone(),
             text: text_style,
             ..Default::default()
         };

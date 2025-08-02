@@ -94,6 +94,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
+const GEMINI_API_KEY_VAR: &str = "GEMINI_API_KEY";
 const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
@@ -150,6 +151,8 @@ impl State {
 
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR) {
+                (api_key, true)
+            } else if let Ok(api_key) = std::env::var(GEMINI_API_KEY_VAR) {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
@@ -903,7 +906,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {GEMINI_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -922,7 +925,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {GOOGLE_AI_API_KEY_VAR} environment variable.")
+                            format!("API key set in {GEMINI_API_KEY_VAR} environment variable.")
                         } else {
                             "API key configured.".to_string()
                         })),
@@ -935,7 +938,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {GOOGLE_AI_API_KEY_VAR} environment variable.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR} and {GOOGLE_AI_API_KEY_VAR} environment variables are unset.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )

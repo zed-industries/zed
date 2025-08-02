@@ -216,6 +216,7 @@ impl EditorElement {
         register_action(editor, window, Editor::newline_above);
         register_action(editor, window, Editor::newline_below);
         register_action(editor, window, Editor::backspace);
+        register_action(editor, window, Editor::blame_hover);
         register_action(editor, window, Editor::delete);
         register_action(editor, window, Editor::tab);
         register_action(editor, window, Editor::backtab);
@@ -229,7 +230,6 @@ impl EditorElement {
         register_action(editor, window, Editor::sort_lines_case_insensitive);
         register_action(editor, window, Editor::reverse_lines);
         register_action(editor, window, Editor::shuffle_lines);
-        register_action(editor, window, Editor::toggle_case);
         register_action(editor, window, Editor::convert_indentation_to_spaces);
         register_action(editor, window, Editor::convert_indentation_to_tabs);
         register_action(editor, window, Editor::convert_to_upper_case);
@@ -240,6 +240,8 @@ impl EditorElement {
         register_action(editor, window, Editor::convert_to_upper_camel_case);
         register_action(editor, window, Editor::convert_to_lower_camel_case);
         register_action(editor, window, Editor::convert_to_opposite_case);
+        register_action(editor, window, Editor::convert_to_sentence_case);
+        register_action(editor, window, Editor::toggle_case);
         register_action(editor, window, Editor::convert_to_rot13);
         register_action(editor, window, Editor::convert_to_rot47);
         register_action(editor, window, Editor::delete_to_previous_word_start);
@@ -261,6 +263,7 @@ impl EditorElement {
         register_action(editor, window, Editor::kill_ring_yank);
         register_action(editor, window, Editor::copy);
         register_action(editor, window, Editor::copy_and_trim);
+        register_action(editor, window, Editor::diff_clipboard_with_selection);
         register_action(editor, window, Editor::paste);
         register_action(editor, window, Editor::undo);
         register_action(editor, window, Editor::redo);
@@ -949,6 +952,7 @@ impl EditorElement {
         if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
             let point = position_map.point_for_position(event.up.position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
+            editor.selection_drag_state = SelectionDragState::None;
 
             cx.stop_propagation();
         }
@@ -1142,10 +1146,14 @@ impl EditorElement {
                 .as_ref()
                 .and_then(|state| state.popover_bounds)
                 .map_or(false, |bounds| bounds.contains(&event.position));
+            let keyboard_grace = editor
+                .inline_blame_popover
+                .as_ref()
+                .map_or(false, |state| state.keyboard_grace);
 
             if mouse_over_inline_blame || mouse_over_popover {
-                editor.show_blame_popover(&blame_entry, event.position, cx);
-            } else {
+                editor.show_blame_popover(&blame_entry, event.position, false, cx);
+            } else if !keyboard_grace {
                 editor.hide_blame_popover(cx);
             }
         } else {
@@ -4003,6 +4011,7 @@ impl EditorElement {
         let available_width = hitbox.bounds.size.width - right_margin;
 
         let mut header = v_flex()
+            .w_full()
             .relative()
             .child(
                 div()
@@ -7935,17 +7944,11 @@ impl Element for EditorElement {
                         right: right_margin,
                     };
 
-                    // Offset the content_bounds from the text_bounds by the gutter margin (which
-                    // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
-
-                    let editor_content_width = editor_width - content_offset.x;
-
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
-                        editor.set_visible_column_count(editor_content_width / em_advance);
+                        editor.set_visible_column_count(editor_width / em_advance);
 
                         if matches!(
                             editor.mode,
@@ -7957,10 +7960,10 @@ impl Element for EditorElement {
                             let wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::GitDiff => None,
                                 SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-                                SoftWrap::EditorWidth => Some(editor_content_width),
+                                SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(wrap_width_for(column)),
                                 SoftWrap::Bounded(column) => {
-                                    Some(editor_content_width.min(wrap_width_for(column)))
+                                    Some(editor_width.min(wrap_width_for(column)))
                                 }
                             };
 
@@ -7985,13 +7988,12 @@ impl Element for EditorElement {
                         HitboxBehavior::Normal,
                     );
 
+                    // Offset the content_bounds from the text_bounds by the gutter margin (which
+                    // is roughly half a character wide) to make hit testing work more like how we want.
+                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
-                    let editor_text_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
-
-                    let height_in_lines = editor_text_bounds.size.height / line_height;
-
+                    let height_in_lines = bounds.size.height / line_height;
                     let max_row = snapshot.max_point().row().as_f32();
 
                     // The max scroll position for the top of the window
@@ -8375,7 +8377,6 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
-                        editor_width,
                         EditorSettings::get_global(cx),
                     );
 
@@ -8447,7 +8448,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - editor_content_width) / em_advance).max(0.0),
+                        ((scroll_width - editor_width) / em_advance).max(0.0),
                         max_scroll_top,
                     );
 
@@ -8459,7 +8460,7 @@ impl Element for EditorElement {
                         if needs_horizontal_autoscroll.0
                             && let Some(new_scroll_position) = editor.autoscroll_horizontally(
                                 start_row,
-                                editor_content_width,
+                                editor_width,
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
@@ -9040,7 +9041,6 @@ impl ScrollbarLayoutInformation {
         glyph_grid_cell: Size<Pixels>,
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
-        editor_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
@@ -9051,19 +9051,11 @@ impl ScrollbarLayoutInformation {
             }
         };
 
-        let right_margin = if document_size.width + longest_line_blame_width >= editor_width {
-            glyph_grid_cell.width
-        } else {
-            px(0.0)
-        };
-
-        let overscroll = size(right_margin + longest_line_blame_width, vertical_overscroll);
-
-        let scroll_range = document_size + overscroll;
+        let overscroll = size(longest_line_blame_width, vertical_overscroll);
 
         ScrollbarLayoutInformation {
             editor_bounds,
-            scroll_range,
+            scroll_range: document_size + overscroll,
             glyph_grid_cell,
         }
     }
@@ -9168,7 +9160,7 @@ struct EditorScrollbars {
 
 impl EditorScrollbars {
     pub fn from_scrollbar_axes(
-        settings_visibility: ScrollbarAxes,
+        show_scrollbar: ScrollbarAxes,
         layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
         scroll_position: gpui::Point<f32>,
@@ -9206,22 +9198,13 @@ impl EditorScrollbars {
         };
 
         let mut create_scrollbar_layout = |axis| {
-            settings_visibility
-                .along(axis)
+            let viewport_size = viewport_size.along(axis);
+            let scroll_range = scroll_range.along(axis);
+
+            // We always want a vertical scrollbar track for scrollbar diagnostic visibility.
+            (show_scrollbar.along(axis)
+                && (axis == ScrollbarAxis::Vertical || scroll_range > viewport_size))
                 .then(|| {
-                    (
-                        viewport_size.along(axis) - content_offset.along(axis),
-                        scroll_range.along(axis),
-                    )
-                })
-                .filter(|(viewport_size, scroll_range)| {
-                    // The scrollbar should only be rendered if the content does
-                    // not entirely fit into the editor
-                    // However, this only applies to the horizontal scrollbar, as information about the
-                    // vertical scrollbar layout is always needed for scrollbar diagnostics.
-                    axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
-                })
-                .map(|(viewport_size, scroll_range)| {
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), HitboxBehavior::Normal),
                         viewport_size,

@@ -1,5 +1,5 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
-use acp::{AcpThread, AcpThreadEvent};
+use acp_thread::{AcpThread, AcpThreadEvent};
 use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
@@ -81,7 +81,7 @@ impl AgentDiffThread {
         match self {
             AgentDiffThread::Native(thread) => thread.read(cx).is_generating(),
             AgentDiffThread::AcpThread(thread) => {
-                thread.read(cx).status() == acp::ThreadStatus::Generating
+                thread.read(cx).status() == acp_thread::ThreadStatus::Generating
             }
         }
     }
@@ -1506,8 +1506,7 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .last()
-                    .and_then(|entry| entry.diff())
-                    .is_some()
+                    .map_or(false, |entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
@@ -1517,12 +1516,14 @@ impl AgentDiff {
                     .read(cx)
                     .entries()
                     .get(*ix)
-                    .and_then(|entry| entry.diff())
-                    .is_some()
+                    .map_or(false, |entry| entry.diffs().next().is_some())
                 {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
+            AcpThreadEvent::Stopped
+            | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::Error => {}
         }
     }
 

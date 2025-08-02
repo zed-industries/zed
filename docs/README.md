@@ -69,3 +69,64 @@ Templates are just functions that modify the source of the docs pages (usually w
 - Template Trait: crates/docs_preprocessor/src/templates.rs
 - Example template: crates/docs_preprocessor/src/templates/keybinding.rs
 - Client-side plugins: docs/theme/plugins.js
+
+## Postprocessor
+
+A postprocessor is implemented as a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, to add support for page-specific title and meta description values.
+
+An example of the syntax can be found in `git.md`, as well as below
+
+```md
+---
+title: Some more detailed title for this page
+description: A page-specific description
+---
+
+# Editor
+```
+
+The above will be transformed into (with non-relevant tags removed)
+
+```html
+<head>
+  <title>Editor | Some more detailed title for this page</title>
+  <meta name="description" contents="A page-specific description" />
+</head>
+<body>
+  <h1>Editor</h1>
+</body>
+```
+
+If no front-matter is provided, or If one or both keys aren't provided, the title and description will be set based on the `default-title` and `default-description` keys in `book.toml` respectively.
+
+### Implementation details
+
+Unfortunately, `mdbook` does not support post-processing like it does pre-processing, and only supports defining one description to put in the meta tag per book rather than per file. So in order to apply post-processing (necessary to modify the html head tags) the global book description is set to a marker value `#description#` and the html renderer is replaced with a sub-command of `docs_preprocessor` that wraps the builtin `html` renderer and applies post-processing to the `html` files, replacing the marker value and the `<title>(.*)</title>` with the contents of the front-matter if there is one.
+
+### Known limitations
+
+The front-matter parsing is extremely simple, which avoids needing to take on an additional dependency, or implement full yaml parsing.
+
+- Double quotes and multi-line values are not supported, i.e. Keys and values must be entirely on the same line, with no double quotes around the value.
+
+The following will not work:
+
+```md
+---
+title: Some
+  Multi-line
+  Title
+---
+```
+
+And neither will:
+
+```md
+---
+title: "Some title"
+---
+```
+
+- The front-matter must be at the top of the file, with only white-space preceding it
+
+- The contents of the title and description will not be html-escaped. They should be simple ascii text with no unicode or emoji characters

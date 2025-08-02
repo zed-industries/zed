@@ -29,7 +29,6 @@ project.workspace = true
 serde.workspace = true
 settings.workspace = true
 telemetry.workspace = true
-theme.workspace = true
 ui.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true

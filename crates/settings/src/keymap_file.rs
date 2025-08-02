@@ -847,6 +847,7 @@ impl KeymapFile {
     }
 }
 
+#[derive(Clone)]
 pub enum KeybindUpdateOperation<'a> {
     Replace {
         /// Describes the keybind to create
@@ -865,6 +866,47 @@ pub enum KeybindUpdateOperation<'a> {
     },
 }
 
+impl KeybindUpdateOperation<'_> {
+    pub fn generate_telemetry(
+        &self,
+    ) -> (
+        // The keybind that is created
+        String,
+        // The keybinding that was removed
+        String,
+        // The source of the keybinding
+        String,
+    ) {
+        let (new_binding, removed_binding, source) = match &self {
+            KeybindUpdateOperation::Replace {
+                source,
+                target,
+                target_keybind_source,
+            } => (Some(source), Some(target), Some(*target_keybind_source)),
+            KeybindUpdateOperation::Add { source, .. } => (Some(source), None, None),
+            KeybindUpdateOperation::Remove {
+                target,
+                target_keybind_source,
+            } => (None, Some(target), Some(*target_keybind_source)),
+        };
+
+        let new_binding = new_binding
+            .map(KeybindUpdateTarget::telemetry_string)
+            .unwrap_or("null".to_owned());
+        let removed_binding = removed_binding
+            .map(KeybindUpdateTarget::telemetry_string)
+            .unwrap_or("null".to_owned());
+
+        let source = source
+            .as_ref()
+            .map(KeybindSource::name)
+            .map(ToOwned::to_owned)
+            .unwrap_or("null".to_owned());
+
+        (new_binding, removed_binding, source)
+    }
+}
+
 impl<'a> KeybindUpdateOperation<'a> {
     pub fn add(source: KeybindUpdateTarget<'a>) -> Self {
         Self::Add { source, from: None }
@@ -881,6 +923,9 @@ pub struct KeybindUpdateTarget<'a> {
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
+        if self.action_name == gpui::NoAction.name() {
+            return Ok(Value::Null);
+        }
         let action_name: Value = self.action_name.into();
         let value = match self.action_arguments {
             Some(args) => {
@@ -902,21 +947,33 @@ impl<'a> KeybindUpdateTarget<'a> {
         keystrokes.pop();
         keystrokes
     }
+
+    fn telemetry_string(&self) -> String {
+        format!(
+            "action_name: {}, context: {}, action_arguments: {}, keystrokes: {}",
+            self.action_name,
+            self.context.unwrap_or("global"),
+            self.action_arguments.unwrap_or("none"),
+            self.keystrokes_unparsed()
+        )
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum KeybindSource {
     User,
-    Default,
-    Base,
     Vim,
+    Base,
+    #[default]
+    Default,
+    Unknown,
 }
 
 impl KeybindSource {
-    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(0);
-    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(1);
-    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(2);
-    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(3);
+    const BASE: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Base as u32);
+    const DEFAULT: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Default as u32);
+    const VIM: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::Vim as u32);
+    const USER: KeyBindingMetaIndex = KeyBindingMetaIndex(KeybindSource::User as u32);
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -924,6 +981,7 @@ impl KeybindSource {
             KeybindSource::Default => "Default",
             KeybindSource::Base => "Base",
             KeybindSource::Vim => "Vim",
+            KeybindSource::Unknown => "Unknown",
         }
     }
 
@@ -933,6 +991,7 @@ impl KeybindSource {
             KeybindSource::Default => Self::DEFAULT,
             KeybindSource::Base => Self::BASE,
             KeybindSource::Vim => Self::VIM,
+            KeybindSource::Unknown => KeyBindingMetaIndex(*self as u32),
         }
     }
 
@@ -942,7 +1001,7 @@ impl KeybindSource {
             Self::BASE => KeybindSource::Base,
             Self::DEFAULT => KeybindSource::Default,
             Self::VIM => KeybindSource::Vim,
-            _ => unreachable!(),
+            _ => KeybindSource::Unknown,
         }
     }
 }
@@ -955,7 +1014,7 @@ impl From<KeyBindingMetaIndex> for KeybindSource {
 
 impl From<KeybindSource> for KeyBindingMetaIndex {
     fn from(source: KeybindSource) -> Self {
-        return source.meta();
+        source.meta()
     }
 }
 
@@ -1479,10 +1538,6 @@ mod tests {
             ]"#
             .unindent(),
         );
-    }
-
-    #[test]
-    fn test_append() {
         check_keymap_update(
             r#"[
                 {
@@ -1528,6 +1583,84 @@ mod tests {
                 }
             ]"#
             .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::baz",
+                    action_arguments: Some("true"),
+                },
+                target_keybind_source: KeybindSource::Default,
+            },
+            r#"[
+                {
+                    "context": "SomeOtherContext",
+                    "use_key_equivalents": true,
+                    "bindings": {
+                        "b": "foo::bar",
+                    }
+                },
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "a": null
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn test_keymap_remove() {
+        zlog::init_test();
+
+        check_keymap_update(
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-k cmd-l": "editor::ConvertToLowerCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("Editor"),
+                    keystrokes: &parse_keystrokes("cmd-k cmd-l"),
+                    action_name: "editor::ConvertToLowerCase",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"
+            [
+              {
+                "context": "Editor",
+                "bindings": {
+                  "cmd-k cmd-u": "editor::ConvertToUpperCase",
+                  "cmd-[": "pane::GoBack",
+                }
+              },
+            ]
+            "#,
         );
     }
 }

@@ -747,7 +747,7 @@ impl Vim {
             Vim::action(
                 editor,
                 cx,
-                |vim, action: &editor::AcceptEditPrediction, window, cx| {
+                |vim, action: &editor::actions::AcceptEditPrediction, window, cx| {
                     vim.update_editor(window, cx, |_, editor, window, cx| {
                         editor.accept_edit_prediction(action, window, cx);
                     });
@@ -1639,6 +1639,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
+                Mode::HelixNormal => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {

@@ -2,7 +2,6 @@ use crate::agent_model_selector::AgentModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::language_model_selector::ToggleModelSelector;
 use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
@@ -38,6 +37,7 @@ use ui::{
     CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
 };
 use workspace::Workspace;
+use zed_actions::agent::ToggleModelSelector;
 
 pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,

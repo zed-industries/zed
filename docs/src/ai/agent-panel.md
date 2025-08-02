@@ -8,7 +8,7 @@ If you're using the Agent Panel for the first time, you need to have at least on
 You can do that by:
 
 1. [subscribing to our Pro plan](https://zed.dev/pricing), so you have access to our hosted models
-2. or by [bringing your own API keys](./configuration.md#use-your-own-keys) for your desired provider
+2. or by [bringing your own API keys](./llm-providers.md#use-your-own-keys) for your desired provider
 
 ## Overview {#overview}
 
@@ -87,7 +87,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./configuration.md#use-your-own-keys) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](./llm-providers.md#use-your-own-keys) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 ## Using Tools {#using-tools}
 
@@ -120,6 +120,12 @@ With a built-in profile selected, in the profile selector, navigate to `Configur
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
 All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
+
+### Tool Approval
+
+Zed's Agent Panel surfaces the `agent.always_allow_tool_actions` setting that, if turned to `false`, will require you to give permission to any editing attempt as well as tool calls coming from MCP servers.
+
+You can change that by setting this key to `true` in either your `settings.json` or via the Agent Panel's settings view.
 
 ### Model Support {#model-support}
 

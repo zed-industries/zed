@@ -12,6 +12,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::ExtensionCapability;
+
 /// This is the old version of the extension manifest, from when it was `extension.json`.
 #[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
 pub struct OldExtensionManifest {
@@ -100,24 +102,8 @@ impl ExtensionManifest {
         desired_args: &[impl AsRef<str> + std::fmt::Debug],
     ) -> Result<()> {
         let is_allowed = self.capabilities.iter().any(|capability| match capability {
-            ExtensionCapability::ProcessExec { command, args } if command == desired_command => {
-                for (ix, arg) in args.iter().enumerate() {
-                    if arg == "**" {
-                        return true;
-                    }
-
-                    if ix >= desired_args.len() {
-                        return false;
-                    }
-
-                    if arg != "*" && arg != desired_args[ix].as_ref() {
-                        return false;
-                    }
-                }
-                if args.len() < desired_args.len() {
-                    return false;
-                }
-                true
+            ExtensionCapability::ProcessExec(capability) => {
+                capability.allows(desired_command, desired_args)
             }
             _ => false,
         });
@@ -146,20 +132,6 @@ pub fn build_debug_adapter_schema_path(
         Path::new("debug_adapter_schemas")
             .join(Path::new(adapter_name.as_ref()).with_extension("json"))
     })
-}
-
-/// A capability for an extension.
-#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum ExtensionCapability {
-    #[serde(rename = "process:exec")]
-    ProcessExec {
-        /// The command to execute.
-        command: String,
-        /// The arguments to pass to the command. Use `*` for a single wildcard argument.
-        /// If the last element is `**`, then any trailing arguments are allowed.
-        args: Vec<String>,
-    },
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -309,6 +281,10 @@ fn manifest_from_old_manifest(
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
+    use crate::ProcessExecCapability;
+
     use super::*;
 
     fn extension_manifest() -> ExtensionManifest {
@@ -360,12 +336,12 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_exact_match() {
+    fn test_allow_exec_exact_match() {
         let manifest = ExtensionManifest {
-            capabilities: vec![ExtensionCapability::ProcessExec {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "ls".to_string(),
                 args: vec!["-la".to_string()],
-            }],
+            })],
             ..extension_manifest()
         };
 
@@ -375,12 +351,12 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_wildcard_arg() {
+    fn test_allow_exec_wildcard_arg() {
         let manifest = ExtensionManifest {
-            capabilities: vec![ExtensionCapability::ProcessExec {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "git".to_string(),
                 args: vec!["*".to_string()],
-            }],
+            })],
             ..extension_manifest()
         };
 
@@ -391,12 +367,12 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_double_wildcard() {
+    fn test_allow_exec_double_wildcard() {
         let manifest = ExtensionManifest {
-            capabilities: vec![ExtensionCapability::ProcessExec {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "cargo".to_string(),
                 args: vec!["test".to_string(), "**".to_string()],
-            }],
+            })],
             ..extension_manifest()
         };
 
@@ -411,12 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_mixed_wildcards() {
+    fn test_allow_exec_mixed_wildcards() {
         let manifest = ExtensionManifest {
-            capabilities: vec![ExtensionCapability::ProcessExec {
+            capabilities: vec![ExtensionCapability::ProcessExec(ProcessExecCapability {
                 command: "docker".to_string(),
                 args: vec!["run".to_string(), "*".to_string(), "**".to_string()],
-            }],
+            })],
             ..extension_manifest()
         };
 
