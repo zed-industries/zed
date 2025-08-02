@@ -152,6 +152,7 @@ dependencies = [
 name = "agent2"
 version = "0.1.0"
 dependencies = [
+ "agent-client-protocol",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
@@ -168,6 +169,7 @@ dependencies = [
  "handlebars 4.5.0",
  "language_model",
  "language_models",
+ "log",
  "parking_lot",
  "project",
  "reqwest_client",
@@ -179,6 +181,7 @@ dependencies = [
  "smol",
  "thiserror 2.0.12",
  "util",
+ "uuid",
  "worktree",
 ]
 
