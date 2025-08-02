@@ -113,6 +113,7 @@ project_panel.workspace = true
 project_symbols.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
+python_ui.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
