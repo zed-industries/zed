@@ -157,6 +157,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent-client-protocol",
+ "agent_servers",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
@@ -184,6 +185,7 @@ dependencies = [
  "settings",
  "smol",
  "thiserror 2.0.12",
+ "ui",
  "util",
  "uuid",
  "worktree",
@@ -253,6 +255,7 @@ dependencies = [
  "acp_thread",
  "agent",
  "agent-client-protocol",
+ "agent2",
  "agent_servers",
  "agent_settings",
  "ai_onboarding",
