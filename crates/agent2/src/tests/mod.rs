@@ -216,8 +216,8 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     });
 
     // Create agent and connection
-    let agent = cx.new(|_| Agent::new(templates.clone()));
-    let connection = AgentConnection(agent.clone());
+    let agent = cx.new(|_| NativeAgent::new(templates.clone()));
+    let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
     let selector_opt = connection.model_selector();

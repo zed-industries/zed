@@ -11,14 +11,14 @@ use std::sync::Arc;
 
 use crate::{templates::Templates, Thread};
 
-pub struct Agent {
+pub struct NativeAgent {
     /// Session ID -> Thread entity mapping
     sessions: HashMap<acp::SessionId, Entity<Thread>>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
 }
 
-impl Agent {
+impl NativeAgent {
     pub fn new(templates: Arc<Templates>) -> Self {
         Self {
             sessions: HashMap::new(),
@@ -29,9 +29,9 @@ impl Agent {
 
 /// Wrapper struct that implements the AgentConnection trait
 #[derive(Clone)]
-pub struct AgentConnection(pub Entity<Agent>);
+pub struct NativeAgentConnection(pub Entity<NativeAgent>);
 
-impl ModelSelector for AgentConnection {
+impl ModelSelector for NativeAgentConnection {
     fn list_models(&self, cx: &mut AsyncApp) -> Task<Result<Vec<Arc<dyn LanguageModel>>>> {
         cx.spawn(async move |cx| {
             cx.update(|cx| {
@@ -85,7 +85,7 @@ impl ModelSelector for AgentConnection {
     }
 }
 
-impl acp_thread::AgentConnection for AgentConnection {
+impl acp_thread::AgentConnection for NativeAgentConnection {
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -98,7 +98,7 @@ impl acp_thread::AgentConnection for AgentConnection {
         cx.spawn(async move |cx| {
             // Create Thread and store in Agent
             let (session_id, _thread) =
-                agent.update(cx, |agent, cx: &mut gpui::Context<Agent>| {
+                agent.update(cx, |agent, cx: &mut gpui::Context<NativeAgent>| {
                     // Fetch default model
                     let default_model = LanguageModelRegistry::read_global(cx)
                         .available_models(cx)
