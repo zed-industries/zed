@@ -747,7 +747,7 @@ impl Vim {
             Vim::action(
                 editor,
                 cx,
-                |vim, action: &editor::AcceptEditPrediction, window, cx| {
+                |vim, action: &editor::actions::AcceptEditPrediction, window, cx| {
                     vim.update_editor(window, cx, |_, editor, window, cx| {
                         editor.accept_edit_prediction(action, window, cx);
                     });

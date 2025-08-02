@@ -51,42 +51,56 @@ mod signature_help;
 pub mod test;
 
 pub(crate) use actions::*;
-pub use actions::{AcceptEditPrediction, OpenExcerpts, OpenExcerptsSplit};
+pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
+pub use editor_settings::{
+    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
+    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap, ShowScrollbar,
+};
+pub use editor_settings_controls::*;
+pub use element::{
+    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
+};
+pub use git::blame::BlameRenderer;
+pub use hover_popover::hover_markdown_style;
+pub use inline_completion::Direction;
+pub use items::MAX_TAB_TITLE_LEN;
+pub use lsp::CompletionContext;
+pub use lsp_ext::lsp_tasks;
+pub use multi_buffer::{
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, PathKey,
+    RowInfo, ToOffset, ToPoint,
+};
+pub use proposed_changes_editor::{
+    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
+};
+pub use text::Bias;
+
+use ::git::{
+    Restore,
+    blame::{BlameEntry, ParsedCommitMessage},
+};
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
 use client::{Collaborator, DisableAiSettings, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
+use code_context_menus::{
+    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
+    CompletionsMenu, ContextMenuOrigin,
+};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-pub use display_map::{ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder};
-pub use editor_settings::{
-    CurrentLineHighlight, DocumentColorsRenderMode, EditorSettings, HideMouseMode,
-    ScrollBeyondLastLine, ScrollbarAxes, SearchSettings, ShowMinimap, ShowScrollbar,
-};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
-pub use editor_settings_controls::*;
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
-pub use element::{
-    CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-};
 use futures::{
     FutureExt, StreamExt as _,
     future::{self, Shared, join},
     stream::FuturesUnordered,
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
-use lsp_colors::LspColorData;
-
-use ::git::blame::BlameEntry;
-use ::git::{Restore, blame::ParsedCommitMessage};
-use code_context_menus::{
-    AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionsMenu, ContextMenuOrigin,
-};
 use git::blame::{GitBlame, GlobalBlameRenderer};
 use gpui::{
     Action, Animation, AnimationExt, AnyElement, App, AppContext, AsyncWindowContext,
@@ -100,32 +114,43 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{HoverLink, HoveredLinkState, InlayHighlight, find_file};
-pub use hover_popover::hover_markdown_style;
 use hover_popover::{HoverState, hide_hover};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
-pub use inline_completion::Direction;
 use inline_completion::{EditPredictionProvider, InlineCompletionProviderHandle};
-pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, Capability, CharKind,
-    CodeLabel, CursorShape, DiagnosticEntry, DiffOptions, EditPredictionsMode, EditPreview,
-    HighlightedText, IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection,
-    SelectionGoal, TextObject, TransactionId, TreeSitterOptions, WordsQuery,
+    AutoindentMode, BlockCommentConfig, BracketMatch, BracketPair, Buffer, BufferRow,
+    BufferSnapshot, Capability, CharClassifier, CharKind, CodeLabel, CursorShape, DiagnosticEntry,
+    DiffOptions, EditPredictionsMode, EditPreview, HighlightedText, IndentKind, IndentSize,
+    Language, OffsetRangeExt, Point, Runnable, RunnableRange, Selection, SelectionGoal, TextObject,
+    TransactionId, TreeSitterOptions, WordsQuery,
     language_settings::{
         self, InlayHintSettings, LspInsertMode, RewrapBehavior, WordsCompletionMode,
         all_language_settings, language_settings,
     },
-    point_from_lsp, text_diff_with_options,
+    point_from_lsp, point_to_lsp, text_diff_with_options,
 };
-use language::{BufferRow, CharClassifier, Runnable, RunnableRange, point_to_lsp};
 use linked_editing_ranges::refresh_linked_ranges;
+use lsp::{
+    CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
+    LanguageServerId, LanguageServerName,
+};
+use lsp_colors::LspColorData;
 use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
+use movement::TextLayoutDetails;
+use multi_buffer::{
+    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
+    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
+};
+use parking_lot::Mutex;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, ProjectPath,
+    BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
+    CompletionSource, DocumentHighlight, InlayHint, Location, LocationLink, PrepareRenameResponse,
+    Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
+    debugger::breakpoint_store::Breakpoint,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -134,44 +159,12 @@ use project::{
         session::{Session, SessionEvent},
     },
     git_store::{GitStoreEvent, RepositoryEvent},
-    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
-};
-
-pub use git::blame::BlameRenderer;
-pub use proposed_changes_editor::{
-    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
-};
-use std::{cell::OnceCell, iter::Peekable, ops::Not};
-use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
-
-pub use lsp::CompletionContext;
-use lsp::{
-    CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
-    LanguageServerId, LanguageServerName,
-};
-
-use language::BufferSnapshot;
-pub use lsp_ext::lsp_tasks;
-use movement::TextLayoutDetails;
-pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, PathKey,
-    RowInfo, ToOffset, ToPoint,
-};
-use multi_buffer::{
-    ExcerptInfo, ExpandExcerptDirection, MultiBufferDiffHunk, MultiBufferPoint, MultiBufferRow,
-    MultiOrSingleBufferOffsetRange, ToOffsetUtf16,
-};
-use parking_lot::Mutex;
-use project::{
-    CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
-    TaskSourceKind,
-    debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter},
     project_settings::{GitGutterSetting, ProjectSettings},
 };
-use rand::prelude::*;
-use rpc::{ErrorExt, proto::*};
+use rand::{seq::SliceRandom, thread_rng};
+use rpc::{ErrorCode, ErrorExt, proto::PeerId};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
 use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
@@ -180,21 +173,24 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsLocation, SettingsStore, update_settings_file};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
-use std::sync::Arc;
 use std::{
     any::TypeId,
     borrow::Cow,
+    cell::OnceCell,
     cell::RefCell,
     cmp::{self, Ordering, Reverse},
+    iter::Peekable,
     mem,
     num::NonZeroU32,
+    ops::Not,
     ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant},
 };
-pub use sum_tree::Bias;
 use sum_tree::TreeMap;
+use task::{ResolvedTask, RunnableTag, TaskTemplate, TaskVariables};
 use text::{BufferId, FromAnchor, OffsetUtf16, Rope};
 use theme::{
     ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, Theme, ThemeSettings,
@@ -213,14 +209,11 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
     searchable::SearchEvent,
 };
-use zed_actions;
 
 use crate::{
     code_context_menus::CompletionsMenuSource,
-    hover_links::{find_url, find_url_from_range},
-};
-use crate::{
     editor_settings::MultiCursorModifier,
+    hover_links::{find_url, find_url_from_range},
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
 };
 
@@ -21128,13 +21121,6 @@ fn process_completion_for_edit(
                     .cmp(&cursor_position, &buffer_snapshot)
                     .is_le(),
                 "replace_range should start before or at cursor position"
-            );
-            debug_assert!(
-                insert_range
-                    .end
-                    .cmp(&cursor_position, &buffer_snapshot)
-                    .is_le(),
-                "insert_range should end before or at cursor position"
             );
 
             let should_replace = match intent {
