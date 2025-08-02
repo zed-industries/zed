@@ -36,7 +36,7 @@ pub trait ModelSelector: 'static {
     /// A task resolving to `Ok(())` on success or an error.
     fn select_model(
         &self,
-        session_id: &acp::SessionId,
+        session_id: acp::SessionId,
         model: Arc<dyn LanguageModel>,
         cx: &mut AsyncApp,
     ) -> Task<Result<()>>;

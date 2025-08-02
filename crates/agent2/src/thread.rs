@@ -9,6 +9,7 @@ use language_model::{
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, MessageContent, Role, StopReason,
 };
+use log;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
@@ -38,7 +39,6 @@ pub struct Thread {
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
 }
 
@@ -80,22 +80,36 @@ impl Thread {
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
+        let content = content.into();
+        log::info!("Thread::send called with model: {:?}", model.name());
+        log::debug!("Thread::send content: {:?}", content);
+
         cx.notify();
         let (events_tx, events_rx) =
             mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
 
         let system_message = self.build_system_message(cx);
+        log::debug!(
+            "System messages count: {}",
+            if system_message.is_some() { 1 } else { 0 }
+        );
         self.messages.extend(system_message);
 
         self.messages.push(AgentMessage {
             role: Role::User,
-            content: vec![content.into()],
+            content: vec![content],
         });
+        log::info!("Total messages in thread: {}", self.messages.len());
         self.running_turn = Some(cx.spawn(async move |thread, cx| {
+            log::info!("Starting agent turn execution");
             let turn_result = async {
                 // Perform one request, then keep looping if the model makes tool calls.
                 let mut completion_intent = CompletionIntent::UserPrompt;
                 loop {
+                    log::debug!(
+                        "Building completion request with intent: {:?}",
+                        completion_intent
+                    );
                     let request = thread.update(cx, |thread, cx| {
                         thread.build_completion_request(completion_intent, cx)
                     })?;
@@ -106,11 +120,14 @@ impl Thread {
                     // );
 
                     // Stream events, appending to messages and collecting up tool uses.
+                    log::info!("Calling model.stream_completion");
                     let mut events = model.stream_completion(request, cx).await?;
+                    log::debug!("Stream completion started successfully");
                     let mut tool_uses = Vec::new();
                     while let Some(event) = events.next().await {
                         match event {
                             Ok(event) => {
+                                log::trace!("Received completion event: {:?}", event);
                                 thread
                                     .update(cx, |thread, cx| {
                                         tool_uses.extend(thread.handle_streamed_completion_event(
@@ -122,6 +139,7 @@ impl Thread {
                                     .ok();
                             }
                             Err(error) => {
+                                log::error!("Error in completion stream: {:?}", error);
                                 events_tx.unbounded_send(Err(error)).ok();
                                 break;
                             }
@@ -130,13 +148,16 @@ impl Thread {
 
                     // If there are no tool uses, the turn is done.
                     if tool_uses.is_empty() {
+                        log::info!("No tool uses found, completing turn");
                         break;
                     }
+                    log::info!("Found {} tool uses to execute", tool_uses.len());
 
                     // If there are tool uses, wait for their results to be
                     // computed, then send them together in a single message on
                     // the next loop iteration.
                     let tool_results = future::join_all(tool_uses).await;
+                    log::debug!("Tool execution completed, {} results", tool_results.len());
                     thread
                         .update(cx, |thread, _cx| {
                             thread.messages.push(AgentMessage {
@@ -156,13 +177,17 @@ impl Thread {
             .await;
 
             if let Err(error) = turn_result {
+                log::error!("Turn execution failed: {:?}", error);
                 events_tx.unbounded_send(Err(error)).ok();
+            } else {
+                log::info!("Turn execution completed successfully");
             }
         }));
         events_rx
     }
 
     pub fn build_system_message(&mut self, cx: &App) -> Option<AgentMessage> {
+        log::debug!("Building system message");
         let mut system_message = AgentMessage {
             role: Role::System,
             content: Vec::new(),
@@ -176,7 +201,9 @@ impl Thread {
             }
         }
 
-        (!system_message.content.is_empty()).then_some(system_message)
+        let result = (!system_message.content.is_empty()).then_some(system_message);
+        log::debug!("System message built: {}", result.is_some());
+        result
     }
 
     /// A helper method that's called on every streamed completion event.
@@ -188,6 +215,7 @@ impl Thread {
         events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
+        log::trace!("Handling streamed completion event: {:?}", event);
         use LanguageModelCompletionEvent::*;
         events_tx.unbounded_send(Ok(event.clone())).ok();
 
@@ -329,41 +357,74 @@ impl Thread {
         completion_intent: CompletionIntent,
         cx: &mut App,
     ) -> LanguageModelRequest {
-        LanguageModelRequest {
+        log::debug!("Building completion request");
+        log::debug!("Completion intent: {:?}", completion_intent);
+        log::debug!("Completion mode: {:?}", self.completion_mode);
+
+        let messages = self.build_request_messages();
+        log::info!("Request will include {} messages", messages.len());
+
+        let tools: Vec<LanguageModelRequestTool> = self
+            .tools
+            .values()
+            .filter_map(|tool| {
+                let tool_name = tool.name().to_string();
+                log::trace!("Including tool: {}", tool_name);
+                Some(LanguageModelRequestTool {
+                    name: tool_name,
+                    description: tool.description(cx).to_string(),
+                    input_schema: tool
+                        .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
+                        .log_err()?,
+                })
+            })
+            .collect();
+
+        log::info!("Request includes {} tools", tools.len());
+
+        let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
             intent: Some(completion_intent),
             mode: Some(self.completion_mode),
-            messages: self.build_request_messages(),
-            tools: self
-                .tools
-                .values()
-                .filter_map(|tool| {
-                    Some(LanguageModelRequestTool {
-                        name: tool.name().to_string(),
-                        description: tool.description(cx).to_string(),
-                        input_schema: tool
-                            .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
-                            .log_err()?,
-                    })
-                })
-                .collect(),
+            messages,
+            tools,
             tool_choice: None,
             stop: Vec::new(),
             temperature: None,
             thinking_allowed: false,
-        }
+        };
+
+        log::debug!("Completion request built successfully");
+        request
     }
 
     fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
-        self.messages
+        log::trace!(
+            "Building request messages from {} thread messages",
+            self.messages.len()
+        );
+        let messages = self
+            .messages
             .iter()
-            .map(|message| LanguageModelRequestMessage {
-                role: message.role,
-                content: message.content.clone(),
-                cache: false,
+            .map(|message| {
+                log::trace!(
+                    "  - {} message with {} content items",
+                    match message.role {
+                        Role::System => "System",
+                        Role::User => "User",
+                        Role::Assistant => "Assistant",
+                    },
+                    message.content.len()
+                );
+                LanguageModelRequestMessage {
+                    role: message.role,
+                    content: message.content.clone(),
+                    cache: false,
+                }
             })
-            .collect()
+            .collect();
+        messages
     }
 }
 
