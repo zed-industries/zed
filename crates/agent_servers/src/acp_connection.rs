@@ -172,7 +172,7 @@ impl acp::Client for ClientDelegate {
         arguments: acp::RequestPermissionRequest,
     ) -> Result<acp::RequestPermissionResponse, acp::Error> {
         let cx = &mut self.cx.clone();
-        let result = self
+        let rx = self
             .sessions
             .borrow()
             .get(&arguments.session_id)
@@ -180,8 +180,9 @@ impl acp::Client for ClientDelegate {
             .thread
             .update(cx, |thread, cx| {
                 thread.request_tool_call_permission(arguments.tool_call, arguments.options, cx)
-            })?
-            .await;
+            })?;
+
+        let result = rx.await;
 
         let outcome = match result {
             Ok(option) => acp::RequestPermissionOutcome::Selected { option_id: option },
@@ -196,15 +197,17 @@ impl acp::Client for ClientDelegate {
         arguments: acp::WriteTextFileRequest,
     ) -> Result<(), acp::Error> {
         let cx = &mut self.cx.clone();
-        self.sessions
+        let task = self
+            .sessions
             .borrow()
             .get(&arguments.session_id)
             .context("Failed to get session")?
             .thread
             .update(cx, |thread, cx| {
                 thread.write_text_file(arguments.path, arguments.content, cx)
-            })?
-            .await?;
+            })?;
+
+        task.await?;
 
         Ok(())
     }
@@ -214,7 +217,7 @@ impl acp::Client for ClientDelegate {
         arguments: acp::ReadTextFileRequest,
     ) -> Result<acp::ReadTextFileResponse, acp::Error> {
         let cx = &mut self.cx.clone();
-        let content = self
+        let task = self
             .sessions
             .borrow()
             .get(&arguments.session_id)
@@ -222,8 +225,9 @@ impl acp::Client for ClientDelegate {
             .thread
             .update(cx, |thread, cx| {
                 thread.read_text_file(arguments.path, arguments.line, arguments.limit, false, cx)
-            })?
-            .await?;
+            })?;
+
+        let content = task.await?;
 
         Ok(acp::ReadTextFileResponse { content })
     }

@@ -19,7 +19,6 @@ doctest = false
 [dependencies]
 acp_thread.workspace = true
 agent-client-protocol.workspace = true
-agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 context_server.workspace = true

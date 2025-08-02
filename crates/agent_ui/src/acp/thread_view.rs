@@ -2844,8 +2844,8 @@ mod tests {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn name(&self) -> &'static str {
-            "StubAgentConnection"
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
         }
 
         fn new_thread(
@@ -2863,17 +2863,21 @@ mod tests {
                     .into(),
             );
             let thread = cx
-                .new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))
+                .new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx))
                 .unwrap();
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<gpui::Result<()>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             let mut tasks = vec![];
@@ -2920,10 +2924,6 @@ mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
-        fn name(&self) -> &'static str {
-            "SaboteurAgentConnection"
-        }
-
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -2931,15 +2931,31 @@ mod tests {
             cx: &mut gpui::AsyncApp,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx
-                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
+                .new(|cx| {
+                    AcpThread::new(
+                        "SaboteurAgentConnection",
+                        self,
+                        project,
+                        SessionId("test".into()),
+                        cx,
+                    )
+                })
                 .unwrap()))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(&self, _params: acp::PromptRequest, _cx: &mut App) -> Task<gpui::Result<()>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 
