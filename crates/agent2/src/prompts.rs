@@ -7,11 +7,11 @@ use gpui::{App, Entity};
 use project::Project;
 
 #[allow(dead_code)]
-struct _BasePrompt {
+struct BasePrompt {
     project: Entity<Project>,
 }
 
-impl Prompt for _BasePrompt {
+impl Prompt for BasePrompt {
     fn render(&self, templates: &Templates, cx: &App) -> Result<String> {
         BaseTemplate {
             os: std::env::consts::OS.to_string(),

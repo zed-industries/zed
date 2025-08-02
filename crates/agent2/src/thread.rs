@@ -35,7 +35,7 @@ pub struct Thread {
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
     system_prompts: Vec<Arc<dyn Prompt>>,
-    tools: BTreeMap<SharedString, Arc<dyn AgentToolErased>>,
+    tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     templates: Arc<Templates>,
     // project: Entity<Project>,
     // action_log: Entity<ActionLog>,
@@ -390,21 +390,21 @@ where
     /// Runs the tool with the provided input.
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
 
-    fn erase(self) -> Arc<dyn AgentToolErased> {
+    fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
     }
 }
 
 pub struct Erased<T>(T);
 
-pub trait AgentToolErased {
+pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self, cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
 }
 
-impl<T> AgentToolErased for Erased<Arc<T>>
+impl<T> AnyAgentTool for Erased<Arc<T>>
 where
     T: AgentTool,
 {
