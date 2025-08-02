@@ -635,7 +635,7 @@ pub(crate) struct Highlights<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InlineCompletionStyles {
+pub struct EditPredictionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
 }
@@ -643,7 +643,7 @@ pub struct InlineCompletionStyles {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub edit_prediction: Option<InlineCompletionStyles>,
+    pub edit_prediction: Option<EditPredictionStyles>,
 }
 
 #[derive(Clone)]

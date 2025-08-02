@@ -50,14 +50,14 @@ const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
 
 struct CopilotErrorToast;
 
-pub struct InlineCompletionButton {
+pub struct EditPredictionButton {
     editor_subscription: Option<(Subscription, usize)>,
     editor_enabled: Option<bool>,
     editor_show_predictions: bool,
     editor_focus_handle: Option<FocusHandle>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
-    edit_prediction_provider: Option<Arc<dyn edit_prediction::InlineCompletionProviderHandle>>,
+    edit_prediction_provider: Option<Arc<dyn edit_prediction::EditPredictionProviderHandle>>,
     fs: Arc<dyn Fs>,
     user_store: Entity<UserStore>,
     popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -70,7 +70,7 @@ enum SupermavenButtonStatus {
     Initializing,
 }
 
-impl Render for InlineCompletionButton {
+impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
@@ -368,7 +368,7 @@ impl Render for InlineCompletionButton {
     }
 }
 
-impl InlineCompletionButton {
+impl EditPredictionButton {
     pub fn new(
         fs: Arc<dyn Fs>,
         user_store: Entity<UserStore>,
@@ -834,7 +834,7 @@ impl InlineCompletionButton {
     }
 }
 
-impl StatusItemView for InlineCompletionButton {
+impl StatusItemView for EditPredictionButton {
     fn set_active_pane_item(
         &mut self,
         item: Option<&dyn ItemHandle>,

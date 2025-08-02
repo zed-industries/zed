@@ -1,6 +1,6 @@
 use crate::{Completion, Copilot};
 use anyhow::Result;
-use edit_prediction::{Direction, EditPredictionProvider, InlineCompletion};
+use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
 use project::Project;
@@ -210,7 +210,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion> {
+    ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
         let buffer = buffer.read(cx);
         let completion = self.active_completion()?;
@@ -241,7 +241,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(InlineCompletion {
+                Some(EditPrediction {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,

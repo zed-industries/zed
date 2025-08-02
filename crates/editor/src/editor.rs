@@ -93,7 +93,7 @@ use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
-use edit_prediction::{EditPredictionProvider, InlineCompletionProviderHandle};
+use edit_prediction::{EditPredictionProvider, EditPredictionProviderHandle};
 use editor_settings::{GoToDefinitionFallback, Minimap as MinimapSettings};
 use element::{AcceptEditPredictionBinding, LineWithInvisibles, PositionMap, layout_line};
 use futures::{
@@ -268,7 +268,7 @@ impl InlineValueCache {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum InlayId {
-    InlineCompletion(usize),
+    EditPrediction(usize),
     DebuggerValue(usize),
     // LSP
     Hint(usize),
@@ -278,7 +278,7 @@ pub enum InlayId {
 impl InlayId {
     fn id(&self) -> usize {
         match self {
-            Self::InlineCompletion(id) => *id,
+            Self::EditPrediction(id) => *id,
             Self::DebuggerValue(id) => *id,
             Self::Hint(id) => *id,
             Self::Color(id) => *id,
@@ -547,7 +547,7 @@ pub struct EditorStyle {
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
     pub inlay_hints_style: HighlightStyle,
-    pub edit_prediction_styles: InlineCompletionStyles,
+    pub edit_prediction_styles: EditPredictionStyles,
     pub unnecessary_code_fade: f32,
     pub show_underlines: bool,
 }
@@ -566,7 +566,7 @@ impl Default for EditorStyle {
             // style and retrieve them directly from the theme.
             status: StatusColors::dark(),
             inlay_hints_style: HighlightStyle::default(),
-            edit_prediction_styles: InlineCompletionStyles {
+            edit_prediction_styles: EditPredictionStyles {
                 insertion: HighlightStyle::default(),
                 whitespace: HighlightStyle::default(),
             },
@@ -588,8 +588,8 @@ pub fn make_inlay_hints_style(cx: &mut App) -> HighlightStyle {
     }
 }
 
-pub fn make_suggestion_styles(cx: &mut App) -> InlineCompletionStyles {
-    InlineCompletionStyles {
+pub fn make_suggestion_styles(cx: &mut App) -> EditPredictionStyles {
+    EditPredictionStyles {
         insertion: HighlightStyle {
             color: Some(cx.theme().status().predictive),
             ..HighlightStyle::default()
@@ -609,7 +609,7 @@ pub(crate) enum EditDisplayMode {
     Inline,
 }
 
-enum InlineCompletion {
+enum EditPrediction {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
         edit_preview: Option<EditPreview>,
@@ -622,9 +622,9 @@ enum InlineCompletion {
     },
 }
 
-struct InlineCompletionState {
+struct EditPredictionState {
     inlay_ids: Vec<InlayId>,
-    completion: InlineCompletion,
+    completion: EditPrediction,
     completion_id: Option<SharedString>,
     invalidation_range: Range<Anchor>,
 }
@@ -637,7 +637,7 @@ enum EditPredictionSettings {
     },
 }
 
-enum InlineCompletionHighlight {}
+enum EditPredictionHighlight {}
 
 #[derive(Debug, Clone)]
 struct InlineDiagnostic {
@@ -648,7 +648,7 @@ struct InlineDiagnostic {
     severity: lsp::DiagnosticSeverity,
 }
 
-pub enum MenuInlineCompletionsPolicy {
+pub enum MenuEditPredictionsPolicy {
     Never,
     ByProvider,
 }
@@ -1087,15 +1087,15 @@ pub struct Editor {
     pending_mouse_down: Option<Rc<RefCell<Option<MouseDownEvent>>>>,
     gutter_hovered: bool,
     hovered_link_state: Option<HoveredLinkState>,
-    edit_prediction_provider: Option<RegisteredInlineCompletionProvider>,
+    edit_prediction_provider: Option<RegisteredEditPredictionProvider>,
     code_action_providers: Vec<Rc<dyn CodeActionProvider>>,
-    active_edit_prediction: Option<InlineCompletionState>,
+    active_edit_prediction: Option<EditPredictionState>,
     /// Used to prevent flickering as the user types while the menu is open
-    stale_edit_prediction_in_menu: Option<InlineCompletionState>,
+    stale_edit_prediction_in_menu: Option<EditPredictionState>,
     edit_prediction_settings: EditPredictionSettings,
     edit_predictions_hidden_for_vim_mode: bool,
     show_edit_predictions_override: Option<bool>,
-    menu_edit_predictions_policy: MenuInlineCompletionsPolicy,
+    menu_edit_predictions_policy: MenuEditPredictionsPolicy,
     edit_prediction_preview: EditPredictionPreview,
     edit_prediction_indent_conflict: bool,
     edit_prediction_requires_modifier_in_indent_conflict: bool,
@@ -1510,8 +1510,8 @@ pub struct RenameState {
 
 struct InvalidationStack<T>(Vec<T>);
 
-struct RegisteredInlineCompletionProvider {
-    provider: Arc<dyn InlineCompletionProviderHandle>,
+struct RegisteredEditPredictionProvider {
+    provider: Arc<dyn EditPredictionProviderHandle>,
     _subscription: Subscription,
 }
 
@@ -2118,7 +2118,7 @@ impl Editor {
             editor_actions: Rc::default(),
             edit_predictions_hidden_for_vim_mode: false,
             show_edit_predictions_override: None,
-            menu_edit_predictions_policy: MenuInlineCompletionsPolicy::ByProvider,
+            menu_edit_predictions_policy: MenuEditPredictionsPolicy::ByProvider,
             edit_prediction_settings: EditPredictionSettings::Disabled,
             edit_prediction_indent_conflict: false,
             edit_prediction_requires_modifier_in_indent_conflict: true,
@@ -2717,15 +2717,14 @@ impl Editor {
     ) where
         T: EditPredictionProvider,
     {
-        self.edit_prediction_provider =
-            provider.map(|provider| RegisteredInlineCompletionProvider {
-                _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
-                    if this.focus_handle.is_focused(window) {
-                        this.update_visible_edit_prediction(window, cx);
-                    }
-                }),
-                provider: Arc::new(provider),
-            });
+        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionProvider {
+            _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
+                if this.focus_handle.is_focused(window) {
+                    this.update_visible_edit_prediction(window, cx);
+                }
+            }),
+            provider: Arc::new(provider),
+        });
         self.update_edit_prediction_settings(cx);
         self.refresh_edit_prediction(false, false, window, cx);
     }
@@ -2814,7 +2813,7 @@ impl Editor {
         }
     }
 
-    pub fn set_menu_edit_predictions_policy(&mut self, value: MenuInlineCompletionsPolicy) {
+    pub fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
         self.menu_edit_predictions_policy = value;
     }
 
@@ -7089,7 +7088,7 @@ impl Editor {
 
         let by_provider = matches!(
             self.menu_edit_predictions_policy,
-            MenuInlineCompletionsPolicy::ByProvider
+            MenuEditPredictionsPolicy::ByProvider
         );
 
         let show_in_menu = by_provider
@@ -7269,7 +7268,7 @@ impl Editor {
         self.report_edit_prediction_event(active_edit_prediction.completion_id.clone(), true, cx);
 
         match &active_edit_prediction.completion {
-            InlineCompletion::Move { target, .. } => {
+            EditPrediction::Move { target, .. } => {
                 let target = *target;
 
                 if let Some(position_map) = &self.last_position_map {
@@ -7311,7 +7310,7 @@ impl Editor {
                     }
                 }
             }
-            InlineCompletion::Edit { edits, .. } => {
+            EditPrediction::Edit { edits, .. } => {
                 if let Some(provider) = self.edit_prediction_provider() {
                     provider.accept(cx);
                 }
@@ -7367,7 +7366,7 @@ impl Editor {
         self.report_edit_prediction_event(active_edit_prediction.completion_id.clone(), true, cx);
 
         match &active_edit_prediction.completion {
-            InlineCompletion::Move { target, .. } => {
+            EditPrediction::Move { target, .. } => {
                 let target = *target;
                 self.change_selections(
                     SelectionEffects::scroll(Autoscroll::newest()),
@@ -7378,7 +7377,7 @@ impl Editor {
                     },
                 );
             }
-            InlineCompletion::Edit { edits, .. } => {
+            EditPrediction::Edit { edits, .. } => {
                 // Find an insertion that starts at the cursor position.
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
@@ -7483,7 +7482,7 @@ impl Editor {
         };
 
         self.splice_inlays(&active_edit_prediction.inlay_ids, Default::default(), cx);
-        self.clear_highlights::<InlineCompletionHighlight>(cx);
+        self.clear_highlights::<EditPredictionHighlight>(cx);
         self.stale_edit_prediction_in_menu = Some(active_edit_prediction);
         true
     }
@@ -7755,7 +7754,7 @@ impl Editor {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
             let target = first_edit_start;
-            InlineCompletion::Move { target, snapshot }
+            EditPrediction::Move { target, snapshot }
         } else {
             let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
                 && !self.edit_predictions_hidden_for_vim_mode;
@@ -7779,7 +7778,7 @@ impl Editor {
                     self.splice_inlays(&[], inlays, cx);
                 } else {
                     let background_color = cx.theme().status().deleted_background;
-                    self.highlight_text::<InlineCompletionHighlight>(
+                    self.highlight_text::<EditPredictionHighlight>(
                         edits.iter().map(|(range, _)| range.clone()).collect(),
                         HighlightStyle {
                             background_color: Some(background_color),
@@ -7802,7 +7801,7 @@ impl Editor {
                 EditDisplayMode::DiffPopover
             };
 
-            InlineCompletion::Edit {
+            EditPrediction::Edit {
                 edits,
                 edit_preview: edit_prediction.edit_preview,
                 display_mode,
@@ -7818,7 +7817,7 @@ impl Editor {
             ));
 
         self.stale_edit_prediction_in_menu = None;
-        self.active_edit_prediction = Some(InlineCompletionState {
+        self.active_edit_prediction = Some(EditPredictionState {
             inlay_ids,
             completion,
             completion_id: edit_prediction.id,
@@ -7830,7 +7829,7 @@ impl Editor {
         Some(())
     }
 
-    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
+    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionProviderHandle>> {
         Some(self.edit_prediction_provider.as_ref()?.provider.clone())
     }
 
@@ -8403,7 +8402,7 @@ impl Editor {
         }
 
         match &active_edit_prediction.completion {
-            InlineCompletion::Move { target, .. } => {
+            EditPrediction::Move { target, .. } => {
                 let target_display_point = target.to_display_point(editor_snapshot);
 
                 if self.edit_prediction_requires_modifier() {
@@ -8440,11 +8439,11 @@ impl Editor {
                     )
                 }
             }
-            InlineCompletion::Edit {
+            EditPrediction::Edit {
                 display_mode: EditDisplayMode::Inline,
                 ..
             } => None,
-            InlineCompletion::Edit {
+            EditPrediction::Edit {
                 display_mode: EditDisplayMode::TabAccept,
                 edits,
                 ..
@@ -8465,7 +8464,7 @@ impl Editor {
                     cx,
                 )
             }
-            InlineCompletion::Edit {
+            EditPrediction::Edit {
                 edits,
                 edit_preview,
                 display_mode: EditDisplayMode::DiffPopover,
@@ -9130,7 +9129,7 @@ impl Editor {
                             .rounded_tl(px(0.))
                             .overflow_hidden()
                             .child(div().px_1p5().child(match &prediction.completion {
-                                InlineCompletion::Move { target, snapshot } => {
+                                EditPrediction::Move { target, snapshot } => {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
@@ -9139,7 +9138,7 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                EditPrediction::Edit { .. } => Icon::new(IconName::ZedPredict),
                             }))
                             .child(
                                 h_flex()
@@ -9287,7 +9286,7 @@ impl Editor {
 
     fn render_edit_prediction_cursor_popover_preview(
         &self,
-        completion: &InlineCompletionState,
+        completion: &EditPredictionState,
         cursor_point: Point,
         style: &EditorStyle,
         cx: &mut Context<Editor>,
@@ -9315,7 +9314,7 @@ impl Editor {
         }
 
         match &completion.completion {
-            InlineCompletion::Move {
+            EditPrediction::Move {
                 target, snapshot, ..
             } => Some(
                 h_flex()
@@ -9332,7 +9331,7 @@ impl Editor {
                     .child(Label::new("Jump to Edit")),
             ),
 
-            InlineCompletion::Edit {
+            EditPrediction::Edit {
                 edits,
                 edit_preview,
                 snapshot,

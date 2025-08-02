@@ -334,7 +334,7 @@ pub fn initialize_workspace(
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
-            edit_prediction_button::InlineCompletionButton::new(
+            edit_prediction_button::EditPredictionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
                 edit_prediction_menu_handle.clone(),

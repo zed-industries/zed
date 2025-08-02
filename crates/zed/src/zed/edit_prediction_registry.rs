@@ -11,7 +11,7 @@ use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use util::ResultExt;
 use workspace::Workspace;
-use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
+use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -207,7 +207,7 @@ fn assign_edit_prediction_provider(
 
     match provider {
         EditPredictionProvider::None => {
-            editor.set_edit_prediction_provider::<ZetaInlineCompletionProvider>(None, window, cx);
+            editor.set_edit_prediction_provider::<ZetaEditPredictionProvider>(None, window, cx);
         }
         EditPredictionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
@@ -265,7 +265,7 @@ fn assign_edit_prediction_provider(
                     ProviderDataCollection::new(zeta.clone(), singleton_buffer, cx);
 
                 let provider =
-                    cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));
+                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, data_collection));
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }

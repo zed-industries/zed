@@ -7,7 +7,7 @@ use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    InlineCompletion, editor_tests::init_test, test::editor_test_context::EditorTestContext,
+    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
@@ -15,7 +15,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
@@ -37,7 +37,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
     cx.set_state("let pi = ˇ\"foo\";");
 
@@ -59,7 +59,7 @@ async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 2+ lines above the proposed edit
@@ -128,7 +128,7 @@ async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) 
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     assign_editor_completion_provider(provider.clone(), &mut cx);
 
     // Cursor is 3+ lines above the proposed edit
@@ -238,7 +238,7 @@ fn assert_editor_active_edit_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let InlineCompletion::Edit { edits, .. } = &completion_state.completion {
+        if let EditPrediction::Edit { edits, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), edits);
         } else {
             panic!("expected edit completion");
@@ -256,7 +256,7 @@ fn assert_editor_active_move_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let InlineCompletion::Move { target, .. } = &completion_state.completion {
+        if let EditPrediction::Move { target, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), *target);
         } else {
             panic!("expected move completion");
@@ -271,7 +271,7 @@ fn accept_completion(cx: &mut EditorTestContext) {
 }
 
 fn propose_edits<T: ToOffset>(
-    provider: &Entity<FakeInlineCompletionProvider>,
+    provider: &Entity<FakeEditPredictionProvider>,
     edits: Vec<(Range<T>, &str)>,
     cx: &mut EditorTestContext,
 ) {
@@ -283,7 +283,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::InlineCompletion {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -293,7 +293,7 @@ fn propose_edits<T: ToOffset>(
 }
 
 fn assign_editor_completion_provider(
-    provider: Entity<FakeInlineCompletionProvider>,
+    provider: Entity<FakeEditPredictionProvider>,
     cx: &mut EditorTestContext,
 ) {
     cx.update_editor(|editor, window, cx| {
@@ -302,17 +302,17 @@ fn assign_editor_completion_provider(
 }
 
 #[derive(Default, Clone)]
-pub struct FakeInlineCompletionProvider {
-    pub completion: Option<edit_prediction::InlineCompletion>,
+pub struct FakeEditPredictionProvider {
+    pub completion: Option<edit_prediction::EditPrediction>,
 }
 
-impl FakeInlineCompletionProvider {
-    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::InlineCompletion>) {
+impl FakeEditPredictionProvider {
+    pub fn set_edit_prediction(&mut self, completion: Option<edit_prediction::EditPrediction>) {
         self.completion = completion;
     }
 }
 
-impl EditPredictionProvider for FakeInlineCompletionProvider {
+impl EditPredictionProvider for FakeEditPredictionProvider {
     fn name() -> &'static str {
         "fake-completion-provider"
     }
@@ -366,7 +366,7 @@ impl EditPredictionProvider for FakeInlineCompletionProvider {
         _buffer: &gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _cx: &mut gpui::Context<Self>,
-    ) -> Option<edit_prediction::InlineCompletion> {
+    ) -> Option<edit_prediction::EditPrediction> {
         self.completion.clone()
     }
 }

@@ -50,7 +50,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::InlineCompletionRating;
+use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
@@ -81,15 +81,15 @@ actions!(
 );
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct InlineCompletionId(Uuid);
+pub struct EditPredictionId(Uuid);
 
-impl From<InlineCompletionId> for gpui::ElementId {
-    fn from(value: InlineCompletionId) -> Self {
+impl From<EditPredictionId> for gpui::ElementId {
+    fn from(value: EditPredictionId) -> Self {
         gpui::ElementId::Uuid(value.0)
     }
 }
 
-impl std::fmt::Display for InlineCompletionId {
+impl std::fmt::Display for EditPredictionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -134,8 +134,8 @@ struct ZetaGlobal(Entity<Zeta>);
 impl Global for ZetaGlobal {}
 
 #[derive(Clone)]
-pub struct InlineCompletion {
-    id: InlineCompletionId,
+pub struct EditPrediction {
+    id: EditPredictionId,
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
@@ -150,7 +150,7 @@ pub struct InlineCompletion {
     response_received_at: Instant,
 }
 
-impl InlineCompletion {
+impl EditPrediction {
     fn latency(&self) -> Duration {
         self.response_received_at
             .duration_since(self.buffer_snapshotted_at)
@@ -207,9 +207,9 @@ fn interpolate(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-impl std::fmt::Debug for InlineCompletion {
+impl std::fmt::Debug for EditPrediction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InlineCompletion")
+        f.debug_struct("EditPrediction")
             .field("id", &self.id)
             .field("path", &self.path)
             .field("edits", &self.edits)
@@ -222,8 +222,8 @@ pub struct Zeta {
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
-    shown_completions: VecDeque<InlineCompletion>,
-    rated_completions: HashSet<InlineCompletionId>,
+    shown_completions: VecDeque<EditPrediction>,
+    rated_completions: HashSet<EditPredictionId>,
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
@@ -384,7 +384,7 @@ impl Zeta {
         can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
-    ) -> Task<Result<Option<InlineCompletion>>>
+    ) -> Task<Result<Option<EditPrediction>>>
     where
         F: FnOnce(PerformPredictEditsParams) -> R + 'static,
         R: Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>>
@@ -664,7 +664,7 @@ and then another
         position: language::Anchor,
         response: PredictEditsResponse,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
         self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
@@ -679,7 +679,7 @@ and then another
         position: language::Anchor,
         can_collect_data: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         let workspace = self
             .workspace
             .as_ref()
@@ -773,7 +773,7 @@ and then another
 
     fn accept_edit_prediction(
         &mut self,
-        request_id: InlineCompletionId,
+        request_id: EditPredictionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -852,7 +852,7 @@ and then another
         input_excerpt: String,
         buffer_snapshotted_at: Instant,
         cx: &AsyncApp,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = snapshot.clone();
         let request_id = prediction_response.request_id;
         let output_excerpt = prediction_response.output_excerpt;
@@ -884,8 +884,8 @@ and then another
 
             let edit_preview = edit_preview.await;
 
-            Ok(Some(InlineCompletion {
-                id: InlineCompletionId(request_id),
+            Ok(Some(EditPrediction {
+                id: EditPredictionId(request_id),
                 path,
                 excerpt_range: editable_range,
                 cursor_offset,
@@ -995,11 +995,11 @@ and then another
             .collect()
     }
 
-    pub fn is_completion_rated(&self, completion_id: InlineCompletionId) -> bool {
+    pub fn is_completion_rated(&self, completion_id: EditPredictionId) -> bool {
         self.rated_completions.contains(&completion_id)
     }
 
-    pub fn completion_shown(&mut self, completion: &InlineCompletion, cx: &mut Context<Self>) {
+    pub fn completion_shown(&mut self, completion: &EditPrediction, cx: &mut Context<Self>) {
         self.shown_completions.push_front(completion.clone());
         if self.shown_completions.len() > 50 {
             let completion = self.shown_completions.pop_back().unwrap();
@@ -1010,8 +1010,8 @@ and then another
 
     pub fn rate_completion(
         &mut self,
-        completion: &InlineCompletion,
-        rating: InlineCompletionRating,
+        completion: &EditPrediction,
+        rating: EditPredictionRating,
         feedback: String,
         cx: &mut Context<Self>,
     ) {
@@ -1029,7 +1029,7 @@ and then another
         cx.notify();
     }
 
-    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
+    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
         self.shown_completions.iter()
     }
 
@@ -1323,12 +1323,12 @@ impl Event {
 }
 
 #[derive(Debug, Clone)]
-struct CurrentInlineCompletion {
+struct CurrentEditPrediction {
     buffer_id: EntityId,
-    completion: InlineCompletion,
+    completion: EditPrediction,
 }
 
-impl CurrentInlineCompletion {
+impl CurrentEditPrediction {
     fn should_replace_completion(&self, old_completion: &Self, snapshot: &BufferSnapshot) -> bool {
         if self.buffer_id != old_completion.buffer_id {
             return true;
@@ -1497,17 +1497,17 @@ async fn llm_token_retry(
     }
 }
 
-pub struct ZetaInlineCompletionProvider {
+pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
-    current_completion: Option<CurrentInlineCompletion>,
+    current_completion: Option<CurrentEditPrediction>,
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
     last_request_timestamp: Instant,
 }
 
-impl ZetaInlineCompletionProvider {
+impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
@@ -1522,7 +1522,7 @@ impl ZetaInlineCompletionProvider {
     }
 }
 
-impl edit_prediction::EditPredictionProvider for ZetaInlineCompletionProvider {
+impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     fn name() -> &'static str {
         "zed-predict"
     }
@@ -1650,7 +1650,7 @@ impl edit_prediction::EditPredictionProvider for ZetaInlineCompletionProvider {
                 Ok(completion_request) => {
                     let completion_request = completion_request.await;
                     completion_request.map(|c| {
-                        c.map(|completion| CurrentInlineCompletion {
+                        c.map(|completion| CurrentEditPrediction {
                             buffer_id: buffer.entity_id(),
                             completion,
                         })
@@ -1754,8 +1754,8 @@ impl edit_prediction::EditPredictionProvider for ZetaInlineCompletionProvider {
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<edit_prediction::InlineCompletion> {
-        let CurrentInlineCompletion {
+    ) -> Option<edit_prediction::EditPrediction> {
+        let CurrentEditPrediction {
             buffer_id,
             completion,
             ..
@@ -1803,7 +1803,7 @@ impl edit_prediction::EditPredictionProvider for ZetaInlineCompletionProvider {
             }
         }
 
-        Some(edit_prediction::InlineCompletion {
+        Some(edit_prediction::EditPrediction {
             id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),
@@ -1848,12 +1848,12 @@ mod tests {
             .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
             .await;
 
-        let completion = InlineCompletion {
+        let completion = EditPrediction {
             edits,
             edit_preview,
             path: Path::new("").into(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
-            id: InlineCompletionId(Uuid::new_v4()),
+            id: EditPredictionId(Uuid::new_v4()),
             excerpt_range: 0..0,
             cursor_offset: 0,
             input_outline: "".into(),
