@@ -423,6 +423,7 @@ pub enum LanguageModelEndpoint {
         input_price: Option<f32>,
         /// in dollars per million token
         output_price: Option<f32>,
+        supports_tools: bool,
     },
 }
 
@@ -431,6 +432,20 @@ impl LanguageModelEndpoint {
         match self {
             LanguageModelEndpoint::Default => "Default",
             LanguageModelEndpoint::Specified { name, .. } => name.as_str(),
+        }
+    }
+
+    /// Whether this endpoint supports tool calls.
+    ///
+    /// When endpoint is [`Default`], this always returns true, so you
+    /// need to do an AND with model.support_tools to really determine
+    /// the capability.
+    pub fn supports_tools(&self) -> bool {
+        match self {
+            // The default endpoint doens't always support tool calls.
+            // The profile selector should do an AND with model.support_tools().
+            LanguageModelEndpoint::Default => true,
+            LanguageModelEndpoint::Specified { supports_tools, .. } => *supports_tools,
         }
     }
 }

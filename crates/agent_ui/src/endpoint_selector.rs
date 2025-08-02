@@ -96,6 +96,7 @@ impl EndpointSelector {
         };
 
         let endpoint = endpoint.clone();
+        let supports_tools = endpoint.supports_tools();
         match endpoint {
             LanguageModelEndpoint::Default => self.build_default_entry(handler, idx),
             LanguageModelEndpoint::Specified {
@@ -118,6 +119,7 @@ impl EndpointSelector {
                     latency,
                     input_price,
                     output_price,
+                    supports_tools,
                 );
                 return a;
             }
@@ -160,6 +162,7 @@ impl EndpointSelector {
         latency: Option<f32>,
         input_price: Option<f32>,
         output_price: Option<f32>,
+        supports_tools: bool,
     ) -> ContextMenuItem {
         let name = SharedString::new(name);
         let quantization = quantization.clone();
@@ -194,6 +197,9 @@ impl EndpointSelector {
                                 })
                                 .when_some(quantization.clone(), |s, quant| {
                                     s.child(Chip::new(quant))
+                                })
+                                .when(supports_tools == false, |s| {
+                                    s.child(Chip::new("no tools").label_color(Color::Warning))
                                 }),
                         ),
                     )

@@ -163,8 +163,9 @@ impl Render for ProfileSelector {
         let Some(configured_model) = configured_model else {
             return Empty.into_any_element();
         };
+        let endpoint = self.thread.read(cx).endpoint();
 
-        if configured_model.model.supports_tools() {
+        if configured_model.model.supports_tools() && endpoint.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
             let trigger_button = Button::new("profile-selector-model", selected_profile)

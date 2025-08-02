@@ -997,8 +997,9 @@ impl Thread {
         &self,
         cx: &App,
         model: Arc<dyn LanguageModel>,
+        endpoint: &LanguageModelEndpoint,
     ) -> Vec<LanguageModelRequestTool> {
-        if model.supports_tools() {
+        if model.supports_tools() && endpoint.supports_tools() {
             self.profile
                 .enabled_tools(cx)
                 .into_iter()
@@ -1291,7 +1292,7 @@ impl Thread {
 
         let _checkpoint = self.finalize_pending_checkpoint(cx);
         self.stream_completion(
-            self.to_completion_request(model.clone(), intent, cx),
+            self.to_completion_request(model.clone(), &self.endpoint, intent, cx),
             model,
             intent,
             window,
@@ -1358,6 +1359,7 @@ impl Thread {
     pub fn to_completion_request(
         &self,
         model: Arc<dyn LanguageModel>,
+        endpoint: &LanguageModelEndpoint,
         intent: CompletionIntent,
         cx: &mut Context<Self>,
     ) -> LanguageModelRequest {
@@ -1375,7 +1377,7 @@ impl Thread {
             provider: self.provider(),
         };
 
-        let available_tools = self.available_tools(cx, model.clone());
+        let available_tools = self.available_tools(cx, model.clone(), endpoint);
         let available_tool_names = available_tools
             .iter()
             .map(|tool| tool.name.clone())
@@ -2535,8 +2537,12 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Vec<PendingToolUse> {
         self.auto_capture_telemetry(cx);
-        let request =
-            Arc::new(self.to_completion_request(model.clone(), CompletionIntent::ToolResults, cx));
+        let request = Arc::new(self.to_completion_request(
+            model.clone(),
+            &self.endpoint,
+            CompletionIntent::ToolResults,
+            cx,
+        ));
         let pending_tool_uses = self
             .tool_use
             .pending_tool_uses()

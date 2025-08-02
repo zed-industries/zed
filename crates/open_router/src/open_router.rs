@@ -450,6 +450,7 @@ pub struct Endpoint {
     /// The provider's display name shown on OpenRouter's webpage.
     pub provider_display_name: String,
     pub quantization: Option<String>,
+    pub supported_parameters: Vec<String>,
     pub pricing: EndpointPricing,
     pub variable_pricings: Vec<EndpointVariablePricing>,
     pub stats: EndpointStats,
