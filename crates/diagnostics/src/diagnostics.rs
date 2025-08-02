@@ -23,7 +23,7 @@ use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, DiagnosticEntry, Point, ToTreeSitterPoint,
 };
 use project::{
-    DiagnosticSummary, Project, ProjectPath,
+    DiagnosticSummary, Project, ProjectItem, ProjectPath,
     lsp_store::rust_analyzer_ext::{cancel_flycheck, run_flycheck},
     project_settings::{DiagnosticSeverity, ProjectSettings},
 };
@@ -32,6 +32,7 @@ use std::{
     any::{Any, TypeId},
     cmp::{self, Ordering},
     ops::{Range, RangeInclusive},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -40,6 +41,7 @@ use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
 use ui::{Icon, IconName, Label, h_flex, prelude::*};
 use util::ResultExt;
+use util::paths::PathMatcher;
 use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
@@ -51,6 +53,8 @@ actions!(
     [
         /// Opens the project diagnostics view.
         Deploy,
+        /// Opens the project diagnostics view for the currently focused file.
+        DeployCurrentFile,
         /// Toggles the display of warning-level diagnostics.
         ToggleWarnings,
         /// Toggles automatic refresh of diagnostics.
@@ -78,6 +82,13 @@ pub(crate) struct ProjectDiagnosticsEditor {
     multibuffer: Entity<MultiBuffer>,
     paths_to_update: BTreeSet<ProjectPath>,
     include_warnings: bool,
+    /// In conjunction with `path_matcher_enabled`, determines whether
+    /// diagnostics for all paths should be shown, or only for paths that match
+    /// the `path_matcher`.
+    path_matcher: PathMatcher,
+    /// Controls whether diagnostics for only the paths that match the
+    /// `path_matcher` should be displayed.
+    path_matcher_enabled: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
     diagnostic_summary_update: Task<()>,
@@ -103,11 +114,29 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         let child = if warning_count + self.summary.error_count == 0 {
-            let label = if self.summary.warning_count == 0 {
-                SharedString::new_static("No problems in workspace")
-            } else {
-                SharedString::new_static("No errors in workspace")
+            let files_str = match (
+                self.path_matcher_enabled,
+                self.path_matcher.sources().is_empty(),
+            ) {
+                (false, _) => None,
+                (true, true) => None,
+                (true, false) => Some(
+                    self.path_matcher
+                        .sources()
+                        .iter()
+                        .map(|path| path.to_string())
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                ),
             };
+
+            let label = match (self.summary.warning_count, files_str) {
+                (0, None) => SharedString::new_static("No problems in workspace"),
+                (_, None) => SharedString::new_static("No errors in workspace"),
+                (0, Some(files_str)) => SharedString::from(format!("No problems in {files_str}")),
+                (_, Some(files_str)) => SharedString::from(format!("No errors in {files_str}")),
+            };
+
             v_flex()
                 .key_context("EmptyPane")
                 .size_full()
@@ -157,17 +186,20 @@ impl ProjectDiagnosticsEditor {
         _: &mut Context<Workspace>,
     ) {
         workspace.register_action(Self::deploy);
+        workspace.register_action(Self::deploy_current_file);
     }
 
     fn new(
         include_warnings: bool,
+        path_matcher: PathMatcher,
+        path_matcher_enabled: bool,
         project_handle: Entity<Project>,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let project_event_subscription =
-            cx.subscribe_in(&project_handle, window, |this, project, event, window, cx| match event {
+            cx.subscribe_in(&project_handle, window, |this, _project, event, window, cx| match event {
                 project::Event::DiskBasedDiagnosticsStarted { .. } => {
                     cx.notify();
                 }
@@ -180,13 +212,12 @@ impl ProjectDiagnosticsEditor {
                     path,
                 } => {
                     this.paths_to_update.insert(path.clone());
-                    let project = project.clone();
                     this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
                         cx.background_executor()
                             .timer(Duration::from_millis(30))
                             .await;
                         this.update(cx, |this, cx| {
-                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                            this.update_diagnostic_summary(cx);
                         })
                         .log_err();
                     });
@@ -263,6 +294,7 @@ impl ProjectDiagnosticsEditor {
             this.update_all_diagnostics(false, window, cx);
         })
         .detach();
+
         cx.observe_release(&cx.entity(), |editor, _, cx| {
             editor.stop_cargo_diagnostics_fetch(cx);
         })
@@ -271,10 +303,15 @@ impl ProjectDiagnosticsEditor {
         let project = project_handle.read(cx);
         let mut this = Self {
             project: project_handle.clone(),
-            summary: project.diagnostic_summary(false, cx),
+            summary: match path_matcher_enabled {
+                true => project.diagnostic_summary_for_paths(&path_matcher, false, cx),
+                false => project.diagnostic_summary(false, cx),
+            },
             diagnostics: Default::default(),
             blocks: Default::default(),
             include_warnings,
+            path_matcher,
+            path_matcher_enabled,
             workspace,
             multibuffer: excerpts,
             focus_handle,
@@ -341,6 +378,13 @@ impl ProjectDiagnosticsEditor {
             let is_active = workspace
                 .active_item(cx)
                 .is_some_and(|item| item.item_id() == existing.item_id());
+
+            // Ensure that the path filter is disabled when deploying the
+            // diagnostics without a specific path.
+            existing.update(cx, |diagnostics, cx| {
+                diagnostics.set_path_matcher_enabled(false, window, cx);
+            });
+
             workspace.activate_item(&existing, true, !is_active, window, cx);
         } else {
             let workspace_handle = cx.entity().downgrade();
@@ -353,6 +397,63 @@ impl ProjectDiagnosticsEditor {
             let diagnostics = cx.new(|cx| {
                 ProjectDiagnosticsEditor::new(
                     include_warnings,
+                    Default::default(),
+                    false,
+                    workspace.project().clone(),
+                    workspace_handle,
+                    window,
+                    cx,
+                )
+            });
+            workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, window, cx);
+        }
+    }
+
+    fn deploy_current_file(
+        workspace: &mut Workspace,
+        _: &DeployCurrentFile,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        // Determine the currently opened path by grabbing the active editor and
+        // finding the project path for the buffer.
+        let path = workspace
+            .active_item_as::<Editor>(cx)
+            .map_or(None, |editor| editor.project_path(cx));
+
+        if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
+            let is_active = workspace
+                .active_item(cx)
+                .is_some_and(|item| item.item_id() == existing.item_id());
+
+            existing.update(cx, |diagnostics, cx| {
+                diagnostics.set_path_filter(path.clone());
+                diagnostics.set_path_matcher_enabled(true, window, cx);
+            });
+
+            workspace.activate_item(&existing, true, !is_active, window, cx);
+        } else {
+            let workspace_handle = cx.entity().downgrade();
+
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectSettings::get_global(cx).diagnostics.include_warnings,
+            };
+
+            let path_matcher = if let Some(project_path) = path
+                && let Some(path_str) = project_path.path.to_str()
+                && let Ok(path_matcher) = PathMatcher::new([path_str])
+            {
+                path_matcher
+            } else {
+                PathMatcher::default()
+            };
+
+            let diagnostics = cx.new(|cx| {
+                ProjectDiagnosticsEditor::new(
+                    include_warnings,
+                    path_matcher,
+                    true,
                     workspace.project().clone(),
                     workspace_handle,
                     window,
@@ -365,6 +466,20 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, _: &mut Window, cx: &mut Context<Self>) {
         cx.set_global(IncludeWarnings(!self.include_warnings));
+    }
+
+    fn set_path_matcher_enabled(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.path_matcher_enabled = enabled;
+        self.diagnostics.clear();
+        self.update_all_diagnostics(false, window, cx);
+        if enabled {
+            self.update_diagnostic_summary(cx);
+        }
     }
 
     fn toggle_diagnostics_refresh(
@@ -477,22 +592,25 @@ impl ProjectDiagnosticsEditor {
     /// currently have diagnostics or are currently present in this view.
     fn update_all_excerpts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.project.update(cx, |project, cx| {
-            let mut paths = project
+            let mut project_paths = project
                 .diagnostic_summaries(false, cx)
-                .map(|(path, _, _)| path)
+                .map(|(project_path, _, _)| project_path)
                 .collect::<BTreeSet<_>>();
+
             self.multibuffer.update(cx, |multibuffer, cx| {
                 for buffer in multibuffer.all_buffers() {
                     if let Some(file) = buffer.read(cx).file() {
-                        paths.insert(ProjectPath {
+                        project_paths.insert(ProjectPath {
                             path: file.path().clone(),
                             worktree_id: file.worktree_id(cx),
                         });
                     }
                 }
             });
-            self.paths_to_update = paths;
+
+            self.paths_to_update = project_paths;
         });
+
         self.update_stale_excerpts(window, cx);
     }
 
@@ -522,6 +640,11 @@ impl ProjectDiagnosticsEditor {
         let was_empty = self.multibuffer.read(cx).is_empty();
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
+        let should_include_path = match buffer.read(cx).project_path(cx) {
+            None => true,
+            Some(project_path) => self.should_include_path(&project_path.path),
+        };
+
         let max_severity = if self.include_warnings {
             lsp::DiagnosticSeverity::WARNING
         } else {
@@ -535,6 +658,7 @@ impl ProjectDiagnosticsEditor {
                     false,
                 )
                 .collect::<Vec<_>>();
+
             let unchanged = this.update(cx, |this, _| {
                 if this.diagnostics.get(&buffer_id).is_some_and(|existing| {
                     this.diagnostics_are_unchanged(existing, &diagnostics, &buffer_snapshot)
@@ -546,6 +670,32 @@ impl ProjectDiagnosticsEditor {
             })?;
             if unchanged {
                 return Ok(());
+            }
+
+            // Double-check that the buffer's path should be included in the
+            // diagnostics. If it shouldn't, avoid doing any work at all and
+            // simply remove diagnostics blocks from the display map and its
+            // excerpts from the multibuffer.
+            if !should_include_path {
+                return this.update_in(cx, |this, _window, cx| {
+                    if let Some(block_ids) = this.blocks.remove(&buffer_id) {
+                        this.editor.update(cx, |editor, cx| {
+                            editor.display_map.update(cx, |display_map, cx| {
+                                display_map.remove_blocks(block_ids.into_iter().collect(), cx)
+                            });
+                        })
+                    }
+
+                    this.multibuffer.update(cx, |multi_buffer, cx| {
+                        multi_buffer.set_excerpt_ranges_for_path(
+                            PathKey::for_buffer(&buffer, cx),
+                            buffer.clone(),
+                            &buffer_snapshot,
+                            vec![],
+                            cx,
+                        )
+                    });
+                });
             }
 
             let mut grouped: HashMap<usize, Vec<_>> = HashMap::default();
@@ -598,6 +748,7 @@ impl ProjectDiagnosticsEditor {
                     &mut cx,
                 )
                 .await;
+
                 let i = excerpt_ranges
                     .binary_search_by(|probe| {
                         probe
@@ -669,6 +820,7 @@ impl ProjectDiagnosticsEditor {
                                 priority: 1,
                             }
                         });
+
                 let block_ids = this.editor.update(cx, |editor, cx| {
                     editor.display_map.update(cx, |display_map, cx| {
                         display_map.insert_blocks(editor_blocks, cx)
@@ -698,6 +850,34 @@ impl ProjectDiagnosticsEditor {
                 cx.notify()
             })
         })
+    }
+
+    fn update_diagnostic_summary(&mut self, cx: &mut Context<Self>) {
+        let project = self.project.read(cx);
+
+        self.summary = match self.path_matcher_enabled {
+            true => project.diagnostic_summary_for_paths(&self.path_matcher, false, cx),
+            false => project.diagnostic_summary(false, cx),
+        };
+    }
+
+    fn set_path_filter(&mut self, path_filter: Option<ProjectPath>) {
+        if let Some(project_path) = path_filter
+            && let Some(path) = project_path.path.to_str()
+            && let Ok(path_matcher) = PathMatcher::new([path])
+        {
+            self.path_matcher = path_matcher;
+            // TODO: Do we need to udpdate `self.summary` after updating this?
+            // When toggling between enabled and disabled, the number seems to
+            // be stuck after all files are shown.
+        };
+    }
+
+    /// Determines whether the provided path should be included in diagnostics.
+    /// This is always true if the path filter is disabled or if the path filter
+    /// is enabled and it matches one of the filtered paths.
+    fn should_include_path(&self, path: &Path) -> bool {
+        !self.path_matcher_enabled || self.path_matcher.is_match(path)
     }
 
     pub fn cargo_diagnostics_sources(&self, cx: &App) -> Vec<ProjectPath> {
@@ -839,6 +1019,8 @@ impl Item for ProjectDiagnosticsEditor {
         Some(cx.new(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.include_warnings,
+                self.path_matcher.clone(),
+                self.path_matcher_enabled,
                 self.project.clone(),
                 self.workspace.clone(),
                 window,
