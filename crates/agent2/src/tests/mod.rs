@@ -209,7 +209,6 @@ async fn setup(cx: &mut TestAppContext) -> ThreadTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
     let templates = Templates::new();
-    let thread = cx.new(|_| Thread::new(templates));
 
     let model = cx
         .update(|cx| {
@@ -238,6 +237,8 @@ async fn setup(cx: &mut TestAppContext) -> ThreadTest {
             })
         })
         .await;
+
+    let thread = cx.new(|_| Thread::new(templates, model.clone()));
 
     ThreadTest { model, thread }
 }
