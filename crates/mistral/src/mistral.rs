@@ -424,8 +424,6 @@ pub struct StreamDelta {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_content: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
