@@ -5843,8 +5843,10 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-    select_path_with_mark(&panel, "root/file1.txt", cx);
-    select_path_with_mark(&panel, "root/file2.txt", cx);
+    let file1_path = path!("root/file1.txt");
+    let file2_path = path!("root/file2.txt");
+    select_path_with_mark(&panel, file1_path, cx);
+    select_path_with_mark(&panel, file2_path, cx);
 
     panel.update_in(cx, |panel, window, cx| {
         panel.compare_marked_files(&CompareMarkedFiles, window, cx);
@@ -5868,10 +5870,40 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
             assert_eq!(diff_view.tab_content_text(0, cx), "file1.txt ↔ file2.txt");
             assert_eq!(
                 diff_view.tab_tooltip_text(cx).unwrap(),
-                format!("{} ↔ {}", path!("root/file1.txt"), path!("root/file2.txt"))
+                format!("{} ↔ {}", file1_path, file2_path)
             );
         })
         .unwrap();
+
+    let file1_entry_id = find_project_entry(&panel, file1_path, cx).unwrap();
+    let file2_entry_id = find_project_entry(&panel, file2_path, cx).unwrap();
+    let worktree_id = panel.update(cx, |panel, cx| {
+        panel
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .id()
+    });
+
+    panel.update(cx, |panel, _cx| {
+        let expected_entries = [
+            SelectedEntry {
+                worktree_id,
+                entry_id: file1_entry_id,
+            },
+            SelectedEntry {
+                worktree_id,
+                entry_id: file2_entry_id,
+            },
+        ];
+        assert_eq!(
+            &panel.marked_entries, &expected_entries,
+            "Should keep marked entries after comparison"
+        );
+    });
 }
 
 #[gpui::test]
