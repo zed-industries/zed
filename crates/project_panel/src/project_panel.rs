@@ -445,7 +445,15 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
-                    this.marked_entries.clear();
+                    let should_clear = this
+                        .workspace
+                        .upgrade()
+                        .and_then(|ws| ws.read(cx).active_item(cx))
+                        .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_none())
+                        .unwrap_or(true);
+                    if should_clear {
+                        this.marked_entries.clear();
+                    }
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     if let Some(()) = this
