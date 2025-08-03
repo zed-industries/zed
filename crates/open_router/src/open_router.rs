@@ -453,7 +453,7 @@ pub struct Endpoint {
     pub supported_parameters: Vec<String>,
     pub pricing: EndpointPricing,
     pub variable_pricings: Vec<EndpointVariablePricing>,
-    pub stats: EndpointStats,
+    pub stats: Option<EndpointStats>,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Deserialize)]

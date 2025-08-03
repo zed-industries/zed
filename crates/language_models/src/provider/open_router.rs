@@ -463,8 +463,8 @@ impl LanguageModel for OpenRouterLanguageModel {
                     context_length: Some(e.context_length as u64),
                     quantization: e.quantization,
                     supports_tools: e.supported_parameters.contains(&String::from("tools")),
-                    throughput: Some(e.stats.p50_throughput),
-                    latency: Some(e.stats.p50_latency / 1_000.0),
+                    throughput: e.stats.as_ref().map(|x| x.p50_throughput),
+                    latency: e.stats.as_ref().map(|x| x.p50_latency),
                     input_price: Some(f32::from_str(&e.pricing.prompt).log_err()? * 1_000_000.0),
                     output_price: Some(
                         f32::from_str(&e.pricing.completion).log_err()? * 1_000_000.0,
