@@ -7759,6 +7759,7 @@ impl Editor {
         };
         let is_move =
             move_invalidation_row_range.is_some() || self.inline_completions_hidden_for_vim_mode;
+
         let completion = if is_move {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
@@ -9348,14 +9349,29 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let (highlighted_edits, has_more_lines) = crate::inline_completion_edit_text(
-                    &snapshot,
-                    &edits,
-                    edit_preview.as_ref()?,
-                    true,
-                    cx,
-                )
-                .first_line_preview();
+                // Handle case where edit_preview is None (e.g., for Copilot)
+                let (highlighted_edits, has_more_lines) = if let Some(edit_preview) =
+                    edit_preview.as_ref()
+                {
+                    crate::inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
+                        .first_line_preview()
+                } else {
+                    // Fallback for when there's no edit preview - show the raw edit text
+                    let first_edit = edits.first()?;
+                    let edit_text = &first_edit.1;
+                    let preview_text = if edit_text.len() > 50 {
+                        format!("{}...", &edit_text[..50])
+                    } else {
+                        edit_text.clone()
+                    };
+                    (
+                        crate::HighlightedText {
+                            text: preview_text.into(),
+                            highlights: Vec::new(),
+                        },
+                        edit_text.len() > 50,
+                    )
+                };
 
                 let styled_text = gpui::StyledText::new(highlighted_edits.text)
                     .with_default_highlights(&style.text, highlighted_edits.highlights);
