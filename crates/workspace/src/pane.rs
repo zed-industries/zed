@@ -3062,13 +3062,13 @@ impl Pane {
                     }
                     to_pane.update(cx, |this, _| {
                         if to_pane == from_pane {
-                            let to_ix = this
+                            let actual_ix = this
                                 .items
                                 .iter()
                                 .position(|item| item.item_id() == item_id)
                                 .unwrap_or(0);
 
-                            let is_pinned_in_to_pane = this.is_tab_pinned(to_ix);
+                            let is_pinned_in_to_pane = this.is_tab_pinned(actual_ix);
 
                             if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
