@@ -9138,17 +9138,37 @@ impl Editor {
                             .rounded(RADIUS)
                             .rounded_tl(px(0.))
                             .overflow_hidden()
-                            .child(div().px_1p5().child(match &prediction.completion {
-                                InlineCompletion::Move { target, snapshot } => {
-                                    use text::ToPoint as _;
-                                    if target.text_anchor.to_point(&snapshot).row > cursor_point.row
-                                    {
-                                        Icon::new(IconName::ZedPredictDown)
+                            .child(div().px_1p5().child({
+                                // Choose icon based on the edit prediction provider
+                                let base_icon_name =
+                                    if let Some(provider) = &self.edit_prediction_provider {
+                                        match provider.provider.name() {
+                                            "copilot" => "Copilot",
+                                            "supermaven" => "Supermaven",
+                                            _ => "ZedPredict", // Default for Zeta and others
+                                        }
                                     } else {
-                                        Icon::new(IconName::ZedPredictUp)
+                                        "ZedPredict" // Default when no provider
+                                    };
+
+                                match &prediction.completion {
+                                    InlineCompletion::Move { target, snapshot } => {
+                                        use text::ToPoint as _;
+                                        if target.text_anchor.to_point(&snapshot).row
+                                            > cursor_point.row
+                                        {
+                                            // For move completions, we only have ZedPredictDown/Up variants
+                                            Icon::new(IconName::ZedPredictDown)
+                                        } else {
+                                            Icon::new(IconName::ZedPredictUp)
+                                        }
                                     }
+                                    InlineCompletion::Edit { .. } => match base_icon_name {
+                                        "Copilot" => Icon::new(IconName::Copilot),
+                                        "Supermaven" => Icon::new(IconName::Supermaven),
+                                        _ => Icon::new(IconName::ZedPredict),
+                                    },
                                 }
-                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
                             }))
                             .child(
                                 h_flex()
@@ -9386,7 +9406,17 @@ impl Editor {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    Icon::new(IconName::ZedPredict).into_any_element()
+                    // Choose icon based on the edit prediction provider
+                    let icon_name = if let Some(provider) = &self.edit_prediction_provider {
+                        match provider.provider.name() {
+                            "copilot" => IconName::Copilot,
+                            "supermaven" => IconName::Supermaven,
+                            _ => IconName::ZedPredict, // Default for Zeta and others
+                        }
+                    } else {
+                        IconName::ZedPredict // Default when no provider
+                    };
+                    Icon::new(icon_name).into_any_element()
                 };
 
                 Some(
