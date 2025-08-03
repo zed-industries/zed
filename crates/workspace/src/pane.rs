@@ -2832,7 +2832,7 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
-        if self.pinned_tab_count > tab_count {
+        if self.is_tab_pinned(tab_count) {
             log::warn!(
                 "Pinned tab count ({}) exceeds actual tab count ({}). \
                 This should not happen. If possible, add reproduction steps, \
@@ -3068,7 +3068,7 @@ impl Pane {
                                 .position(|item| item.item_id() == item_id)
                                 .unwrap_or(0);
 
-                            let is_pinned_in_to_pane = to_ix < this.pinned_tab_count;
+                            let is_pinned_in_to_pane = this.is_tab_pinned(to_ix);
 
                             if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
