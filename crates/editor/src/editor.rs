@@ -9227,18 +9227,25 @@ impl Editor {
                 )?
             }
 
-            None if is_refreshing => match &self.stale_inline_completion_in_menu {
-                Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
-                    stale_completion,
-                    cursor_point,
-                    style,
-                    cx,
-                )?,
-
-                None => {
-                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
+            None if is_refreshing => {
+                let is_zed_provider = provider.provider.name() == "zed-predict";
+                // we dont show a loading state if the provider is not Zed
+                if !is_zed_provider {
+                    return None;
                 }
-            },
+
+                match &self.stale_inline_completion_in_menu {
+                    Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
+                        stale_completion,
+                        cursor_point,
+                        style,
+                        cx,
+                    )?,
+
+                    None => pending_completion_container()
+                        .child(Label::new("...").size(LabelSize::Small)),
+                }
+            }
 
             None => pending_completion_container().child(Label::new("No Prediction")),
         };
