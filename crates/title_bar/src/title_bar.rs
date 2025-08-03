@@ -682,6 +682,10 @@ impl TitleBar {
                         )
                         .separator()
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .action(
+                            "Settings Profiles",
+                            zed_actions::settings_profile_selector::Toggle.boxed_clone(),
+                        )
                         .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                         .action(
                             "Themes…",
@@ -726,6 +730,10 @@ impl TitleBar {
                 .menu(|window, cx| {
                     ContextMenu::build(window, cx, |menu, _, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .action(
+                                "Settings Profiles",
+                                zed_actions::settings_profile_selector::Toggle.boxed_clone(),
+                            )
                             .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                             .action(
                                 "Themes…",
