@@ -684,7 +684,7 @@ impl TitleBar {
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
                         .action(
                             "Settings Profiles",
-                            zed_actions::settings_profile_selector::Toggle::default().boxed_clone(),
+                            zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
                         .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                         .action(
@@ -732,8 +732,7 @@ impl TitleBar {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
                             .action(
                                 "Settings Profiles",
-                                zed_actions::settings_profile_selector::Toggle::default()
-                                    .boxed_clone(),
+                                zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
                             .action("Key Bindings", Box::new(keybindings::OpenKeymapEditor))
                             .action(
