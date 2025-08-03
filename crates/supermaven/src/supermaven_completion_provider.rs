@@ -108,7 +108,11 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
     }
 
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
@@ -193,16 +197,20 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         let completion_text = completion_text.trim_end();
 
         if !completion_text.trim().is_empty() {
-            let snapshot = buffer.read(cx).snapshot();
+            let buffer_read = buffer.read(cx);
+            let snapshot = buffer_read.snapshot();
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
-            Some(completion_from_diff(
+
+            let completion = completion_from_diff(
                 snapshot,
                 completion_text,
                 cursor_position,
                 range,
-            ))
+            );
+
+            Some(completion)
         } else {
             None
         }

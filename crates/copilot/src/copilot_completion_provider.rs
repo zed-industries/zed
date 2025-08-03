@@ -58,7 +58,11 @@ impl EditPredictionProvider for CopilotCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
-        false
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
     }
 
     fn is_refreshing(&self) -> bool {
@@ -241,6 +245,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
+
                 Some(InlineCompletion {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],

@@ -487,7 +487,12 @@ impl InlineCompletionButton {
         let subtle_mode = matches!(current_mode, EditPredictionsMode::Subtle);
         let eager_mode = matches!(current_mode, EditPredictionsMode::Eager);
 
-        if matches!(provider, EditPredictionProvider::Zed) {
+        if matches!(
+            provider,
+            EditPredictionProvider::Zed
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+        ) {
             menu = menu
                 .separator()
                 .header("Display Modes")
