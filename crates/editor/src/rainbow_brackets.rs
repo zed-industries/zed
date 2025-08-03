@@ -21,88 +21,81 @@ pub fn refresh_rainbow_bracket_highlights(
     if let Some((_, _, buffer_snapshot)) = multi_buffer_snapshot.as_singleton() {
         let language = buffer_snapshot.language();
 
-        if let Some(language) = language {
-            if let Some(grammar) = language.grammar() {
-                if let Some(rainbow_config) = &grammar.rainbow_config {
-                    let mut highlights_by_level: HashMap<usize, Vec<Range<Anchor>>> =
-                        HashMap::new();
+        if let Some(rainbow_config) = language
+            .and_then(|lang| lang.grammar())
+            .and_then(|grammar| grammar.rainbow_config.as_ref())
+        {
+            let mut highlights_by_level: HashMap<usize, Vec<Range<Anchor>>> = HashMap::new();
 
-                    collect_rainbow_highlights(
-                        buffer_snapshot,
-                        rainbow_config,
-                        &mut highlights_by_level,
-                    );
+            collect_rainbow_highlights(buffer_snapshot, rainbow_config, &mut highlights_by_level);
 
-                    // Apply highlights by level
-                    for (level, ranges) in highlights_by_level {
-                        // Convert text anchors to multi-buffer anchors
-                        let multi_buffer_ranges: Vec<_> = ranges
-                            .into_iter()
-                            .map(|range| {
-                                let start_offset = range.start.to_offset(buffer_snapshot);
-                                let end_offset = range.end.to_offset(buffer_snapshot);
-                                let start =
-                                    multi_buffer_snapshot.anchor_at(start_offset, Bias::Left);
-                                let end = multi_buffer_snapshot.anchor_at(end_offset, Bias::Right);
-                                start..end
-                            })
-                            .collect();
+            // Apply highlights by level
+            for (level, ranges) in highlights_by_level {
+                // Convert text anchors to multi-buffer anchors
+                let multi_buffer_ranges: Vec<_> = ranges
+                    .into_iter()
+                    .map(|range| {
+                        let start_offset = range.start.to_offset(buffer_snapshot);
+                        let end_offset = range.end.to_offset(buffer_snapshot);
+                        let start = multi_buffer_snapshot.anchor_at(start_offset, Bias::Left);
+                        let end = multi_buffer_snapshot.anchor_at(end_offset, Bias::Right);
+                        start..end
+                    })
+                    .collect();
 
-                        // TODO: make it a text style instead of a background highlight
-                        // Create a unique type for each level to avoid conflicts
-                        match level {
-                            0 => editor.highlight_background::<RainbowLevel0>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_0,
-                                cx,
-                            ),
-                            1 => editor.highlight_background::<RainbowLevel1>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_1,
-                                cx,
-                            ),
-                            2 => editor.highlight_background::<RainbowLevel2>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_2,
-                                cx,
-                            ),
-                            3 => editor.highlight_background::<RainbowLevel3>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_3,
-                                cx,
-                            ),
-                            4 => editor.highlight_background::<RainbowLevel4>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_4,
-                                cx,
-                            ),
-                            5 => editor.highlight_background::<RainbowLevel5>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_5,
-                                cx,
-                            ),
-                            6 => editor.highlight_background::<RainbowLevel6>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_6,
-                                cx,
-                            ),
-                            7 => editor.highlight_background::<RainbowLevel7>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_7,
-                                cx,
-                            ),
-                            8 => editor.highlight_background::<RainbowLevel8>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_8,
-                                cx,
-                            ),
-                            _ => editor.highlight_background::<RainbowLevel9>(
-                                &multi_buffer_ranges,
-                                get_rainbow_color_9,
-                                cx,
-                            ),
-                        }
-                    }
+                // TODO: make it a text style instead of a background highlight
+                // Create a unique type for each level to avoid conflicts
+                match level {
+                    0 => editor.highlight_background::<RainbowLevel0>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_0,
+                        cx,
+                    ),
+                    1 => editor.highlight_background::<RainbowLevel1>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_1,
+                        cx,
+                    ),
+                    2 => editor.highlight_background::<RainbowLevel2>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_2,
+                        cx,
+                    ),
+                    3 => editor.highlight_background::<RainbowLevel3>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_3,
+                        cx,
+                    ),
+                    4 => editor.highlight_background::<RainbowLevel4>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_4,
+                        cx,
+                    ),
+                    5 => editor.highlight_background::<RainbowLevel5>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_5,
+                        cx,
+                    ),
+                    6 => editor.highlight_background::<RainbowLevel6>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_6,
+                        cx,
+                    ),
+                    7 => editor.highlight_background::<RainbowLevel7>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_7,
+                        cx,
+                    ),
+                    8 => editor.highlight_background::<RainbowLevel8>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_8,
+                        cx,
+                    ),
+                    _ => editor.highlight_background::<RainbowLevel9>(
+                        &multi_buffer_ranges,
+                        get_rainbow_color_9,
+                        cx,
+                    ),
                 }
             }
         }
