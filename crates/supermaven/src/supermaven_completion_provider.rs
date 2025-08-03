@@ -203,12 +203,8 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
 
-            let completion = completion_from_diff(
-                snapshot,
-                completion_text,
-                cursor_position,
-                range,
-            );
+            let completion =
+                completion_from_diff(snapshot, completion_text, cursor_position, range);
 
             Some(completion)
         } else {
