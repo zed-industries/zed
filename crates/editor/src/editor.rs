@@ -9145,10 +9145,10 @@ impl Editor {
                                         match provider.provider.name() {
                                             "copilot" => "Copilot",
                                             "supermaven" => "Supermaven",
-                                            _ => "ZedPredict", // Default for Zeta and others
+                                            _ => "ZedPredict",
                                         }
                                     } else {
-                                        "ZedPredict" // Default when no provider
+                                        "ZedPredict"
                                     };
 
                                 match &prediction.completion {
@@ -9369,14 +9369,14 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                // Handle case where edit_preview is None (e.g., for Copilot)
+                // Handle case where edit_preview is None (providers other then Zeta)
                 let (highlighted_edits, has_more_lines) = if let Some(edit_preview) =
                     edit_preview.as_ref()
                 {
                     crate::inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
                         .first_line_preview()
                 } else {
-                    // Fallback for when there's no edit preview - show the raw edit text
+                    // Fallback for when there's no edit preview - show the raw edit text (will miss everything previous to cursor position)
                     let first_edit = edits.first()?;
                     let edit_text = &first_edit.1;
                     let preview_text = if edit_text.len() > 50 {
@@ -9406,15 +9406,14 @@ impl Editor {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    // Choose icon based on the edit prediction provider
                     let icon_name = if let Some(provider) = &self.edit_prediction_provider {
                         match provider.provider.name() {
                             "copilot" => IconName::Copilot,
                             "supermaven" => IconName::Supermaven,
-                            _ => IconName::ZedPredict, // Default for Zeta and others
+                            _ => IconName::ZedPredict,
                         }
                     } else {
-                        IconName::ZedPredict // Default when no provider
+                        IconName::ZedPredict
                     };
                     Icon::new(icon_name).into_any_element()
                 };
