@@ -1083,8 +1083,6 @@ mod tests {
             vec![complete_from_marker.clone(), replace_range_marker.clone()],
         );
 
-        let _complete_from_position =
-            cx.to_lsp(marked_ranges.remove(&complete_from_marker).unwrap()[0].start);
         let replace_range =
             cx.to_lsp_range(marked_ranges.remove(&replace_range_marker).unwrap()[0].clone());
 
