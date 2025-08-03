@@ -301,7 +301,7 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        self.model.supports_vision()
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
