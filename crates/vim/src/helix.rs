@@ -703,4 +703,29 @@ mod test {
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
     }
+
+    #[gpui::test]
+    async fn test_helix_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test yanking current character with no selection
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        // Test cursor remains at the same position after yanking single character
+        cx.assert_state("hello ˇworld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
+
+        // Move cursor and yank another character
+        cx.simulate_keystrokes("l");
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("o");
+
+        // Test yanking with existing selection
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("worl");
+        cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+    }
 }
