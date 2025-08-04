@@ -110,26 +110,22 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Apply content_mask corner radii clipping
   float clip_alpha = 1.0;
-  float clip_sdf = 1.0;
-  float2 clip_half_size = float2(0.0, 0.0);
-  float clip_corner_radius = 0.0;
   ContentMask_ScaledPixels content_mask = quad.content_mask;
   if (content_mask.corner_radii.top_left > quad.corner_radii.top_left ||
       content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
       content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
       content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
-    clip_half_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height) / 2.0;
-    float2 clip_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + clip_half_size;
-    float2 clip_center_to_point = input.position.xy - clip_center;
-    clip_corner_radius = pick_corner_radius(clip_center_to_point, content_mask.corner_radii);
-    float2 clip_corner_center_to_point = fabs(clip_center_to_point) - clip_half_size + clip_corner_radius;
-    clip_sdf = quad_sdf_impl(clip_corner_center_to_point, clip_corner_radius);
+    float2 half_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height) / 2.0;
+    float2 clip_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + half_size;
+    float2 point = input.position.xy - clip_center;
+    float corner_radius = pick_corner_radius(point, content_mask.corner_radii);
+    float2 center_to_point = fabs(point) - half_size + corner_radius;
+    float clip_sdf = quad_sdf_impl(center_to_point, corner_radius);
     clip_alpha = saturate(antialias_threshold - clip_sdf);
 
     background_color.a *= clip_alpha;
     border_color.a *= clip_alpha;
   }
-
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
