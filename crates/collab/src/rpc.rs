@@ -658,8 +658,7 @@ impl Server {
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
-                let payload_type = M::NAME;
-                tracing::info!(payload_type, "message received");
+                tracing::info!("message received");
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
@@ -675,7 +674,6 @@ impl Server {
                                 total_duration_ms,
                                 processing_duration_ms,
                                 queue_duration_ms,
-                                payload_type,
                                 "error handling message"
                             )
                         }
@@ -683,7 +681,6 @@ impl Server {
                             total_duration_ms,
                             processing_duration_ms,
                             queue_duration_ms,
-                            payload_type,
                             "finished handling message"
                         ),
                     }
