@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
