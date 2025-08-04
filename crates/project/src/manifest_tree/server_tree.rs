@@ -132,9 +132,9 @@ impl LanguageServerTree {
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let adapters =
-            self.adapters_for_language(&path, &language_name, manifest_name, delegate, cx);
-        self.get_with_adapters(path, adapters)
+        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
+        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
+        self.get_with_adapters(manifest_location, adapters)
     }
 
     fn get_with_adapters<'a>(
@@ -149,7 +149,6 @@ impl LanguageServerTree {
             .into_iter()
             .map(move |(_, (settings, new_languages, adapter))| {
                 let root_path = root_path.clone();
-
                 let inner_node = self
                     .instances
                     .entry(root_path.worktree_id)
@@ -173,20 +172,26 @@ impl LanguageServerTree {
             })
     }
 
-    fn adapters_for_language(
+    fn manifest_location_for_path(
         &self,
-        project_path: &ProjectPath,
-        language_name: &LanguageName,
+        path: &ProjectPath,
         manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
+    ) -> ProjectPath {
+        // Find out what the root location of our subproject is.
+        // That's where we'll look for language settings (that include a set of language servers).
+        self.manifest_tree.update(cx, |this, cx| {
+            this.root_for_path_or_worktree_root(path, manifest_name, delegate, cx)
+        })
+    }
+    fn adapters_for_language(
+        &self,
+        manifest_location: &ProjectPath,
+        language_name: &LanguageName,
+        cx: &mut App,
     ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
     {
-        // First, let's find out what the root location of our subproject is.
-        // That's where we'll look for language settings (that include a set of language servers).
-        let manifest_location = self.manifest_tree.update(cx, |this, cx| {
-            this.root_for_path_or_worktree_root(project_path, manifest_name, delegate, cx)
-        });
         let settings_location = SettingsLocation {
             worktree_id: manifest_location.worktree_id,
             path: &manifest_location.path,
@@ -347,16 +352,15 @@ impl<'tree> ServerTreeRebase<'tree> {
         delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let adapters = self.new_tree.adapters_for_language(
-            &path,
-            &language_name,
-            manifest_name,
-            &delegate,
-            cx,
-        );
+        let manifest =
+            self.new_tree
+                .manifest_location_for_path(&path, manifest_name, &delegate, cx);
+        let adapters = self
+            .new_tree
+            .adapters_for_language(&manifest, &language_name, cx);
 
         self.new_tree
-            .get_with_adapters(path, adapters)
+            .get_with_adapters(manifest, adapters)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.
