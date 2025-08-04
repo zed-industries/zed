@@ -226,7 +226,7 @@ impl LocalLspStore {
         worktree_handle: &Entity<Worktree>,
         delegate: Arc<LocalLspAdapterDelegate>,
         disposition: &Arc<LaunchDisposition>,
-        language_name: LanguageName,
+        language_name: &LanguageName,
         cx: &mut App,
     ) -> LanguageServerId {
         let key = LanguageServerSeed {
@@ -241,7 +241,7 @@ impl LocalLspStore {
         } else {
             let adapter = self
                 .languages
-                .lsp_adapters(&language_name)
+                .lsp_adapters(language_name)
                 .into_iter()
                 .find(|adapter| adapter.name() == disposition.server_name)
                 .expect("To find LSP adapter");
@@ -1194,11 +1194,18 @@ impl LocalLspStore {
         else {
             return Vec::new();
         };
-        let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+        let delegate: Arc<dyn ManifestDelegate> =
+            Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
         let root = self.lsp_tree.update(cx, |this, cx| {
-            this.get(project_path, language.name(), language, delegate, cx)
-                .filter_map(|node| node.server_id())
-                .collect::<Vec<_>>()
+            this.get(
+                project_path,
+                language.name(),
+                language.manifest(),
+                &delegate,
+                cx,
+            )
+            .filter_map(|node| node.server_id())
+            .collect::<Vec<_>>()
         });
 
         root
@@ -2471,7 +2478,8 @@ impl LocalLspStore {
             .map(|(delegate, servers)| (true, delegate, servers))
             .unwrap_or_else(|| {
                 let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-                let delegate = Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+                let delegate: Arc<dyn ManifestDelegate> =
+                    Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
                 let servers = self
                     .lsp_tree
                     .clone()
@@ -2480,7 +2488,8 @@ impl LocalLspStore {
                             .get(
                                 ProjectPath { worktree_id, path },
                                 language.name(),
-                                delegate.clone(),
+                                language.manifest(),
+                                &delegate,
                                 cx,
                             )
                             .collect::<Vec<_>>()
@@ -2516,7 +2525,7 @@ impl LocalLspStore {
                             &worktree,
                             delegate.clone(),
                             disposition,
-                            language_name.clone(),
+                            &language_name,
                             cx,
                         );
 
@@ -4696,7 +4705,7 @@ impl LspStore {
                         }
                         File::from_dyn(raw_buffer.file())
                             .cloned()
-                            .zip(raw_buffer.language().map(|l| l.name()))
+                            .zip(raw_buffer.language().cloned())
                     })
                     .sorted_by_key(|(file, _)| Reverse(file.worktree.read(cx).is_visible()));
                 for (file, language) in buffers {
@@ -4713,7 +4722,7 @@ impl LspStore {
                         .reuse_existing_language_server(
                             rebase.server_tree(),
                             &worktree,
-                            &language,
+                            &language.name(),
                             cx,
                         )
                         .map(|(delegate, servers)| (true, delegate, servers))
@@ -4731,7 +4740,13 @@ impl LspStore {
                                 .unwrap_or_else(|| file.path().clone());
                             let worktree_path = ProjectPath { worktree_id, path };
 
-                            let nodes = rebase.get(worktree_path, language, delegate.clone(), cx);
+                            let nodes = rebase.get(
+                                worktree_path,
+                                language.name(),
+                                language.manifest(),
+                                delegate.clone(),
+                                cx,
+                            );
 
                             Some((false, lsp_delegate, nodes.collect()))
                         })
@@ -4759,7 +4774,7 @@ impl LspStore {
                                     &worktree,
                                     delegate.clone(),
                                     disposition,
-                                    language.clone(),
+                                    &language.name(),
                                     cx,
                                 );
                                 if let Some(state) = local.language_servers.get(&server_id) {
@@ -7527,8 +7542,9 @@ impl LspStore {
         cx.spawn(async move |this, cx| {
             while let Some(()) = joint_future.next().await {
                 this.update(cx, |this, cx| {
-                    this.refresh_server_tree(cx);
-                });
+                    this.refresh_server_tree(todo!(), cx);
+                })
+                .ok();
 
                 Self::refresh_workspace_configurations(&this, fs.clone(), cx).await;
             }

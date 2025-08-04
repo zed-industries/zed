@@ -87,10 +87,6 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
     }
 }
 
-// /project_a/pyproject.toml <- manifest
-// /project_a/src/foo.py
-//
-// we know that for: /project_a/, there should be an instance of pylsp running
 #[derive(Debug)]
 pub struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
@@ -138,10 +134,7 @@ impl LanguageServerTree {
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let adapters =
             self.adapters_for_language(&path, &language_name, manifest_name, delegate, cx);
-        self.get_with_adapters(path, adapters, cx)
-        // /Cargo.toml
-        // /src/main.rs
-        // /src/.zed/settings.json ("Rust": {"language_servers" ["!rust_analyzer"]})
+        self.get_with_adapters(path, adapters)
     }
 
     fn get_with_adapters<'a>(
@@ -151,40 +144,11 @@ impl LanguageServerTree {
             LanguageServerName,
             (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
         >,
-        cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let worktree_id = root_path.worktree_id;
-
-        let mut manifest_to_adapters = BTreeMap::default();
-        for (_, _, adapter) in adapters.values() {
-            if let Some(manifest_name) = adapter.manifest_name() {
-                manifest_to_adapters
-                    .entry(manifest_name)
-                    .or_insert_with(Vec::default)
-                    .push(adapter.clone());
-            }
-        }
-
-        let roots = self.manifest_tree.update(cx, |this, cx| {
-            this.root_for_path(
-                path,
-                &mut manifest_to_adapters.keys().cloned(),
-                delegate,
-                cx,
-            )
-        });
-        let root_path = std::cell::LazyCell::new(move || ProjectPath {
-            worktree_id,
-            path: Arc::from("".as_ref()),
-        });
         adapters
             .into_iter()
             .map(move |(_, (settings, new_languages, adapter))| {
-                let root_path = adapter
-                    .manifest_name()
-                    .and_then(|name| roots.get(&name))
-                    .cloned()
-                    .unwrap_or_else(|| root_path.clone());
+                let root_path = root_path.clone();
 
                 let inner_node = self
                     .instances
@@ -377,20 +341,20 @@ impl<'tree> ServerTreeRebase<'tree> {
         &'a mut self,
         path: ProjectPath,
         language_name: LanguageName,
-        manifest_name: ManifestName,
+        manifest_name: Option<&ManifestName>,
         delegate: Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let settings_location = SettingsLocation {
-            worktree_id: path.worktree_id,
-            path: &path.path,
-        };
-        let adapters = self
-            .new_tree
-            .adapters_for_language(settings_location, &language_name, cx);
+        let adapters = self.new_tree.adapters_for_language(
+            &path,
+            &language_name,
+            manifest_name,
+            &delegate,
+            cx,
+        );
 
         self.new_tree
-            .get_with_adapters(path, adapters, cx)
+            .get_with_adapters(path, adapters)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.

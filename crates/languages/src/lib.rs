@@ -1,6 +1,6 @@
 use anyhow::Context as _;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
-use gpui::{App, UpdateGlobal};
+use gpui::{App, SharedString, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
 use rust::CargoManifestProvider;
@@ -235,6 +235,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             registration.adapters,
             registration.context,
             registration.toolchain,
+            registration.manifest_name,
         );
     }
 
@@ -371,13 +372,14 @@ fn register_language(
         config.grammar.clone(),
         config.matcher.clone(),
         config.hidden,
-        config.manifest_name,
+        manifest_name.clone(),
         Arc::new(move || {
             Ok(LoadedLanguage {
                 config: config.clone(),
                 queries: load_queries(name),
                 context_provider: context.clone(),
                 toolchain_provider: toolchain.clone(),
+                manifest_name: manifest_name.clone(),
             })
         }),
     );
