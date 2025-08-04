@@ -14,7 +14,7 @@ use ui::{
 };
 use vim_mode_setting::VimModeSetting;
 
-use crate::theme_preview::ThemePreviewTile;
+use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
 fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
@@ -139,38 +139,15 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                                     theme_registry.get(LIGHT_THEMES[index]).unwrap(),
                                     theme_registry.get(DARK_THEMES[index]).unwrap(),
                                 );
-
                                 this.child(
-                                    h_flex()
-                                        .relative()
-                                        .size_full()
-                                        .rounded_sm()
-                                        .overflow_hidden()
-                                        .child(
-                                            div()
-                                                .size_full()
-                                                .rounded_l_sm()
-                                                .overflow_hidden()
-                                                .bg(colors.editor_background)
-                                                .child(ThemePreviewTile::new(light, theme_seed).style(
-                                                    crate::theme_preview::ThemePreviewStyle::Borderless,
-                                                )),
-                                        )
-                                        .child(
-                                            div()
-                                                .size_full()
-                                                .overflow_hidden()
-                                                .rounded_r_sm()
-                                                .absolute()
-                                                .left_1_2()
-                                                .bg(colors.editor_background)
-                                                .child(ThemePreviewTile::new(dark, theme_seed).style(
-                                                    crate::theme_preview::ThemePreviewStyle::Borderless,
-                                                )),
-                                        ),
+                                    ThemePreviewTile::new(light, theme_seed)
+                                        .style(ThemePreviewStyle::SideBySide(dark)),
                                 )
                             } else {
-                                this.child(ThemePreviewTile::new(theme.clone(), theme_seed))
+                                this.child(
+                                    ThemePreviewTile::new(theme.clone(), theme_seed)
+                                        .style(ThemePreviewStyle::Bordered),
+                                )
                             }
                         }),
                 )

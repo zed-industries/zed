@@ -6,10 +6,11 @@ use ui::{
     IntoElement, RenderOnce, component_prelude::Documented, prelude::*, utils::inner_corner_radius,
 };
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum ThemePreviewStyle {
     Bordered,
     Borderless,
+    SideBySide(Arc<Theme>),
 }
 
 /// Shows a preview of a theme as an abstract illustration
@@ -183,7 +184,7 @@ impl ThemePreviewTile {
         div()
             .size_full()
             .flex()
-            .bg(theme.colors().background)
+            .bg(theme.colors().background.alpha(1.00))
             .child(Self::render_sidebar(
                 seed,
                 theme.colors(),
@@ -196,6 +197,52 @@ impl ThemePreviewTile {
 
 impl RenderOnce for ThemePreviewTile {
     fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
+        let root_radius = Self::CORNER_RADIUS;
+        let root_border = px(2.0);
+        let root_padding = px(2.0);
+        let child_border = px(1.0);
+        let inner_radius =
+            inner_corner_radius(root_radius, root_border, root_padding, child_border);
+
+        if let ThemePreviewStyle::SideBySide(other_theme) = self.style {
+            let sidebar_width = relative(0.20);
+            return h_flex()
+                .size_full()
+                .p(root_padding)
+                .rounded(root_radius)
+                .relative()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .size_full()
+                        .rounded(inner_radius)
+                        .border(child_border)
+                        .border_color(self.theme.colors().border)
+                        .child(Self::render_editor(
+                            self.seed,
+                            self.theme.clone(),
+                            sidebar_width,
+                            Self::SKELETON_HEIGHT_DEFAULT,
+                        )),
+                )
+                .child(
+                    div()
+                        .size_full()
+                        .absolute()
+                        .left_1_2()
+                        .rounded_r(inner_radius)
+                        .border_r(child_border)
+                        .border_y(child_border)
+                        .border_color(other_theme.colors().border)
+                        .child(Self::render_editor(
+                            self.seed,
+                            other_theme,
+                            sidebar_width,
+                            Self::SKELETON_HEIGHT_DEFAULT,
+                        )),
+                )
+                .into_any_element();
+        }
         let content = Self::render_editor(
             self.seed,
             self.theme.clone(),
@@ -206,12 +253,6 @@ impl RenderOnce for ThemePreviewTile {
         if self.style == ThemePreviewStyle::Borderless {
             return content.into_any_element();
         }
-        let root_radius = Self::CORNER_RADIUS;
-        let root_border = px(2.0);
-        let root_padding = px(2.0);
-        let child_border = px(1.0);
-        let inner_radius =
-            inner_corner_radius(root_radius, root_border, root_padding, child_border);
 
         div()
             .size_full()
