@@ -6,7 +6,6 @@ mod sign_in;
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
-use client::DisableAiSettings;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -24,6 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
+use project::DisableAiSettings;
 use request::StatusNotification;
 use serde_json::json;
 use settings::Settings;
