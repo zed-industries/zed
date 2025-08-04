@@ -556,6 +556,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "charset",
     "http2",
     "macos-system-configuration",
+    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",

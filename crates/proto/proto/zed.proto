@@ -294,8 +294,8 @@ message Envelope {
         GetPathMetadata get_path_metadata = 278;
         GetPathMetadataResponse get_path_metadata_response = 279;
 
-        GetPanicFiles get_panic_files = 280;
-        GetPanicFilesResponse get_panic_files_response = 281;
+        GetCrashFiles get_crash_files = 280;
+        GetCrashFilesResponse get_crash_files_response = 281;
 
         CancelLanguageServerWork cancel_language_server_work = 282;
 

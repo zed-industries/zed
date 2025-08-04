@@ -7,7 +7,7 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
-use futures::future::BoxFuture;
+use futures::{future::{self, BoxFuture}, FutureExt as _};
 use http::request::Builder;
 use parking_lot::Mutex;
 #[cfg(feature = "test-support")]
@@ -86,6 +86,7 @@ pub trait HttpClient: 'static + Send + Sync {
     fn proxy(&self) -> Option<&Url>;
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
@@ -94,6 +95,17 @@ pub trait HttpClient: 'static + Send + Sync {
     fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
         None
 >>>>>>> 55ed03f762 (Add uploading)
+||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        None
+=======
+    fn send_multipart_form<'a>(
+        &'a self,
+        _url: &str,
+        _request: reqwest::multipart::Form
+    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
+>>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }
 }
 
@@ -153,14 +165,22 @@ impl HttpClient for HttpClientWithProxy {
 =======
 >>>>>>> 55ed03f762 (Add uploading)
 
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        self.client.as_real_client()
+    fn send_multipart_form<'a>(
+        &'a self,
+        url: &str,
+        form: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+        self.client.send_multipart_form(url, form)
     }
 
+<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
     }
+||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
+=======
+>>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
 }
 
 /// An [`HttpClient`] that has a base URL.
@@ -342,6 +362,7 @@ impl HttpClient for HttpClientWithUrl {
     }
 
 <<<<<<< HEAD
+<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
@@ -350,6 +371,17 @@ impl HttpClient for HttpClientWithUrl {
     fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
         self.client.as_real_client()
 >>>>>>> 55ed03f762 (Add uploading)
+||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
+    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
+        self.client.as_real_client()
+=======
+    fn send_multipart_form<'a>(
+        &'a self,
+        url: &str,
+        request: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+        self.client.send_multipart_form(url, request)
+>>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }
 }
 

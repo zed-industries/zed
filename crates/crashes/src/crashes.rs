@@ -52,7 +52,7 @@ pub async fn init(id: String) {
         smol::Timer::after(retry_frequency).await;
     }
     let client = maybe_client.unwrap();
-    client.send_message(1, id).unwrap();
+    client.send_message(1, id).unwrap(); // set session id on the server
     let handler = crash_handler::CrashHandler::attach(unsafe {
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once

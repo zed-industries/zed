@@ -4,13 +4,10 @@ use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{AsyncRead, TryStreamExt as _};
+use futures::{AsyncRead, TryFutureExt as _, TryStreamExt as _};
 use http_client::{RedirectPolicy, Url, http};
 use regex::Regex;
-use reqwest::{
-    header::{HeaderMap, HeaderValue},
-    redirect,
-};
+use reqwest::{header::{HeaderMap, HeaderValue}, redirect};
 use smol::future::FutureExt;
 
 const DEFAULT_CAPACITY: usize = 4096;
@@ -275,8 +272,12 @@ impl http_client::HttpClient for ReqwestClient {
         .boxed()
     }
 
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        Some((&self.client, self.handle.clone()))
+    fn send_multipart_form<'a>(
+        &'a self,
+        url: &str,
+        form: reqwest::multipart::Form,
+    ) -> futures::future::BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+        self.client.post(url).multipart(form).send().map_err(|e| anyhow!(e)).boxed()
     }
 }
 
