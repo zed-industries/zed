@@ -1162,7 +1162,7 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, _window: &Window, cx: &App) -> Option<ui::IconName> {
-        self.enabled(cx).then(|| ui::IconName::MessageBubbles)
+        self.enabled(cx).then(|| ui::IconName::Chat)
     }
 
     fn icon_tooltip(&self, _: &Window, _: &App) -> Option<&'static str> {
