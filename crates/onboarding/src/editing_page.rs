@@ -9,7 +9,7 @@ use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
     ButtonLike, ContextMenu, DropdownMenu, NumericStepper, SwitchField, ToggleButtonGroup,
-    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, prelude::*,
+    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
 };
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings};
@@ -357,23 +357,28 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
 }
 
 fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
+    const LIGATURE_TOOLTIP: &'static str = "Ligatures are when a font creates a special character out of combining two characters into one. For example, with ligatures turned on, =/= would become ≠.";
+
     v_flex()
         .gap_5()
         .child(Label::new("Popular Settings").size(LabelSize::Large).mt_8())
         .child(render_font_customization_section(window, cx))
-        .child(SwitchField::new(
-            "onboarding-font-ligatures",
-            "Font Ligatures",
-            Some("Combine text characters into their associated symbols.".into()),
-            if read_font_ligatures(cx) {
-                ui::ToggleState::Selected
-            } else {
-                ui::ToggleState::Unselected
-            },
-            |toggle_state, _, cx| {
-                write_font_ligatures(toggle_state == &ToggleState::Selected, cx);
-            },
-        ))
+        .child(
+            SwitchField::new(
+                "onboarding-font-ligatures",
+                "Font Ligatures",
+                Some("Combine text characters into their associated symbols.".into()),
+                if read_font_ligatures(cx) {
+                    ui::ToggleState::Selected
+                } else {
+                    ui::ToggleState::Unselected
+                },
+                |toggle_state, _, cx| {
+                    write_font_ligatures(toggle_state == &ToggleState::Selected, cx);
+                },
+            )
+            .tooltip(Tooltip::text(LIGATURE_TOOLTIP)),
+        )
         .child(SwitchField::new(
             "onboarding-format-on-save",
             "Format on Save",
@@ -385,6 +390,32 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
             },
             |toggle_state, _, cx| {
                 write_format_on_save(toggle_state == &ToggleState::Selected, cx);
+            },
+        ))
+        .child(SwitchField::new(
+            "onboarding-enable-inlay-hints",
+            "Inlay Hints",
+            Some("See parameter names for function and method calls inline.".into()),
+            if read_inlay_hints(cx) {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            |toggle_state, _, cx| {
+                write_inlay_hints(toggle_state == &ToggleState::Selected, cx);
+            },
+        ))
+        .child(SwitchField::new(
+            "onboarding-git-blame-switch",
+            "Git Blame",
+            Some("See who committed each line on a given file.".into()),
+            if read_git_blame(cx) {
+                ui::ToggleState::Selected
+            } else {
+                ui::ToggleState::Unselected
+            },
+            |toggle_state, _, cx| {
+                set_git_blame(toggle_state == &ToggleState::Selected, cx);
             },
         ))
         .child(
@@ -421,32 +452,6 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
                     .button_width(ui::rems_from_px(64.)),
                 ),
         )
-        .child(SwitchField::new(
-            "onboarding-enable-inlay-hints",
-            "Inlay Hints",
-            Some("See parameter names for function and method calls inline.".into()),
-            if read_inlay_hints(cx) {
-                ui::ToggleState::Selected
-            } else {
-                ui::ToggleState::Unselected
-            },
-            |toggle_state, _, cx| {
-                write_inlay_hints(toggle_state == &ToggleState::Selected, cx);
-            },
-        ))
-        .child(SwitchField::new(
-            "onboarding-git-blame-switch",
-            "Git Blame",
-            Some("See who committed each line on a given file.".into()),
-            if read_git_blame(cx) {
-                ui::ToggleState::Selected
-            } else {
-                ui::ToggleState::Unselected
-            },
-            |toggle_state, _, cx| {
-                set_git_blame(toggle_state == &ToggleState::Selected, cx);
-            },
-        ))
 }
 
 pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
