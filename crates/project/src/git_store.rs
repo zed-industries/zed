@@ -4025,6 +4025,25 @@ impl Repository {
         })
     }
 
+    pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.default_branch().await,
+                RepositoryState::Remote { project_id, client } => {
+                    let response = client
+                        .request(proto::GetDefaultBranch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    anyhow::Ok(response.branch.map(SharedString::from))
+                }
+            }
+        })
+    }
+
     pub fn diff(&mut self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
