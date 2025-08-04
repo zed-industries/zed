@@ -445,6 +445,8 @@ Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api
 
 To configure a compatible API, you can add a custom API URL for OpenAI either via the UI (currently available only in Preview) or by editing your `settings.json`.
 
+Set your API key with the environment variable `OPENAI_API_KEY=<your api key>`.
+
 For example, to connect to [Together AI](https://www.together.ai/) via the UI:
 
 1. Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
