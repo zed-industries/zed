@@ -97,7 +97,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -942,10 +942,38 @@ pub enum PulledDiagnostics {
     },
 }
 
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
+        DisableAiSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {

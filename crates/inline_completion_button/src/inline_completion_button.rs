@@ -1,5 +1,5 @@
 use anyhow::Result;
-use client::{DisableAiSettings, UserStore, zed_urls};
+use client::{UserStore, zed_urls};
 use copilot::{Copilot, Status};
 use editor::{
     Editor, SelectionEffects,
@@ -18,6 +18,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+use project::DisableAiSettings;
 use regex::Regex;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::{

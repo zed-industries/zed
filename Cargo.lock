@@ -6295,7 +6295,6 @@ dependencies = [
  "buffer_diff",
  "call",
  "chrono",
- "client",
  "collections",
  "command_palette_hooks",
  "component",

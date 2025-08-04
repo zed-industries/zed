@@ -16,7 +16,7 @@ use agent::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
-use client::{DisableAiSettings, telemetry::Telemetry};
+use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet, VecDeque, hash_map};
 use editor::SelectionEffects;
 use editor::{
@@ -39,7 +39,7 @@ use language_model::{
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
-use project::{CodeAction, LspAction, Project, ProjectTransaction};
+use project::{CodeAction, DisableAiSettings, LspAction, Project, ProjectTransaction};
 use prompt_store::{PromptBuilder, PromptStore};
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEventData, AssistantKind, AssistantPhase};

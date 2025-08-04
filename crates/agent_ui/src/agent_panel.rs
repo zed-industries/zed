@@ -43,7 +43,7 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{DisableAiSettings, UserStore, zed_urls};
+use client::{UserStore, zed_urls};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -57,7 +57,7 @@ use language::LanguageRegistry;
 use language_model::{
     ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
 };
-use project::{Project, ProjectPath, Worktree};
+use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
 use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
