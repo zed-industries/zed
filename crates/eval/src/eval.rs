@@ -13,12 +13,12 @@ pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
 use clap::Parser;
-use client::{Client, CloudUserStore, ProxySettings, UserStore};
+use client::{Client, ProxySettings, UserStore};
 use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
@@ -329,7 +329,6 @@ pub struct AgentAppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
-    pub cloud_user_store: Entity<CloudUserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub node_runtime: NodeRuntime,
 
@@ -338,7 +337,8 @@ pub struct AgentAppState {
 }
 
 pub fn init(cx: &mut App) -> Arc<AgentAppState> {
-    release_channel::init(SemanticVersion::default(), cx);
+    let app_version = AppVersion::global(cx);
+    release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
     let mut settings_store = SettingsStore::new(cx);
@@ -351,7 +351,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
         "Zed/{} ({}; {})",
-        AppVersion::global(cx),
+        app_version,
         std::env::consts::OS,
         std::env::consts::ARCH
     );
@@ -384,8 +384,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     let languages = Arc::new(languages);
 
     let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-    let cloud_user_store =
-        cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
 
     extension::init(cx);
 
@@ -425,12 +423,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         languages.clone(),
     );
     language_model::init(client.clone(), cx);
-    language_models::init(
-        user_store.clone(),
-        cloud_user_store.clone(),
-        client.clone(),
-        cx,
-    );
+    language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
@@ -455,7 +448,6 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
         languages,
         client,
         user_store,
-        cloud_user_store,
         fs,
         node_runtime,
         prompt_builder,

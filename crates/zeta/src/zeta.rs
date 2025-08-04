@@ -16,7 +16,7 @@ pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
-use client::{Client, CloudUserStore, EditPredictionUsage};
+use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
     PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
@@ -120,8 +120,8 @@ impl Dismissable for ZedPredictUpsell {
     }
 }
 
-pub fn should_show_upsell_modal(cloud_user_store: &Entity<CloudUserStore>, cx: &App) -> bool {
-    if cloud_user_store.read(cx).has_accepted_tos() {
+pub fn should_show_upsell_modal(user_store: &Entity<UserStore>, cx: &App) -> bool {
+    if user_store.read(cx).has_accepted_terms_of_service() {
         !ZedPredictUpsell::dismissed()
     } else {
         true
@@ -146,14 +146,14 @@ pub struct InlineCompletion {
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
     output_excerpt: Arc<str>,
-    request_sent_at: Instant,
+    buffer_snapshotted_at: Instant,
     response_received_at: Instant,
 }
 
 impl InlineCompletion {
     fn latency(&self) -> Duration {
         self.response_received_at
-            .duration_since(self.request_sent_at)
+            .duration_since(self.buffer_snapshotted_at)
     }
 
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
@@ -229,7 +229,7 @@ pub struct Zeta {
     _llm_token_subscription: Subscription,
     /// Whether an update to a newer version of Zed is required to continue using Zeta.
     update_required: bool,
-    cloud_user_store: Entity<CloudUserStore>,
+    user_store: Entity<UserStore>,
     license_detection_watchers: HashMap<WorktreeId, Rc<LicenseDetectionWatcher>>,
 }
 
@@ -242,11 +242,11 @@ impl Zeta {
         workspace: Option<WeakEntity<Workspace>>,
         worktree: Option<Entity<Worktree>>,
         client: Arc<Client>,
-        cloud_user_store: Entity<CloudUserStore>,
+        user_store: Entity<UserStore>,
         cx: &mut App,
     ) -> Entity<Self> {
         let this = Self::global(cx).unwrap_or_else(|| {
-            let entity = cx.new(|cx| Self::new(workspace, client, cloud_user_store, cx));
+            let entity = cx.new(|cx| Self::new(workspace, client, user_store, cx));
             cx.set_global(ZetaGlobal(entity.clone()));
             entity
         });
@@ -269,13 +269,13 @@ impl Zeta {
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
-        self.cloud_user_store.read(cx).edit_prediction_usage()
+        self.user_store.read(cx).edit_prediction_usage()
     }
 
     fn new(
         workspace: Option<WeakEntity<Workspace>>,
         client: Arc<Client>,
-        cloud_user_store: Entity<CloudUserStore>,
+        user_store: Entity<UserStore>,
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
@@ -306,7 +306,7 @@ impl Zeta {
             ),
             update_required: false,
             license_detection_watchers: HashMap::default(),
-            cloud_user_store,
+            user_store,
         }
     }
 
@@ -391,104 +391,48 @@ impl Zeta {
             + Send
             + 'static,
     {
+        let buffer = buffer.clone();
+        let buffer_snapshotted_at = Instant::now();
         let snapshot = self.report_changes_for_buffer(&buffer, cx);
-        let diagnostic_groups = snapshot.diagnostic_groups(None);
-        let cursor_point = cursor.to_point(&snapshot);
-        let cursor_offset = cursor_point.to_offset(&snapshot);
-        let events = self.events.clone();
-        let path: Arc<Path> = snapshot
-            .file()
-            .map(|f| Arc::from(f.full_path(cx).as_path()))
-            .unwrap_or_else(|| Arc::from(Path::new("untitled")));
-
         let zeta = cx.entity();
+        let events = self.events.clone();
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
-        let buffer = buffer.clone();
-
-        let local_lsp_store =
-            project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
-        let diagnostic_groups = if let Some(local_lsp_store) = local_lsp_store {
-            Some(
-                diagnostic_groups
-                    .into_iter()
-                    .filter_map(|(language_server_id, diagnostic_group)| {
-                        let language_server =
-                            local_lsp_store.running_language_server_for_id(language_server_id)?;
-
-                        Some((
-                            language_server.name(),
-                            diagnostic_group.resolve::<usize>(&snapshot),
-                        ))
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            None
-        };
+        let full_path: Arc<Path> = snapshot
+            .file()
+            .map(|f| Arc::from(f.full_path(cx).as_path()))
+            .unwrap_or_else(|| Arc::from(Path::new("untitled")));
+        let full_path_str = full_path.to_string_lossy().to_string();
+        let cursor_point = cursor.to_point(&snapshot);
+        let cursor_offset = cursor_point.to_offset(&snapshot);
+        let make_events_prompt = move || prompt_for_events(&events, MAX_EVENT_TOKENS);
+        let gather_task = gather_context(
+            project,
+            full_path_str,
+            &snapshot,
+            cursor_point,
+            make_events_prompt,
+            can_collect_data,
+            cx,
+        );
 
         cx.spawn(async move |this, cx| {
-            let request_sent_at = Instant::now();
-
-            struct BackgroundValues {
-                input_events: String,
-                input_excerpt: String,
-                speculated_output: String,
-                editable_range: Range<usize>,
-                input_outline: String,
-            }
-
-            let values = cx
-                .background_spawn({
-                    let snapshot = snapshot.clone();
-                    let path = path.clone();
-                    async move {
-                        let path = path.to_string_lossy();
-                        let input_excerpt = excerpt_for_cursor_position(
-                            cursor_point,
-                            &path,
-                            &snapshot,
-                            MAX_REWRITE_TOKENS,
-                            MAX_CONTEXT_TOKENS,
-                        );
-                        let input_events = prompt_for_events(&events, MAX_EVENT_TOKENS);
-                        let input_outline = prompt_for_outline(&snapshot);
-
-                        anyhow::Ok(BackgroundValues {
-                            input_events,
-                            input_excerpt: input_excerpt.prompt,
-                            speculated_output: input_excerpt.speculated_output,
-                            editable_range: input_excerpt.editable_range.to_offset(&snapshot),
-                            input_outline,
-                        })
-                    }
-                })
-                .await?;
+            let GatherContextOutput {
+                body,
+                editable_range,
+            } = gather_task.await?;
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
-                values.input_events,
-                values.input_excerpt
+                body.input_events,
+                body.input_excerpt
             );
 
-            let body = PredictEditsBody {
-                input_events: values.input_events.clone(),
-                input_excerpt: values.input_excerpt.clone(),
-                speculated_output: Some(values.speculated_output),
-                outline: Some(values.input_outline.clone()),
-                can_collect_data,
-                diagnostic_groups: diagnostic_groups.and_then(|diagnostic_groups| {
-                    diagnostic_groups
-                        .into_iter()
-                        .map(|(name, diagnostic_group)| {
-                            Ok((name.to_string(), serde_json::to_value(diagnostic_group)?))
-                        })
-                        .collect::<Result<Vec<_>>>()
-                        .log_err()
-                }),
-            };
+            let input_outline = body.outline.clone().unwrap_or_default();
+            let input_events = body.input_events.clone();
+            let input_excerpt = body.input_excerpt.clone();
 
             let response = perform_predict_edits(PerformPredictEditsParams {
                 client,
@@ -535,8 +479,8 @@ impl Zeta {
 
             if let Some(usage) = usage {
                 this.update(cx, |this, cx| {
-                    this.cloud_user_store.update(cx, |cloud_user_store, cx| {
-                        cloud_user_store.update_edit_prediction_usage(usage, cx);
+                    this.user_store.update(cx, |user_store, cx| {
+                        user_store.update_edit_prediction_usage(usage, cx);
                     });
                 })
                 .ok();
@@ -546,13 +490,13 @@ impl Zeta {
                 response,
                 buffer,
                 &snapshot,
-                values.editable_range,
+                editable_range,
                 cursor_offset,
-                path,
-                values.input_outline,
-                values.input_events,
-                values.input_excerpt,
-                request_sent_at,
+                full_path,
+                input_outline,
+                input_events,
+                input_excerpt,
+                buffer_snapshotted_at,
                 &cx,
             )
             .await
@@ -751,7 +695,7 @@ and then another
         )
     }
 
-    fn perform_predict_edits(
+    pub fn perform_predict_edits(
         params: PerformPredictEditsParams,
     ) -> impl Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>> {
         async move {
@@ -877,8 +821,8 @@ and then another
             if response.status().is_success() {
                 if let Some(usage) = EditPredictionUsage::from_headers(response.headers()).ok() {
                     this.update(cx, |this, cx| {
-                        this.cloud_user_store.update(cx, |cloud_user_store, cx| {
-                            cloud_user_store.update_edit_prediction_usage(usage, cx);
+                        this.user_store.update(cx, |user_store, cx| {
+                            user_store.update_edit_prediction_usage(usage, cx);
                         });
                     })?;
                 }
@@ -906,7 +850,7 @@ and then another
         input_outline: String,
         input_events: String,
         input_excerpt: String,
-        request_sent_at: Instant,
+        buffer_snapshotted_at: Instant,
         cx: &AsyncApp,
     ) -> Task<Result<Option<InlineCompletion>>> {
         let snapshot = snapshot.clone();
@@ -952,7 +896,7 @@ and then another
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
                 output_excerpt,
-                request_sent_at,
+                buffer_snapshotted_at,
                 response_received_at: Instant::now(),
             }))
         })
@@ -1136,7 +1080,7 @@ and then another
     }
 }
 
-struct PerformPredictEditsParams {
+pub struct PerformPredictEditsParams {
     pub client: Arc<Client>,
     pub llm_token: LlmApiToken,
     pub app_version: SemanticVersion,
@@ -1211,6 +1155,77 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
+pub struct GatherContextOutput {
+    pub body: PredictEditsBody,
+    pub editable_range: Range<usize>,
+}
+
+pub fn gather_context(
+    project: Option<&Entity<Project>>,
+    full_path_str: String,
+    snapshot: &BufferSnapshot,
+    cursor_point: language::Point,
+    make_events_prompt: impl FnOnce() -> String + Send + 'static,
+    can_collect_data: bool,
+    cx: &App,
+) -> Task<Result<GatherContextOutput>> {
+    let local_lsp_store =
+        project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
+    let diagnostic_groups: Vec<(String, serde_json::Value)> =
+        if let Some(local_lsp_store) = local_lsp_store {
+            snapshot
+                .diagnostic_groups(None)
+                .into_iter()
+                .filter_map(|(language_server_id, diagnostic_group)| {
+                    let language_server =
+                        local_lsp_store.running_language_server_for_id(language_server_id)?;
+                    let diagnostic_group = diagnostic_group.resolve::<usize>(&snapshot);
+                    let language_server_name = language_server.name().to_string();
+                    let serialized = serde_json::to_value(diagnostic_group).unwrap();
+                    Some((language_server_name, serialized))
+                })
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+
+    cx.background_spawn({
+        let snapshot = snapshot.clone();
+        async move {
+            let diagnostic_groups = if diagnostic_groups.is_empty() {
+                None
+            } else {
+                Some(diagnostic_groups)
+            };
+
+            let input_excerpt = excerpt_for_cursor_position(
+                cursor_point,
+                &full_path_str,
+                &snapshot,
+                MAX_REWRITE_TOKENS,
+                MAX_CONTEXT_TOKENS,
+            );
+            let input_events = make_events_prompt();
+            let input_outline = prompt_for_outline(&snapshot);
+            let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
+
+            let body = PredictEditsBody {
+                input_events,
+                input_excerpt: input_excerpt.prompt,
+                speculated_output: Some(input_excerpt.speculated_output),
+                outline: Some(input_outline),
+                can_collect_data,
+                diagnostic_groups,
+            };
+
+            Ok(GatherContextOutput {
+                body,
+                editable_range,
+            })
+        }
+    })
+}
+
 fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
     let mut input_outline = String::new();
 
@@ -1261,7 +1276,7 @@ struct RegisteredBuffer {
 }
 
 #[derive(Clone)]
-enum Event {
+pub enum Event {
     BufferChange {
         old_snapshot: BufferSnapshot,
         new_snapshot: BufferSnapshot,
@@ -1559,9 +1574,9 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         !self
             .zeta
             .read(cx)
-            .cloud_user_store
+            .user_store
             .read(cx)
-            .has_accepted_tos()
+            .has_accepted_terms_of_service()
     }
 
     fn is_refreshing(&self) -> bool {
@@ -1587,9 +1602,9 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         if self
             .zeta
             .read(cx)
-            .cloud_user_store
-            .read_with(cx, |cloud_user_store, _cx| {
-                cloud_user_store.account_too_young() || cloud_user_store.has_overdue_invoices()
+            .user_store
+            .read_with(cx, |user_store, _cx| {
+                user_store.account_too_young() || user_store.has_overdue_invoices()
             })
         {
             return;
@@ -1808,10 +1823,7 @@ mod tests {
     use client::UserStore;
     use client::test::FakeServer;
     use clock::FakeSystemClock;
-    use cloud_api_types::{
-        AuthenticatedUser, CreateLlmTokenResponse, GetAuthenticatedUserResponse, LlmToken, PlanInfo,
-    };
-    use cloud_llm_client::{CurrentUsage, Plan, UsageData, UsageLimit};
+    use cloud_api_types::{CreateLlmTokenResponse, LlmToken};
     use gpui::TestAppContext;
     use http_client::FakeHttpClient;
     use indoc::indoc;
@@ -1819,39 +1831,6 @@ mod tests {
     use settings::SettingsStore;
 
     use super::*;
-
-    fn make_get_authenticated_user_response() -> GetAuthenticatedUserResponse {
-        GetAuthenticatedUserResponse {
-            user: AuthenticatedUser {
-                id: 1,
-                metrics_id: "metrics-id-1".to_string(),
-                avatar_url: "".to_string(),
-                github_login: "".to_string(),
-                name: None,
-                is_staff: false,
-                accepted_tos_at: None,
-            },
-            feature_flags: vec![],
-            plan: PlanInfo {
-                plan: Plan::ZedPro,
-                subscription_period: None,
-                usage: CurrentUsage {
-                    model_requests: UsageData {
-                        used: 0,
-                        limit: UsageLimit::Limited(500),
-                    },
-                    edit_predictions: UsageData {
-                        used: 250,
-                        limit: UsageLimit::Unlimited,
-                    },
-                },
-                trial_started_at: None,
-                is_usage_based_billing_enabled: false,
-                is_account_too_young: false,
-                has_overdue_invoices: false,
-            },
-        }
-    }
 
     #[gpui::test]
     async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
@@ -1881,7 +1860,7 @@ mod tests {
             input_events: "".into(),
             input_excerpt: "".into(),
             output_excerpt: "".into(),
-            request_sent_at: Instant::now(),
+            buffer_snapshotted_at: Instant::now(),
             response_received_at: Instant::now(),
         };
 
@@ -2054,14 +2033,6 @@ mod tests {
 
         let http_client = FakeHttpClient::create(move |req| async move {
             match (req.method(), req.uri().path()) {
-                (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
-                    .status(200)
-                    .body(
-                        serde_json::to_string(&make_get_authenticated_user_response())
-                            .unwrap()
-                            .into(),
-                    )
-                    .unwrap()),
                 (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
                     .status(200)
                     .body(
@@ -2098,9 +2069,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
@@ -2128,14 +2097,6 @@ mod tests {
             let completion = completion_response.clone();
             async move {
                 match (req.method(), req.uri().path()) {
-                    (&Method::GET, "/client/users/me") => Ok(http_client::Response::builder()
-                        .status(200)
-                        .body(
-                            serde_json::to_string(&make_get_authenticated_user_response())
-                                .unwrap()
-                                .into(),
-                        )
-                        .unwrap()),
                     (&Method::POST, "/client/llm_tokens") => Ok(http_client::Response::builder()
                         .status(200)
                         .body(
@@ -2172,9 +2133,7 @@ mod tests {
         // Construct the fake server to authenticate.
         let _server = FakeServer::for_client(42, &client, cx).await;
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-        let zeta = cx.new(|cx| Zeta::new(None, client, cloud_user_store, cx));
+        let zeta = cx.new(|cx| Zeta::new(None, client, user_store.clone(), cx));
 
         let buffer = cx.new(|cx| Buffer::local(buffer_content, cx));
         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());

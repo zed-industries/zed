@@ -44,6 +44,7 @@ pub(crate) struct WindowsPlatform {
     drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_thread_id_win32: u32,
+    disable_direct_composition: bool,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -93,14 +94,18 @@ impl WindowsPlatform {
             main_thread_id_win32,
             validation_number,
         ));
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let directx_devices = DirectXDevices::new(disable_direct_composition)
+            .context("Unable to init directx devices.")?;
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&bitmap_factory)
+            DirectWriteTextSystem::new(&directx_devices, &bitmap_factory)
                 .context("Error creating DirectWriteTextSystem")?,
         );
         let drop_target_helper: IDropTargetHelper = unsafe {
@@ -120,6 +125,7 @@ impl WindowsPlatform {
             background_executor,
             foreground_executor,
             text_system,
+            disable_direct_composition,
             windows_version,
             bitmap_factory,
             drop_target_helper,
@@ -184,6 +190,7 @@ impl WindowsPlatform {
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
             main_thread_id_win32: self.main_thread_id_win32,
+            disable_direct_composition: self.disable_direct_composition,
         }
     }
 
@@ -715,6 +722,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) main_thread_id_win32: u32,
+    pub(crate) disable_direct_composition: bool,
 }
 
 fn open_target(target: &str) {

@@ -48,7 +48,11 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_registry = ThemeRegistry::global(cx);
 
     let current_theme_name = theme_selection.theme(appearance);
-    let theme_mode = theme_selection.mode();
+    let theme_mode = theme_selection.mode().unwrap_or_default();
+
+    // let theme_mode = theme_selection.mode();
+    // TODO: Clean this up once the "System" button inside the
+    // toggle button group is done
 
     let selected_index = match appearance {
         Appearance::Light => 0,
@@ -72,8 +76,28 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_selected = theme.name == current_theme_name;
         let name = theme.name.clone();
         let colors = cx.theme().colors();
+
         v_flex()
             .id(name.clone())
+            .w_full()
+            .items_center()
+            .gap_1()
+            .child(
+                div()
+                    .w_full()
+                    .border_2()
+                    .border_color(colors.border_transparent)
+                    .rounded(ThemePreviewTile::CORNER_RADIUS)
+                    .map(|this| {
+                        if is_selected {
+                            this.border_color(colors.border_selected)
+                        } else {
+                            this.opacity(0.8).hover(|s| s.border_color(colors.border))
+                        }
+                    })
+                    .child(ThemePreviewTile::new(theme.clone(), theme_seed)),
+            )
+            .child(Label::new(name).color(Color::Muted).size(LabelSize::Small))
             .on_click({
                 let theme_name = theme.name.clone();
                 move |_, _, cx| {
@@ -84,94 +108,53 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     });
                 }
             })
-            .flex_1()
-            .child(
-                div()
-                    .border_2()
-                    .border_color(colors.border_transparent)
-                    .rounded(ThemePreviewTile::CORNER_RADIUS)
-                    .hover(|mut style| {
-                        if !is_selected {
-                            style.border_color = Some(colors.element_hover);
-                        }
-                        style
-                    })
-                    .when(is_selected, |this| {
-                        this.border_color(colors.border_selected)
-                    })
-                    .cursor_pointer()
-                    .child(ThemePreviewTile::new(theme, theme_seed)),
-            )
-            .child(
-                h_flex()
-                    .justify_center()
-                    .items_baseline()
-                    .child(Label::new(name).color(Color::Muted)),
-            )
     });
 
     return v_flex()
+        .gap_2()
         .child(
             h_flex().justify_between().child(Label::new("Theme")).child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-dark-light",
-                            [
-                                ToggleButtonSimple::new("Light", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Light,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                                ToggleButtonSimple::new("Dark", {
-                                    let appearance_state = appearance_state.clone();
-                                    move |_, _, cx| {
-                                        write_appearance_change(
-                                            &appearance_state,
-                                            Appearance::Dark,
-                                            cx,
-                                        );
-                                    }
-                                }),
-                            ],
-                        )
-                        .selected_index(selected_index)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    )
-                    .child(
-                        ToggleButtonGroup::single_row(
-                            "theme-selector-onboarding-system",
-                            [ToggleButtonSimple::new("System", {
-                                let theme = theme_selection.clone();
-                                move |_, _, cx| {
-                                    toggle_system_theme_mode(theme.clone(), appearance, cx);
-                                }
-                            })],
-                        )
-                        .selected_index((theme_mode != Some(ThemeMode::System)) as usize)
-                        .style(ui::ToggleButtonGroupStyle::Outlined)
-                        .button_width(rems_from_px(64.)),
-                    ),
+                ToggleButtonGroup::single_row(
+                    "theme-selector-onboarding-dark-light",
+                    [
+                        ToggleButtonSimple::new("Light", {
+                            let appearance_state = appearance_state.clone();
+                            move |_, _, cx| {
+                                write_appearance_change(&appearance_state, Appearance::Light, cx);
+                            }
+                        }),
+                        ToggleButtonSimple::new("Dark", {
+                            let appearance_state = appearance_state.clone();
+                            move |_, _, cx| {
+                                write_appearance_change(&appearance_state, Appearance::Dark, cx);
+                            }
+                        }),
+                        // TODO: Properly put the System back as a button within this group
+                        // Currently, given "System" is not an option in the Appearance enum,
+                        // this button doesn't get selected
+                        ToggleButtonSimple::new("System", {
+                            let theme = theme_selection.clone();
+                            move |_, _, cx| {
+                                toggle_system_theme_mode(theme.clone(), appearance, cx);
+                            }
+                        })
+                        .selected(theme_mode == ThemeMode::System),
+                    ],
+                )
+                .selected_index(selected_index)
+                .style(ui::ToggleButtonGroupStyle::Outlined)
+                .button_width(rems_from_px(64.)),
             ),
         )
-        .child(h_flex().justify_between().children(theme_previews));
+        .child(h_flex().gap_4().justify_between().children(theme_previews));
 
     fn write_appearance_change(
         appearance_state: &Entity<Appearance>,
         new_appearance: Appearance,
         cx: &mut App,
     ) {
-        appearance_state.update(cx, |appearance, _| {
-            *appearance = new_appearance;
-        });
         let fs = <dyn Fs>::global(cx);
+        appearance_state.write(cx, new_appearance);
 
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
             if settings.theme.as_ref().and_then(ThemeSelection::mode) == Some(ThemeMode::System) {
@@ -210,7 +193,6 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     };
                     ThemeSelection::Dynamic { mode, light, dark }
                 }
-
                 ThemeSelection::Dynamic {
                     mode: _,
                     light,
@@ -242,7 +224,7 @@ fn render_telemetry_section(cx: &App) -> impl IntoElement {
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
             "Help Improve Zed",
-            "Sending anonymous usage data helps us build the right features and create the best experience.",
+            Some("Sending anonymous usage data helps us build the right features and create the best experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
             } else {
@@ -267,7 +249,7 @@ fn render_telemetry_section(cx: &App) -> impl IntoElement {
         .child(SwitchField::new(
             "onboarding-telemetry-crash-reports",
             "Help Fix Zed",
-            "Send crash reports so we can fix critical issues fast.",
+            Some("Send crash reports so we can fix critical issues fast.".into()),
             if TelemetrySettings::get_global(cx).diagnostics {
                 ui::ToggleState::Selected
             } else {
@@ -311,37 +293,38 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                 ToggleButtonGroup::two_rows(
                     "multiple_row_test",
                     [
-                        ToggleButtonWithIcon::new("VS Code", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
                             write_keymap_base(BaseKeymap::VSCode, cx);
                         }),
-                        ToggleButtonWithIcon::new("Jetbrains", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Jetbrains", IconName::EditorJetBrains, |_, _, cx| {
                             write_keymap_base(BaseKeymap::JetBrains, cx);
                         }),
-                        ToggleButtonWithIcon::new("Sublime Text", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
                             write_keymap_base(BaseKeymap::SublimeText, cx);
                         }),
                     ],
                     [
-                        ToggleButtonWithIcon::new("Atom", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Atom, cx);
                         }),
-                        ToggleButtonWithIcon::new("Emacs", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Emacs, cx);
                         }),
-                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::AiZed, |_, _, cx| {
+                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
                             write_keymap_base(BaseKeymap::Cursor, cx);
                         }),
                     ],
                 )
                 .when_some(base_keymap, |this, base_keymap| this.selected_index(base_keymap))
-                .button_width(rems_from_px(230.))
+                .button_width(rems_from_px(216.))
+                .size(ui::ToggleButtonGroupSize::Medium)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
             ),
         )
-        .child(v_flex().justify_center().child(div().h_0().child("hack").invisible()).child(SwitchField::new(
+        .child(SwitchField::new(
             "onboarding-vim-mode",
             "Vim Mode",
-            "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.",
+            Some("Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.".into()),
             if VimModeSetting::get_global(cx).0 {
                 ui::ToggleState::Selected
             } else {
@@ -363,6 +346,6 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
                     );
                 }
             },
-        )))
+        ))
         .child(render_telemetry_section(cx))
 }

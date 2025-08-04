@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
 use http_client::http::request;
-use http_client::{AsyncBody, HttpClientWithUrl, Method, Request};
+use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
 use parking_lot::RwLock;
 
 struct Credentials {
@@ -40,27 +40,14 @@ impl CloudApiClient {
         *self.credentials.write() = None;
     }
 
-    fn authorization_header(&self) -> Result<String> {
-        let guard = self.credentials.read();
-        let credentials = guard
-            .as_ref()
-            .ok_or_else(|| anyhow!("No credentials provided"))?;
-
-        Ok(format!(
-            "{} {}",
-            credentials.user_id, credentials.access_token
-        ))
-    }
-
     fn build_request(
         &self,
         req: request::Builder,
         body: impl Into<AsyncBody>,
     ) -> Result<Request<AsyncBody>> {
-        Ok(req
-            .header("Content-Type", "application/json")
-            .header("Authorization", self.authorization_header()?)
-            .body(body.into())?)
+        let credentials = self.credentials.read();
+        let credentials = credentials.as_ref().context("no credentials provided")?;
+        build_request(req, body, credentials)
     }
 
     pub async fn get_authenticated_user(&self) -> Result<GetAuthenticatedUserResponse> {
@@ -152,4 +139,50 @@ impl CloudApiClient {
 
         Ok(serde_json::from_str(&body)?)
     }
+
+    pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
+        let request = build_request(
+            Request::builder().method(Method::GET).uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/users/me", &[])?
+                    .as_ref(),
+            ),
+            AsyncBody::default(),
+            &Credentials {
+                user_id,
+                access_token: access_token.into(),
+            },
+        )?;
+
+        let mut response = self.http_client.send(request).await?;
+
+        if response.status().is_success() {
+            Ok(true)
+        } else {
+            let mut body = String::new();
+            response.body_mut().read_to_string(&mut body).await?;
+            if response.status() == StatusCode::UNAUTHORIZED {
+                return Ok(false);
+            } else {
+                return Err(anyhow!(
+                    "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
+                    response.status()
+                ));
+            }
+        }
+    }
+}
+
+fn build_request(
+    req: request::Builder,
+    body: impl Into<AsyncBody>,
+    credentials: &Credentials,
+) -> Result<Request<AsyncBody>> {
+    Ok(req
+        .header("Content-Type", "application/json")
+        .header(
+            "Authorization",
+            format!("{} {}", credentials.user_id, credentials.access_token),
+        )
+        .body(body.into())?)
 }
