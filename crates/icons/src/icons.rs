@@ -282,7 +282,6 @@ pub enum IconName {
     ToolTerminal,
     ToolWeb,
     Trash,
-    TrashAlt,
     Triangle,
     TriangleRight,
     Undo,
