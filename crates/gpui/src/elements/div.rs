@@ -16,13 +16,14 @@
 //! constructed by combining these two systems into an all-in-one element.
 
 use crate::{
-    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
-    Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
-    HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
-    KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
-    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
-    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
+    Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent,
+    DispatchPhase, Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
+    KeyUpEvent,KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea,
+    point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -1294,12 +1295,19 @@ impl Element for Div {
                 |style, window, cx| {
                     window.with_bidi_style(style.bidi_style().cloned(), |window| {
                         window.with_text_style(style.text_style().cloned(), |window| {
+                            let bidi_style = window.bidi_style();
+                            let mapped_style = bidi_style.dir.apply_flex_direction(style);
+
                             child_layout_ids = self
                                 .children
                                 .iter_mut()
                                 .map(|child| child.request_layout(window, cx))
                                 .collect::<SmallVec<_>>();
-                            window.request_layout(style, child_layout_ids.iter().copied(), cx)
+                            window.request_layout(
+                                mapped_style,
+                                child_layout_ids.iter().copied(),
+                                cx,
+                            )
                         })
                     })
                 },
@@ -1932,15 +1940,17 @@ impl Interactivity {
                 }
             };
 
-            window.with_text_style(
-                Some(crate::TextStyleRefinement {
-                    color: Some(crate::red()),
-                    line_height: Some(FONT_SIZE.into()),
-                    background_color: Some(crate::white()),
-                    ..Default::default()
-                }),
-                render_debug_text,
-            )
+            window.with_bidi_style(None, |window| {
+                window.with_text_style(
+                    Some(crate::TextStyleRefinement {
+                        color: Some(crate::red()),
+                        line_height: Some(FONT_SIZE.into()),
+                        background_color: Some(crate::white()),
+                        ..Default::default()
+                    }),
+                    render_debug_text,
+                )
+            })
         }
     }
 

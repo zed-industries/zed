@@ -514,6 +514,19 @@ impl Default for BidiDirection {
     }
 }
 
+impl BidiDirection {
+    /// Sets the flex direction on a style, given the bidi direction
+    pub fn apply_flex_direction(self, mut style: Style) -> Style {
+        match self {
+            BidiDirection::LeftToRight => style,
+            BidiDirection::RightToLeft => {
+                style.flex_direction = style.flex_direction.flip_horizontal();
+                style
+            }
+        }
+    }
+}
+
 /// The properties used to change the layout direction in GPUI
 #[derive(Refineable, Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema, Default)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1204,12 +1217,12 @@ pub enum FlexDirection {
 
 impl FlexDirection {
     /// Reverse the direction that items will be drawn in.
-    pub fn reverse(self) -> Self {
+    pub fn flip_horizontal(self) -> Self {
         match self {
             FlexDirection::Row => FlexDirection::RowReverse,
-            FlexDirection::Column => FlexDirection::ColumnReverse,
+            FlexDirection::Column => FlexDirection::Column,
             FlexDirection::RowReverse => FlexDirection::Row,
-            FlexDirection::ColumnReverse => FlexDirection::Column,
+            FlexDirection::ColumnReverse => FlexDirection::ColumnReverse,
         }
     }
 }

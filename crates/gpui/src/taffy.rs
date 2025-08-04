@@ -290,7 +290,7 @@ impl ToTaffy<taffy::style::Style> for Style {
             gap: self.gap.to_taffy(rem_size),
             flex_direction: match self.bidi.dir.unwrap_or_default() {
                 crate::BidiDirection::LeftToRight => self.flex_direction.into(),
-                crate::BidiDirection::RightToLeft => self.flex_direction.reverse().into(),
+                crate::BidiDirection::RightToLeft => self.flex_direction.flip_horizontal().into(),
             },
             flex_wrap: self.flex_wrap.into(),
             flex_basis: self.flex_basis.to_taffy(rem_size),
