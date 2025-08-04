@@ -421,7 +421,7 @@ impl MacWindowState {
                         - px(close_button_frame.size.height as f32),
                 );
                 let button_spacing =
-                    px((min_button_frame.origin.x - close_button_frame.origin.x) as f32)
+                    px(((min_button_frame.origin.x - close_button_frame.origin.x) as f32).abs())
                         * match self.layout_direction {
                             LayoutDirection::LeftToRight => 1.,
                             LayoutDirection::RightToLeft => -1.,
