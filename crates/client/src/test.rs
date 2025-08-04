@@ -282,14 +282,14 @@ pub fn parse_authorization_header(req: &Request<AsyncBody>) -> Option<Credential
 
 pub fn make_get_authenticated_user_response(
     user_id: i32,
-    github_login: String,
+    github_login: impl Into<String>,
 ) -> GetAuthenticatedUserResponse {
     GetAuthenticatedUserResponse {
         user: AuthenticatedUser {
             id: user_id,
             metrics_id: format!("metrics-id-{user_id}"),
             avatar_url: "".to_string(),
-            github_login,
+            github_login: github_login.into(),
             name: None,
             is_staff: false,
             accepted_tos_at: None,
