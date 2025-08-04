@@ -381,6 +381,7 @@ fn handle_keydown_msg(
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
     lock.keydown_time = Some(std::time::Instant::now());
+    println!("WM_KEYDOWN");
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
@@ -1244,7 +1245,10 @@ fn draw_window(
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(keydown_time) = lock.keydown_time.take() {
         let elapsed = keydown_time.elapsed();
-        println!("Elapsed keydown time: {:.02} ms", elapsed.as_secs_f64() * 1000.0);
+        println!(
+            "Elapsed keydown time: {:.02} ms",
+            elapsed.as_secs_f64() * 1000.0
+        );
     }
     lock.callbacks.request_frame = Some(request_frame);
     unsafe { ValidateRect(Some(handle), None).ok().log_err() };
