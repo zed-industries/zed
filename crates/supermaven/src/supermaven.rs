@@ -452,7 +452,6 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local("hello world", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-        // Create a completion state where the user has typed "h" and the completion is "hello"
         let mut states = BTreeMap::new();
         let state_id = SupermavenCompletionStateId(1);
         let (updates_tx, _) = watch::channel();
@@ -469,7 +468,6 @@ mod tests {
             },
         );
 
-        // Simulate cursor at position 1 (after typing "h")
         let cursor_position = buffer_snapshot.anchor_after(1);
 
         let result = find_relevant_completion(
@@ -479,7 +477,6 @@ mod tests {
             cursor_position,
         );
 
-        // The result should be "ello" (completion text minus the "h" that was already typed)
         assert_eq!(result, Some("ello"));
     }
 
@@ -488,7 +485,6 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local("hello world", cx));
         let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
 
-        // Create a completion state where the user has typed "hel" and the completion is "hello"
         let mut states = BTreeMap::new();
         let state_id = SupermavenCompletionStateId(1);
         let (updates_tx, _) = watch::channel();
@@ -505,7 +501,6 @@ mod tests {
             },
         );
 
-        // Simulate cursor at position 3 (after typing "hel")
         let cursor_position = buffer_snapshot.anchor_after(3);
 
         let result = find_relevant_completion(
@@ -515,7 +510,6 @@ mod tests {
             cursor_position,
         );
 
-        // The result should be "lo" (completion text minus the "hel" that was already typed)
         assert_eq!(result, Some("lo"));
     }
 }
