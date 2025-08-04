@@ -18,6 +18,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{
+            DirectComposition::DCompositionWaitForCompositorClock,
             Gdi::*,
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
@@ -32,7 +33,7 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
-    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
@@ -109,7 +110,7 @@ impl WindowsPlatform {
         };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
-        let raw_window_handles = RwLock::new(SmallVec::new());
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -128,10 +129,27 @@ impl WindowsPlatform {
         })
     }
 
+    fn begin_vsync_thread(&self) {
+        let raw_window_handles = self.raw_window_handles.clone();
+        std::thread::spawn(move || {
+            loop {
+                unsafe {
+                    DCompositionWaitForCompositorClock(None, INFINITE);
+                    for handle in raw_window_handles.read().iter() {
+                        RedrawWindow(Some(**handle), None, None, RDW_INVALIDATE)
+                            .ok()
+                            .log_err();
+                        // PostMessageW(Some(**handle), WM_GPUI_FORCE_DRAW_WINDOW, WPARAM(0), LPARAM(0)).log_err();
+                    }
+                }
+            }
+        });
+    }
+
     fn redraw_all(&self) {
         for handle in self.raw_window_handles.read().iter() {
             unsafe {
-                RedrawWindow(Some(*handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
+                RedrawWindow(Some(**handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
                     .ok()
                     .log_err();
             }
@@ -142,8 +160,8 @@ impl WindowsPlatform {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .find(|entry| ***entry == hwnd)
+            .and_then(|hwnd| try_get_window_inner(**hwnd))
     }
 
     #[inline]
@@ -152,7 +170,7 @@ impl WindowsPlatform {
             .read()
             .iter()
             .for_each(|handle| unsafe {
-                PostMessageW(Some(*handle), message, wparam, lparam).log_err();
+                PostMessageW(Some(**handle), message, wparam, lparam).log_err();
             });
     }
 
@@ -160,7 +178,7 @@ impl WindowsPlatform {
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
-            .position(|handle| *handle == target_window)
+            .position(|handle| **handle == target_window)
             .unwrap();
         lock.remove(index);
 
@@ -223,7 +241,8 @@ impl WindowsPlatform {
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
         unsafe {
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            // while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
                     WM_INPUTLANGCHANGE
@@ -305,11 +324,17 @@ impl WindowsPlatform {
         if active_window_hwnd.is_invalid() {
             return None;
         }
-        self.raw_window_handles
+        if self
+            .raw_window_handles
             .read()
             .iter()
-            .find(|&&hwnd| hwnd == active_window_hwnd)
-            .copied()
+            .find(|&&hwnd| *hwnd == active_window_hwnd)
+            .is_some()
+        {
+            Some(active_window_hwnd)
+        } else {
+            None
+        }
     }
 }
 
@@ -340,12 +365,13 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            if self.handle_events() {
-                break;
-            }
-            self.redraw_all();
+        self.begin_vsync_thread();
+        // loop {
+        if self.handle_events() {
+            // break;
         }
+        //     self.redraw_all();
+        // }
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
@@ -438,7 +464,7 @@ impl Platform for WindowsPlatform {
     ) -> Result<Box<dyn PlatformWindow>> {
         let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
-        self.raw_window_handles.write().push(handle);
+        self.raw_window_handles.write().push(handle.into());
 
         Ok(Box::new(window))
     }
