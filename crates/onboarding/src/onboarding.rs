@@ -1,7 +1,7 @@
 use crate::welcome::{ShowWelcome, WelcomePage};
 use client::{Client, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
-use db::kvp::KEY_VALUE_STORE;
+use db::kvp::{KEY_VALUE_STORE, KeyValueStore};
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
@@ -653,10 +653,6 @@ pub async fn handle_import_vscode_settings(
             }
         })
         .ok();
-
-    // if !res.is_ok() {
-    //     return;
-    // }
 }
 
 #[derive(Default, Copy, Clone)]
@@ -770,8 +766,6 @@ mod persistence {
                         ON DELETE CASCADE
                     ) STRICT;
                 ),
-                // sql!( ALTER TABLE onboarding_pages ADD COLU
-                // )
             ];
     }
 

@@ -173,11 +173,10 @@ fn render_setting_import_button(
 ) -> impl IntoElement {
     let action = action.boxed_clone();
     h_flex().w_full().child(
-        ButtonLike::new("import_cursor")
+        ButtonLike::new(label.clone())
             .full_width()
             .style(ButtonStyle::Outlined)
             .size(ButtonSize::Large)
-            .disabled(imported)
             .child(
                 h_flex()
                     .w_full()
@@ -202,13 +201,11 @@ fn render_setting_import_button(
                                         .color(Color::Success)
                                         .size(IconSize::XSmall),
                                 )
-                                .child(Label::new("Imported")),
+                                .child(Label::new("Imported").size(LabelSize::Small)),
                         )
                     }),
             )
-            .when(!imported, move |this| {
-                this.on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx))
-            }),
+            .on_click(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
     )
 }
 
