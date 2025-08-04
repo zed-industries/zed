@@ -238,41 +238,35 @@ impl ThemePreviewTile {
         seed: f32,
         theme: Arc<Theme>,
         other_theme: Arc<Theme>,
+        border_color: Hsla,
     ) -> impl IntoElement {
         let sidebar_width = relative(0.20);
-        return h_flex()
+
+        return div()
             .size_full()
             .p(Self::ROOT_PADDING)
             .rounded(Self::ROOT_RADIUS)
-            .relative()
-            .overflow_hidden()
             .child(
-                div()
+                h_flex()
                     .size_full()
+                    .relative()
                     .rounded(*Self::CHILD_RADIUS)
                     .border(Self::CHILD_BORDER)
-                    .border_color(theme.colors().border)
-                    .child(Self::render_editor(
+                    .border_color(border_color)
+                    .overflow_hidden()
+                    .child(div().size_full().child(Self::render_editor(
                         seed,
                         theme.clone(),
                         sidebar_width,
                         Self::SKELETON_HEIGHT_DEFAULT,
-                    )),
-            )
-            .child(
-                div()
-                    .size_full()
-                    .absolute()
-                    .left_1_2()
-                    .rounded_r(*Self::CHILD_RADIUS)
-                    .border_r(Self::CHILD_BORDER)
-                    .border_y(Self::CHILD_BORDER)
-                    .border_color(other_theme.colors().border)
-                    .child(Self::render_editor(
-                        seed,
-                        other_theme,
-                        sidebar_width,
-                        Self::SKELETON_HEIGHT_DEFAULT,
+                    )))
+                    .child(div().size_full().absolute().left_1_2().bg(bg_color).child(
+                        Self::render_editor(
+                            seed,
+                            other_theme,
+                            sidebar_width,
+                            Self::SKELETON_HEIGHT_DEFAULT,
+                        ),
                     )),
             )
             .into_any_element();
@@ -288,9 +282,13 @@ impl RenderOnce for ThemePreviewTile {
             ThemePreviewStyle::Borderless => {
                 Self::render_borderless(self.seed, self.theme).into_any_element()
             }
-            ThemePreviewStyle::SideBySide(other_theme) => {
-                Self::render_side_by_side(self.seed, self.theme, other_theme).into_any_element()
-            }
+            ThemePreviewStyle::SideBySide(other_theme) => Self::render_side_by_side(
+                self.seed,
+                self.theme,
+                other_theme,
+                _cx.theme().colors().border,
+            )
+            .into_any_element(),
         }
     }
 }

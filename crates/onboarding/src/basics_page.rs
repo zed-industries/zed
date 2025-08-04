@@ -158,6 +158,7 @@ fn render_theme_section(_window: &mut Window, cx: &mut App) -> impl IntoElement 
                     }
                 })
         });
+
         theme_previews
     }
 
