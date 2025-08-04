@@ -1124,7 +1124,7 @@ impl CollabPanel {
                     .relative()
                     .gap_1()
                     .child(render_tree_branch(false, false, window, cx))
-                    .child(IconButton::new(0, IconName::MessageBubbles))
+                    .child(IconButton::new(0, IconName::Chat))
                     .children(has_messages_notification.then(|| {
                         div()
                             .w_1p5()
@@ -2923,7 +2923,7 @@ impl CollabPanel {
                         .gap_1()
                         .px_1()
                         .child(
-                            IconButton::new("channel_chat", IconName::MessageBubbles)
+                            IconButton::new("channel_chat", IconName::Chat)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
@@ -2939,7 +2939,7 @@ impl CollabPanel {
                                 .visible_on_hover(""),
                         )
                         .child(
-                            IconButton::new("channel_notes", IconName::File)
+                            IconButton::new("channel_notes", IconName::FileText)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)

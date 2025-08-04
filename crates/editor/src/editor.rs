@@ -6403,7 +6403,6 @@ impl Editor {
         IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
             .icon_size(icon_size)
             .shape(ui::IconButtonShape::Square)
-            .style(ButtonStyle::Transparent)
             .icon_color(ui::Color::Hidden)
             .toggle_state(is_active)
             .when(show_tooltip, |this| {
@@ -8338,26 +8337,29 @@ impl Editor {
         let color = Color::Muted;
         let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
 
-        IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::XSmall)
-            .icon_color(color)
-            .toggle_state(is_active)
-            .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                let quick_launch = e.down.button == MouseButton::Left;
-                window.focus(&editor.focus_handle(cx));
-                editor.toggle_code_actions(
-                    &ToggleCodeActions {
-                        deployed_from: Some(CodeActionSource::RunMenu(row)),
-                        quick_launch,
-                    },
-                    window,
-                    cx,
-                );
-            }))
-            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
-            }))
+        IconButton::new(
+            ("run_indicator", row.0 as usize),
+            ui::IconName::PlayOutlined,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(color)
+        .toggle_state(is_active)
+        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+            let quick_launch = e.down.button == MouseButton::Left;
+            window.focus(&editor.focus_handle(cx));
+            editor.toggle_code_actions(
+                &ToggleCodeActions {
+                    deployed_from: Some(CodeActionSource::RunMenu(row)),
+                    quick_launch,
+                },
+                window,
+                cx,
+            );
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+        }))
     }
 
     pub fn context_menu_visible(&self) -> bool {
