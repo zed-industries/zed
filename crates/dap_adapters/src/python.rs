@@ -1,74 +1,55 @@
 use crate::*;
-use anyhow::Context as _;
+
 use dap::{DebugRequest, StartDebuggingRequestArguments, adapters::DebugTaskDefinition};
 use gpui::{AsyncApp, SharedString};
-use json_dotpath::DotPaths;
 use language::LanguageName;
-use paths::debug_adapters_dir;
 use serde_json::Value;
-use smol::lock::OnceCell;
-use std::net::Ipv4Addr;
-use std::{
-    collections::HashMap,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-};
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[derive(Debug, PartialEq, Eq)]
+enum PackageManager {
+    Uv,
+    Poetry,
+    Pdm,
+    Pip,
+}
+
+async fn detect_package_manager(
+    delegate: &dyn DapDelegate,
+    worktree_root: &Path,
+) -> PackageManager {
+    if delegate.fs().is_file(&worktree_root.join("uv.lock")).await {
+        log::info!("Found 'uv.lock', setting package manager to Uv.");
+        return PackageManager::Uv;
+    }
+    if delegate
+        .fs()
+        .is_file(&worktree_root.join("poetry.lock"))
+        .await
+    {
+        log::info!("Found 'poetry.lock', setting package manager to Poetry.");
+        return PackageManager::Poetry;
+    }
+    if delegate.fs().is_file(&worktree_root.join("pdm.lock")).await {
+        log::info!("Found 'pdm.lock', setting package manager to Pdm.");
+        return PackageManager::Pdm;
+    }
+    // fallback to Pip if no specific lock file is found
+    log::info!("No specific lock file found, falling back to Pip.");
+    PackageManager::Pip
+}
 
 #[derive(Default)]
-pub(crate) struct PythonDebugAdapter {
-    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
-}
+pub(crate) struct PythonDebugAdapter;
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "Debugpy";
     const DEBUG_ADAPTER_NAME: DebugAdapterName =
         DebugAdapterName(SharedString::new_static(Self::ADAPTER_NAME));
-    const PYTHON_ADAPTER_IN_VENV: &'static str = if cfg!(target_os = "windows") {
-        "Scripts/python3"
-    } else {
-        "bin/python3"
-    };
-    const ADAPTER_PATH: &'static str = if cfg!(target_os = "windows") {
-        "debugpy-venv/Scripts/debugpy-adapter"
-    } else {
-        "debugpy-venv/bin/debugpy-adapter"
-    };
 
     const LANGUAGE_NAME: &'static str = "Python";
-
-    async fn generate_debugpy_arguments(
-        host: &Ipv4Addr,
-        port: u16,
-        user_installed_path: Option<&Path>,
-        user_args: Option<Vec<String>>,
-        installed_in_venv: bool,
-    ) -> Result<Vec<String>> {
-        let mut args = if let Some(user_installed_path) = user_installed_path {
-            log::debug!(
-                "Using user-installed debugpy adapter from: {}",
-                user_installed_path.display()
-            );
-            vec![user_installed_path.to_string_lossy().to_string()]
-        } else if installed_in_venv {
-            log::debug!("Using venv-installed debugpy");
-            vec!["-m".to_string(), "debugpy.adapter".to_string()]
-        } else {
-            let adapter_path = paths::debug_adapters_dir().join(Self::DEBUG_ADAPTER_NAME.as_ref());
-            let path = adapter_path
-                .join(Self::ADAPTER_PATH)
-                .to_string_lossy()
-                .into_owned();
-            log::debug!("Using pip debugpy adapter from: {path}");
-            vec![path]
-        };
-
-        args.extend(if let Some(args) = user_args {
-            args
-        } else {
-            vec![format!("--host={}", host), format!("--port={}", port)]
-        });
-        Ok(args)
-    }
 
     async fn request_args(
         &self,
@@ -78,145 +59,25 @@ impl PythonDebugAdapter {
         let request = self.request_kind(&task_definition.config).await?;
 
         let mut configuration = task_definition.config.clone();
-        if let Ok(console) = configuration.dot_get_mut("console") {
-            // Use built-in Zed terminal if user did not explicitly provide a setting for console.
-            if console.is_null() {
-                *console = Value::String("integratedTerminal".into());
-            }
-        }
-
         if let Some(obj) = configuration.as_object_mut() {
-            obj.entry("cwd")
-                .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+            // Use built-in Zed terminal if user did not explicitly provide a setting for console.
+            if let Some(console) = obj.get_mut("console") {
+                if console.is_null() {
+                    *console = "integratedTerminal".into();
+                }
+            } else {
+                obj.insert("console".to_string(), "integratedTerminal".into());
+            }
+
+            // Set the working directory to the project root if not specified.
+            obj.entry("cwd").or_insert_with(|| {
+                Value::String(delegate.worktree_root_path().to_string_lossy().into_owned())
+            });
         }
 
         Ok(StartDebuggingRequestArguments {
             configuration,
             request,
-        })
-    }
-
-    async fn ensure_venv(delegate: &dyn DapDelegate) -> Result<Arc<Path>> {
-        let python_path = Self::find_base_python(delegate)
-            .await
-            .context("Could not find Python installation for DebugPy")?;
-        let work_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
-        let mut path = work_dir.clone();
-        path.push("debugpy-venv");
-        if !path.exists() {
-            util::command::new_smol_command(python_path)
-                .arg("-m")
-                .arg("venv")
-                .arg("debugpy-venv")
-                .current_dir(work_dir)
-                .spawn()?
-                .output()
-                .await?;
-        }
-
-        Ok(path.into())
-    }
-
-    // Find "baseline", user python version from which we'll create our own venv.
-    async fn find_base_python(delegate: &dyn DapDelegate) -> Option<PathBuf> {
-        for path in ["python3", "python"] {
-            if let Some(path) = delegate.which(path.as_ref()).await {
-                return Some(path);
-            }
-        }
-        None
-    }
-
-    async fn base_venv(&self, delegate: &dyn DapDelegate) -> Result<Arc<Path>, String> {
-        const BINARY_DIR: &str = if cfg!(target_os = "windows") {
-            "Scripts"
-        } else {
-            "bin"
-        };
-        self.python_venv_base
-            .get_or_init(move || async move {
-                let venv_base = Self::ensure_venv(delegate)
-                    .await
-                    .map_err(|e| format!("{e}"))?;
-                let pip_path = venv_base.join(BINARY_DIR).join("pip3");
-                let installation_succeeded = util::command::new_smol_command(pip_path.as_path())
-                    .arg("install")
-                    .arg("debugpy")
-                    .arg("-U")
-                    .output()
-                    .await
-                    .map_err(|e| format!("{e}"))?
-                    .status
-                    .success();
-                if !installation_succeeded {
-                    return Err("debugpy installation failed".into());
-                }
-
-                Ok(venv_base)
-            })
-            .await
-            .clone()
-    }
-
-    async fn get_installed_binary(
-        &self,
-        delegate: &Arc<dyn DapDelegate>,
-        config: &DebugTaskDefinition,
-        user_installed_path: Option<PathBuf>,
-        user_args: Option<Vec<String>>,
-        python_from_toolchain: Option<String>,
-        installed_in_venv: bool,
-    ) -> Result<DebugAdapterBinary> {
-        const BINARY_NAMES: [&str; 3] = ["python3", "python", "py"];
-        let tcp_connection = config.tcp_connection.clone().unwrap_or_default();
-        let (host, port, timeout) = crate::configure_tcp_connection(tcp_connection).await?;
-
-        let python_path = if let Some(toolchain) = python_from_toolchain {
-            Some(toolchain)
-        } else {
-            let mut name = None;
-
-            for cmd in BINARY_NAMES {
-                name = delegate
-                    .which(OsStr::new(cmd))
-                    .await
-                    .map(|path| path.to_string_lossy().to_string());
-                if name.is_some() {
-                    break;
-                }
-            }
-            name
-        };
-
-        let python_command = python_path.context("failed to find binary path for Python")?;
-        log::debug!("Using Python executable: {}", python_command);
-
-        let arguments = Self::generate_debugpy_arguments(
-            &host,
-            port,
-            user_installed_path.as_deref(),
-            user_args,
-            installed_in_venv,
-        )
-        .await?;
-
-        log::debug!(
-            "Starting debugpy adapter with command: {} {}",
-            python_command,
-            arguments.join(" ")
-        );
-
-        Ok(DebugAdapterBinary {
-            command: Some(python_command),
-            arguments,
-            connection: Some(adapters::TcpArguments {
-                host,
-                port,
-                timeout,
-            }),
-            cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            envs: HashMap::default(),
-            request_args: self.request_args(delegate, config).await?,
         })
     }
 }
@@ -612,69 +473,242 @@ impl DebugAdapter for PythonDebugAdapter {
         user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
-        if let Some(local_path) = &user_installed_path {
-            log::debug!(
-                "Using user-installed debugpy adapter from: {}",
-                local_path.display()
-            );
-            return self
-                .get_installed_binary(
-                    delegate,
-                    &config,
-                    Some(local_path.clone()),
-                    user_args,
-                    None,
-                    false,
-                )
-                .await;
-        }
+        // --- Python Path Discovery ---
+        let mut python_path: Option<PathBuf> = None;
+        let worktree_root = delegate.worktree_root_path();
 
+        // Priority 1: User-selected toolchain in Zed
+        log::info!("Searching for active Python toolchain...");
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
-                Arc::from("".as_ref()),
+                Arc::from(worktree_root),
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )
             .await;
 
-        if let Some(toolchain) = &toolchain {
-            if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
-                let debugpy_path = path.join("debugpy");
-                if delegate.fs().is_file(&debugpy_path).await {
-                    log::debug!(
-                        "Found debugpy in toolchain environment: {}",
-                        debugpy_path.display()
+        if let Some(toolchain) = toolchain {
+            log::info!("Found active toolchain: '{}'", toolchain.path);
+            python_path = Some(PathBuf::from(toolchain.path.as_ref()));
+        } else {
+            log::info!("No active toolchain found.");
+        }
+
+        // Priority 2: `.venv` directory in project root
+        if python_path.is_none() {
+            log::info!("Checking for '.venv' directory in project root...");
+            let venv_path = worktree_root.join(".venv");
+            let python_in_venv = venv_path.join(if cfg!(target_os = "windows") {
+                "Scripts/python.exe"
+            } else {
+                "bin/python"
+            });
+            if delegate.fs().is_file(&python_in_venv).await {
+                log::info!("Found Python in '.venv': {}", python_in_venv.display());
+                python_path = Some(python_in_venv);
+            }
+        }
+
+        // Priority 3: Check python environment.
+        let python_path = python_path.ok_or_else(|| {
+            anyhow::anyhow!("Could not find a Python environment. Please select a Python interpreter in the Zed status bar, or ensure your project has a `.venv` directory.")
+        })?;
+
+        // --- Debug Adapter Logic ---
+        let (host, port, timeout) =
+            crate::configure_tcp_connection(config.tcp_connection.clone().unwrap_or_default())
+                .await?;
+
+        // If user provided a path to a specific adapter script, run it with the discovered python.
+        if let Some(user_adapter_path) = user_installed_path {
+            log::info!(
+                "Using user-configured debugpy adapter path: {}",
+                user_adapter_path.display()
+            );
+
+            let mut arguments = vec![user_adapter_path.to_string_lossy().to_string()];
+            arguments.extend(if let Some(args) = user_args {
+                args
+            } else {
+                vec![format!("--host={host}"), format!("--port={port}")]
+            });
+
+            return Ok(DebugAdapterBinary {
+                command: Some(python_path.to_string_lossy().into_owned()),
+                arguments,
+                envs: Default::default(),
+                connection: Some(adapters::TcpArguments {
+                    host,
+                    port,
+                    timeout,
+                }),
+                cwd: Some(worktree_root.to_path_buf()),
+                request_args: self.request_args(delegate, &config).await?,
+            });
+        }
+
+        // --- Package Management ---
+        // Detect the package manager and ensure debugpy is installed.
+        let package_manager = detect_package_manager(&**delegate, worktree_root).await;
+        log::info!("Detected package manager: {:?}", package_manager);
+
+        match package_manager {
+            PackageManager::Uv => {
+                if let Some(uv_path) = delegate.which("uv".as_ref()).await {
+                    log::info!("Found 'uv', using it to check for and install 'debugpy'.");
+                    let mut check_command = util::command::new_smol_command(&uv_path);
+                    check_command
+                        .args(["pip", "show", "debugpy"])
+                        .current_dir(worktree_root);
+
+                    log::info!(
+                        "Checking for debugpy installation with: {:?}",
+                        check_command
                     );
-                    return self
-                        .get_installed_binary(
-                            delegate,
-                            &config,
-                            None,
-                            user_args,
-                            Some(toolchain.path.to_string()),
-                            true,
-                        )
-                        .await;
+                    let check_output = check_command.output().await?;
+                    if !check_output.status.success() {
+                        log::info!("'debugpy' not found, attempting to install it with 'uv'...");
+                        let mut install_command = util::command::new_smol_command(uv_path);
+                        install_command
+                            .args(["pip", "install", "debugpy"])
+                            .current_dir(worktree_root);
+
+                        log::info!("Running command: {:?}", install_command);
+                        let install_output = install_command.output().await?;
+                        if !install_output.status.success() {
+                            anyhow::bail!(
+                                "Failed to install 'debugpy' with 'uv'.\nStdout: {}\nStderr: {}",
+                                String::from_utf8_lossy(&install_output.stdout),
+                                String::from_utf8_lossy(&install_output.stderr)
+                            );
+                        }
+                        log::info!("'debugpy' installed successfully with 'uv'.");
+                    } else {
+                        log::info!("'debugpy' is already installed in the selected environment.");
+                    }
+                } else {
+                    anyhow::bail!(
+                        "Project is managed by `uv` (uv.lock found), but `uv` command is not in your PATH."
+                    );
+                }
+            }
+            PackageManager::Poetry => {
+                if let Some(poetry_path) = delegate.which("poetry".as_ref()).await {
+                    log::info!("Found 'poetry', using it to run python commands.");
+                    let mut check_command = util::command::new_smol_command(&poetry_path);
+                    check_command
+                        .args(["run", "python", "-m", "pip", "show", "debugpy"])
+                        .current_dir(worktree_root);
+                    log::info!("Checking for debugpy with: {:?}", check_command);
+                    let check_output = check_command.output().await?;
+
+                    if !check_output.status.success() {
+                        log::info!("'debugpy' not found, installing with `poetry run pip`...");
+                        let mut install_command = util::command::new_smol_command(&poetry_path);
+                        install_command
+                            .args(["run", "python", "-m", "pip", "install", "debugpy", "-U"])
+                            .current_dir(worktree_root);
+                        let install_output = install_command.output().await?;
+                        if !install_output.status.success() {
+                            anyhow::bail!(
+                                "Failed to install 'debugpy' with `poetry`.\nStdout: {}\nStderr: {}",
+                                String::from_utf8_lossy(&install_output.stdout),
+                                String::from_utf8_lossy(&install_output.stderr)
+                            );
+                        }
+                    } else {
+                        log::info!("'debugpy' is already installed in the poetry environment.");
+                    }
+                } else {
+                    anyhow::bail!(
+                        "Project is managed by `poetry` (poetry.lock found), but `poetry` command is not in your PATH."
+                    );
+                }
+            }
+            PackageManager::Pdm => {
+                if let Some(pdm_path) = delegate.which("pdm".as_ref()).await {
+                    log::info!("Found 'pdm', using it to run python commands.");
+                    let mut check_command = util::command::new_smol_command(&pdm_path);
+                    check_command
+                        .args(["run", "python", "-m", "pip", "show", "debugpy"])
+                        .current_dir(worktree_root);
+                    log::info!("Checking for debugpy with: {:?}", check_command);
+                    let check_output = check_command.output().await?;
+
+                    if !check_output.status.success() {
+                        log::info!("'debugpy' not found, installing with `pdm run pip`...");
+                        let mut install_command = util::command::new_smol_command(&pdm_path);
+                        install_command
+                            .args(["run", "python", "-m", "pip", "install", "debugpy", "-U"])
+                            .current_dir(worktree_root);
+                        let install_output = install_command.output().await?;
+                        if !install_output.status.success() {
+                            anyhow::bail!(
+                                "Failed to install 'debugpy' with `pdm`.\nStdout: {}\nStderr: {}",
+                                String::from_utf8_lossy(&install_output.stdout),
+                                String::from_utf8_lossy(&install_output.stderr)
+                            );
+                        }
+                    } else {
+                        log::info!("'debugpy' is already installed in the pdm environment.");
+                    }
+                } else {
+                    anyhow::bail!(
+                        "Project is managed by `pdm` (pdm.lock found), but `pdm` command is not in your PATH."
+                    );
+                }
+            }
+            PackageManager::Pip => {
+                log::info!("Falling back to 'python -m pip'.");
+                // Check if debugpy is installed by running `python -m pip show debugpy`
+                let mut check_command = util::command::new_smol_command(&python_path);
+                check_command.args(["-m", "pip", "show", "debugpy"]);
+                log::info!(
+                    "Checking for debugpy installation with: {:?}",
+                    check_command
+                );
+                let check_output = check_command.output().await?;
+                if !check_output.status.success() {
+                    log::info!("'debugpy' not found, attempting to install it with pip...");
+                    let mut install_command = util::command::new_smol_command(&python_path);
+                    install_command.args(["-m", "pip", "install", "debugpy", "-U"]);
+                    log::info!("Running command: {:?}", install_command);
+                    let install_output = install_command.output().await?;
+                    if !install_output.status.success() {
+                        anyhow::bail!(
+                            "Failed to install 'debugpy'.\nStdout: {}\nStderr: {}",
+                            String::from_utf8_lossy(&install_output.stdout),
+                            String::from_utf8_lossy(&install_output.stderr)
+                        );
+                    }
+                    log::info!("'debugpy' installed successfully.");
+                } else {
+                    log::info!("'debugpy' is already installed in the selected environment.");
                 }
             }
         }
-        let toolchain = self
-            .base_venv(&**delegate)
-            .await
-            .map_err(|e| anyhow::anyhow!(e))?
-            .join(Self::PYTHON_ADAPTER_IN_VENV);
 
-        self.get_installed_binary(
-            delegate,
-            &config,
-            None,
-            user_args,
-            Some(toolchain.to_string_lossy().into_owned()),
-            false,
-        )
-        .await
+        let mut arguments = vec!["-m".to_string(), "debugpy.adapter".to_string()];
+        arguments.extend(if let Some(args) = user_args {
+            args
+        } else {
+            vec![format!("--host={host}"), format!("--port={port}")]
+        });
+
+        Ok(DebugAdapterBinary {
+            command: Some(python_path.to_string_lossy().into_owned()),
+            arguments,
+            envs: Default::default(),
+            connection: Some(adapters::TcpArguments {
+                host,
+                port,
+                timeout,
+            }),
+            cwd: Some(worktree_root.to_path_buf()),
+            request_args: self.request_args(delegate, &config).await?,
+        })
     }
 
     fn label_for_child_session(&self, args: &StartDebuggingRequestArguments) -> Option<String> {
