@@ -3843,6 +3843,9 @@ impl LspStore {
         request: R,
         cx: &mut Context<LspStore>,
     ) -> Task<anyhow::Result<<R as LspCommand>::Response>> {
+        if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+            return Task::ready(Ok(R::Response::default()));
+        }
         let message = request.to_proto(upstream_project_id, buffer.read(cx));
         cx.spawn(async move |this, cx| {
             let response = client.request(message).await?;
@@ -4461,20 +4464,73 @@ impl LspStore {
         }
     }
 
-    pub fn request_lsp<R: LspCommand>(
+    // TODO: remove MultiLspQuery: instead, the proto handler should pick appropriate server(s)
+    // Then, use `send_lsp_proto_request` or analogue for most of the LSP proto requests and inline this check inside
+    fn is_capable_for_proto_request<R>(
+        &self,
+        buffer: &Entity<Buffer>,
+        request: &R,
+        cx: &Context<Self>,
+    ) -> bool
+    where
+        R: LspCommand,
+    {
+        self.check_if_capable_for_proto_request(
+            buffer,
+            |capabilities| {
+                request.check_capabilities(AdapterServerCapabilities {
+                    server_capabilities: capabilities.clone(),
+                    code_action_kinds: None,
+                })
+            },
+            cx,
+        )
+    }
+
+    fn check_if_capable_for_proto_request<F>(
+        &self,
+        buffer: &Entity<Buffer>,
+        check: F,
+        cx: &Context<Self>,
+    ) -> bool
+    where
+        F: Fn(&lsp::ServerCapabilities) -> bool,
+    {
+        let Some(language) = buffer.read(cx).language().cloned() else {
+            return false;
+        };
+        let relevant_language_servers = self
+            .languages
+            .lsp_adapters(&language.name())
+            .into_iter()
+            .map(|lsp_adapter| lsp_adapter.name())
+            .collect::<HashSet<_>>();
+        self.language_server_statuses
+            .iter()
+            .filter_map(|(server_id, server_status)| {
+                relevant_language_servers
+                    .contains(&server_status.name)
+                    .then_some(server_id)
+            })
+            .filter_map(|server_id| self.lsp_server_capabilities.get(&server_id))
+            .any(check)
+    }
+
+    pub fn request_lsp<R>(
         &mut self,
-        buffer_handle: Entity<Buffer>,
+        buffer: Entity<Buffer>,
         server: LanguageServerToQuery,
         request: R,
         cx: &mut Context<Self>,
     ) -> Task<Result<R::Response>>
     where
+        R: LspCommand,
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
         if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
             return self.send_lsp_proto_request(
-                buffer_handle,
+                buffer,
                 upstream_client,
                 upstream_project_id,
                 request,
@@ -4482,7 +4538,7 @@ impl LspStore {
             );
         }
 
-        let Some(language_server) = buffer_handle.update(cx, |buffer, cx| match server {
+        let Some(language_server) = buffer.update(cx, |buffer, cx| match server {
             LanguageServerToQuery::FirstCapable => self.as_local().and_then(|local| {
                 local
                     .language_servers_for_buffer(buffer, cx)
@@ -4502,8 +4558,7 @@ impl LspStore {
             return Task::ready(Ok(Default::default()));
         };
 
-        let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+        let file = File::from_dyn(buffer.read(cx).file()).and_then(File::as_local);
 
         let Some(file) = file else {
             return Task::ready(Ok(Default::default()));
@@ -4511,7 +4566,7 @@ impl LspStore {
 
         let lsp_params = match request.to_lsp_params_or_response(
             &file.abs_path(cx),
-            buffer,
+            buffer.read(cx),
             &language_server,
             cx,
         ) {
@@ -4587,7 +4642,7 @@ impl LspStore {
                 .response_from_lsp(
                     response,
                     this.upgrade().context("no app context")?,
-                    buffer_handle,
+                    buffer,
                     language_server.server_id(),
                     cx.clone(),
                 )
@@ -4933,15 +4988,20 @@ impl LspStore {
 
     pub fn resolve_inlay_hint(
         &self,
-        hint: InlayHint,
-        buffer_handle: Entity<Buffer>,
+        mut hint: InlayHint,
+        buffer: Entity<Buffer>,
         server_id: LanguageServerId,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<InlayHint>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            if !self.check_if_capable_for_proto_request(&buffer, InlayHints::can_resolve_inlays, cx)
+            {
+                hint.resolve_state = ResolveState::Resolved;
+                return Task::ready(Ok(hint));
+            }
             let request = proto::ResolveInlayHint {
                 project_id,
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
+                buffer_id: buffer.read(cx).remote_id().into(),
                 language_server_id: server_id.0 as u64,
                 hint: Some(InlayHints::project_to_proto_hint(hint.clone())),
             };
@@ -4957,7 +5017,7 @@ impl LspStore {
                 }
             })
         } else {
-            let Some(lang_server) = buffer_handle.update(cx, |buffer, cx| {
+            let Some(lang_server) = buffer.update(cx, |buffer, cx| {
                 self.language_server_for_local_buffer(buffer, server_id, cx)
                     .map(|(_, server)| server.clone())
             }) else {
@@ -4966,7 +5026,7 @@ impl LspStore {
             if !InlayHints::can_resolve_inlays(&lang_server.capabilities()) {
                 return Task::ready(Ok(hint));
             }
-            let buffer_snapshot = buffer_handle.read(cx).snapshot();
+            let buffer_snapshot = buffer.read(cx).snapshot();
             cx.spawn(async move |_, cx| {
                 let resolve_task = lang_server.request::<lsp::request::InlayHintResolveRequest>(
                     InlayHints::project_to_lsp_hint(hint, &buffer_snapshot),
@@ -4977,7 +5037,7 @@ impl LspStore {
                     .context("inlay hint resolve LSP request")?;
                 let resolved_hint = InlayHints::lsp_to_project_hint(
                     resolved_hint,
-                    &buffer_handle,
+                    &buffer,
                     server_id,
                     ResolveState::Resolved,
                     false,
@@ -5088,7 +5148,7 @@ impl LspStore {
         }
     }
 
-    pub(crate) fn linked_edit(
+    pub(crate) fn linked_edits(
         &mut self,
         buffer: &Entity<Buffer>,
         position: Anchor,
@@ -5130,7 +5190,7 @@ impl LspStore {
                 }) == Some(true)
             })
         else {
-            return Task::ready(Ok(vec![]));
+            return Task::ready(Ok(Vec::new()));
         };
 
         self.request_lsp(
@@ -5149,6 +5209,15 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         if let Some((client, project_id)) = self.upstream_client() {
+            if !self.check_if_capable_for_proto_request(
+                &buffer,
+                |capabilities| {
+                    OnTypeFormatting::supports_on_type_formatting(&trigger, capabilities)
+                },
+                cx,
+            ) {
+                return Task::ready(Ok(None));
+            }
             let request = proto::OnTypeFormatting {
                 project_id,
                 buffer_id: buffer.read(cx).remote_id().into(),
@@ -5260,6 +5329,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetDefinitions { position };
+            if !self.is_capable_for_proto_request(buffer_handle, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 version: serialize_version(&buffer_handle.read(cx).version()),
@@ -5268,7 +5341,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDefinition(
-                    GetDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5333,6 +5406,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetDeclarations { position };
+            if !self.is_capable_for_proto_request(buffer_handle, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer_handle.read(cx).remote_id().into(),
                 version: serialize_version(&buffer_handle.read(cx).version()),
@@ -5341,7 +5418,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDeclaration(
-                    GetDeclarations { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5401,23 +5478,27 @@ impl LspStore {
 
     pub fn type_definitions(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetTypeDefinitions { position };
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetTypeDefinition(
-                    GetTypeDefinitions { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
-            let buffer = buffer_handle.clone();
+            let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
@@ -5456,7 +5537,7 @@ impl LspStore {
             })
         } else {
             let type_definitions_task = self.request_multiple_lsp_locally(
-                buffer_handle,
+                buffer,
                 Some(position),
                 GetTypeDefinitions { position },
                 cx,
@@ -5474,23 +5555,27 @@ impl LspStore {
 
     pub fn implementations(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LocationLink>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetImplementations { position };
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetImplementation(
-                    GetImplementations { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
-            let buffer = buffer_handle.clone();
+            let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
@@ -5529,7 +5614,7 @@ impl LspStore {
             })
         } else {
             let implementations_task = self.request_multiple_lsp_locally(
-                buffer_handle,
+                buffer,
                 Some(position),
                 GetImplementations { position },
                 cx,
@@ -5547,23 +5632,27 @@ impl LspStore {
 
     pub fn references(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         position: PointUtf16,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Location>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetReferences { position };
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetReferences(
-                    GetReferences { position }.to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
-            let buffer = buffer_handle.clone();
+            let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
@@ -5602,7 +5691,7 @@ impl LspStore {
             })
         } else {
             let references_task = self.request_multiple_lsp_locally(
-                buffer_handle,
+                buffer,
                 Some(position),
                 GetReferences { position },
                 cx,
@@ -5620,28 +5709,31 @@ impl LspStore {
 
     pub fn code_actions(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         range: Range<Anchor>,
         kinds: Option<Vec<CodeActionKind>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetCodeActions {
+                range: range.clone(),
+                kinds: kinds.clone(),
+            };
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
-                buffer_id: buffer_handle.read(cx).remote_id().into(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                buffer_id: buffer.read(cx).remote_id().into(),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetCodeActions(
-                    GetCodeActions {
-                        range: range.clone(),
-                        kinds: kinds.clone(),
-                    }
-                    .to_proto(project_id, buffer_handle.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
-            let buffer = buffer_handle.clone();
+            let buffer = buffer.clone();
             cx.spawn(async move |weak_project, cx| {
                 let Some(project) = weak_project.upgrade() else {
                     return Ok(Vec::new());
@@ -5683,7 +5775,7 @@ impl LspStore {
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
-                buffer_handle,
+                buffer,
                 Some(range.start),
                 GetCodeActions {
                     range: range.clone(),
@@ -5785,6 +5877,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<HashMap<LanguageServerId, Vec<CodeAction>>>> {
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetCodeLens;
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(HashMap::default()));
+            }
             let request_task = upstream_client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
@@ -5793,7 +5889,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetCodeLens(
-                    GetCodeLens.to_proto(project_id, buffer.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -5877,11 +5973,15 @@ impl LspStore {
         let language_registry = self.languages.clone();
 
         if let Some((upstream_client, project_id)) = self.upstream_client() {
+            let request = GetCompletions { position, context };
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let task = self.send_lsp_proto_request(
                 buffer.clone(),
                 upstream_client,
                 project_id,
-                GetCompletions { position, context },
+                request,
                 cx,
             );
             let language = buffer.read(cx).language().cloned();
@@ -6019,11 +6119,17 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
         let client = self.upstream_client();
-
         let buffer_id = buffer.read(cx).remote_id();
         let buffer_snapshot = buffer.read(cx).snapshot();
 
-        cx.spawn(async move |this, cx| {
+        if !self.check_if_capable_for_proto_request(
+            &buffer,
+            GetCompletions::can_resolve_completions,
+            cx,
+        ) {
+            return Task::ready(Ok(false));
+        }
+        cx.spawn(async move |lsp_store, cx| {
             let mut did_resolve = false;
             if let Some((client, project_id)) = client {
                 for completion_index in completion_indices {
@@ -6060,7 +6166,7 @@ impl LspStore {
                         completion.source.server_id()
                     };
                     if let Some(server_id) = server_id {
-                        let server_and_adapter = this
+                        let server_and_adapter = lsp_store
                             .read_with(cx, |lsp_store, _| {
                                 let server = lsp_store.language_server_for_id(server_id)?;
                                 let adapter =
@@ -6111,13 +6217,7 @@ impl LspStore {
         completion_index: usize,
     ) -> Result<()> {
         let server_id = server.server_id();
-        let can_resolve = server
-            .capabilities()
-            .completion_provider
-            .as_ref()
-            .and_then(|options| options.resolve_provider)
-            .unwrap_or(false);
-        if !can_resolve {
+        if !GetCompletions::can_resolve_completions(&server.capabilities()) {
             return Ok(());
         }
 
@@ -6468,16 +6568,24 @@ impl LspStore {
 
     pub fn pull_diagnostics(
         &mut self,
-        buffer_handle: Entity<Buffer>,
+        buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<LspPullDiagnostics>>> {
-        let buffer = buffer_handle.read(cx);
-        let buffer_id = buffer.remote_id();
+        let buffer_id = buffer.read(cx).remote_id();
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
+            if !self.is_capable_for_proto_request(
+                &buffer,
+                &GetDocumentDiagnostics {
+                    previous_result_id: None,
+                },
+                cx,
+            ) {
+                return Task::ready(Ok(Vec::new()));
+            }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer_id.to_proto(),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                version: serialize_version(&buffer.read(cx).version()),
                 project_id: upstream_project_id,
                 strategy: Some(proto::multi_lsp_query::Strategy::All(
                     proto::AllLanguageServers {},
@@ -6486,7 +6594,7 @@ impl LspStore {
                     proto::GetDocumentDiagnostics {
                         project_id: upstream_project_id,
                         buffer_id: buffer_id.to_proto(),
-                        version: serialize_version(&buffer_handle.read(cx).version()),
+                        version: serialize_version(&buffer.read(cx).version()),
                     },
                 )),
             });
@@ -6508,7 +6616,7 @@ impl LspStore {
                     .collect())
             })
         } else {
-            let server_ids = buffer_handle.update(cx, |buffer, cx| {
+            let server_ids = buffer.update(cx, |buffer, cx| {
                 self.language_servers_for_local_buffer(buffer, cx)
                     .map(|(_, server)| server.server_id())
                     .collect::<Vec<_>>()
@@ -6518,7 +6626,7 @@ impl LspStore {
                 .map(|server_id| {
                     let result_id = self.result_id(server_id, buffer_id, cx);
                     self.request_lsp(
-                        buffer_handle.clone(),
+                        buffer.clone(),
                         LanguageServerToQuery::Other(server_id),
                         GetDocumentDiagnostics {
                             previous_result_id: result_id,
@@ -6540,34 +6648,36 @@ impl LspStore {
 
     pub fn inlay_hints(
         &mut self,
-        buffer_handle: Entity<Buffer>,
+        buffer: Entity<Buffer>,
         range: Range<Anchor>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<Vec<InlayHint>>> {
-        let buffer = buffer_handle.read(cx);
         let range_start = range.start;
         let range_end = range.end;
-        let buffer_id = buffer.remote_id().into();
-        let lsp_request = InlayHints { range };
+        let buffer_id = buffer.read(cx).remote_id().into();
+        let request = InlayHints { range };
 
         if let Some((client, project_id)) = self.upstream_client() {
-            let request = proto::InlayHints {
+            if !self.is_capable_for_proto_request(&buffer, &request, cx) {
+                return Task::ready(Ok(Vec::new()));
+            }
+            let proto_request = proto::InlayHints {
                 project_id,
                 buffer_id,
                 start: Some(serialize_anchor(&range_start)),
                 end: Some(serialize_anchor(&range_end)),
-                version: serialize_version(&buffer_handle.read(cx).version()),
+                version: serialize_version(&buffer.read(cx).version()),
             };
             cx.spawn(async move |project, cx| {
                 let response = client
-                    .request(request)
+                    .request(proto_request)
                     .await
                     .context("inlay hints proto request")?;
                 LspCommand::response_from_proto(
-                    lsp_request,
+                    request,
                     response,
                     project.upgrade().context("No project")?,
-                    buffer_handle.clone(),
+                    buffer.clone(),
                     cx.clone(),
                 )
                 .await
@@ -6575,13 +6685,13 @@ impl LspStore {
             })
         } else {
             let lsp_request_task = self.request_lsp(
-                buffer_handle.clone(),
+                buffer.clone(),
                 LanguageServerToQuery::FirstCapable,
-                lsp_request,
+                request,
                 cx,
             );
             cx.spawn(async move |_, cx| {
-                buffer_handle
+                buffer
                     .update(cx, |buffer, _| {
                         buffer.wait_for_edits(vec![range_start.timestamp, range_end.timestamp])
                     })?
@@ -6805,37 +6915,9 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
         if let Some((client, project_id)) = self.upstream_client() {
-            if let Some(language) = buffer.read(cx).language() {
-                let relevant_language_servers = self
-                    .languages
-                    .lsp_adapters(&language.name())
-                    .into_iter()
-                    .map(|lsp_adapter| lsp_adapter.name())
-                    .collect::<HashSet<_>>();
-
-                let request = GetDocumentColor {};
-                let is_supported = self
-                    .language_server_statuses
-                    .iter()
-                    .filter_map(|(server_id, server_status)| {
-                        // let adapter = self.language_server_adapter_for_id(id)?;
-                        relevant_language_servers
-                            .contains(&server_status.name)
-                            .then_some(server_id)
-                    })
-                    .filter_map(|server_id| self.lsp_server_capabilities.get(&server_id))
-                    .any(|capabilities| {
-                        request.check_capabilities(AdapterServerCapabilities {
-                            server_capabilities: capabilities.clone(),
-                            code_action_kinds: None,
-                        })
-                    });
-                // TODO kb make generic, for each lsp-related request
-                dbg!((
-                    "remote colors fetch!",
-                    relevant_language_servers,
-                    is_supported,
-                ));
+            let request = GetDocumentColor {};
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Ok(HashMap::default()));
             }
 
             let request_task = client.request(proto::MultiLspQuery {
@@ -6846,7 +6928,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDocumentColor(
-                    GetDocumentColor {}.to_proto(project_id, buffer.read(cx)),
+                    request.to_proto(project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -6874,7 +6956,7 @@ impl LspStore {
                             }
                         })
                         .map(|(server_id, color_response)| {
-                            let response = GetDocumentColor {}.response_from_proto(
+                            let response = request.response_from_proto(
                                 color_response,
                                 project.clone(),
                                 buffer.clone(),
@@ -6921,6 +7003,10 @@ impl LspStore {
         let position = position.to_point_utf16(buffer.read(cx));
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let request = GetSignatureHelp { position };
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Vec::new());
+            }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
@@ -6929,7 +7015,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetSignatureHelp(
-                    GetSignatureHelp { position }.to_proto(upstream_project_id, buffer.read(cx)),
+                    request.to_proto(upstream_project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -6992,6 +7078,10 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> Task<Vec<Hover>> {
         if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let request = GetHover { position };
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                return Task::ready(Vec::new());
+            }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer.read(cx).remote_id().into(),
                 version: serialize_version(&buffer.read(cx).version()),
@@ -7000,7 +7090,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetHover(
-                    GetHover { position }.to_proto(upstream_project_id, buffer.read(cx)),
+                    request.to_proto(upstream_project_id, buffer.read(cx)),
                 )),
             });
             let buffer = buffer.clone();
@@ -10837,6 +10927,7 @@ impl LspStore {
         ));
         cx.emit(LspStoreEvent::RefreshInlayHints);
 
+        let server_capabilities = language_server.capabilities();
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
                 .send(proto::StartLanguageServer {
@@ -10846,11 +10937,13 @@ impl LspStore {
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.0.to_proto()),
                     }),
-                    capabilities: serde_json::to_string(&language_server.capabilities())
+                    capabilities: serde_json::to_string(&server_capabilities)
                         .expect("serializing server LSP capabilities"),
                 })
                 .log_err();
         }
+        self.lsp_server_capabilities
+            .insert(server_id, server_capabilities);
 
         // Tell the language server about every open buffer in the worktree that matches the language.
         // Also check for buffers in worktrees that reused this server

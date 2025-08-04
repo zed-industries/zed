@@ -3465,20 +3465,6 @@ impl Project {
         })
     }
 
-    fn document_highlights_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<DocumentHighlight>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDocumentHighlights { position },
-            cx,
-        )
-    }
-
     pub fn document_highlights<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -3486,7 +3472,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.document_highlights_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentHighlights { position },
+            cx,
+        )
     }
 
     pub fn document_symbols(
@@ -3587,14 +3578,14 @@ impl Project {
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
     }
 
-    pub fn linked_edit(
+    pub fn linked_edits(
         &self,
         buffer: &Entity<Buffer>,
         position: Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.linked_edit(buffer, position, cx)
+            lsp_store.linked_edits(buffer, position, cx)
         })
     }
 
@@ -3686,19 +3677,6 @@ impl Project {
         })
     }
 
-    fn prepare_rename_impl(
-        &mut self,
-        buffer: Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<PrepareRenameResponse>> {
-        self.request_lsp(
-            buffer,
-            LanguageServerToQuery::FirstCapable,
-            PrepareRename { position },
-            cx,
-        )
-    }
     pub fn prepare_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3706,7 +3684,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.prepare_rename_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer,
+            LanguageServerToQuery::FirstCapable,
+            PrepareRename { position },
+            cx,
+        )
     }
 
     pub fn perform_rename<T: ToPointUtf16>(
