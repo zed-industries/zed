@@ -466,7 +466,8 @@ mod tests {
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
-        source_location: &str,
+        file: &str,
+        line: u32,
     ) {
         let (hover_target, open_target) = test_path_like(
             HoveredWord {
@@ -481,44 +482,60 @@ mod tests {
         )
         .await;
 
-        let hover_target = hover_target.expect("Hover target should not be None");
+        let Some(hover_target) = hover_target else {
+            assert!(
+                hover_target.is_some(),
+                "Hover target should not be `None` at {file}:{line}:"
+            );
+            return;
+        };
 
         assert_eq!(
             hover_target.tooltip, tooltip,
-            "Tooltips mismatch\n     at {source_location}:\n"
+            "Tooltip mismatch at {file}:{line}:"
         );
         assert_eq!(
             hover_target.hovered_word.word, maybe_path,
-            "Hovered word mismatch\n     at {source_location}:\n"
+            "Hovered word mismatch at {file}:{line}:"
         );
 
-        let open_target = open_target.expect("Open target should not be None");
+        let Some(open_target) = open_target else {
+            assert!(
+                open_target.is_some(),
+                "Open target should not be `None` at {file}:{line}:"
+            );
+            return;
+        };
+
         match open_target {
             OpenTarget::File(path, _) | OpenTarget::Worktree(path, _) => {
-                assert_eq!(path.path.as_path(), Path::new(tooltip));
+                assert_eq!(
+                    path.path.as_path(),
+                    Path::new(tooltip),
+                    "Open target path mismatch at {file}:{line}:"
+                );
             }
         }
     }
 
-    macro_rules! test_path_like {
-        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal) => {
-            test_path_like_simple(
-                &mut $test_path_like,
-                path!($maybe_path),
-                path!($tooltip),
-                None,
-                &format!("{}:{}", std::file!(), std::line!()),
-            )
-            .await
+    macro_rules! none_or_some {
+        () => {
+            None
         };
+        ($some:expr) => {
+            Some($some)
+        };
+    }
 
-        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal, $cwd:literal) => {
+    macro_rules! test_path_like {
+        ($test_path_like:expr, $maybe_path:literal, $tooltip:literal $(, $cwd:literal)?) => {
             test_path_like_simple(
                 &mut $test_path_like,
                 path!($maybe_path),
                 path!($tooltip),
-                Some($crate::PathBuf::from(path!($cwd))),
-                &format!("{}:{}", std::file!(), std::line!()),
+                none_or_some!($($crate::PathBuf::from(path!($cwd)))?),
+                std::file!(),
+                std::line!(),
             )
             .await
         };
@@ -635,11 +652,10 @@ mod tests {
         }
 
         // https://github.com/zed-industries/zed/issues/28407
-        // Note, #28407 is marked as closed, but three of the below cases are still failing.
         // See https://github.com/zed-industries/zed/issues/34027
         // See https://github.com/zed-industries/zed/issues/33498
         #[gpui::test]
-        #[should_panic(expected = "Tooltips mismatch")]
+        #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_28407_nesting(cx: &mut TestAppContext) {
             let mut test_path_like = init_test(
                 cx,
@@ -752,7 +768,7 @@ mod tests {
 
         // https://github.com/zed-industries/zed/issues/34027
         #[gpui::test]
-        #[should_panic(expected = "Tooltips mismatch")]
+        #[should_panic(expected = "Tooltip mismatch")]
         async fn issue_34027_non_worktree_file(cx: &mut TestAppContext) {
             let mut test_path_like = init_test(
                 cx,
