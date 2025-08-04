@@ -72,9 +72,7 @@ impl AcpConnection {
             })
             .await?;
 
-        // todo! check version and try old acp
         // todo! if child exits, display error in thread view
-
         Ok(Self {
             auth_methods: response.auth_methods,
             connection: connection.into(),
