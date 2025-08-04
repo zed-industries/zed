@@ -182,7 +182,9 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 .on_click({
                     let theme_name = theme.name.clone();
                     move |_, _, cx| {
-                        write_theme_change(theme_name.clone(), cx);
+                        if theme_mode != ThemeMode::System {
+                            write_theme_change(theme_name.clone(), theme_mode, cx);
+                        }
                     }
                 })
         });
@@ -191,17 +193,25 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+        update_settings_file::<ThemeSettings>(fs, cx, move |settings, _cx| {
             settings.set_mode(mode);
         });
     }
 
-    fn write_theme_change(theme: impl Into<Arc<str>>, cx: &mut App) {
+    fn write_theme_change(theme: impl Into<Arc<str>>, theme_mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-        let appearance = *SystemAppearance::global(cx);
         let theme = theme.into();
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
-            settings.set_theme(theme.clone(), appearance);
+            if theme_mode == ThemeMode::System {
+                settings.theme = Some(ThemeSelection::Dynamic {
+                    mode: ThemeMode::System,
+                    light: ThemeName(theme.clone()),
+                    dark: ThemeName(theme.clone()),
+                });
+            } else {
+                let appearance = *SystemAppearance::global(cx);
+                settings.set_theme(theme.clone(), appearance);
+            }
         });
     }
 }
