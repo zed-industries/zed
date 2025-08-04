@@ -499,25 +499,27 @@ impl TextStyle {
     }
 }
 
-#[derive(Clone, Copy)]
+/// The direction of layout.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 pub enum BidiDirection {
+    /// Left-to-right layout.
     LeftToRight,
+    /// Right-to-left layout.
     RightToLeft,
 }
 
-/// The properties used to change the layout direction in GPUI
-#[derive(Refineable, Clone, Debug, PartialEq)]
-#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct BidiStyle {
-    pub dir: BidiDirection,
+impl Default for BidiDirection {
+    fn default() -> Self {
+        BidiDirection::LeftToRight
+    }
 }
 
-impl Default for BidiStyle {
-    fn default() -> Self {
-        BidiStyle {
-            dir: BidiDirection::LeftToRight,
-        }
-    }
+/// The properties used to change the layout direction in GPUI
+#[derive(Refineable, Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema, Default)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BidiStyle {
+    /// The direction of layout.
+    pub dir: BidiDirection,
 }
 
 /// A highlight style to apply, similar to a `TextStyle` except
@@ -574,6 +576,15 @@ impl Style {
     pub fn text_style(&self) -> Option<&TextStyleRefinement> {
         if self.text.is_some() {
             Some(&self.text)
+        } else {
+            None
+        }
+    }
+
+    /// Get the bidi style in this element style.
+    pub fn bidi_style(&self) -> Option<&BidiStyleRefinement> {
+        if self.bidi.is_some() {
+            Some(&self.bidi)
         } else {
             None
         }
@@ -1189,6 +1200,18 @@ pub enum FlexDirection {
     ///
     /// Items will be added from bottom to top in a column.
     ColumnReverse,
+}
+
+impl FlexDirection {
+    /// Reverse the direction that items will be drawn in.
+    pub fn reverse(self) -> Self {
+        match self {
+            FlexDirection::Row => FlexDirection::RowReverse,
+            FlexDirection::Column => FlexDirection::ColumnReverse,
+            FlexDirection::RowReverse => FlexDirection::Row,
+            FlexDirection::ColumnReverse => FlexDirection::Column,
+        }
+    }
 }
 
 /// How children overflowing their container should affect layout

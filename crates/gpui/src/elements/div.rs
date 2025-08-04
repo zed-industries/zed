@@ -1292,7 +1292,7 @@ impl Element for Div {
                 window,
                 cx,
                 |style, window, cx| {
-                    window.with_bidi_style(style.bidi_style(), |window| {
+                    window.with_bidi_style(style.bidi_style().cloned(), |window| {
                         window.with_text_style(style.text_style().cloned(), |window| {
                             child_layout_ids = self
                                 .children
