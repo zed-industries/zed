@@ -83,7 +83,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, DisableAiSettings, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -148,8 +148,8 @@ use parking_lot::Mutex;
 use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
-    CompletionSource, DocumentHighlight, InlayHint, Location, LocationLink, PrepareRenameResponse,
-    Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
+    CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, Location, LocationLink,
+    PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     debugger::{
         breakpoint_store::{

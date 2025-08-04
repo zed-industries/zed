@@ -12,7 +12,6 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use client::DisableAiSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -51,10 +50,9 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
-use project::git_store::{RepositoryEvent, RepositoryId};
 use project::{
-    Fs, Project, ProjectPath,
-    git_store::{GitStoreEvent, Repository},
+    DisableAiSettings, Fs, Project, ProjectPath,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -5115,7 +5113,6 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             Project::init_settings(cx);
-            client::DisableAiSettings::register(cx);
             crate::init(cx);
         });
     }
