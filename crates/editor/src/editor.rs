@@ -9228,12 +9228,13 @@ impl Editor {
             }
 
             None if is_refreshing => {
-                let is_zed_provider = provider.provider.name() == "zed-predict";
-                // we dont show a loading state if the provider is not Zed
-                if !is_zed_provider {
+                // Only show loading state for Zed provider to avoid visual noise from other providers
+                let is_zed_predict_provider = provider.provider.name() == "zed-predict";
+                if !is_zed_predict_provider {
                     return None;
                 }
 
+                // Show stale completion if available, otherwise show loading indicator
                 match &self.stale_inline_completion_in_menu {
                     Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                         stale_completion,
@@ -9241,7 +9242,6 @@ impl Editor {
                         style,
                         cx,
                     )?,
-
                     None => pending_completion_container()
                         .child(Label::new("...").size(LabelSize::Small)),
                 }
