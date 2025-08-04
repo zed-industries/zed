@@ -2328,7 +2328,6 @@ where
         .await
         .host_for_mutating_project_request(project_id, session.connection_id)
         .await?;
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
