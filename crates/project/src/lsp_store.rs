@@ -288,7 +288,8 @@ impl LocalLspStore {
             adapter.name.0
         );
 
-        let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
+        let binary =
+            self.get_language_server_binary(adapter.clone(), settings, delegate.clone(), true, cx);
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
 
         let pending_server = cx.spawn({
@@ -482,23 +483,15 @@ impl LocalLspStore {
     fn get_language_server_binary(
         &self,
         adapter: Arc<CachedLspAdapter>,
+        settings: Arc<LspSettings>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
         cx: &mut App,
     ) -> Task<Result<LanguageServerBinary>> {
-        let settings = ProjectSettings::get(
-            Some(SettingsLocation {
-                worktree_id: delegate.worktree_id(),
-                path: Path::new(""),
-            }),
-            cx,
-        )
-        .lsp
-        .get(&adapter.name)
-        .and_then(|s| s.binary.clone());
-
-        if settings.as_ref().is_some_and(|b| b.path.is_some()) {
-            let settings = settings.unwrap();
+        if let Some(settings) = settings.binary.as_ref()
+            && settings.path.is_some()
+        {
+            let settings = settings.clone();
 
             return cx.background_spawn(async move {
                 let mut env = delegate.shell_env().await;
@@ -518,6 +511,7 @@ impl LocalLspStore {
         }
         let lsp_binary_options = LanguageServerBinaryOptions {
             allow_path_lookup: !settings
+                .binary
                 .as_ref()
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
@@ -539,12 +533,12 @@ impl LocalLspStore {
 
             shell_env.extend(binary.env.unwrap_or_default());
 
-            if let Some(settings) = settings {
-                if let Some(arguments) = settings.arguments {
+            if let Some(settings) = settings.binary.as_ref() {
+                if let Some(arguments) = &settings.arguments {
                     binary.arguments = arguments.into_iter().map(Into::into).collect();
                 }
-                if let Some(env) = settings.env {
-                    shell_env.extend(env);
+                if let Some(env) = &settings.env {
+                    shell_env.extend(env.iter().map(|(k, v)| (k.clone(), v.clone())));
                 }
             }
 

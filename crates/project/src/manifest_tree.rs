@@ -7,13 +7,7 @@ mod manifest_store;
 mod path_trie;
 mod server_tree;
 
-use std::{
-    borrow::Borrow,
-    collections::{BTreeMap, hash_map::Entry},
-    ops::ControlFlow,
-    path::Path,
-    sync::Arc,
-};
+use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, path::Path, sync::Arc};
 
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};

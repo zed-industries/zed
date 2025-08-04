@@ -44,6 +44,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
+use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -59,7 +60,6 @@ use std::{
         atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
     },
 };
-use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextLocation, ContextProvider, RunnableRange};
