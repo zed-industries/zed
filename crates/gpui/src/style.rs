@@ -525,6 +525,17 @@ impl BidiDirection {
             }
         }
     }
+
+    pub fn apply_text_align_direction(self, mut text_align: TextAlign) -> TextAlign {
+        match self {
+            BidiDirection::LeftToRight => text_align,
+            BidiDirection::RightToLeft => match text_align {
+                TextAlign::Left => TextAlign::Left,
+                TextAlign::Center => TextAlign::Center,
+                TextAlign::Right => TextAlign::Right,
+            },
+        }
+    }
 }
 
 /// The properties used to change the layout direction in GPUI
