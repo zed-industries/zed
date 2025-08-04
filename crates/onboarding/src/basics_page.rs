@@ -16,22 +16,6 @@ use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::ThemePreviewTile;
 
-// "specific-theme-name" | {
-//    "mode": "dark" | "light" | "system",
-//    "light": "light-theme-name",
-//    "dark": "dark-theme-name"
-// }
-/// separates theme "mode" ("dark" | "light" | "system") into two separate states
-/// - appearance = "dark" | "light"
-/// - "system" true/false
-/// when system selected:
-///  - toggling between light and dark does not change theme.mode, just which variant will be changed
-/// when system not selected:
-///  - toggling between light and dark does change theme.mode
-/// selecting a theme preview will always change theme.["light" | "dark"] to the selected theme,
-///
-/// this allows for selecting a dark and light theme option regardless of whether the mode is set to system or not
-/// it does not support setting theme to a static value
 fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
