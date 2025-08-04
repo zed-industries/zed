@@ -396,7 +396,6 @@ impl AcpConnection {
                 io_fut.await.log_err();
             });
 
-            // todo! if child exits, display error in thread view
             let child_status = cx.background_spawn(async move {
                 let result = match child.status().await {
                     Err(e) => Err(anyhow!(e)),

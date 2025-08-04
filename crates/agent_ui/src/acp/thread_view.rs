@@ -246,8 +246,7 @@ impl AcpThreadView {
             {
                 Err(e) => {
                     let mut cx = cx.clone();
-                    // todo! remove duplication
-                    if e.downcast_ref::<acp_thread::AuthRequired>().is_some() {
+                    if e.is::<acp_thread::AuthRequired>() {
                         this.update(&mut cx, |this, cx| {
                             this.thread_state = ThreadState::Unauthenticated { connection };
                             cx.notify();
