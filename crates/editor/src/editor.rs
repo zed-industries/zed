@@ -9374,20 +9374,20 @@ impl Editor {
                 snapshot,
                 display_mode: _,
             } => {
+                const MAX_CHARS: usize = 50;
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                // Handle case where edit_preview is None (providers other then Zeta)
                 let (highlighted_edits, has_more_lines) = if let Some(edit_preview) =
                     edit_preview.as_ref()
                 {
                     crate::inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
                         .first_line_preview()
                 } else {
-                    // Fallback for when there's no edit preview - show the raw edit text (will miss everything previous to cursor position)
+                    // no diff highlighting, for other providers
                     let first_edit = edits.first()?;
                     let edit_text = &first_edit.1;
-                    let preview_text = if edit_text.len() > 50 {
-                        format!("{}...", &edit_text[..50])
+                    let preview_text = if edit_text.len() > MAX_CHARS {
+                        format!("{}...", &edit_text[..MAX_CHARS])
                     } else {
                         edit_text.clone()
                     };
@@ -9396,7 +9396,7 @@ impl Editor {
                             text: preview_text.into(),
                             highlights: Vec::new(),
                         },
-                        edit_text.len() > 50,
+                        edit_text.len() > MAX_CHARS,
                     )
                 };
 

@@ -197,16 +197,17 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         let completion_text = completion_text.trim_end();
 
         if !completion_text.trim().is_empty() {
-            let buffer_read = buffer.read(cx);
-            let snapshot = buffer_read.snapshot();
+            let snapshot = buffer.read(cx).snapshot();
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
 
-            let completion =
-                completion_from_diff(snapshot, completion_text, cursor_position, range);
-
-            Some(completion)
+            Some(completion_from_diff(
+                snapshot,
+                completion_text,
+                cursor_position,
+                range,
+            ))
         } else {
             None
         }
