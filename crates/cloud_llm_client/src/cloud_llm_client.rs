@@ -159,9 +159,6 @@ pub struct PredictEditsGitInfo {
     /// SHA of git HEAD commit at time of prediction.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub head_sha: Option<String>,
-    /// Name of the current branch at time of prediction.
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub branch_name: Option<String>,
     /// URL of the remote called `origin`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub remote_origin_url: Option<String>,
