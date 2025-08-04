@@ -7,10 +7,8 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
- "async-pipe",
  "buffer_diff",
  "editor",
  "env_logger 0.11.8",
@@ -139,10 +137,14 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.11"
+version = "0.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72ec54650c1fc2d63498bab47eeeaa9eddc7d239d53f615b797a0e84f7ccc87b"
+checksum = "22c5180e40d31a9998ffa5f8eb067667f0870908a4aeed65a6a299e2d1d95443"
 dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "log",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
@@ -177,6 +179,7 @@ dependencies = [
  "smol",
  "strum 0.27.1",
  "tempfile",
+ "thiserror 2.0.12",
  "ui",
  "util",
  "uuid",
@@ -3539,13 +3542,13 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "dirs 4.0.0",
+ "edit_prediction",
  "editor",
  "fs",
  "futures 0.3.31",
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "itertools 0.14.0",
  "language",
  "log",
@@ -4853,6 +4856,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "language",
+ "project",
+ "workspace-hack",
+]
+
+[[package]]
+name = "edit_prediction_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "cloud_llm_client",
+ "copilot",
+ "edit_prediction",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "paths",
+ "project",
+ "regex",
+ "serde_json",
+ "settings",
+ "supermaven",
+ "telemetry",
+ "theme",
+ "ui",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+ "zeta",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -4867,6 +4913,7 @@ dependencies = [
  "ctor",
  "dap",
  "db",
+ "edit_prediction",
  "emojis",
  "file_icons",
  "fs",
@@ -4876,7 +4923,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "itertools 0.14.0",
  "language",
  "languages",
@@ -6312,7 +6358,6 @@ dependencies = [
  "buffer_diff",
  "call",
  "chrono",
- "client",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -8286,49 +8331,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "inline_completion"
-version = "0.1.0"
-dependencies = [
- "client",
- "gpui",
- "language",
- "project",
- "workspace-hack",
-]
-
-[[package]]
-name = "inline_completion_button"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "cloud_llm_client",
- "copilot",
- "editor",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "inline_completion",
- "language",
- "lsp",
- "paths",
- "project",
- "regex",
- "serde_json",
- "settings",
- "supermaven",
- "telemetry",
- "theme",
- "ui",
- "workspace",
- "workspace-hack",
- "zed_actions",
- "zeta",
-]
-
-[[package]]
 name = "inotify"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9572,9 +9574,9 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
+checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -11288,9 +11290,9 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
+checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -11298,9 +11300,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
+checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
 dependencies = [
  "cfg-if",
  "libc",
@@ -15582,12 +15584,12 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "edit_prediction",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "http_client",
- "inline_completion",
  "language",
  "log",
  "postage",
@@ -20219,6 +20221,7 @@ dependencies = [
  "debugger_tools",
  "debugger_ui",
  "diagnostics",
+ "edit_prediction_button",
  "editor",
  "env_logger 0.11.8",
  "extension",
@@ -20238,7 +20241,6 @@ dependencies = [
  "http_client",
  "image_viewer",
  "indoc",
- "inline_completion_button",
  "inspector_ui",
  "install_cli",
  "itertools 0.14.0",
@@ -20570,6 +20572,7 @@ dependencies = [
  "copilot",
  "ctor",
  "db",
+ "edit_prediction",
  "editor",
  "feature_flags",
  "fs",
@@ -20577,7 +20580,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "language",
  "language_model",
  "log",

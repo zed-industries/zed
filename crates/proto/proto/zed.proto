@@ -399,7 +399,10 @@ message Envelope {
         GetColorPresentationResponse get_color_presentation_response = 356;
 
         Stash stash = 357;
-        StashPop stash_pop = 358; // current max
+        StashPop stash_pop = 358;
+
+        GetDefaultBranch get_default_branch = 359;
+        GetDefaultBranchResponse get_default_branch_response = 360; // current max
     }
 
     reserved 87 to 88;

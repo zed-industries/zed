@@ -150,7 +150,7 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
     drop(tempdir);
 }
 
-pub async fn test_tool_call_with_confirmation(
+pub async fn test_tool_call_with_permission(
     server: impl AgentServer + 'static,
     allow_option_id: acp::PermissionOptionId,
     cx: &mut TestAppContext,
@@ -337,8 +337,8 @@ macro_rules! common_e2e_tests {
 
             #[::gpui::test]
             #[cfg_attr(not(feature = "e2e"), ignore)]
-            async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
-                $crate::e2e_tests::test_tool_call_with_confirmation(
+            async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
                     ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
                     cx,
@@ -374,9 +374,6 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 }),
                 gemini: Some(AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
-                }),
-                codex: Some(AgentServerSettings {
-                    command: crate::codex::tests::local_command(),
                 }),
             },
             cx,

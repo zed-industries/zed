@@ -315,7 +315,9 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background)
+    (PullWorkspaceDiagnostics, Background),
+    (GetDefaultBranch, Background),
+    (GetDefaultBranchResponse, Background),
 );
 
 request_messages!(
@@ -483,7 +485,8 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack)
+    (PullWorkspaceDiagnostics, Ack),
+    (GetDefaultBranch, GetDefaultBranchResponse),
 );
 
 entity_messages!(
@@ -615,7 +618,8 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    PullWorkspaceDiagnostics
+    PullWorkspaceDiagnostics,
+    GetDefaultBranch
 );
 
 entity_messages!(

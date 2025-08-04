@@ -253,8 +253,8 @@ impl LogStore {
 
         let copilot_subscription = Copilot::global(cx).map(|copilot| {
             let copilot = &copilot;
-            cx.subscribe(copilot, |this, copilot, inline_completion_event, cx| {
-                if let copilot::Event::CopilotLanguageServerStarted = inline_completion_event {
+            cx.subscribe(copilot, |this, copilot, edit_prediction_event, cx| {
+                if let copilot::Event::CopilotLanguageServerStarted = edit_prediction_event {
                     if let Some(server) = copilot.read(cx).language_server() {
                         let server_id = server.server_id();
                         let weak_this = cx.weak_entity();

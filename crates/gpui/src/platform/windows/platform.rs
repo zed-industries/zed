@@ -144,12 +144,12 @@ impl WindowsPlatform {
         }
     }
 
-    pub fn try_get_windows_inner_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
+    pub fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         self.raw_window_handles
             .read()
             .iter()
             .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .and_then(|hwnd| window_from_hwnd(*hwnd))
     }
 
     #[inline]
@@ -434,7 +434,7 @@ impl Platform for WindowsPlatform {
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.try_get_windows_inner_from_hwnd(active_window_hwnd)
+        self.window_from_hwnd(active_window_hwnd)
             .map(|inner| inner.handle)
     }
 
