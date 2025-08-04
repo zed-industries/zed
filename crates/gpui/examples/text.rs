@@ -298,6 +298,8 @@ impl Render for TextExample {
 }
 
 fn main() {
+    env_logger::init();
+
     Application::new().run(|cx: &mut App| {
         cx.set_menus(vec![Menu {
             name: "GPUI Typography".into(),
