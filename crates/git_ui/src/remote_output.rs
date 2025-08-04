@@ -24,7 +24,7 @@ impl RemoteAction {
 pub enum SuccessStyle {
     Toast,
     ToastWithLog { output: RemoteCommandOutput },
-    PushPrLink { link: String },
+    PushPrLink { text: String, link: String },
 }
 
 pub struct SuccessMessage {
@@ -37,7 +37,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
         RemoteAction::Fetch(remote) => {
             if output.stderr.is_empty() {
                 SuccessMessage {
-                    message: "Already up to date".into(),
+                    message: "Fetch: Already up to date".into(),
                     style: SuccessStyle::Toast,
                 }
             } else {
@@ -68,10 +68,9 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
 
                 Ok(files_changed)
             };
-
-            if output.stderr.starts_with("Everything up to date") {
+            if output.stdout.ends_with("Already up to date.\n") {
                 SuccessMessage {
-                    message: output.stderr.trim().to_owned(),
+                    message: "Pull: Already up to date".into(),
                     style: SuccessStyle::Toast,
                 }
             } else if output.stdout.starts_with("Updating") {
@@ -119,48 +118,42 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
             }
         }
         RemoteAction::Push(branch_name, remote_ref) => {
-            if output.stderr.contains("* [new branch]") {
-                let pr_hints = [
-                    // GitHub
-                    "Create a pull request",
-                    // Bitbucket
-                    "Create pull request",
-                    // GitLab
-                    "create a merge request",
-                ];
-                let style = if pr_hints
-                    .iter()
-                    .any(|indicator| output.stderr.contains(indicator))
-                {
-                    let finder = LinkFinder::new();
-                    let first_link = finder
-                        .links(&output.stderr)
-                        .filter(|link| *link.kind() == LinkKind::Url)
-                        .map(|link| link.start()..link.end())
-                        .next();
-                    if let Some(link) = first_link {
-                        let link = output.stderr[link].to_string();
-                        SuccessStyle::PushPrLink { link }
-                    } else {
-                        SuccessStyle::ToastWithLog { output }
-                    }
-                } else {
-                    SuccessStyle::ToastWithLog { output }
-                };
-                SuccessMessage {
-                    message: format!("Published {} to {}", branch_name, remote_ref.name),
-                    style,
-                }
-            } else if output.stderr.starts_with("Everything up to date") {
-                SuccessMessage {
-                    message: output.stderr.trim().to_owned(),
-                    style: SuccessStyle::Toast,
-                }
+            let message = if output.stderr.ends_with("Everything up-to-date\n") {
+                "Push: Everything is up-to-date".to_string()
             } else {
-                SuccessMessage {
-                    message: format!("Pushed {} to {}", branch_name, remote_ref.name),
-                    style: SuccessStyle::ToastWithLog { output },
-                }
+                format!("Pushed {} to {}", branch_name, remote_ref.name)
+            };
+
+            let style = if output.stderr.ends_with("Everything up-to-date\n") {
+                Some(SuccessStyle::Toast)
+            } else if output.stderr.contains("\nremote: ") {
+                let pr_hints = [
+                    ("Create a pull request", "Create Pull Request"), // GitHub
+                    ("Create pull request", "Create Pull Request"),   // Bitbucket
+                    ("create a merge request", "Create Merge Request"), // GitLab
+                    ("View merge request", "View Merge Request"),     // GitLab
+                ];
+                pr_hints
+                    .iter()
+                    .find(|(indicator, _)| output.stderr.contains(indicator))
+                    .and_then(|(_, mapped)| {
+                        let finder = LinkFinder::new();
+                        finder
+                            .links(&output.stderr)
+                            .filter(|link| *link.kind() == LinkKind::Url)
+                            .map(|link| link.start()..link.end())
+                            .next()
+                            .map(|link| SuccessStyle::PushPrLink {
+                                text: mapped.to_string(),
+                                link: output.stderr[link].to_string(),
+                            })
+                    })
+            } else {
+                None
+            };
+            SuccessMessage {
+                message,
+                style: style.unwrap_or(SuccessStyle::ToastWithLog { output }),
             }
         }
     }
@@ -169,6 +162,7 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indoc::indoc;
 
     #[test]
     fn test_push_new_branch_pull_request() {
@@ -181,8 +175,7 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from(
-                "
+            stderr: indoc! { "
                 Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
                 remote:
                 remote: Create a pull request for 'test' on GitHub by visiting:
@@ -190,13 +183,14 @@ mod tests {
                 remote:
                 To example.com:test/test.git
                  * [new branch]      test -> test
-                ",
-            ),
+                "}
+            .to_string(),
         };
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { link } = &msg.style {
+        if let SuccessStyle::PushPrLink { text: hint, link } = &msg.style {
+            assert_eq!(hint, "Create Pull Request");
             assert_eq!(link, "https://example.com/test/test/pull/new/test");
         } else {
             panic!("Expected PushPrLink variant");
@@ -214,7 +208,7 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from("
+            stderr: indoc! {"
                 Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
                 remote:
                 remote: To create a merge request for test, visit:
@@ -222,16 +216,51 @@ mod tests {
                 remote:
                 To example.com:test/test.git
                  * [new branch]      test -> test
-                "),
-        };
+                "}
+            .to_string()
+            };
 
         let msg = format_output(&action, output);
 
-        if let SuccessStyle::PushPrLink { link } = &msg.style {
+        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
+            assert_eq!(text, "Create Merge Request");
             assert_eq!(
                 link,
                 "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
             );
+        } else {
+            panic!("Expected PushPrLink variant");
+        }
+    }
+
+    #[test]
+    fn test_push_branch_existing_merge_request() {
+        let action = RemoteAction::Push(
+            SharedString::new("test_branch"),
+            Remote {
+                name: SharedString::new("test_remote"),
+            },
+        );
+
+        let output = RemoteCommandOutput {
+            stdout: String::new(),
+            stderr: indoc! {"
+                Total 0 (delta 0), reused 0 (delta 0), pack-reused 0 (from 0)
+                remote:
+                remote: View merge request for test:
+                remote:    https://example.com/test/test/-/merge_requests/99999
+                remote:
+                To example.com:test/test.git
+                    + 80bd3c83be...e03d499d2e test -> test
+                "}
+            .to_string(),
+        };
+
+        let msg = format_output(&action, output);
+
+        if let SuccessStyle::PushPrLink { text, link } = &msg.style {
+            assert_eq!(text, "View Merge Request");
+            assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
         } else {
             panic!("Expected PushPrLink variant");
         }
@@ -248,12 +277,12 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            stderr: String::from(
-                "
+            stderr: indoc! { "
                 To http://example.com/test/test.git
                  * [new branch]      test -> test
                 ",
-            ),
+            }
+            .to_string(),
         };
 
         let msg = format_output(&action, output);
@@ -261,10 +290,7 @@ mod tests {
         if let SuccessStyle::ToastWithLog { output } = &msg.style {
             assert_eq!(
                 output.stderr,
-                "
-                To http://example.com/test/test.git
-                 * [new branch]      test -> test
-                "
+                "To http://example.com/test/test.git\n * [new branch]      test -> test\n"
             );
         } else {
             panic!("Expected ToastWithLog variant");
