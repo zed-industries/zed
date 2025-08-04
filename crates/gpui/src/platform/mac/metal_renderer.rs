@@ -2,7 +2,7 @@ use super::metal_atlas::MetalAtlas;
 use crate::{
     AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
     Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    Surface, Underline, physical_px, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -924,8 +924,8 @@ impl MetalRenderer {
 
         let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
-            DevicePixels(texture.width() as i32),
-            DevicePixels(texture.height() as i32),
+            physical_px(texture.width() as i32),
+            physical_px(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.monochrome_sprites_pipeline_state);
         command_encoder.set_vertex_buffer(
@@ -989,8 +989,8 @@ impl MetalRenderer {
 
         let texture = self.sprite_atlas.metal_texture(texture_id);
         let texture_size = size(
-            DevicePixels(texture.width() as i32),
-            DevicePixels(texture.height() as i32),
+            physical_px(texture.width() as i32),
+            physical_px(texture.height() as i32),
         );
         command_encoder.set_render_pipeline_state(&self.polychrome_sprites_pipeline_state);
         command_encoder.set_vertex_buffer(
@@ -1166,8 +1166,8 @@ fn new_command_encoder<'a>(
     command_encoder.set_viewport(metal::MTLViewport {
         originX: 0.0,
         originY: 0.0,
-        width: i32::from(viewport_size.width) as f64,
-        height: i32::from(viewport_size.height) as f64,
+        width: viewport_size.width.0 as f64,
+        height: viewport_size.height.0 as f64,
         znear: 0.0,
         zfar: 1.0,
     });
@@ -1332,13 +1332,13 @@ enum PathRasterizationInputIndex {
     ViewportSize = 1,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct PathSprite {
     pub bounds: Bounds<ScaledPixels>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[repr(C)]
 pub struct SurfaceBounds {
     pub bounds: Bounds<ScaledPixels>,

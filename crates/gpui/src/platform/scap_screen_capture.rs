@@ -1,7 +1,7 @@
 //! Screen capture for Linux and Windows
 use crate::{
     DevicePixels, ForegroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    Size, SourceMetadata, size,
+    Size, SourceMetadata, physical_px, size,
 };
 use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
@@ -58,8 +58,8 @@ fn get_screen_targets(sources_tx: oneshot::Sender<Result<Vec<ScapCaptureSource>>
             .filter_map(|target| match target {
                 scap::Target::Display(display) => {
                     let size = Size {
-                        width: DevicePixels(display.width as i32),
-                        height: DevicePixels(display.height as i32),
+                        width: physical_px(display.width as i32),
+                        height: physical_px(display.height as i32),
                     };
                     Some(ScapCaptureSource {
                         target: display,
@@ -276,7 +276,7 @@ fn frame_size(frame: &scap::frame::Frame) -> Size<DevicePixels> {
         scap::frame::Frame::BGR0(frame) => (frame.width, frame.height),
         scap::frame::Frame::BGRA(frame) => (frame.width, frame.height),
     };
-    size(DevicePixels(width), DevicePixels(height))
+    size(physical_px(width), physical_px(height))
 }
 
 /// This is used by `get_screen_targets` and `start_default_target_screen_capture` to turn their

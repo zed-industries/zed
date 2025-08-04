@@ -843,8 +843,8 @@ impl PlatformWindow for WaylandWindow {
         state.xdg_surface.set_window_geometry(
             state.bounds.origin.x.0 as i32,
             state.bounds.origin.y.0 as i32,
-            dp_size.width.0,
-            dp_size.height.0,
+            dp_size.width.raw(),
+            dp_size.height.raw(),
         );
 
         state

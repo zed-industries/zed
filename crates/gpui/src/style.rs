@@ -46,7 +46,7 @@ impl ObjectFit {
         bounds: Bounds<Pixels>,
         image_size: Size<DevicePixels>,
     ) -> Bounds<Pixels> {
-        let image_size = image_size.map(|dimension| Pixels::from(u32::from(dimension)));
+        let image_size = image_size.map(|dimension| dimension.unquantize());
         let image_ratio = image_size.width / image_size.height;
         let bounds_ratio = bounds.size.width / bounds.size.height;
 
@@ -54,15 +54,9 @@ impl ObjectFit {
             ObjectFit::Fill => bounds,
             ObjectFit::Contain => {
                 let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
+                    size(bounds.size.height * image_ratio, bounds.size.height)
                 } else {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
+                    size(bounds.size.width, bounds.size.width / image_ratio)
                 };
 
                 Bounds {
@@ -75,18 +69,15 @@ impl ObjectFit {
             }
             ObjectFit::ScaleDown => {
                 // Check if the image is larger than the bounds in either dimension.
-                if image_size.width > bounds.size.width || image_size.height > bounds.size.height {
+                // TODO: this reinterprets physical pixels as logical with a factor of 1
+                if image_size.width.to_logical(1.) > bounds.size.width
+                    || image_size.height.to_logical(1.) > bounds.size.height
+                {
                     // If the image is larger, use the same logic as Contain to scale it down.
                     let new_size = if bounds_ratio > image_ratio {
-                        size(
-                            image_size.width * (bounds.size.height / image_size.height),
-                            bounds.size.height,
-                        )
+                        size(bounds.size.height * image_ratio, bounds.size.height)
                     } else {
-                        size(
-                            bounds.size.width,
-                            image_size.height * (bounds.size.width / image_size.width),
-                        )
+                        size(bounds.size.width, bounds.size.width / image_ratio)
                     };
 
                     Bounds {
@@ -99,7 +90,8 @@ impl ObjectFit {
                 } else {
                     // If the image is smaller than or equal to the container, display it at its original size,
                     // centered within the container.
-                    let original_size = size(image_size.width, image_size.height);
+                    // TODO: this reinterprets physical pixels as logical with a factor of 1
+                    let original_size = image_size.map(|dimension| dimension.to_logical(1.));
                     Bounds {
                         origin: point(
                             bounds.origin.x + (bounds.size.width - original_size.width) / 2.0,
@@ -111,15 +103,9 @@ impl ObjectFit {
             }
             ObjectFit::Cover => {
                 let new_size = if bounds_ratio > image_ratio {
-                    size(
-                        bounds.size.width,
-                        image_size.height * (bounds.size.width / image_size.width),
-                    )
+                    size(bounds.size.width, bounds.size.width / image_ratio)
                 } else {
-                    size(
-                        image_size.width * (bounds.size.height / image_size.height),
-                        bounds.size.height,
-                    )
+                    size(bounds.size.height * image_ratio, bounds.size.height)
                 };
 
                 Bounds {
@@ -132,7 +118,8 @@ impl ObjectFit {
             }
             ObjectFit::None => Bounds {
                 origin: bounds.origin,
-                size: image_size,
+                // TODO: this reinterprets physical pixels as logical with a factor of 1
+                size: image_size.map(|dimension| dimension.to_logical(1.)),
             },
         }
     }
