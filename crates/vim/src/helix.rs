@@ -88,42 +88,6 @@ impl Vim {
         });
     }
 
-    // Helix motion which do not create any selection
-    pub fn helix_move_and_collapse(
-        &mut self,
-        motion: Motion,
-        times: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_editor(window, cx, |_, editor, window, cx| {
-            let text_layout_details = editor.text_layout_details(window);
-            editor.change_selections(Default::default(), window, cx, |s| {
-                s.move_with(|map, selection| {
-                    let goal = selection.goal;
-                    let cursor = if selection.is_empty() || selection.reversed {
-                        selection.head()
-                    } else {
-                        movement::left(map, selection.head())
-                    };
-
-                    let (point, goal) = motion
-                        .move_point(
-                            map,
-                            cursor,
-                            selection.goal,
-                            times,
-                            &text_layout_details,
-                            true,
-                        )
-                        .unwrap_or((cursor, goal));
-
-                    selection.collapse_to(point, goal)
-                })
-            });
-        });
-    }
-
     fn helix_find_range_forward(
         &mut self,
         times: Option<usize>,
@@ -234,6 +198,42 @@ impl Vim {
                     selection.set_head(head, new_goal);
                 });
             })
+        });
+    }
+
+    // Helix motion which do not create any selection
+    pub fn helix_move_and_collapse(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let goal = selection.goal;
+                    let cursor = if selection.is_empty() || selection.reversed {
+                        selection.head()
+                    } else {
+                        movement::left(map, selection.head())
+                    };
+
+                    let (point, goal) = motion
+                        .move_point(
+                            map,
+                            cursor,
+                            selection.goal,
+                            times,
+                            &text_layout_details,
+                            true,
+                        )
+                        .unwrap_or((cursor, goal));
+
+                    selection.collapse_to(point, goal)
+                })
+            });
         });
     }
 
