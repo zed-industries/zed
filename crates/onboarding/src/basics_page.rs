@@ -182,9 +182,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                 .on_click({
                     let theme_name = theme.name.clone();
                     move |_, _, cx| {
-                        if theme_mode != ThemeMode::System {
-                            write_theme_change(theme_name.clone(), theme_mode, cx);
-                        }
+                        write_theme_change(theme_name.clone(), theme_mode, cx);
                     }
                 })
         });
