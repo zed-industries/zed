@@ -4367,6 +4367,7 @@ mod tests {
                 "repl",
                 "rules_library",
                 "search",
+                "settings_profile_selector",
                 "snippets",
                 "supermaven",
                 "svg",
