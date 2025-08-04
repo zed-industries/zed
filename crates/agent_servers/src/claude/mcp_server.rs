@@ -158,12 +158,12 @@ impl McpServerTool for PermissionTool {
                     vec![
                         acp::PermissionOption {
                             id: allow_option_id.clone(),
-                            label: "Allow".into(),
+                            name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
                         },
                         acp::PermissionOption {
                             id: reject_option_id.clone(),
-                            label: "Reject".into(),
+                            name: "Reject".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
                         },
                     ],
