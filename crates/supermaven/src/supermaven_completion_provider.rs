@@ -124,7 +124,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn is_refreshing(&self) -> bool {
-        self.pending_refresh.is_some()
+        self.pending_refresh.is_some() && self.completion_id.is_none()
     }
 
     fn refresh(

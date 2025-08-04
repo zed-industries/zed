@@ -234,16 +234,16 @@ fn find_relevant_completion<'a>(
         }
 
         let original_cursor_offset = buffer.clip_offset(state.prefix_offset, text::Bias::Left);
-        let text_inserted_since_completion_request =
-            buffer.text_for_range(original_cursor_offset..current_cursor_offset);
-        let mut trimmed_completion = state_completion;
-        for chunk in text_inserted_since_completion_request {
-            if let Some(suffix) = trimmed_completion.strip_prefix(chunk) {
-                trimmed_completion = suffix;
-            } else {
-                continue 'completions;
-            }
-        }
+        let text_inserted_since_completion_request: String = buffer
+            .text_for_range(original_cursor_offset..current_cursor_offset)
+            .collect();
+        let trimmed_completion = if let Some(suffix) =
+            state_completion.strip_prefix(&text_inserted_since_completion_request)
+        {
+            suffix
+        } else {
+            continue 'completions;
+        };
 
         if best_completion.map_or(false, |best| best.len() > trimmed_completion.len()) {
             continue;
