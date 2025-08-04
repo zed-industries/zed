@@ -2,21 +2,21 @@ use std::sync::Arc;
 
 use client::TelemetrySettings;
 use fs::Fs;
-use gpui::{App, Entity, IntoElement, Window};
+use gpui::{App, IntoElement, Window};
 use settings::{BaseKeymap, Settings, update_settings_file};
 use theme::{
     Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
     ThemeSettings,
 };
 use ui::{
-    Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
+    ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
     ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
 };
 use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
-fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
+fn render_theme_section(_window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
     let theme_selection = theme_selection.unwrap_or_else(|| ThemeSelection::Dynamic {
@@ -34,11 +34,6 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             Appearance::Light => ThemeMode::Light,
             Appearance::Dark => ThemeMode::Dark,
         });
-    let selected_index = match theme_mode {
-        ThemeMode::Light => 0,
-        ThemeMode::Dark => 1,
-        ThemeMode::System => 2,
-    };
 
     return v_flex()
         .gap_2()
@@ -125,7 +120,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                         .w_full()
                         .border_2()
                         .border_color(colors.border_transparent)
-                        .rounded(ThemePreviewTile::CORNER_RADIUS)
+                        .rounded(ThemePreviewTile::ROOT_RADIUS)
                         .map(|this| {
                             if is_selected {
                                 this.border_color(colors.border_selected)

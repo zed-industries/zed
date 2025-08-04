@@ -23,10 +23,21 @@ pub struct ThemePreviewTile {
 }
 
 impl ThemePreviewTile {
-    pub const CORNER_RADIUS: Pixels = px(8.0);
     pub const SKELETON_HEIGHT_DEFAULT: Pixels = px(2.);
     pub const SIDEBAR_SKELETON_ITEM_COUNT: usize = 8;
     pub const SIDEBAR_WIDTH_DEFAULT: DefiniteLength = relative(0.25);
+    pub const ROOT_RADIUS: Pixels = px(8.0);
+    pub const ROOT_BORDER: Pixels = px(2.0);
+    pub const ROOT_PADDING: Pixels = px(2.0);
+    pub const CHILD_BORDER: Pixels = px(1.0);
+    pub const CHILD_RADIUS: std::cell::LazyCell<Pixels> = std::cell::LazyCell::new(|| {
+        inner_corner_radius(
+            Self::ROOT_RADIUS,
+            Self::ROOT_BORDER,
+            Self::ROOT_PADDING,
+            Self::CHILD_BORDER,
+        )
+    });
 
     pub fn new(theme: Arc<Theme>, seed: f32) -> Self {
         Self {
@@ -193,80 +204,94 @@ impl ThemePreviewTile {
             ))
             .child(Self::render_pane(seed, theme, skeleton_height.clone()))
     }
+
+    fn render_borderless(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
+        return Self::render_editor(
+            seed,
+            theme,
+            Self::SIDEBAR_WIDTH_DEFAULT,
+            Self::SKELETON_HEIGHT_DEFAULT,
+        );
+    }
+
+    fn render_border(seed: f32, theme: Arc<Theme>) -> impl IntoElement {
+        div()
+            .size_full()
+            .p(Self::ROOT_PADDING)
+            .rounded(Self::ROOT_RADIUS)
+            .child(
+                div()
+                    .size_full()
+                    .rounded(*Self::CHILD_RADIUS)
+                    .border(Self::CHILD_BORDER)
+                    .border_color(theme.colors().border)
+                    .child(Self::render_editor(
+                        seed,
+                        theme.clone(),
+                        Self::SIDEBAR_WIDTH_DEFAULT,
+                        Self::SKELETON_HEIGHT_DEFAULT,
+                    )),
+            )
+    }
+
+    fn render_side_by_side(
+        seed: f32,
+        theme: Arc<Theme>,
+        other_theme: Arc<Theme>,
+    ) -> impl IntoElement {
+        let sidebar_width = relative(0.20);
+        return h_flex()
+            .size_full()
+            .p(Self::ROOT_PADDING)
+            .rounded(Self::ROOT_RADIUS)
+            .relative()
+            .overflow_hidden()
+            .child(
+                div()
+                    .size_full()
+                    .rounded(*Self::CHILD_RADIUS)
+                    .border(Self::CHILD_BORDER)
+                    .border_color(theme.colors().border)
+                    .child(Self::render_editor(
+                        seed,
+                        theme.clone(),
+                        sidebar_width,
+                        Self::SKELETON_HEIGHT_DEFAULT,
+                    )),
+            )
+            .child(
+                div()
+                    .size_full()
+                    .absolute()
+                    .left_1_2()
+                    .rounded_r(*Self::CHILD_RADIUS)
+                    .border_r(Self::CHILD_BORDER)
+                    .border_y(Self::CHILD_BORDER)
+                    .border_color(other_theme.colors().border)
+                    .child(Self::render_editor(
+                        seed,
+                        other_theme,
+                        sidebar_width,
+                        Self::SKELETON_HEIGHT_DEFAULT,
+                    )),
+            )
+            .into_any_element();
+    }
 }
 
 impl RenderOnce for ThemePreviewTile {
     fn render(self, _window: &mut ui::Window, _cx: &mut ui::App) -> impl IntoElement {
-        let root_radius = Self::CORNER_RADIUS;
-        let root_border = px(2.0);
-        let root_padding = px(2.0);
-        let child_border = px(1.0);
-        let inner_radius =
-            inner_corner_radius(root_radius, root_border, root_padding, child_border);
-
-        if let ThemePreviewStyle::SideBySide(other_theme) = self.style {
-            let sidebar_width = relative(0.20);
-            return h_flex()
-                .size_full()
-                .p(root_padding)
-                .rounded(root_radius)
-                .relative()
-                .overflow_hidden()
-                .child(
-                    div()
-                        .size_full()
-                        .rounded(inner_radius)
-                        .border(child_border)
-                        .border_color(self.theme.colors().border)
-                        .child(Self::render_editor(
-                            self.seed,
-                            self.theme.clone(),
-                            sidebar_width,
-                            Self::SKELETON_HEIGHT_DEFAULT,
-                        )),
-                )
-                .child(
-                    div()
-                        .size_full()
-                        .absolute()
-                        .left_1_2()
-                        .rounded_r(inner_radius)
-                        .border_r(child_border)
-                        .border_y(child_border)
-                        .border_color(other_theme.colors().border)
-                        .child(Self::render_editor(
-                            self.seed,
-                            other_theme,
-                            sidebar_width,
-                            Self::SKELETON_HEIGHT_DEFAULT,
-                        )),
-                )
-                .into_any_element();
+        match self.style {
+            ThemePreviewStyle::Bordered => {
+                Self::render_border(self.seed, self.theme).into_any_element()
+            }
+            ThemePreviewStyle::Borderless => {
+                Self::render_borderless(self.seed, self.theme).into_any_element()
+            }
+            ThemePreviewStyle::SideBySide(other_theme) => {
+                Self::render_side_by_side(self.seed, self.theme, other_theme).into_any_element()
+            }
         }
-        let content = Self::render_editor(
-            self.seed,
-            self.theme.clone(),
-            Self::SIDEBAR_WIDTH_DEFAULT,
-            Self::SKELETON_HEIGHT_DEFAULT,
-        );
-
-        if self.style == ThemePreviewStyle::Borderless {
-            return content.into_any_element();
-        }
-
-        div()
-            .size_full()
-            .p(root_padding)
-            .rounded(root_radius)
-            .child(
-                div()
-                    .size_full()
-                    .rounded(inner_radius)
-                    .border(child_border)
-                    .border_color(self.theme.colors().border)
-                    .child(content),
-            )
-            .into_any_element()
     }
 }
 
