@@ -9059,6 +9059,18 @@ impl Editor {
         let editor_bg_color = cx.theme().colors().editor_background;
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
+    fn get_prediction_provider_icon_name(
+        provider: Option<&RegisteredInlineCompletionProvider>,
+    ) -> IconName {
+        match provider {
+            Some(provider) => match provider.provider.name() {
+                "copilot" => IconName::Copilot,
+                "supermaven" => IconName::Supermaven,
+                _ => IconName::ZedPredict,
+            },
+            None => IconName::ZedPredict,
+        }
+    }
 
     fn render_edit_prediction_cursor_popover(
         &self,
@@ -9139,35 +9151,20 @@ impl Editor {
                             .rounded_tl(px(0.))
                             .overflow_hidden()
                             .child(div().px_1p5().child({
-                                // Choose icon based on the edit prediction provider
-                                let base_icon_name =
-                                    if let Some(provider) = &self.edit_prediction_provider {
-                                        match provider.provider.name() {
-                                            "copilot" => "Copilot",
-                                            "supermaven" => "Supermaven",
-                                            _ => "ZedPredict",
-                                        }
-                                    } else {
-                                        "ZedPredict"
-                                    };
-
                                 match &prediction.completion {
                                     InlineCompletion::Move { target, snapshot } => {
                                         use text::ToPoint as _;
                                         if target.text_anchor.to_point(&snapshot).row
                                             > cursor_point.row
                                         {
-                                            // For move completions, we only have ZedPredictDown/Up variants
                                             Icon::new(IconName::ZedPredictDown)
                                         } else {
                                             Icon::new(IconName::ZedPredictUp)
                                         }
                                     }
-                                    InlineCompletion::Edit { .. } => match base_icon_name {
-                                        "Copilot" => Icon::new(IconName::Copilot),
-                                        "Supermaven" => Icon::new(IconName::Supermaven),
-                                        _ => Icon::new(IconName::ZedPredict),
-                                    },
+                                    InlineCompletion::Edit { .. } => Icon::new(
+                                        Editor::get_prediction_provider_icon_name(Some(provider)),
+                                    ),
                                 }
                             }))
                             .child(
@@ -9413,15 +9410,9 @@ impl Editor {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    let icon_name = if let Some(provider) = &self.edit_prediction_provider {
-                        match provider.provider.name() {
-                            "copilot" => IconName::Copilot,
-                            "supermaven" => IconName::Supermaven,
-                            _ => IconName::ZedPredict,
-                        }
-                    } else {
-                        IconName::ZedPredict
-                    };
+                    let icon_name = Editor::get_prediction_provider_icon_name(
+                        self.edit_prediction_provider.as_ref(),
+                    );
                     Icon::new(icon_name).into_any_element()
                 };
 
