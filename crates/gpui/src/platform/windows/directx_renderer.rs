@@ -1011,8 +1011,7 @@ fn get_dxgi_factory(debug_layer_available: bool) -> Result<IDXGIFactory6> {
 fn get_adapter(dxgi_factory: &IDXGIFactory6, debug_layer_available: bool) -> Result<IDXGIAdapter1> {
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = unsafe {
-            dxgi_factory
-                .EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
+            dxgi_factory.EnumAdapterByGpuPreference(adapter_index, DXGI_GPU_PREFERENCE_UNSPECIFIED)
         }?;
         if let Ok(desc) = unsafe { adapter.GetDesc1() } {
             let gpu_name = String::from_utf16_lossy(&desc.Description)
