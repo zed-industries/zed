@@ -254,6 +254,40 @@ impl Onboarding {
         cx.emit(ItemEvent::UpdateTab);
     }
 
+    fn go_to_welcome_page(&self, cx: &mut App) {
+        with_active_or_new_workspace(cx, |workspace, window, cx| {
+            let Some((onboarding_id, onboarding_idx)) = workspace
+                .active_pane()
+                .read(cx)
+                .items()
+                .enumerate()
+                .find_map(|(idx, item)| {
+                    let _ = item.downcast::<Onboarding>()?;
+                    Some((item.item_id(), idx))
+                })
+            else {
+                return;
+            };
+
+            workspace.active_pane().update(cx, |pane, cx| {
+                // Get the index here to get around the borrow checker
+                let idx = pane.items().enumerate().find_map(|(idx, item)| {
+                    let _ = item.downcast::<WelcomePage>()?;
+                    Some(idx)
+                });
+
+                if let Some(idx) = idx {
+                    pane.activate_item(idx, true, true, window, cx);
+                } else {
+                    let item = Box::new(WelcomePage::new(window, cx));
+                    pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
+                }
+
+                pane.remove_item(onboarding_id, false, false, window, cx);
+            });
+        });
+    }
+
     fn render_nav_buttons(
         &mut self,
         window: &mut Window,
@@ -319,6 +353,8 @@ impl Onboarding {
     }
 
     fn render_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ai_setup_page = matches!(self.selected_page, SelectedPage::AiSetup);
+
         v_flex()
             .h_full()
             .w(rems_from_px(220.))
@@ -357,67 +393,38 @@ impl Onboarding {
                                     .gap_1()
                                     .children(self.render_nav_buttons(window, cx)),
                             )
-                            .child(
-                                ButtonLike::new("skip_all")
-                                    .child(Label::new("Skip All").ml_1())
-                                    .on_click(|_, _, cx| {
-                                        with_active_or_new_workspace(
-                                            cx,
-                                            |workspace, window, cx| {
-                                                let Some((onboarding_id, onboarding_idx)) =
-                                                    workspace
-                                                        .active_pane()
-                                                        .read(cx)
-                                                        .items()
-                                                        .enumerate()
-                                                        .find_map(|(idx, item)| {
-                                                            let _ =
-                                                                item.downcast::<Onboarding>()?;
-                                                            Some((item.item_id(), idx))
-                                                        })
-                                                else {
-                                                    return;
-                                                };
-
-                                                workspace.active_pane().update(cx, |pane, cx| {
-                                                    // Get the index here to get around the borrow checker
-                                                    let idx = pane.items().enumerate().find_map(
-                                                        |(idx, item)| {
-                                                            let _ =
-                                                                item.downcast::<WelcomePage>()?;
-                                                            Some(idx)
-                                                        },
-                                                    );
-
-                                                    if let Some(idx) = idx {
-                                                        pane.activate_item(
-                                                            idx, true, true, window, cx,
-                                                        );
-                                                    } else {
-                                                        let item =
-                                                            Box::new(WelcomePage::new(window, cx));
-                                                        pane.add_item(
-                                                            item,
-                                                            true,
-                                                            true,
-                                                            Some(onboarding_idx),
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    }
-
-                                                    pane.remove_item(
-                                                        onboarding_id,
-                                                        false,
-                                                        false,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                });
-                                            },
-                                        );
-                                    }),
-                            ),
+                            .map(|this| {
+                                if ai_setup_page {
+                                    this.child(
+                                        ButtonLike::new("start_building")
+                                            .style(ButtonStyle::Filled)
+                                            .size(ButtonSize::Medium)
+                                            .child(
+                                                h_flex()
+                                                    .ml_1()
+                                                    .w_full()
+                                                    .justify_between()
+                                                    .child(Label::new("Start Building"))
+                                                    .child(
+                                                        Icon::new(IconName::Check)
+                                                            .size(IconSize::Small),
+                                                    ),
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.go_to_welcome_page(cx);
+                                            })),
+                                    )
+                                } else {
+                                    this.child(
+                                        ButtonLike::new("skip_all")
+                                            .size(ButtonSize::Medium)
+                                            .child(Label::new("Skip All").ml_1())
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.go_to_welcome_page(cx);
+                                            })),
+                                    )
+                                }
+                            }),
                     ),
             )
             .child(
@@ -430,8 +437,8 @@ impl Onboarding {
                         .into_any_element()
                 } else {
                     Button::new("sign_in", "Sign In")
-                        .style(ButtonStyle::Outlined)
                         .full_width()
+                        .style(ButtonStyle::Outlined)
                         .on_click(|_, window, cx| {
                             let client = Client::global(cx);
                             window
