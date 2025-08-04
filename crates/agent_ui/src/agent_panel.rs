@@ -1913,7 +1913,7 @@ impl AgentPanel {
                             })
                             .item(
                                 ContextMenuEntry::new("New Thread")
-                                    .icon(IconName::NewThread)
+                                    .icon(IconName::Thread)
                                     .icon_color(Color::Muted)
                                     .action(NewThread::default().boxed_clone())
                                     .handler(move |window, cx| {
@@ -1925,7 +1925,7 @@ impl AgentPanel {
                             )
                             .item(
                                 ContextMenuEntry::new("New Text Thread")
-                                    .icon(IconName::NewTextThread)
+                                    .icon(IconName::TextThread)
                                     .icon_color(Color::Muted)
                                     .action(NewTextThread.boxed_clone())
                                     .handler(move |window, cx| {
@@ -1939,7 +1939,7 @@ impl AgentPanel {
                                     let thread_id = thread.id().clone();
                                     this.item(
                                         ContextMenuEntry::new("New From Summary")
-                                            .icon(IconName::NewFromSummary)
+                                            .icon(IconName::ThreadFromSummary)
                                             .icon_color(Color::Muted)
                                             .handler(move |window, cx| {
                                                 window.dispatch_action(
@@ -2572,7 +2572,7 @@ impl AgentPanel {
                                         NewThreadButton::new(
                                             "new-thread-btn",
                                             "New Thread",
-                                            IconName::NewThread,
+                                            IconName::Thread,
                                         )
                                         .keybinding(KeyBinding::for_action_in(
                                             &NewThread::default(),
@@ -2593,7 +2593,7 @@ impl AgentPanel {
                                         NewThreadButton::new(
                                             "new-text-thread-btn",
                                             "New Text Thread",
-                                            IconName::NewTextThread,
+                                            IconName::TextThread,
                                         )
                                         .keybinding(KeyBinding::for_action_in(
                                             &NewTextThread,
