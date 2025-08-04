@@ -22,7 +22,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
     cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
 
-    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+    assert_editor_active_edit_copletion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].1.as_str(), "-273.15");
     });

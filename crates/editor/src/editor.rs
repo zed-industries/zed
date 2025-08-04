@@ -7756,7 +7756,6 @@ impl Editor {
         } else {
             None
         };
-        // Check if the current provider supports jump functionality
         let supports_jump = self
             .edit_prediction_provider
             .as_ref()
@@ -9344,7 +9343,6 @@ impl Editor {
                 .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
         }
 
-        // Check if the current provider supports jump functionality
         let supports_jump = self
             .edit_prediction_provider
             .as_ref()
@@ -9355,7 +9353,6 @@ impl Editor {
             EditPrediction::Move {
                 target, snapshot, ..
             } => {
-                // Disable jump functionality for providers that don't support it
                 if !supports_jump {
                     return None;
                 }
@@ -9389,7 +9386,6 @@ impl Editor {
                         crate::edit_prediction_edit_text(&snapshot, &edits, edit_preview, true, cx)
                             .first_line_preview()
                     } else {
-                        // Fallback for providers without edit_preview (like Copilot/Supermaven)
                         crate::edit_prediction_fallback_text(&edits, cx).first_line_preview()
                     };
 
@@ -9402,7 +9398,6 @@ impl Editor {
                     .child(styled_text)
                     .when(has_more_lines, |parent| parent.child("…"));
 
-                // For providers that don't support jump, always show the provider icon instead of relative jump
                 let left = if supports_jump && first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
