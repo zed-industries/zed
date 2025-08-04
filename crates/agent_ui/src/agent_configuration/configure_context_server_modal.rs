@@ -181,17 +181,19 @@ impl ConfigurationSource {
 }
 
 fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)>) -> String {
-    let (name, command, args, env) = match existing {
+    let (name, command, args, env, working_directory) = match existing {
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
+            let working_directory = serde_json::to_string(&cmd.working_directory).unwrap();
+            (id.0.to_string(), cmd.path, args, env, working_directory)
         }
         None => (
             "some-mcp-server".to_string(),
             PathBuf::new(),
             "[]".to_string(),
             "{}".to_string(),
+            "null".to_string(),
         ),
     };
 
@@ -204,7 +206,10 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
-    "env": {env}
+    "env": {env},
+    /// The working directory to run the command in.
+    /// If not set, the project root will be used.
+    "working_directory": {working_directory}
   }}
 }}"#,
         command.display()
