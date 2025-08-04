@@ -87,18 +87,18 @@ impl<const COLS: usize> Section<COLS> {
     ) -> impl IntoElement {
         v_flex()
             .min_w_full()
-            .gap_2()
             .child(
                 h_flex()
                     .px_1()
-                    .gap_4()
+                    .mb_2()
+                    .gap_2()
                     .child(
                         Label::new(self.title.to_ascii_uppercase())
                             .buffer_font(cx)
                             .color(Color::Muted)
                             .size(LabelSize::XSmall),
                     )
-                    .child(Divider::horizontal().color(DividerColor::Border)),
+                    .child(Divider::horizontal().color(DividerColor::BorderVariant)),
             )
             .children(
                 self.entries
@@ -125,10 +125,10 @@ impl SectionEntry {
     ) -> impl IntoElement {
         ButtonLike::new(("onboarding-button-id", button_index))
             .full_width()
+            .size(ButtonSize::Medium)
             .child(
                 h_flex()
                     .w_full()
-                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
@@ -140,7 +140,10 @@ impl SectionEntry {
                             )
                             .child(Label::new(self.title)),
                     )
-                    .children(KeyBinding::for_action_in(self.action, focus, window, cx)),
+                    .children(
+                        KeyBinding::for_action_in(self.action, focus, window, cx)
+                            .map(|s| s.size(rems_from_px(12.))),
+                    ),
             )
             .on_click(|_, window, cx| window.dispatch_action(self.action.boxed_clone(), cx))
     }
@@ -191,8 +194,8 @@ impl Render for WelcomePage {
                             )
                             .child(
                                 v_flex()
-                                    .mt_12()
-                                    .gap_8()
+                                    .mt_10()
+                                    .gap_6()
                                     .child(first_section.render(
                                         Default::default(),
                                         &self.focus_handle,
@@ -213,10 +216,9 @@ impl Render for WelcomePage {
                                             // We call this a hack
                                             .rounded_b_xs()
                                             .border_t_1()
-                                            .border_color(DividerColor::Border.hsla(cx))
+                                            .border_color(cx.theme().colors().border.opacity(0.6))
                                             .border_dashed()
                                             .child(
-                                                div().child(
                                                     Button::new("welcome-exit", "Return to Setup")
                                                         .full_width()
                                                         .label_size(LabelSize::XSmall)
@@ -278,7 +280,6 @@ impl Render for WelcomePage {
                                                             });
                                                         }),
                                                 ),
-                                            ),
                                     ),
                             ),
                     ),
