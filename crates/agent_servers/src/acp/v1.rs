@@ -1,4 +1,5 @@
 use agent_client_protocol::{self as acp, Agent as _};
+use anyhow::anyhow;
 use collections::HashMap;
 use futures::channel::oneshot;
 use project::Project;
@@ -105,11 +106,16 @@ impl AgentConnection for AcpConnection {
                     mcp_servers: vec![],
                     cwd,
                 })
-                .await?;
+                .await
+                .map_err(|err| {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                        anyhow!(AuthRequired)
+                    } else {
+                        anyhow!(err)
+                    }
+                })?;
 
-            let Some(session_id) = response.session_id else {
-                anyhow::bail!(AuthRequired);
-            };
+            let session_id = response.session_id;
 
             let thread = cx.new(|cx| {
                 AcpThread::new(
@@ -155,11 +161,11 @@ impl AgentConnection for AcpConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         let conn = self.connection.clone();
-        let params = acp::CancelledNotification {
+        let params = acp::CancelNotification {
             session_id: session_id.clone(),
         };
         cx.foreground_executor()
-            .spawn(async move { conn.cancelled(params).await })
+            .spawn(async move { conn.cancel(params).await })
             .detach();
     }
 }

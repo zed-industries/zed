@@ -1233,7 +1233,7 @@ impl AcpThreadView {
             })
             .children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.label.clone())
+                Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| match option.kind {
                         acp::PermissionOptionKind::AllowOnce => {
                             this.icon(IconName::Check).icon_color(Color::Success)
@@ -2465,7 +2465,7 @@ impl Render for AcpThreadView {
                         connection.auth_methods().into_iter().map(|method| {
                             Button::new(
                                 SharedString::from(method.id.0.clone()),
-                                method.label.clone(),
+                                method.name.clone(),
                             )
                             .on_click({
                                 let method_id = method.id.clone();
@@ -2773,7 +2773,7 @@ mod tests {
         let tool_call_id = acp::ToolCallId("1".into());
         let tool_call = acp::ToolCall {
             id: tool_call_id.clone(),
-            label: "Label".into(),
+            title: "Label".into(),
             kind: acp::ToolKind::Edit,
             status: acp::ToolCallStatus::Pending,
             content: vec!["hi".into()],
@@ -2785,7 +2785,7 @@ mod tests {
                 tool_call_id,
                 vec![acp::PermissionOption {
                     id: acp::PermissionOptionId("1".into()),
-                    label: "Allow".into(),
+                    name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
                 }],
             )]));
