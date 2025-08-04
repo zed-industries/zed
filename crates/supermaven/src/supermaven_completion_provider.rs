@@ -115,6 +115,10 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         true
     }
 
+    fn supports_jump_to_edit() -> bool {
+        false
+    }
+
     fn is_enabled(&self, _buffer: &Entity<Buffer>, _cursor_position: Anchor, cx: &App) -> bool {
         self.supermaven.read(cx).is_enabled()
     }

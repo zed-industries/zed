@@ -7756,8 +7756,15 @@ impl Editor {
         } else {
             None
         };
-        let is_move =
-            move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode;
+        // Check if the current provider supports jump functionality
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
+        let is_move = supports_jump
+            && (move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode);
         let completion = if is_move {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
@@ -8791,8 +8798,12 @@ impl Editor {
             return None;
         }
 
-        let highlighted_edits =
-            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview.as_ref()?, false, cx);
+        let highlighted_edits = if let Some(edit_preview) = edit_preview.as_ref() {
+            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview, false, cx)
+        } else {
+            // Fallback for providers without edit_preview
+            crate::edit_prediction_fallback_text(edits, cx)
+        };
 
         let styled_text = highlighted_edits.to_styled_text(&style.text);
         let line_count = highlighted_edits.text.lines().count();
@@ -9061,7 +9072,7 @@ impl Editor {
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
     fn get_prediction_provider_icon_name(
-        provider: Option<&RegisteredInlineCompletionProvider>,
+        provider: &Option<RegisteredEditPredictionProvider>,
     ) -> IconName {
         match provider {
             Some(provider) => match provider.provider.name() {
@@ -9084,6 +9095,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
+        let provider_icon = Self::get_prediction_provider_icon_name(&self.edit_prediction_provider);
 
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
@@ -9110,7 +9122,7 @@ impl Editor {
                         h_flex()
                             .flex_1()
                             .gap_2()
-                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Icon::new(provider_icon))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
                             .child(
@@ -9126,12 +9138,8 @@ impl Editor {
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
-        fn pending_completion_container() -> Div {
-            h_flex()
-                .h_full()
-                .flex_1()
-                .gap_2()
-                .child(Icon::new(IconName::ZedPredict))
+        fn pending_completion_container(icon: IconName) -> Div {
+            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
         }
 
         let completion = match &self.active_edit_prediction {
@@ -9161,7 +9169,7 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                EditPrediction::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
                             }))
                             .child(
                                 h_flex()
@@ -9228,15 +9236,15 @@ impl Editor {
                     cx,
                 )?,
 
-                None => {
-                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
-                }
+                None => pending_completion_container(provider_icon)
+                    .child(Label::new("...").size(LabelSize::Small)),
             },
 
-            None => pending_completion_container().child(Label::new("No Prediction")),
+            None => pending_completion_container(provider_icon)
+                .child(Label::new("...").size(LabelSize::Small)),
         };
 
-        let completion = if is_refreshing {
+        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
             completion
                 .with_animation(
                     "loading-completion",
@@ -9336,23 +9344,37 @@ impl Editor {
                 .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
         }
 
+        // Check if the current provider supports jump functionality
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
         match &completion.completion {
             EditPrediction::Move {
                 target, snapshot, ..
-            } => Some(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .flex_1()
-                    .child(
-                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                            Icon::new(IconName::ZedPredictDown)
-                        } else {
-                            Icon::new(IconName::ZedPredictUp)
-                        },
-                    )
-                    .child(Label::new("Jump to Edit")),
-            ),
+            } => {
+                // Disable jump functionality for providers that don't support it
+                if !supports_jump {
+                    return None;
+                }
+
+                Some(
+                    h_flex()
+                        .px_2()
+                        .gap_2()
+                        .flex_1()
+                        .child(
+                            if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                Icon::new(IconName::ZedPredictDown)
+                            } else {
+                                Icon::new(IconName::ZedPredictUp)
+                            },
+                        )
+                        .child(Label::new("Jump to Edit")),
+                )
+            }
 
             EditPrediction::Edit {
                 edits,
@@ -9360,17 +9382,16 @@ impl Editor {
                 snapshot,
                 display_mode: _,
             } => {
-                const MAX_CHARS: usize = 50;
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let (highlighted_edits, has_more_lines) = crate::edit_prediction_edit_text(
-                    &snapshot,
-                    &edits,
-                    edit_preview.as_ref()?,
-                    true,
-                    cx,
-                )
-                .first_line_preview();
+                let (highlighted_edits, has_more_lines) =
+                    if let Some(edit_preview) = edit_preview.as_ref() {
+                        crate::edit_prediction_edit_text(&snapshot, &edits, edit_preview, true, cx)
+                            .first_line_preview()
+                    } else {
+                        // Fallback for providers without edit_preview (like Copilot/Supermaven)
+                        crate::edit_prediction_fallback_text(&edits, cx).first_line_preview()
+                    };
 
                 let styled_text = gpui::StyledText::new(highlighted_edits.text)
                     .with_default_highlights(&style.text, highlighted_edits.highlights);
@@ -9381,13 +9402,13 @@ impl Editor {
                     .child(styled_text)
                     .when(has_more_lines, |parent| parent.child("…"));
 
-                let left = if first_edit_row != cursor_point.row {
+                // For providers that don't support jump, always show the provider icon instead of relative jump
+                let left = if supports_jump && first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    let icon_name = Editor::get_prediction_provider_icon_name(
-                        self.edit_prediction_provider.as_ref(),
-                    );
+                    let icon_name =
+                        Editor::get_prediction_provider_icon_name(&self.edit_prediction_provider);
                     Icon::new(icon_name).into_any_element()
                 };
 
@@ -23202,6 +23223,33 @@ fn edit_prediction_edit_text(
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
+}
+
+fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) -> HighlightedText {
+    // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
+    // Just show the raw edit text with basic styling
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+
+    let insertion_highlight_style = HighlightStyle {
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    };
+
+    for (_, edit_text) in edits {
+        let start_offset = text.len();
+        text.push_str(edit_text);
+        let end_offset = text.len();
+
+        if start_offset < end_offset {
+            highlights.push((start_offset..end_offset, insertion_highlight_style));
+        }
+    }
+
+    HighlightedText {
+        text: text.into(),
+        highlights,
+    }
 }
 
 pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {

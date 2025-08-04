@@ -439,3 +439,83 @@ pub struct SupermavenCompletion {
     pub id: SupermavenCompletionStateId,
     pub updates: watch::Receiver<()>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collections::BTreeMap;
+    use gpui::TestAppContext;
+    use language::Buffer;
+
+    #[gpui::test]
+    async fn test_find_relevant_completion_no_first_letter_skip(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("hello world", cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        // Create a completion state where the user has typed "h" and the completion is "hello"
+        let mut states = BTreeMap::new();
+        let state_id = SupermavenCompletionStateId(1);
+        let (updates_tx, _) = watch::channel();
+
+        states.insert(
+            state_id,
+            SupermavenCompletionState {
+                buffer_id: buffer.entity_id(),
+                prefix_anchor: buffer_snapshot.anchor_before(0), // Start of buffer
+                prefix_offset: 0,
+                text: "hello".to_string(),
+                dedent: String::new(),
+                updates_tx,
+            },
+        );
+
+        // Simulate cursor at position 1 (after typing "h")
+        let cursor_position = buffer_snapshot.anchor_after(1);
+
+        let result = find_relevant_completion(
+            &states,
+            buffer.entity_id(),
+            &buffer_snapshot,
+            cursor_position,
+        );
+
+        // The result should be "ello" (completion text minus the "h" that was already typed)
+        assert_eq!(result, Some("ello"));
+    }
+
+    #[gpui::test]
+    async fn test_find_relevant_completion_with_multiple_chars(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("hello world", cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        // Create a completion state where the user has typed "hel" and the completion is "hello"
+        let mut states = BTreeMap::new();
+        let state_id = SupermavenCompletionStateId(1);
+        let (updates_tx, _) = watch::channel();
+
+        states.insert(
+            state_id,
+            SupermavenCompletionState {
+                buffer_id: buffer.entity_id(),
+                prefix_anchor: buffer_snapshot.anchor_before(0), // Start of buffer
+                prefix_offset: 0,
+                text: "hello".to_string(),
+                dedent: String::new(),
+                updates_tx,
+            },
+        );
+
+        // Simulate cursor at position 3 (after typing "hel")
+        let cursor_position = buffer_snapshot.anchor_after(3);
+
+        let result = find_relevant_completion(
+            &states,
+            buffer.entity_id(),
+            &buffer_snapshot,
+            cursor_position,
+        );
+
+        // The result should be "lo" (completion text minus the "hel" that was already typed)
+        assert_eq!(result, Some("lo"));
+    }
+}

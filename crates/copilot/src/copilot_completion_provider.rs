@@ -65,6 +65,10 @@ impl EditPredictionProvider for CopilotCompletionProvider {
         true
     }
 
+    fn supports_jump_to_edit() -> bool {
+        false
+    }
+
     fn is_refreshing(&self) -> bool {
         self.pending_refresh.is_some()
     }
