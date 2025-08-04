@@ -397,7 +397,7 @@ impl Onboarding {
                                 if ai_setup_page {
                                     this.child(
                                         ButtonLike::new("start_building")
-                                            .style(ButtonStyle::Filled)
+                                            .style(ButtonStyle::Outlined)
                                             .size(ButtonSize::Medium)
                                             .child(
                                                 h_flex()
