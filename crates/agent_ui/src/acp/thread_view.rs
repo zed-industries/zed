@@ -424,10 +424,13 @@ impl AcpThreadView {
         let mention_set = self.mention_set.clone();
 
         self.set_editor_is_expanded(false, cx);
+
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
             editor.remove_creases(mention_set.lock().drain(), cx)
         });
+
+        self.scroll_to_bottom(cx);
 
         self.message_history.borrow_mut().push(chunks);
     }
@@ -2022,15 +2025,15 @@ impl AcpThreadView {
                 .icon_color(Color::Accent)
                 .style(ButtonStyle::Filled)
                 .disabled(self.thread().is_none() || is_editor_empty)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.chat(&Chat, window, cx);
-                }))
                 .when(!is_editor_empty, |button| {
                     button.tooltip(move |window, cx| Tooltip::for_action("Send", &Chat, window, cx))
                 })
                 .when(is_editor_empty, |button| {
                     button.tooltip(Tooltip::text("Type a message to submit"))
                 })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.chat(&Chat, window, cx);
+                }))
                 .into_any_element()
         } else {
             IconButton::new("stop-generation", IconName::StopFilled)
@@ -2243,6 +2246,14 @@ impl AcpThreadView {
     fn scroll_to_top(&mut self, cx: &mut Context<Self>) {
         self.list_state.scroll_to(ListOffset::default());
         cx.notify();
+    }
+
+    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            let entry_count = thread.read(cx).entries().len();
+            self.list_state.reset(entry_count);
+            cx.notify();
+        }
     }
 
     fn notify_with_sound(
