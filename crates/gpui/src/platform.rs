@@ -36,12 +36,7 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LineLayout, Pixels, PlatformInput,
-    Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene,
-    ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window,
-    WindowControlArea, hash, point, px, size,
+    hash, point, px, size, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LayoutDirection, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, WindowControlArea, DEFAULT_WINDOW_SIZE
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -1101,6 +1096,9 @@ pub struct WindowOptions {
     /// Whether to use client or server side decorations. Wayland only
     /// Note that this may be ignored.
     pub window_decorations: Option<WindowDecorations>,
+
+    /// The layout direction
+    pub layout_direction: LayoutDirection,
 }
 
 /// The variables that can be configured when creating a new window
@@ -1140,6 +1138,8 @@ pub(crate) struct WindowParams {
     pub display_id: Option<DisplayId>,
 
     pub window_min_size: Option<Size<Pixels>>,
+
+    pub layout_direction: LayoutDirection,
 }
 
 /// Represents the status of how a window should be opened.
@@ -1190,6 +1190,7 @@ impl Default for WindowOptions {
             app_id: None,
             window_min_size: None,
             window_decorations: None,
+            layout_direction: LayoutDirection::LeftToRight,
         }
     }
 }
