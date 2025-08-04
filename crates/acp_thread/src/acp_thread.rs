@@ -1695,6 +1695,7 @@ mod tests {
             }
         }
 
+        #[expect(unused)]
         fn with_auth_methods(mut self, auth_methods: Vec<acp::AuthMethod>) -> Self {
             self.auth_methods = auth_methods;
             self
