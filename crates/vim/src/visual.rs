@@ -238,7 +238,6 @@ impl Vim {
                             return;
                         };
 
-                        log::info!("Motion new head:{:?}", new_head);
                         selection.set_head(new_head, goal);
 
                         // ensure the current character is included in the selection.
@@ -262,11 +261,6 @@ impl Vim {
                         } else if !was_reversed && selection.reversed {
                             selection.end = movement::right(map, selection.end);
                         }
-                        log::info!(
-                            "Selection: tail={:?} head={:?}",
-                            selection.start,
-                            selection.end
-                        );
                     })
                 });
             }
