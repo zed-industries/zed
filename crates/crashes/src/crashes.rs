@@ -16,15 +16,19 @@ use std::{
     time::Duration,
 };
 
+// set once the crash handler has initialized and the client has connected to it
 pub static CRASH_HANDLER: AtomicBool = AtomicBool::new(false);
+// set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
-pub static SESSION_ID: OnceLock<String> = OnceLock::new();
 
-// meant to be detached to lazily set up a crash handler, the CRASH_HANDLER atomic bool will
-// be set to true once initialization is complete
 pub async fn init(id: String) {
     let exe = env::current_exe().expect("unable to find ourselves");
     let zed_pid = process::id();
+    // TODO: we should be able to get away with using 1 crash-handler process per machine,
+    // but for now we append the PID of the current process which makes it unique per remote
+    // server or interactive zed instance. This solves an issue where occasionally the socket
+    // used by the crash handler isn't destroyed correctly which causes it to stay on the file
+    // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
     #[allow(unused)]
     let server_pid = Command::new(exe)
