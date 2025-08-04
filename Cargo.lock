@@ -7,10 +7,8 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
- "async-pipe",
  "buffer_diff",
  "editor",
  "env_logger 0.11.8",
@@ -158,6 +156,7 @@ version = "0.1.0"
 dependencies = [
  "acp_thread",
  "agent-client-protocol",
+ "agentic-coding-protocol",
  "anyhow",
  "collections",
  "context_server",

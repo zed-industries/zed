@@ -9,7 +9,7 @@ use std::{cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
-use crate::{AcpThread, AgentConnection, AuthRequired};
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
 pub struct OldAcpClientDelegate {
@@ -442,3 +442,6 @@ impl AgentConnection for OldAcpAgentConnection {
             .detach_and_log_err(cx)
     }
 }
+
+#[cfg(test)]
+mod tests {}

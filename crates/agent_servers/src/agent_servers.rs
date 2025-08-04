@@ -1,6 +1,7 @@
 mod acp_connection;
 mod claude;
 mod gemini;
+mod old_acp_support;
 mod settings;
 
 #[cfg(test)]
