@@ -526,13 +526,14 @@ impl BidiDirection {
         }
     }
 
+    /// Sets the flex direction on a TextAlign, given the bidi direction
     pub fn apply_text_align_direction(self, mut text_align: TextAlign) -> TextAlign {
         match self {
             BidiDirection::LeftToRight => text_align,
             BidiDirection::RightToLeft => match text_align {
-                TextAlign::Left => TextAlign::Left,
+                TextAlign::Left => TextAlign::Right,
                 TextAlign::Center => TextAlign::Center,
-                TextAlign::Right => TextAlign::Right,
+                TextAlign::Right => TextAlign::Left,
             },
         }
     }
