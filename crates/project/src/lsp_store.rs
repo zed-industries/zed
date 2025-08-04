@@ -171,10 +171,6 @@ pub struct LocalLspStore {
     environment: Entity<ProjectEnvironment>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
-    // /proj_a/pyproject.toml
-    // /proj_b/pyproject.toml
-    // - worktree_id
-    // HashMap<(WorktreeId, LanguageServerName, Arc<LspSettings>, Option<Toolchain>), {id: language_server_id, project_roots: HashSet<PathBuf>}
     language_server_ids: HashMap<LanguageServerSeed, UnifiedLanguageServer>,
     yarn: Entity<YarnPathStore>,
     pub language_servers: HashMap<LanguageServerId, LanguageServerState>,
@@ -900,18 +896,15 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::ApplyWorkspaceEdit, _, _>({
-                let adapter = adapter.clone();
                 let this = this.clone();
                 move |params, cx| {
                     let mut cx = cx.clone();
                     let this = this.clone();
-                    let adapter = adapter.clone();
                     async move {
                         LocalLspStore::on_lsp_workspace_edit(
                             this.clone(),
                             params,
                             server_id,
-                            adapter.clone(),
                             &mut cx,
                         )
                         .await
@@ -1284,7 +1277,7 @@ impl LocalLspStore {
                         .collect::<Vec<_>>()
                 })
             })?;
-            for (lsp_adapter, language_server) in adapters_and_servers.iter() {
+            for (_, language_server) in adapters_and_servers.iter() {
                 let actions = Self::get_server_code_actions_from_action_kinds(
                     &lsp_store,
                     language_server.server_id(),
@@ -1296,7 +1289,6 @@ impl LocalLspStore {
                 Self::execute_code_actions_on_server(
                     &lsp_store,
                     language_server,
-                    lsp_adapter,
                     actions,
                     push_to_history,
                     &mut project_transaction,
@@ -2425,6 +2417,31 @@ impl LocalLspStore {
         Ok(())
     }
 
+    fn register_language_server_for_invisible_worktree(
+        &mut self,
+        worktree: &Entity<Worktree>,
+        language_server_id: LanguageServerId,
+        cx: &mut App,
+    ) {
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        debug_assert!(!worktree.is_visible());
+        let Some(mut origin_seed) = self
+            .language_server_ids
+            .iter()
+            .find_map(|(seed, state)| (state.id == language_server_id).then(|| seed.clone()))
+        else {
+            return;
+        };
+        origin_seed.worktree_id = worktree_id;
+        self.language_server_ids
+            .entry(origin_seed)
+            .or_insert_with(|| UnifiedLanguageServer {
+                id: language_server_id,
+                project_roots: Default::default(),
+            });
+    }
+
     fn register_buffer_with_language_servers(
         &mut self,
         buffer_handle: &Entity<Buffer>,
@@ -2770,7 +2787,7 @@ impl LocalLspStore {
     pub async fn execute_code_actions_on_server(
         lsp_store: &WeakEntity<LspStore>,
         language_server: &Arc<LanguageServer>,
-        lsp_adapter: &Arc<CachedLspAdapter>,
+
         actions: Vec<CodeAction>,
         push_to_history: bool,
         project_transaction: &mut ProjectTransaction,
@@ -2790,7 +2807,6 @@ impl LocalLspStore {
                     lsp_store.upgrade().context("project dropped")?,
                     edit.clone(),
                     push_to_history,
-                    lsp_adapter.clone(),
                     language_server.clone(),
                     cx,
                 )
@@ -2971,7 +2987,6 @@ impl LocalLspStore {
         this: Entity<LspStore>,
         edit: lsp::WorkspaceEdit,
         push_to_history: bool,
-        lsp_adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         cx: &mut AsyncApp,
     ) -> Result<ProjectTransaction> {
@@ -3072,7 +3087,6 @@ impl LocalLspStore {
                             this.open_local_buffer_via_lsp(
                                 op.text_document.uri.clone(),
                                 language_server.server_id(),
-                                lsp_adapter.name.clone(),
                                 cx,
                             )
                         })?
@@ -3197,7 +3211,6 @@ impl LocalLspStore {
         this: WeakEntity<LspStore>,
         params: lsp::ApplyWorkspaceEditParams,
         server_id: LanguageServerId,
-        adapter: Arc<CachedLspAdapter>,
         cx: &mut AsyncApp,
     ) -> Result<lsp::ApplyWorkspaceEditResponse> {
         let this = this.upgrade().context("project project closed")?;
@@ -3208,7 +3221,6 @@ impl LocalLspStore {
             this.clone(),
             params.edit,
             true,
-            adapter.clone(),
             language_server.clone(),
             cx,
         )
@@ -4829,7 +4841,7 @@ impl LspStore {
                     .await
             })
         } else if self.mode.is_local() {
-            let Some((lsp_adapter, lang_server)) = buffer_handle.update(cx, |buffer, cx| {
+            let Some((_, lang_server)) = buffer_handle.update(cx, |buffer, cx| {
                 self.language_server_for_local_buffer(buffer, action.server_id, cx)
                     .map(|(adapter, server)| (adapter.clone(), server.clone()))
             }) else {
@@ -4845,7 +4857,7 @@ impl LspStore {
                             this.upgrade().context("no app present")?,
                             edit.clone(),
                             push_to_history,
-                            lsp_adapter.clone(),
+
                             lang_server.clone(),
                             cx,
                         )
@@ -7640,36 +7652,6 @@ impl LspStore {
             .collect();
     }
 
-    fn register_local_language_server(
-        &mut self,
-        worktree: Entity<Worktree>,
-        language_server_name: LanguageServerName,
-        language_server_id: LanguageServerId,
-        cx: &mut App,
-    ) {
-        let Some(local) = self.as_local_mut() else {
-            return;
-        };
-
-        let worktree = worktree.read(cx);
-        let worktree_id = worktree.id();
-        debug_assert!(!worktree.is_visible());
-
-        let seed = LanguageServerSeed {
-            worktree_id,
-            name: language_server_name,
-            workspace_configuration: todo!(),
-            settings: todo!(),
-        };
-        local
-            .language_server_ids
-            .entry(seed)
-            .or_insert_with(|| UnifiedLanguageServer {
-                id: language_server_id,
-                project_roots: Default::default(),
-            });
-    }
-
     #[cfg(test)]
     pub fn update_diagnostic_entries(
         &mut self,
@@ -7879,12 +7861,7 @@ impl LspStore {
                 return Task::ready(Err(anyhow!("invalid symbol path")));
             };
 
-            self.open_local_buffer_via_lsp(
-                symbol_uri,
-                symbol.source_language_server_id,
-                symbol.language_server_name.clone(),
-                cx,
-            )
+            self.open_local_buffer_via_lsp(symbol_uri, symbol.source_language_server_id, cx)
         } else {
             Task::ready(Err(anyhow!("no upstream client or local store")))
         }
@@ -7894,7 +7871,6 @@ impl LspStore {
         &mut self,
         mut abs_path: lsp::Url,
         language_server_id: LanguageServerId,
-        language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |lsp_store, cx| {
@@ -7945,12 +7921,13 @@ impl LspStore {
                 if worktree.read_with(cx, |worktree, _| worktree.is_local())? {
                     lsp_store
                         .update(cx, |lsp_store, cx| {
-                            lsp_store.register_local_language_server(
-                                worktree.clone(),
-                                language_server_name,
-                                language_server_id,
-                                cx,
-                            )
+                            if let Some(local) = lsp_store.as_local_mut() {
+                                local.register_language_server_for_invisible_worktree(
+                                    &worktree,
+                                    language_server_id,
+                                    cx,
+                                )
+                            }
                         })
                         .ok();
                 }
@@ -9120,11 +9097,7 @@ impl LspStore {
                     else {
                         continue;
                     };
-                    let Some(adapter) =
-                        this.language_server_adapter_for_id(language_server.server_id())
-                    else {
-                        continue;
-                    };
+
                     if filter.should_send_will_rename(&old_uri, is_dir) {
                         let apply_edit = cx.spawn({
                             let old_uri = old_uri.clone();
@@ -9145,7 +9118,6 @@ impl LspStore {
                                     this.upgrade()?,
                                     edit,
                                     false,
-                                    adapter.clone(),
                                     language_server.clone(),
                                     cx,
                                 )

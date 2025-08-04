@@ -173,10 +173,6 @@ impl LanguageServerTree {
             })
     }
 
-    fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
-        self.languages.adapter_for_name(name)
-    }
-
     fn adapters_for_language(
         &self,
         project_path: &ProjectPath,
@@ -262,9 +258,15 @@ impl LanguageServerTree {
         adapters_with_settings
     }
 
-    // Rebasing a tree:
-    // - Clears it out
-    // - Provides you with the indirect access to the old tree while you're reinitializing a new one (by querying it).
+    /// Server Tree is built up incrementally via queries for distinct paths of the worktree.
+    /// Results of these queries have to be invalidated when data used to build the tree changes.
+    ///
+    /// The environment of a server tree is a set of all user settings.
+    /// Rebasing a tree means invalidating it and building up a new one while reusing the old tree where applicable.
+    /// We want to reuse the old tree in order to preserve as many of the running language servers as possible.
+    /// E.g. if the user disables one of their language servers for Python, we don't want to shut down any language servers unaffected by this settings change.
+    ///
+    /// Thus, [`ServerTreeRebase`] mimicks the interface of a [`ServerTree`], except that it tries to find a matching language server in the old tree before handing out an uninitialized node.
     pub(crate) fn rebase(&mut self) -> ServerTreeRebase<'_> {
         ServerTreeRebase::new(self)
     }

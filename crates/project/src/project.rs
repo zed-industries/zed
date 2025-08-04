@@ -3537,16 +3537,10 @@ impl Project {
         &mut self,
         abs_path: lsp::Url,
         language_server_id: LanguageServerId,
-        language_server_name: LanguageServerName,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.open_local_buffer_via_lsp(
-                abs_path,
-                language_server_id,
-                language_server_name,
-                cx,
-            )
+            lsp_store.open_local_buffer_via_lsp(abs_path, language_server_id, cx)
         })
     }
 
