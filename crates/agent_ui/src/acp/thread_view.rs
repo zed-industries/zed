@@ -2453,6 +2453,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
+            .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { connection } => v_flex()
                     .p_2()
