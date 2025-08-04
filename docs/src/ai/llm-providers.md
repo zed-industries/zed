@@ -458,13 +458,11 @@ Alternatively, you can also add it via the `settings.json`:
   "language_models": {
     "openai": {
       "api_url": "https://api.together.xyz/v1",
-      "api_key": "YOUR_TOGETHER_AI_API_KEY",
       "available_models": [
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768,
-          "supports_tools": true
+          "max_tokens": 32768
         }
       ]
     }
