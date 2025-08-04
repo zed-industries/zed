@@ -411,7 +411,9 @@ impl MacWindowState {
                     match self.layout_direction {
                         LayoutDirection::LeftToRight => traffic_light_position.x,
                         LayoutDirection::RightToLeft => {
-                            self.window_bounds().get_bounds().size.width - traffic_light_position.x
+                            self.window_bounds().get_bounds().size.width
+                                - traffic_light_position.x
+                                - px(close_button_frame.size.width as f32)
                         }
                     },
                     titlebar_height
