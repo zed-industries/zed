@@ -178,7 +178,7 @@ pub enum KeyBindingContextPredicate {
     NotEqual(SharedString, SharedString),
     /// A predicate that will match a given predicate appearing below another predicate.
     /// in the element tree
-    Child(
+    Descendant(
         Box<KeyBindingContextPredicate>,
         Box<KeyBindingContextPredicate>,
     ),
@@ -203,7 +203,7 @@ impl fmt::Display for KeyBindingContextPredicate {
             Self::Equal(left, right) => write!(f, "{} == {}", left, right),
             Self::NotEqual(left, right) => write!(f, "{} != {}", left, right),
             Self::Not(pred) => write!(f, "!{}", pred),
-            Self::Child(parent, child) => write!(f, "{} > {}", parent, child),
+            Self::Descendant(parent, child) => write!(f, "{} > {}", parent, child),
             Self::And(left, right) => write!(f, "({} && {})", left, right),
             Self::Or(left, right) => write!(f, "({} || {})", left, right),
         }
@@ -249,8 +249,25 @@ impl KeyBindingContextPredicate {
         }
     }
 
+    /// Find the deepest depth at which the predicate matches.
+    pub fn depth_of(&self, contexts: &[KeyContext]) -> Option<usize> {
+        for depth in (0..=contexts.len()).rev() {
+            let context_slice = &contexts[0..depth];
+            if self.eval_inner(context_slice, contexts) {
+                return Some(depth);
+            }
+        }
+        None
+    }
+
     /// Eval a predicate against a set of contexts, arranged from lowest to highest.
-    pub fn eval(&self, contexts: &[KeyContext]) -> bool {
+    #[allow(unused)]
+    pub(crate) fn eval(&self, contexts: &[KeyContext]) -> bool {
+        self.eval_inner(contexts, contexts)
+    }
+
+    /// Eval a predicate against a set of contexts, arranged from lowest to highest.
+    pub fn eval_inner(&self, contexts: &[KeyContext], all_contexts: &[KeyContext]) -> bool {
         let Some(context) = contexts.last() else {
             return false;
         };
@@ -264,12 +281,38 @@ impl KeyBindingContextPredicate {
                 .get(left)
                 .map(|value| value != right)
                 .unwrap_or(true),
-            Self::Not(pred) => !pred.eval(contexts),
-            Self::Child(parent, child) => {
-                parent.eval(&contexts[..contexts.len() - 1]) && child.eval(contexts)
+            Self::Not(pred) => {
+                for i in 0..all_contexts.len() {
+                    if pred.eval_inner(&all_contexts[..=i], all_contexts) {
+                        return false;
+                    }
+                }
+                return true;
             }
-            Self::And(left, right) => left.eval(contexts) && right.eval(contexts),
-            Self::Or(left, right) => left.eval(contexts) || right.eval(contexts),
+            // Workspace > Pane > Editor
+            //
+            // Pane > (Pane > Editor) // should match?
+            // (Pane > Pane) > Editor // should not match?
+            // Pane > !Workspace <-- should match?
+            // !Workspace        <-- shouldn't match?
+            Self::Descendant(parent, child) => {
+                for i in 0..contexts.len() - 1 {
+                    // [Workspace >  Pane], [Editor]
+                    if parent.eval_inner(&contexts[..=i], all_contexts) {
+                        if !child.eval_inner(&contexts[i + 1..], &contexts[i + 1..]) {
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+            Self::And(left, right) => {
+                left.eval_inner(contexts, all_contexts) && right.eval_inner(contexts, all_contexts)
+            }
+            Self::Or(left, right) => {
+                left.eval_inner(contexts, all_contexts) || right.eval_inner(contexts, all_contexts)
+            }
         }
     }
 
@@ -285,7 +328,7 @@ impl KeyBindingContextPredicate {
         }
 
         match other {
-            KeyBindingContextPredicate::Child(_, child) => self.is_superset(child),
+            KeyBindingContextPredicate::Descendant(_, child) => self.is_superset(child),
             KeyBindingContextPredicate::And(left, right) => {
                 self.is_superset(left) || self.is_superset(right)
             }
@@ -375,7 +418,7 @@ impl KeyBindingContextPredicate {
     }
 
     fn new_child(self, other: Self) -> Result<Self> {
-        Ok(Self::Child(Box::new(self), Box::new(other)))
+        Ok(Self::Descendant(Box::new(self), Box::new(other)))
     }
 
     fn new_eq(self, other: Self) -> Result<Self> {
@@ -597,5 +640,123 @@ mod tests {
             let b = KeyBindingContextPredicate::parse(b).unwrap();
             assert_eq!(a.is_superset(&b), result, "({a:?}).is_superset({b:?})");
         }
+    }
+
+    #[test]
+    fn test_child_operator() {
+        let predicate = KeyBindingContextPredicate::parse("parent > child").unwrap();
+
+        let parent_context = KeyContext::try_from("parent").unwrap();
+        let child_context = KeyContext::try_from("child").unwrap();
+
+        let contexts = vec![parent_context.clone(), child_context.clone()];
+        assert!(predicate.eval(&contexts));
+
+        let grandparent_context = KeyContext::try_from("grandparent").unwrap();
+
+        let contexts = vec![
+            grandparent_context,
+            parent_context.clone(),
+            child_context.clone(),
+        ];
+        assert!(predicate.eval(&contexts));
+
+        let other_context = KeyContext::try_from("other").unwrap();
+
+        let contexts = vec![other_context.clone(), child_context.clone()];
+        assert!(!predicate.eval(&contexts));
+
+        let contexts = vec![
+            parent_context.clone(),
+            other_context.clone(),
+            child_context.clone(),
+        ];
+        assert!(predicate.eval(&contexts));
+
+        assert!(!predicate.eval(&[]));
+        assert!(!predicate.eval(&[child_context.clone()]));
+        assert!(!predicate.eval(&[parent_context]));
+
+        let zany_predicate = KeyBindingContextPredicate::parse("child > child").unwrap();
+        assert!(!zany_predicate.eval(&[child_context.clone()]));
+        assert!(zany_predicate.eval(&[child_context.clone(), child_context.clone()]));
+    }
+
+    #[test]
+    fn test_not_operator() {
+        let not_predicate = KeyBindingContextPredicate::parse("!editor").unwrap();
+        let editor_context = KeyContext::try_from("editor").unwrap();
+        let workspace_context = KeyContext::try_from("workspace").unwrap();
+        let parent_context = KeyContext::try_from("parent").unwrap();
+        let child_context = KeyContext::try_from("child").unwrap();
+
+        assert!(not_predicate.eval(&[workspace_context.clone()]));
+        assert!(!not_predicate.eval(&[editor_context.clone()]));
+        assert!(!not_predicate.eval(&[editor_context.clone(), workspace_context.clone()]));
+        assert!(!not_predicate.eval(&[workspace_context.clone(), editor_context.clone()]));
+
+        let complex_not = KeyBindingContextPredicate::parse("!editor && workspace").unwrap();
+        assert!(complex_not.eval(&[workspace_context.clone()]));
+        assert!(!complex_not.eval(&[editor_context.clone(), workspace_context.clone()]));
+
+        let not_mode_predicate = KeyBindingContextPredicate::parse("!(mode == full)").unwrap();
+        let mut mode_context = KeyContext::default();
+        mode_context.set("mode", "full");
+        assert!(!not_mode_predicate.eval(&[mode_context.clone()]));
+
+        let mut other_mode_context = KeyContext::default();
+        other_mode_context.set("mode", "partial");
+        assert!(not_mode_predicate.eval(&[other_mode_context]));
+
+        let not_descendant = KeyBindingContextPredicate::parse("!(parent > child)").unwrap();
+        assert!(not_descendant.eval(&[parent_context.clone()]));
+        assert!(not_descendant.eval(&[child_context.clone()]));
+        assert!(!not_descendant.eval(&[parent_context.clone(), child_context.clone()]));
+
+        let not_descendant = KeyBindingContextPredicate::parse("parent > !child").unwrap();
+        assert!(!not_descendant.eval(&[parent_context.clone()]));
+        assert!(!not_descendant.eval(&[child_context.clone()]));
+        assert!(!not_descendant.eval(&[parent_context.clone(), child_context.clone()]));
+
+        let double_not = KeyBindingContextPredicate::parse("!!editor").unwrap();
+        assert!(double_not.eval(&[editor_context.clone()]));
+        assert!(!double_not.eval(&[workspace_context.clone()]));
+
+        // Test complex descendant cases
+        let workspace_context = KeyContext::try_from("Workspace").unwrap();
+        let pane_context = KeyContext::try_from("Pane").unwrap();
+        let editor_context = KeyContext::try_from("Editor").unwrap();
+
+        // Workspace > Pane > Editor
+        let workspace_pane_editor = vec![
+            workspace_context.clone(),
+            pane_context.clone(),
+            editor_context.clone(),
+        ];
+
+        // Pane > (Pane > Editor) - should not match
+        let pane_pane_editor = KeyBindingContextPredicate::parse("Pane > (Pane > Editor)").unwrap();
+        assert!(!pane_pane_editor.eval(&workspace_pane_editor));
+
+        let workspace_pane_editor_predicate =
+            KeyBindingContextPredicate::parse("Workspace > Pane > Editor").unwrap();
+        assert!(workspace_pane_editor_predicate.eval(&workspace_pane_editor));
+
+        // (Pane > Pane) > Editor - should not match
+        let pane_pane_then_editor =
+            KeyBindingContextPredicate::parse("(Pane > Pane) > Editor").unwrap();
+        assert!(!pane_pane_then_editor.eval(&workspace_pane_editor));
+
+        // Pane > !Workspace - should match
+        let pane_not_workspace = KeyBindingContextPredicate::parse("Pane > !Workspace").unwrap();
+        assert!(pane_not_workspace.eval(&[pane_context.clone(), editor_context.clone()]));
+        assert!(!pane_not_workspace.eval(&[pane_context.clone(), workspace_context.clone()]));
+
+        // !Workspace - shouldn't match when Workspace is in the context
+        let not_workspace = KeyBindingContextPredicate::parse("!Workspace").unwrap();
+        assert!(!not_workspace.eval(&[workspace_context.clone()]));
+        assert!(not_workspace.eval(&[pane_context.clone()]));
+        assert!(not_workspace.eval(&[editor_context.clone()]));
+        assert!(!not_workspace.eval(&workspace_pane_editor));
     }
 }

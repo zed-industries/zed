@@ -97,6 +97,10 @@ impl SingleLineInput {
     pub fn editor(&self) -> &Entity<Editor> {
         &self.editor
     }
+
+    pub fn text(&self, cx: &App) -> String {
+        self.editor().read(cx).text(cx)
+    }
 }
 
 impl Render for SingleLineInput {

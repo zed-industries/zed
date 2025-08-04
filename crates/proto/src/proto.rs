@@ -261,6 +261,8 @@ messages!(
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
     (Unstage, Background),
+    (Stash, Background),
+    (StashPop, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -421,6 +423,8 @@ request_messages!(
     (TaskContextForLocation, TaskContext),
     (Test, Test),
     (Unstage, Ack),
+    (Stash, Ack),
+    (StashPop, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
@@ -552,6 +556,8 @@ entity_messages!(
     TaskContextForLocation,
     UnshareProject,
     Unstage,
+    Stash,
+    StashPop,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
@@ -780,6 +786,25 @@ pub fn split_repository_update(
         is_last_update: true,
         ..update
     }])
+}
+
+impl MultiLspQuery {
+    pub fn request_str(&self) -> &str {
+        match self.request {
+            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
+            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
+            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
+            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
+            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
+            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
+            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
+            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
+            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
+            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
+            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
+            None => "<unknown>",
+        }
+    }
 }
 
 #[cfg(test)]

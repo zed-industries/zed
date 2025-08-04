@@ -25,6 +25,10 @@ pub fn app_menus() -> Vec<Menu> {
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action(
+                            "Select Settings Profile...",
+                            zed_actions::settings_profile_selector::Toggle,
+                        ),
+                        MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
@@ -145,15 +149,15 @@ pub fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action(
                     "Zoom In",
-                    zed_actions::IncreaseBufferFontSize { persist: true },
+                    zed_actions::IncreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Zoom Out",
-                    zed_actions::DecreaseBufferFontSize { persist: true },
+                    zed_actions::DecreaseBufferFontSize { persist: false },
                 ),
                 MenuItem::action(
                     "Reset Zoom",
-                    zed_actions::ResetBufferFontSize { persist: true },
+                    zed_actions::ResetBufferFontSize { persist: false },
                 ),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Left Dock", workspace::ToggleLeftDock),

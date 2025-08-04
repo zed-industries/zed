@@ -1323,7 +1323,7 @@ fn setup_context_editor_with_fake_model(
 ) -> (Entity<AssistantContext>, Arc<FakeLanguageModel>) {
     let registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
 
-    let fake_provider = Arc::new(FakeLanguageModelProvider);
+    let fake_provider = Arc::new(FakeLanguageModelProvider::default());
     let fake_model = Arc::new(fake_provider.test_model());
 
     cx.update(|cx| {

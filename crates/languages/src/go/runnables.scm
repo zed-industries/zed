@@ -38,7 +38,10 @@
       arguments: (
         argument_list
         .
-        (interpreted_string_literal) @_subtest_name
+        [
+          (interpreted_string_literal)
+          (raw_string_literal)
+        ] @_subtest_name
         .
         (func_literal
           parameters: (
@@ -66,7 +69,7 @@
 (
   (
     (function_declaration name: (_) @run @_name
-      (#match? @_name "^Benchmark.+"))
+      (#match? @_name "^Benchmark.*"))
   ) @_
   (#set! tag go-benchmark)
 )

@@ -126,7 +126,7 @@ impl ChannelMembership {
                 proto::channel_member::Kind::Member => 0,
                 proto::channel_member::Kind::Invitee => 1,
             },
-            username_order: self.user.github_login.as_str(),
+            username_order: &self.user.github_login,
         }
     }
 }

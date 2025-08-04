@@ -1,20 +1,36 @@
-use agentic_coding_protocol as acp;
+use std::{error::Error, fmt, path::Path, rc::Rc};
+
+use agent_client_protocol::{self as acp};
 use anyhow::Result;
-use futures::future::{FutureExt as _, LocalBoxFuture};
+use gpui::{AsyncApp, Entity, Task};
+use project::Project;
+use ui::App;
+
+use crate::AcpThread;
 
 pub trait AgentConnection {
-    fn request_any(
-        &self,
-        params: acp::AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>>;
+    fn new_thread(
+        self: Rc<Self>,
+        project: Entity<Project>,
+        cwd: &Path,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Entity<AcpThread>>>;
+
+    fn auth_methods(&self) -> &[acp::AuthMethod];
+
+    fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
+
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>>;
+
+    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 }
 
-impl AgentConnection for acp::AgentConnection {
-    fn request_any(
-        &self,
-        params: acp::AnyAgentRequest,
-    ) -> LocalBoxFuture<'static, Result<acp::AnyAgentResult>> {
-        let task = self.request_any(params);
-        async move { Ok(task.await?) }.boxed_local()
+#[derive(Debug)]
+pub struct AuthRequired;
+
+impl Error for AuthRequired {}
+impl fmt::Display for AuthRequired {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AuthRequired")
     }
 }

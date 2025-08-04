@@ -54,7 +54,7 @@ impl Tool for ReadFileTool {
         "read_file".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         false
     }
 

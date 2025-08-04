@@ -398,8 +398,11 @@ message Envelope {
         GetColorPresentation get_color_presentation = 355;
         GetColorPresentationResponse get_color_presentation_response = 356;
 
-        GetDefaultBranch get_default_branch = 357;
-        GetDefaultBranchResponse get_default_branch_response = 358; // current max
+        Stash stash = 357;
+        StashPop stash_pop = 358;
+
+        GetDefaultBranch get_default_branch = 359;
+        GetDefaultBranchResponse get_default_branch_response = 360; // current max
     }
 
     reserved 87 to 88;

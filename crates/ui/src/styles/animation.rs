@@ -109,7 +109,7 @@ impl Component for Animation {
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         let container_size = 128.0;
         let element_size = 32.0;
-        let left_offset = element_size - container_size / 2.0;
+        let offset = container_size / 2.0 - element_size / 2.0;
         Some(
             v_flex()
                 .gap_6()
@@ -129,7 +129,7 @@ impl Component for Animation {
                                             .id("animate-in-from-bottom")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .left(px(offset))
                                             .rounded_md()
                                             .bg(gpui::red())
                                             .animate_in(AnimationDirection::FromBottom, false),
@@ -148,7 +148,7 @@ impl Component for Animation {
                                             .id("animate-in-from-top")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .left(px(offset))
                                             .rounded_md()
                                             .bg(gpui::blue())
                                             .animate_in(AnimationDirection::FromTop, false),
@@ -167,7 +167,7 @@ impl Component for Animation {
                                             .id("animate-in-from-left")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .top(px(offset))
                                             .rounded_md()
                                             .bg(gpui::green())
                                             .animate_in(AnimationDirection::FromLeft, false),
@@ -186,7 +186,7 @@ impl Component for Animation {
                                             .id("animate-in-from-right")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .top(px(offset))
                                             .rounded_md()
                                             .bg(gpui::yellow())
                                             .animate_in(AnimationDirection::FromRight, false),
@@ -211,7 +211,7 @@ impl Component for Animation {
                                             .id("fade-animate-in-from-bottom")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .left(px(offset))
                                             .rounded_md()
                                             .bg(gpui::red())
                                             .animate_in(AnimationDirection::FromBottom, true),
@@ -230,7 +230,7 @@ impl Component for Animation {
                                             .id("fade-animate-in-from-top")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .left(px(offset))
                                             .rounded_md()
                                             .bg(gpui::blue())
                                             .animate_in(AnimationDirection::FromTop, true),
@@ -249,7 +249,7 @@ impl Component for Animation {
                                             .id("fade-animate-in-from-left")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .top(px(offset))
                                             .rounded_md()
                                             .bg(gpui::green())
                                             .animate_in(AnimationDirection::FromLeft, true),
@@ -268,7 +268,7 @@ impl Component for Animation {
                                             .id("fade-animate-in-from-right")
                                             .absolute()
                                             .size(px(element_size))
-                                            .left(px(left_offset))
+                                            .top(px(offset))
                                             .rounded_md()
                                             .bg(gpui::yellow())
                                             .animate_in(AnimationDirection::FromRight, true),

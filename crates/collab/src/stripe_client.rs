@@ -73,6 +73,7 @@ pub enum StripeCancellationDetailsReason {
 pub struct StripeCreateSubscriptionParams {
     pub customer: StripeCustomerId,
     pub items: Vec<StripeCreateSubscriptionItems>,
+    pub automatic_tax: Option<StripeAutomaticTax>,
 }
 
 #[derive(Debug)]
@@ -221,6 +222,11 @@ pub struct StripeCreateCheckoutSessionSubscriptionData {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct StripeTaxIdCollection {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct StripeAutomaticTax {
     pub enabled: bool,
 }
 
