@@ -4,11 +4,13 @@ use std::{any::type_name, borrow::Cow, mem, pin::Pin, task::Poll, time::Duration
 
 use anyhow::anyhow;
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{AsyncRead, TryFutureExt as _, TryStreamExt as _};
+use futures::{AsyncRead, FutureExt as _, TryStreamExt as _};
 use http_client::{RedirectPolicy, Url, http};
 use regex::Regex;
-use reqwest::{header::{HeaderMap, HeaderValue}, redirect};
-use smol::future::FutureExt;
+use reqwest::{
+    header::{HeaderMap, HeaderValue},
+    redirect,
+};
 
 const DEFAULT_CAPACITY: usize = 4096;
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
@@ -276,8 +278,20 @@ impl http_client::HttpClient for ReqwestClient {
         &'a self,
         url: &str,
         form: reqwest::multipart::Form,
-    ) -> futures::future::BoxFuture<'a, anyhow::Result<reqwest::Response>> {
-        self.client.post(url).multipart(form).send().map_err(|e| anyhow!(e)).boxed()
+    ) -> futures::future::BoxFuture<'a, anyhow::Result<http_client::Response<http_client::AsyncBody>>>
+    {
+        let response = self.client.post(url).multipart(form).send();
+        self.handle
+            .spawn(async move {
+                let response = response.await?;
+                let mut builder = http::response::Builder::new().status(response.status());
+                for (k, v) in response.headers() {
+                    builder = builder.header(k, v)
+                }
+                Ok(builder.body(response.bytes().await?.into())?)
+            })
+            .map(|e| e?)
+            .boxed()
     }
 }
 

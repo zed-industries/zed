@@ -7,6 +7,7 @@ use client::{
     telemetry::{self, SENTRY_MINIDUMP_ENDPOINT},
 };
 use db::kvp::KEY_VALUE_STORE;
+use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
@@ -235,7 +236,8 @@ pub fn init(
                                     minidump.clone(),
                                     panic.as_ref(),
                                 )
-                                .await;
+                                .await
+                                .log_err();
                             }
 
                             if let Some(panic) = panic {
@@ -530,7 +532,11 @@ async fn upload_previous_panics(
                     let minidump = smol::fs::read(&minidump_path)
                         .await
                         .context("Failed to read minidump")?;
-                    if upload_minidump(http.clone(), minidump, Some(&panic)).await {
+                    if upload_minidump(http.clone(), minidump, Some(&panic))
+                        .await
+                        .log_err()
+                        .is_some()
+                    {
                         fs::remove_file(minidump_path).ok();
                     }
                 }
@@ -548,6 +554,7 @@ async fn upload_previous_panics(
     }
 
     // loop back over the directory again to upload any minidumps that are missing panics
+    let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
     while let Some(child) = children.next().await {
         let child = child?;
         let child_path = child.path();
@@ -562,6 +569,8 @@ async fn upload_previous_panics(
             None,
         )
         .await
+        .log_err()
+        .is_some()
         {
             fs::remove_file(child_path).ok();
         }
@@ -574,21 +583,38 @@ async fn upload_minidump(
     http: Arc<HttpClientWithUrl>,
     minidump: Vec<u8>,
     panic: Option<&Panic>,
-) -> bool {
-    let Some(sentry_upload_url) = SENTRY_MINIDUMP_ENDPOINT.to_owned() else {
-        return false;
-    };
+) -> Result<()> {
+    let sentry_upload_url = SENTRY_MINIDUMP_ENDPOINT
+        .to_owned()
+        .ok_or_else(|| anyhow::anyhow!("Minidump endpoint not set"))?;
 
-    let mut form = Form::new().part("upload_file_minidump", Part::bytes(minidump));
+    let mut form = Form::new()
+        .part(
+            "upload_file_minidump",
+            Part::bytes(minidump)
+                .file_name("minidump.dmp")
+                .mime_str("application/octet-stream")?,
+        )
+        .text("platform", "rust");
     if let Some(panic) = panic {
-        form = form.text("platform", "rust").text(
+        form = form.text(
             "release",
             format!("{}-{}", panic.release_channel, panic.app_version),
         );
         // TODO: tack on more fields
     }
 
-    http.send_multipart_form(&sentry_upload_url, form)
+    let mut response_text = String::new();
+    let mut response = http.send_multipart_form(&sentry_upload_url, form).await?;
+    response
+        .body_mut()
+        .read_to_string(&mut response_text)
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("failed to upload minidump: {response_text}");
+    }
+    log::info!("Uploaded minidump. event id: {response_text}");
+    Ok(())
 }
 
 async fn upload_panic(

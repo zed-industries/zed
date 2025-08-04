@@ -7,7 +7,10 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
-use futures::{future::{self, BoxFuture}, FutureExt as _};
+use futures::{
+    FutureExt as _,
+    future::{self, BoxFuture},
+};
 use http::request::Builder;
 use parking_lot::Mutex;
 #[cfg(feature = "test-support")]
@@ -102,8 +105,8 @@ pub trait HttpClient: 'static + Send + Sync {
     fn send_multipart_form<'a>(
         &'a self,
         _url: &str,
-        _request: reqwest::multipart::Form
-    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+        _request: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
 >>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }
@@ -169,9 +172,10 @@ impl HttpClient for HttpClientWithProxy {
         &'a self,
         url: &str,
         form: reqwest::multipart::Form,
-    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         self.client.send_multipart_form(url, form)
     }
+<<<<<<< HEAD
 
 <<<<<<< HEAD
     #[cfg(feature = "test-support")]
@@ -181,6 +185,10 @@ impl HttpClient for HttpClientWithProxy {
 ||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
 =======
 >>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
+||||||| parent of ccf43fa7b8 (Fix file uploading)
+
+=======
+>>>>>>> ccf43fa7b8 (Fix file uploading)
 }
 
 /// An [`HttpClient`] that has a base URL.
@@ -379,7 +387,7 @@ impl HttpClient for HttpClientWithUrl {
         &'a self,
         url: &str,
         request: reqwest::multipart::Form,
-    ) -> BoxFuture<'a, anyhow::Result<reqwest::Response>> {
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         self.client.send_multipart_form(url, request)
 >>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }

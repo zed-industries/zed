@@ -252,10 +252,14 @@ fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<C
                 }
             }
 
-            crashes.extend(minidumps_by_session_id.into_values().map(|dmp| CrashReport {
-                panic_contents: None,
-                minidump_contents: Some(dmp),
-            }));
+            crashes.extend(
+                minidumps_by_session_id
+                    .into_values()
+                    .map(|dmp| CrashReport {
+                        panic_contents: None,
+                        minidump_contents: Some(dmp),
+                    }),
+            );
 
             anyhow::Ok(proto::GetCrashFilesResponse { crashes })
         },
