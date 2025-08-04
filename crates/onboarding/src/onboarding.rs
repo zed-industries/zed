@@ -1,13 +1,13 @@
 use crate::welcome::{ShowWelcome, WelcomePage};
 use client::{Client, UserStore};
 use command_palette_hooks::CommandPaletteFilter;
-use db::kvp::{KEY_VALUE_STORE, KeyValueStore};
+use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
     FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
-    Task, UpdateGlobal, WeakEntity, Window, actions,
+    Task, WeakEntity, Window, actions,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
