@@ -127,7 +127,7 @@ impl acp_old::Client for OldAcpClientDelegate {
             outcomes.push(outcome);
             acp_options.push(acp::PermissionOption {
                 id: acp::PermissionOptionId(index.to_string().into()),
-                label,
+                name: label,
                 kind,
             })
         }
@@ -266,7 +266,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
         id: id,
-        label: request.label,
+        title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,
         content: request
