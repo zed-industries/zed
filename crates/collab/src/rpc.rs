@@ -658,7 +658,8 @@ impl Server {
             Box::new(move |envelope, session| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
-                tracing::info!("message received");
+                let payload_type = M::NAME;
+                tracing::info!(payload_type, "message received");
                 let start_time = Instant::now();
                 let future = (handler)(*envelope, session);
                 async move {
@@ -666,7 +667,6 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
-                    let payload_type = M::NAME;
 
                     match result {
                         Err(error) => {
