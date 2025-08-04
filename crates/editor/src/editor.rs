@@ -56,7 +56,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, DisableAiSettings, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
@@ -125,7 +125,7 @@ use markdown::Markdown;
 use mouse_context_menu::MouseContextMenu;
 use persistence::DB;
 use project::{
-    BreakpointWithPosition, CompletionResponse, ProjectPath,
+    BreakpointWithPosition, CompletionResponse, DisableAiSettings, ProjectPath,
     debugger::{
         breakpoint_store::{
             BreakpointEditAction, BreakpointSessionState, BreakpointState, BreakpointStore,
@@ -7003,6 +7003,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
@@ -7060,6 +7064,7 @@ impl Editor {
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
         if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
+            self.discard_inline_completion(false, cx);
         } else {
             let selection = self.selections.newest_anchor();
             let cursor = selection.head();
@@ -7677,6 +7682,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
