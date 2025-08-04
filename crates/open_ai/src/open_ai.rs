@@ -202,24 +202,6 @@ impl Model {
         }
     }
 
-    /// Returns whether the given model supports vision (image processing) capabilities.
-    pub fn supports_vision(&self) -> bool {
-        match self {
-            Self::FourOmni
-            | Self::FourOmniMini
-            | Self::FourPointOne
-            | Self::FourPointOneMini
-            | Self::FourPointOneNano
-            | Self::O1
-            | Self::O3
-            | Self::O4Mini => true,
-            Self::ThreePointFiveTurbo
-            | Self::Four
-            | Self::FourTurbo
-            | Self::O3Mini => false,
-            Self::Custom { .. } => false, // Custom models don't support vision by default
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -301,7 +301,22 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_vision()
+        use open_ai::Model;
+        match &self.model {
+            Model::FourOmni
+            | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::O1
+            | Model::O3
+            | Model::O4Mini => true,
+            Model::ThreePointFiveTurbo
+            | Model::Four
+            | Model::FourTurbo
+            | Model::O3Mini
+            | Model::Custom { .. } => false,
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
