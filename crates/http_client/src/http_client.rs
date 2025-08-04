@@ -9,12 +9,10 @@ pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
 use futures::future::BoxFuture;
 use http::request::Builder;
+use parking_lot::Mutex;
 #[cfg(feature = "test-support")]
 use std::fmt;
-use std::{
-    any::type_name,
-    sync::{Arc, Mutex},
-};
+use std::{any::type_name, sync::Arc};
 pub use url::Url;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
@@ -86,6 +84,11 @@ pub trait HttpClient: 'static + Send + Sync {
     }
 
     fn proxy(&self) -> Option<&Url>;
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        panic!("called as_fake on {}", type_name::<Self>())
+    }
 }
 
 /// An [`HttpClient`] that may have a proxy.
@@ -132,6 +135,11 @@ impl HttpClient for HttpClientWithProxy {
     fn type_name(&self) -> &'static str {
         self.client.type_name()
     }
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        self.client.as_fake()
+    }
 }
 
 impl HttpClient for Arc<HttpClientWithProxy> {
@@ -152,6 +160,11 @@ impl HttpClient for Arc<HttpClientWithProxy> {
 
     fn type_name(&self) -> &'static str {
         self.client.type_name()
+    }
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        self.client.as_fake()
     }
 }
 
@@ -199,20 +212,13 @@ impl HttpClientWithUrl {
 
     /// Returns the base URL.
     pub fn base_url(&self) -> String {
-        self.base_url
-            .lock()
-            .map_or_else(|_| Default::default(), |url| url.clone())
+        self.base_url.lock().clone()
     }
 
     /// Sets the base URL.
     pub fn set_base_url(&self, base_url: impl Into<String>) {
         let base_url = base_url.into();
-        self.base_url
-            .lock()
-            .map(|mut url| {
-                *url = base_url;
-            })
-            .ok();
+        *self.base_url.lock() = base_url;
     }
 
     /// Builds a URL using the given path.
@@ -288,6 +294,11 @@ impl HttpClient for Arc<HttpClientWithUrl> {
     fn type_name(&self) -> &'static str {
         self.client.type_name()
     }
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        self.client.as_fake()
+    }
 }
 
 impl HttpClient for HttpClientWithUrl {
@@ -308,6 +319,11 @@ impl HttpClient for HttpClientWithUrl {
 
     fn type_name(&self) -> &'static str {
         self.client.type_name()
+    }
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        self.client.as_fake()
     }
 }
 
@@ -360,10 +376,15 @@ impl HttpClient for BlockedHttpClient {
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
     }
+
+    #[cfg(feature = "test-support")]
+    fn as_fake(&self) -> &FakeHttpClient {
+        panic!("called as_fake on {}", type_name::<Self>())
+    }
 }
 
 #[cfg(feature = "test-support")]
-type FakeHttpHandler = Box<
+type FakeHttpHandler = Arc<
     dyn Fn(Request<AsyncBody>) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>
         + Send
         + Sync
@@ -372,7 +393,7 @@ type FakeHttpHandler = Box<
 
 #[cfg(feature = "test-support")]
 pub struct FakeHttpClient {
-    handler: FakeHttpHandler,
+    handler: Mutex<Option<FakeHttpHandler>>,
     user_agent: HeaderValue,
 }
 
@@ -387,7 +408,7 @@ impl FakeHttpClient {
             base_url: Mutex::new("http://test.example".into()),
             client: HttpClientWithProxy {
                 client: Arc::new(Self {
-                    handler: Box::new(move |req| Box::pin(handler(req))),
+                    handler: Mutex::new(Some(Arc::new(move |req| Box::pin(handler(req))))),
                     user_agent: HeaderValue::from_static(type_name::<Self>()),
                 }),
                 proxy: None,
@@ -412,6 +433,18 @@ impl FakeHttpClient {
                 .unwrap())
         })
     }
+
+    pub fn replace_handler<Fut, F>(&self, new_handler: F)
+    where
+        Fut: futures::Future<Output = anyhow::Result<Response<AsyncBody>>> + Send + 'static,
+        F: Fn(FakeHttpHandler, Request<AsyncBody>) -> Fut + Send + Sync + 'static,
+    {
+        let mut handler = self.handler.lock();
+        let old_handler = handler.take().unwrap();
+        *handler = Some(Arc::new(move |req| {
+            Box::pin(new_handler(old_handler.clone(), req))
+        }));
+    }
 }
 
 #[cfg(feature = "test-support")]
@@ -427,7 +460,7 @@ impl HttpClient for FakeHttpClient {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        let future = (self.handler)(req);
+        let future = (self.handler.lock().as_ref().unwrap())(req);
         future
     }
 
@@ -441,5 +474,9 @@ impl HttpClient for FakeHttpClient {
 
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
+    }
+
+    fn as_fake(&self) -> &FakeHttpClient {
+        self
     }
 }

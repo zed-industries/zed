@@ -79,8 +79,8 @@ members = [
     "crates/icons",
     "crates/image_viewer",
     "crates/indexed_docs",
-    "crates/inline_completion",
-    "crates/inline_completion_button",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
@@ -189,6 +189,7 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
+    "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
 
@@ -301,8 +302,8 @@ http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
-inline_completion = { path = "crates/inline_completion" }
-inline_completion_button = { path = "crates/inline_completion_button" }
+edit_prediction = { path = "crates/edit_prediction" }
+edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -420,7 +421,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.11"
+agent-client-protocol = "0.0.17"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -678,8 +679,6 @@ features = [
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
-    "Win32_Graphics_Direct2D",
-    "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Direct3D_Fxc",
@@ -690,7 +689,6 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
-    "Win32_Graphics_Imaging_D2D",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
@@ -758,7 +756,7 @@ feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
-inline_completion_button = { codegen-units = 1 }
+edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }

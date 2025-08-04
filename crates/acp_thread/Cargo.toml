@@ -17,7 +17,6 @@ test-support = ["gpui/test-support", "project/test-support"]
 
 [dependencies]
 agent-client-protocol.workspace = true
-agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true
@@ -37,11 +36,12 @@ util.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
-async-pipe.workspace = true
 env_logger.workspace = true
 gpui = { workspace = true, "features" = ["test-support"] }
 indoc.workspace = true
+parking_lot.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
+rand.workspace = true
 tempfile.workspace = true
 util.workspace = true
 settings.workspace = true
