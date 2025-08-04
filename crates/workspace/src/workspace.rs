@@ -2070,6 +2070,7 @@ impl Workspace {
     pub fn prompt_for_new_path(
         &mut self,
         lister: DirectoryLister,
+        suggested_name: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
@@ -2097,7 +2098,7 @@ impl Workspace {
                     })
                     .or_else(std::env::home_dir)
                     .unwrap_or_else(|| PathBuf::from(""));
-                cx.prompt_for_new_path(&relative_to)
+                cx.prompt_for_new_path(&relative_to, suggested_name.as_deref())
             })?;
             let abs_path = match abs_path.await? {
                 Ok(path) => path,
