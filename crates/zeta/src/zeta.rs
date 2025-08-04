@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -34,7 +34,7 @@ use language::{
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use postage::watch;
-use project::Project;
+use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
@@ -400,6 +400,14 @@ impl Zeta {
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
 
+        let git_info = if let (true, Some(project), Some(file)) =
+            (can_collect_data, project, snapshot.file())
+        {
+            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+        } else {
+            None
+        };
+
         let full_path: Arc<Path> = snapshot
             .file()
             .map(|f| Arc::from(f.full_path(cx).as_path()))
@@ -415,6 +423,7 @@ impl Zeta {
             cursor_point,
             make_events_prompt,
             can_collect_data,
+            git_info,
             cx,
         );
 
@@ -1155,6 +1164,35 @@ fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b:
         .sum()
 }
 
+fn git_info_for_file(
+    project: &Entity<Project>,
+    project_path: &ProjectPath,
+    cx: &App,
+) -> Option<PredictEditsGitInfo> {
+    let git_store = project.read(cx).git_store().read(cx);
+    if let Some((repository, _repo_path)) =
+        git_store.repository_and_path_for_project_path(project_path, cx)
+    {
+        let repository = repository.read(cx);
+        let head_sha = repository
+            .head_commit
+            .as_ref()
+            .map(|head_commit| head_commit.sha.to_string());
+        let remote_origin_url = repository.remote_origin_url.clone();
+        let remote_upstream_url = repository.remote_upstream_url.clone();
+        if head_sha.is_none() && remote_origin_url.is_none() && remote_upstream_url.is_none() {
+            return None;
+        }
+        Some(PredictEditsGitInfo {
+            head_sha,
+            remote_origin_url,
+            remote_upstream_url,
+        })
+    } else {
+        None
+    }
+}
+
 pub struct GatherContextOutput {
     pub body: PredictEditsBody,
     pub editable_range: Range<usize>,
@@ -1167,6 +1205,7 @@ pub fn gather_context(
     cursor_point: language::Point,
     make_events_prompt: impl FnOnce() -> String + Send + 'static,
     can_collect_data: bool,
+    git_info: Option<PredictEditsGitInfo>,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     let local_lsp_store =
@@ -1216,6 +1255,7 @@ pub fn gather_context(
                 outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
+                git_info,
             };
 
             Ok(GatherContextOutput {
