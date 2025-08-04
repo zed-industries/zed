@@ -1,7 +1,10 @@
 use std::path::Path;
 use std::rc::Rc;
 
-use crate::{AgentServer, AgentServerCommand, acp_connection::AcpConnection};
+use crate::{
+    AgentServer, AgentServerCommand, acp_connection::AcpConnection,
+    old_acp_support::OldAcpAgentConnection,
+};
 use acp_thread::AgentConnection;
 use anyhow::Result;
 use gpui::{Entity, Task};
@@ -40,8 +43,8 @@ impl AgentServer for Gemini {
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
         let project = project.clone();
-        let server_name = self.name();
         let root_dir = root_dir.to_path_buf();
+        let server_name = self.name();
         cx.spawn(async move |cx| {
             let settings = cx.read_global(|settings: &SettingsStore, _| {
                 settings.get::<AllAgentServersSettings>(None).gemini.clone()
@@ -52,10 +55,17 @@ impl AgentServer for Gemini {
             else {
                 anyhow::bail!("Failed to find gemini binary");
             };
-            // todo! check supported version
 
-            let conn = AcpConnection::stdio(server_name, command, &root_dir, cx).await?;
-            Ok(Rc::new(conn) as _)
+            // todo! check supported version
+            Ok(if true {
+                let conn: Rc<dyn AgentConnection> =
+                    Rc::new(OldAcpAgentConnection::new(server_name, command, &root_dir, cx).await?);
+                conn
+            } else {
+                let conn: Rc<dyn AgentConnection> =
+                    Rc::new(AcpConnection::stdio(server_name, command, &root_dir, cx).await?);
+                conn
+            })
         })
     }
 }

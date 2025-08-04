@@ -1,7 +1,7 @@
 // Translates old acp agents into the new schema
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
@@ -9,10 +9,11 @@ use std::{cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
+use crate::AgentServerCommand;
 use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
-pub struct OldAcpClientDelegate {
+struct OldAcpClientDelegate {
     thread: Rc<RefCell<WeakEntity<AcpThread>>>,
     cx: AsyncApp,
     next_tool_call_id: Rc<RefCell<u64>>,
@@ -20,7 +21,7 @@ pub struct OldAcpClientDelegate {
 }
 
 impl OldAcpClientDelegate {
-    pub fn new(thread: Rc<RefCell<WeakEntity<AcpThread>>>, cx: AsyncApp) -> Self {
+    fn new(thread: Rc<RefCell<WeakEntity<AcpThread>>>, cx: AsyncApp) -> Self {
         Self {
             thread,
             cx,
@@ -354,9 +355,65 @@ fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatu
 pub struct OldAcpAgentConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
-    pub child_status: Task<Result<()>>,
+    pub _child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
-    pub auth_methods: [acp::AuthMethod; 1],
+}
+
+impl OldAcpAgentConnection {
+    pub fn new(
+        name: &'static str,
+        command: AgentServerCommand,
+        root_dir: &Path,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Self>> {
+        let root_dir = root_dir.to_path_buf();
+
+        cx.spawn(async move |cx| {
+            let mut child = util::command::new_smol_command(&command.path)
+                .args(command.args.iter())
+                .current_dir(root_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()?;
+
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
+
+            let foreground_executor = cx.foreground_executor().clone();
+
+            let thread_rc = Rc::new(RefCell::new(WeakEntity::new_invalid()));
+
+            let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
+                OldAcpClientDelegate::new(thread_rc.clone(), cx.clone()),
+                stdin,
+                stdout,
+                move |fut| foreground_executor.spawn(fut).detach(),
+            );
+
+            let io_task = cx.background_spawn(async move {
+                io_fut.await.log_err();
+            });
+
+            let child_status = cx.background_spawn(async move {
+                let result = match child.status().await {
+                    Err(e) => Err(anyhow!(e)),
+                    Ok(result) if result.success() => Ok(()),
+                    Ok(result) => Err(anyhow!(result)),
+                };
+                drop(io_task);
+                result
+            });
+
+            Ok(Self {
+                name,
+                connection,
+                _child_status: child_status,
+                current_thread: thread_rc,
+            })
+        })
+    }
 }
 
 impl AgentConnection for OldAcpAgentConnection {
@@ -384,7 +441,7 @@ impl AgentConnection for OldAcpAgentConnection {
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new("Gemini", self.clone(), project, session_id, cx)
+                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
@@ -393,7 +450,7 @@ impl AgentConnection for OldAcpAgentConnection {
     }
 
     fn auth_methods(&self) -> &[acp::AuthMethod] {
-        &self.auth_methods
+        &[]
     }
 
     fn authenticate(&self, _method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
@@ -442,6 +499,3 @@ impl AgentConnection for OldAcpAgentConnection {
             .detach_and_log_err(cx)
     }
 }
-
-#[cfg(test)]
-mod tests {}
