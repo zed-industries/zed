@@ -1,8 +1,10 @@
 use editor::display_map::DisplaySnapshot;
-use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
+use editor::{
+    DisplayPoint, Editor, HideMouseCursorOrigin, SelectionEffects, ToOffset, ToPoint, movement,
+};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
-use language::{CharClassifier, CharKind};
+use language::{CharClassifier, CharKind, Point};
 use text::{Bias, SelectionGoal};
 
 use crate::motion;
@@ -25,6 +27,8 @@ actions!(
         HelixAppend,
         /// Goes to the location of the last modification.
         HelixGotoLastModification,
+        /// Select entire line or multiple lines, extending downwards.
+        HelixSelectLine,
     ]
 );
 
@@ -34,6 +38,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
+    Vim::action(editor, cx, Vim::helix_select_lines);
 }
 
 impl Vim {
@@ -442,6 +447,41 @@ impl Vim {
     ) {
         self.jump(".".into(), false, false, window, cx);
     }
+
+    pub fn helix_select_lines(
+        &mut self,
+        _: &HelixSelectLine,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        self.update_editor(cx, |_, editor, cx| {
+            editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+            let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let mut selections = editor.selections.all::<Point>(cx);
+            let max_point = display_map.buffer_snapshot.max_point();
+
+            for selection in &mut selections {
+                // Start always goes to column 0 of the first selected line
+                let start_row = selection.start.row;
+                let current_end_row = selection.end.row;
+
+                let end_row = current_end_row + count as u32;
+
+                selection.start = Point::new(start_row, 0);
+                selection.end = if end_row > max_point.row {
+                    max_point
+                } else {
+                    Point::new(end_row, 0)
+                };
+                selection.reversed = false;
+            }
+
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(selections);
+            });
+        });
+    }
 }
 
 #[cfg(test)]
@@ -847,6 +887,82 @@ mod test {
         // Verify we're back at the modification location and still in HelixNormal mode
         cx.assert_state(
             "line one\nline modifiedˇ two\nline three",
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_n_lines(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            "line one\nline ˇtwo\nline three\nline four",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 x");
+        cx.assert_state(
+            "line one\n«line two\nline three\nˇ»line four",
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_with_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test extending existing line selection
+        cx.set_state(
+            indoc! {"
+            li«ˇne one
+            li»ne two
+            line three
+            line four"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("x");
+
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            ˇ»line three
+            line four"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_lines_with_merging(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test selecting multiple lines with count
+        cx.set_state(
+            indoc! {"
+            ˇline one
+            line two
+            line threeˇ
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            ˇ»line two
+            «line three
+            ˇ»line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «line one
+            line two
+            line three
+            line four
+            ˇ»line five"},
             Mode::HelixNormal,
         );
     }
