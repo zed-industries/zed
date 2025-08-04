@@ -946,13 +946,6 @@ async fn open_disabled_globs_setting_in_editor(
     anyhow::Ok(())
 }
 
-fn toggle_edit_predictions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.defaults.show_edit_predictions = Some(!show_edit_predictions)
-    });
-}
-
 fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.features
