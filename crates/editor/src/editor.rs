@@ -7055,7 +7055,7 @@ impl Editor {
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
         if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
-            self.discard_inline_completion(false, cx);
+            self.discard_edit_prediction(false, cx);
         } else {
             let selection = self.selections.newest_anchor();
             let cursor = selection.head();
