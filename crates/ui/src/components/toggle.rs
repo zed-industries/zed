@@ -2,10 +2,10 @@ use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
     prelude::*,
 };
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
-use crate::{Color, Icon, IconName, ToggleState};
+use crate::{Color, Icon, IconName, ToggleState, Tooltip};
 use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
@@ -571,6 +571,7 @@ pub struct SwitchField {
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
     color: SwitchColor,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
 }
 
 impl SwitchField {
@@ -589,6 +590,7 @@ impl SwitchField {
             on_click: Arc::new(on_click),
             disabled: false,
             color: SwitchColor::Accent,
+            tooltip: None,
         }
     }
 
@@ -608,10 +610,17 @@ impl SwitchField {
         self.color = color;
         self
     }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
+        self
+    }
 }
 
 impl RenderOnce for SwitchField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let tooltip = self.tooltip;
+
         h_flex()
             .id(SharedString::from(format!("{}-container", self.id)))
             .when(!self.disabled, |this| {
@@ -621,14 +630,48 @@ impl RenderOnce for SwitchField {
             .gap_4()
             .justify_between()
             .flex_wrap()
-            .child(match &self.description {
-                Some(description) => v_flex()
+            .child(match (&self.description, &tooltip) {
+                (Some(description), Some(tooltip)) => v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .child(Label::new(self.label.clone()))
+                            .child(
+                                IconButton::new("tooltip_button", IconName::Info)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .shape(crate::IconButtonShape::Square)
+                                    .tooltip({
+                                        let tooltip = tooltip.clone();
+                                        move |window, cx| tooltip(window, cx)
+                                    }),
+                            ),
+                    )
+                    .child(Label::new(description.clone()).color(Color::Muted))
+                    .into_any_element(),
+                (Some(description), None) => v_flex()
                     .gap_0p5()
                     .max_w_5_6()
                     .child(Label::new(self.label.clone()))
                     .child(Label::new(description.clone()).color(Color::Muted))
                     .into_any_element(),
-                None => Label::new(self.label.clone()).into_any_element(),
+                (None, Some(tooltip)) => h_flex()
+                    .gap_0p5()
+                    .child(Label::new(self.label.clone()))
+                    .child(
+                        IconButton::new("tooltip_button", IconName::Info)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .shape(crate::IconButtonShape::Square)
+                            .tooltip({
+                                let tooltip = tooltip.clone();
+                                move |window, cx| tooltip(window, cx)
+                            }),
+                    )
+                    .into_any_element(),
+                (None, None) => Label::new(self.label.clone()).into_any_element(),
             })
             .child(
                 Switch::new(
@@ -753,6 +796,35 @@ impl Component for SwitchField {
                             )
                             .into_any_element(),
                         )],
+                    ),
+                    example_group_with_title(
+                        "With Tooltip",
+                        vec![
+                            single_example(
+                                "Tooltip with Description",
+                                SwitchField::new(
+                                    "switch_field_tooltip_with_desc",
+                                    "Nice Feature",
+                                    Some("Enable advanced configuration options.".into()),
+                                    ToggleState::Unselected,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("This is content for this tooltip!"))
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Tooltip without Description",
+                                SwitchField::new(
+                                    "switch_field_tooltip_no_desc",
+                                    "Nice Feature",
+                                    None,
+                                    ToggleState::Selected,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("This is content for this tooltip!"))
+                                .into_any_element(),
+                            ),
+                        ],
                     ),
                 ])
                 .into_any_element(),
