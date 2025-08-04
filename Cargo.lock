@@ -6315,7 +6315,6 @@ dependencies = [
  "buffer_diff",
  "call",
  "chrono",
- "client",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",

@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
-use client::DisableAiSettings;
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Window, prelude::*,
 };
 use itertools;
-
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use project::DisableAiSettings;
 use settings::{Settings, update_settings_file};
 use ui::{
     Badge, ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, ToggleState,
     prelude::*,
 };
-use workspace::ModalView;
-
 use util::ResultExt;
+use workspace::ModalView;
 use zed_actions::agent::OpenSettings;
 
 use crate::Onboarding;
