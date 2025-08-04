@@ -545,6 +545,7 @@ impl MacWindow {
             show,
             display_id,
             window_min_size,
+            layout_direction,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -671,6 +672,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                layout_direction: layout_direction,
             })));
 
             (*native_window).set_ivar(
