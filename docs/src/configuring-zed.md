@@ -3594,3 +3594,88 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   }
 }
 ```
+
+## TLS Certificate Configuration
+
+- Description: Configure custom TLS certificates for Zed to use when making HTTPS connections.
+- Environment Variables: `SSL_CERT_FILE` and `SSL_CERT_DIR`
+- Default: Uses system default certificate stores
+
+Zed supports loading custom TLS certificates through standard environment variables. This is particularly useful in:
+- Corporate environments with internal certificate authorities
+- Development environments using self-signed certificates
+- Environments requiring specific certificate bundles
+
+### SSL_CERT_FILE
+
+- Description: Path to a file containing one or more PEM-encoded certificates
+- Environment Variable: `SSL_CERT_FILE`
+- Default: `null`
+
+**Example**
+
+```bash
+# macOS/Linux
+export SSL_CERT_FILE="/path/to/custom-ca-bundle.pem"
+
+# Windows
+set SSL_CERT_FILE="C:\path\to\custom-ca-bundle.pem"
+```
+
+### SSL_CERT_DIR
+
+- Description: Path to a directory containing PEM-encoded certificate files
+- Environment Variable: `SSL_CERT_DIR`
+- Default: `null`
+
+**Example**
+
+```bash
+# macOS/Linux
+export SSL_CERT_DIR="/etc/ssl/certs"
+
+# Windows
+set SSL_CERT_DIR="C:\certificates"
+```
+
+**Options**
+
+When `SSL_CERT_DIR` is set, Zed will load all certificate files in the directory with the following extensions:
+- `.pem`
+- `.crt`
+- `.cert`
+- `.cer`
+
+### Usage Examples
+
+1. Corporate environment with internal CA:
+
+```bash
+# Add your company's root CA certificate
+export SSL_CERT_FILE="/etc/corporate/ca-bundle.pem"
+zed
+```
+
+2. Development with self-signed certificates:
+
+```bash
+# Point to a directory containing your development certificates
+export SSL_CERT_DIR="$HOME/.local/share/dev-certs"
+zed
+```
+
+3. Using both file and directory:
+
+```bash
+# Both variables can be used together - certificates from both sources will be loaded
+export SSL_CERT_FILE="/etc/ssl/custom-ca.pem"
+export SSL_CERT_DIR="/etc/ssl/additional-certs"
+zed
+```
+
+### Notes
+
+- Custom certificates are loaded in addition to the system's default certificate store
+- Changes to these environment variables require restarting Zed
+- Certificate files must be in PEM format
+- Invalid or malformed certificates will be logged as warnings but won't prevent Zed from starting

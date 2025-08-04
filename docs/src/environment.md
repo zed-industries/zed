@@ -90,3 +90,69 @@ These language server processes always inherit Zed's process environment. But, d
 
 - If the language server was found in the project environment's `$PATH`, then the project environment's is passed along to the language server process. Where the project environment comes from depends on how the project was opened, via CLI or not. See previous point on look-up of language servers.
 - If the language servers was not found in the project environment, Zed tries to install it globally and start it globally. In that case, the process will inherit Zed's process environment, and — if the project was opened via ClI — from the CLI.
+
+## TLS Certificate Environment Variables
+
+Zed supports loading custom TLS certificates through standard environment variables. These are particularly useful in corporate environments or when working with self-signed certificates.
+
+### SSL_CERT_FILE
+
+The `SSL_CERT_FILE` environment variable specifies a path to a file containing one or more PEM-encoded certificates. These certificates will be loaded in addition to the system's default certificate store.
+
+**Example:**
+
+```bash
+# macOS/Linux
+export SSL_CERT_FILE="/path/to/custom-ca-bundle.pem"
+zed .
+
+# Windows
+set SSL_CERT_FILE="C:\path\to\custom-ca-bundle.pem"
+zed .
+```
+
+### SSL_CERT_DIR
+
+The `SSL_CERT_DIR` environment variable specifies a directory containing individual certificate files. Zed will load all certificate files in this directory with the following extensions:
+- `.pem`
+- `.crt`
+- `.cert`
+- `.cer`
+
+**Example:**
+
+```bash
+# macOS/Linux
+export SSL_CERT_DIR="/etc/ssl/certs"
+zed .
+
+# Windows
+set SSL_CERT_DIR="C:\certificates"
+zed .
+```
+
+### Common Use Cases
+
+1. **Corporate environments with internal certificate authorities:**
+   ```bash
+   export SSL_CERT_FILE="/etc/corporate/ca-bundle.pem"
+   ```
+
+2. **Development with self-signed certificates:**
+   ```bash
+   export SSL_CERT_DIR="$HOME/.local/share/dev-certs"
+   ```
+
+3. **Using both variables together:**
+   ```bash
+   export SSL_CERT_FILE="/etc/ssl/custom-ca.pem"
+   export SSL_CERT_DIR="/etc/ssl/additional-certs"
+   ```
+
+### Important Notes
+
+- These environment variables must be set before starting Zed
+- Custom certificates are loaded in addition to (not instead of) the system's default certificate store
+- Changes to these variables require restarting Zed to take effect
+- Invalid or malformed certificates will be logged as warnings but won't prevent Zed from starting
+- These variables follow the same naming convention used by many other tools (curl, wget, etc.)
