@@ -1877,5 +1877,25 @@
     "save_breakpoints": true,
     "dock": "bottom",
     "button": true
-  }
+  },
+  // Configures any number of settings profiles that are temporarily applied on
+  // top of your existing user settings when selected from
+  // `settings profile selector: toggle`.
+  // Examples:
+  // "profiles": {
+  //   "Presenting": {
+  //     "agent_font_size": 20.0,
+  //     "buffer_font_size": 20.0,
+  //     "theme": "One Light",
+  //     "ui_font_size": 20.0
+  //   },
+  //   "Python (ty)": {
+  //     "languages": {
+  //       "Python": {
+  //         "language_servers": ["ty"]
+  //       }
+  //     }
+  //   }
+  // }
+  "profiles": []
 }

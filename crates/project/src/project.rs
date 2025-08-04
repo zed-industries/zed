@@ -97,7 +97,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -942,10 +942,38 @@ pub enum PulledDiagnostics {
     },
 }
 
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
+        DisableAiSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -1362,10 +1390,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        client
-            .authenticate_and_connect(true, &cx)
-            .await
-            .into_response()?;
+        client.connect(true, &cx).await.into_response()?;
 
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
@@ -3372,7 +3397,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3390,7 +3415,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.declarations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3408,7 +3433,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3426,7 +3451,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.implementations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3444,7 +3469,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3996,7 +4021,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
