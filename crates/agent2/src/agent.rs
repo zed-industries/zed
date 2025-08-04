@@ -244,7 +244,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                             acp::SessionUpdate::AgentMessageChunk {
                                                 content: acp::ContentBlock::Text(
                                                     acp::TextContent {
-                                                        text: text.into(),
+                                                        text,
                                                         annotations: None,
                                                     },
                                                 ),
@@ -259,7 +259,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                         thread.handle_session_update(
                                             acp::SessionUpdate::ToolCall(acp::ToolCall {
                                                 id: acp::ToolCallId(tool_use.id.to_string().into()),
-                                                label: tool_use.name.to_string(),
+                                                title: tool_use.name.to_string(),
                                                 kind: acp::ToolKind::Other,
                                                 status: acp::ToolCallStatus::Pending,
                                                 content: vec![],
@@ -283,7 +283,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                             acp::SessionUpdate::AgentThoughtChunk {
                                                 content: acp::ContentBlock::Text(
                                                     acp::TextContent {
-                                                        text: text.into(),
+                                                        text,
                                                         annotations: None,
                                                     },
                                                 ),
