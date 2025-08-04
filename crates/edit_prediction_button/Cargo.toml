@@ -25,6 +25,7 @@ indoc.workspace = true
 edit_prediction.workspace = true
 language.workspace = true
 paths.workspace = true
+project.workspace = true
 regex.workspace = true
 settings.workspace = true
 supermaven.workspace = true

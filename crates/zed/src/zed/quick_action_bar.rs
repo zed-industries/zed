@@ -2,7 +2,6 @@ mod preview;
 mod repl_menu;
 
 use agent_settings::AgentSettings;
-use client::DisableAiSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, CodeActionSource, DuplicateLineDown, GoToDiagnostic,
     GoToHunk, GoToPreviousDiagnostic, GoToPreviousHunk, MoveLineDown, MoveLineUp, SelectAll,
@@ -16,6 +15,7 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
+use project::DisableAiSettings;
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
@@ -192,7 +192,7 @@ impl Render for QuickActionBar {
             };
             v_flex()
                 .child(
-                    IconButton::new("toggle_code_actions_icon", IconName::Bolt)
+                    IconButton::new("toggle_code_actions_icon", IconName::BoltOutlined)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)

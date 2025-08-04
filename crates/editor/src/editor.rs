@@ -83,7 +83,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, DisableAiSettings, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -148,8 +148,8 @@ use parking_lot::Mutex;
 use persistence::DB;
 use project::{
     BreakpointWithPosition, CodeAction, Completion, CompletionIntent, CompletionResponse,
-    CompletionSource, DocumentHighlight, InlayHint, Location, LocationLink, PrepareRenameResponse,
-    Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
+    CompletionSource, DisableAiSettings, DocumentHighlight, InlayHint, Location, LocationLink,
+    PrepareRenameResponse, Project, ProjectItem, ProjectPath, ProjectTransaction, TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     debugger::{
         breakpoint_store::{
@@ -6402,7 +6402,6 @@ impl Editor {
         IconButton::new("inline_code_actions", ui::IconName::BoltFilled)
             .icon_size(icon_size)
             .shape(ui::IconButtonShape::Square)
-            .style(ButtonStyle::Transparent)
             .icon_color(ui::Color::Hidden)
             .toggle_state(is_active)
             .when(show_tooltip, |this| {
@@ -6995,6 +6994,10 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let provider = self.edit_prediction_provider()?;
         let cursor = self.selections.newest_anchor().head();
         let (buffer, cursor_buffer_position) =
@@ -7052,6 +7055,7 @@ impl Editor {
     pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
         if self.edit_prediction_provider.is_none() || DisableAiSettings::get_global(cx).disable_ai {
             self.edit_prediction_settings = EditPredictionSettings::Disabled;
+            self.discard_inline_completion(false, cx);
         } else {
             let selection = self.selections.newest_anchor();
             let cursor = selection.head();
@@ -7661,6 +7665,10 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
+        if DisableAiSettings::get_global(cx).disable_ai {
+            return None;
+        }
+
         let selection = self.selections.newest_anchor();
         let cursor = selection.head();
         let multibuffer = self.buffer.read(cx).snapshot(cx);
@@ -8329,26 +8337,29 @@ impl Editor {
         let color = Color::Muted;
         let position = breakpoint.as_ref().map(|(anchor, _, _)| *anchor);
 
-        IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::XSmall)
-            .icon_color(color)
-            .toggle_state(is_active)
-            .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                let quick_launch = e.down.button == MouseButton::Left;
-                window.focus(&editor.focus_handle(cx));
-                editor.toggle_code_actions(
-                    &ToggleCodeActions {
-                        deployed_from: Some(CodeActionSource::RunMenu(row)),
-                        quick_launch,
-                    },
-                    window,
-                    cx,
-                );
-            }))
-            .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
-            }))
+        IconButton::new(
+            ("run_indicator", row.0 as usize),
+            ui::IconName::PlayOutlined,
+        )
+        .shape(ui::IconButtonShape::Square)
+        .icon_size(IconSize::XSmall)
+        .icon_color(color)
+        .toggle_state(is_active)
+        .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
+            let quick_launch = e.down.button == MouseButton::Left;
+            window.focus(&editor.focus_handle(cx));
+            editor.toggle_code_actions(
+                &ToggleCodeActions {
+                    deployed_from: Some(CodeActionSource::RunMenu(row)),
+                    quick_launch,
+                },
+                window,
+                cx,
+            );
+        }))
+        .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
+            editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+        }))
     }
 
     pub fn context_menu_visible(&self) -> bool {
