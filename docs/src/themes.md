@@ -64,6 +64,10 @@ For example, to create a new theme called `my-cool-theme`, create a file called 
 
 Find more themes at [zed-themes.com](https://zed-themes.com).
 
+## Hot Theme Reload
+
+On Unix systems, Zed accepts the `SIGHUP` signal to reload the current theme. This is useful for hot-reloading changes to your theme file without restarting Zed.
+
 ## Theme Development
 
 See: [Developing Zed Themes](./extensions/themes.md)

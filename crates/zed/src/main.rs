@@ -675,6 +675,10 @@ pub fn main() {
         watch_themes(fs.clone(), cx);
         watch_languages(fs.clone(), app_state.languages.clone(), cx);
 
+        // Setup SIGHUP handler for theme reload
+        #[cfg(unix)]
+        setup_sighup_theme_reload(fs.clone(), cx);
+
         cx.set_menus(app_menus());
         initialize_workspace(app_state.clone(), prompt_builder, cx);
 
@@ -1443,4 +1447,64 @@ fn dump_all_gpui_actions() {
         serde_json::to_string_pretty(&actions).unwrap().as_bytes(),
     )
     .unwrap();
+}
+
+#[cfg(unix)]
+static SIGHUP_SENDER: std::sync::OnceLock<smol::channel::Sender<()>> = std::sync::OnceLock::new();
+
+/// Setup SIGHUP signal handler for theme reload
+#[cfg(unix)]
+fn setup_sighup_theme_reload(fs: Arc<dyn fs::Fs>, cx: &mut App) {
+    let (sender, receiver) = smol::channel::unbounded();
+
+    if let Err(_) = SIGHUP_SENDER.set(sender) {
+        log::warn!("SIGHUP sender already initialized");
+        return;
+    }
+
+    register_sighup_handler();
+
+    cx.spawn(async move |cx| {
+        while receiver.recv().await.is_ok() {
+            if let Err(err) = cx.update(|cx| {
+                ThemeSettings::reload_current_theme(cx);
+                ThemeSettings::reload_current_icon_theme(cx);
+
+                let theme_registry = ThemeRegistry::global(cx);
+                let fs_clone = fs.clone();
+                cx.spawn(async move |cx| {
+                    if let Err(err) = theme_registry
+                        .load_user_themes(paths::themes_dir(), fs_clone)
+                        .await
+                    {
+                        log::error!("Failed to reload user themes: {}", err);
+                    } else {
+                        cx.update(ThemeSettings::reload_current_theme).log_err();
+                    }
+                    anyhow::Ok(())
+                })
+                .detach();
+            }) {
+                log::error!("Failed to reload themes on SIGHUP: {}", err);
+            }
+        }
+    })
+    .detach();
+}
+
+#[cfg(unix)]
+fn register_sighup_handler() {
+    use nix::sys::signal::{SigHandler, Signal, signal};
+
+    extern "C" fn handle_sighup(_: libc::c_int) {
+        if let Some(sender) = SIGHUP_SENDER.get() {
+            let _ = sender.try_send(());
+        }
+    }
+
+    unsafe {
+        if let Err(err) = signal(Signal::SIGHUP, SigHandler::Handler(handle_sighup)) {
+            log::warn!("Failed to register SIGHUP handler: {}", err);
+        }
+    }
 }
