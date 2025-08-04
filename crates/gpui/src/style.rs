@@ -254,6 +254,9 @@ pub struct Style {
     /// The text style of this element
     pub text: TextStyleRefinement,
 
+    /// The bidi style of this element
+    pub bidi: BidiStyleRefinement,
+
     /// The mouse cursor style shown when the mouse pointer is over an element.
     pub mouse_cursor: Option<CursorStyle>,
 
@@ -474,6 +477,27 @@ impl TextStyle {
             background_color: self.background_color,
             underline: self.underline,
             strikethrough: self.strikethrough,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum BidiDirection {
+    LeftToRight,
+    RightToLeft,
+}
+
+/// The properties used to change the layout direction in GPUI
+#[derive(Refineable, Clone, Debug, PartialEq)]
+#[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BidiStyle {
+    pub dir: BidiDirection,
+}
+
+impl Default for BidiStyle {
+    fn default() -> Self {
+        BidiStyle {
+            dir: BidiDirection::LeftToRight,
         }
     }
 }
@@ -755,6 +779,7 @@ impl Default for Style {
             corner_radii: Corners::default(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
+            bidi: BidiStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
 

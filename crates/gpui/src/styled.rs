@@ -1,3 +1,4 @@
+use crate::BidiDirection;
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
@@ -637,6 +638,22 @@ pub trait Styled: Sized {
     /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_ltr(mut self, opacity: f32) -> Self {
+        self.style().bidi = BidiStyleRefinement {
+            dir: BidiDirection::LeftToRight
+        };
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_rtl(mut self, opacity: f32) -> Self {
+        self.style().bidi = BidiStyleRefinement {
+            dir: BidiDirection::RightToLeft
+        };
         self
     }
 
