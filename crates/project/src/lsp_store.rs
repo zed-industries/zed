@@ -5069,10 +5069,7 @@ impl LspStore {
                     local
                         .language_servers_for_buffer(buffer, cx)
                         .filter(|(_, server)| {
-                            server
-                                .capabilities()
-                                .linked_editing_range_provider
-                                .is_some()
+                            LinkedEditingRange::check_server_capabilities(server.capabilities())
                         })
                         .filter(|(adapter, _)| {
                             scope
