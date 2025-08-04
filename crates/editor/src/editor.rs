@@ -9152,7 +9152,7 @@ impl Editor {
                             .rounded_tl(px(0.))
                             .overflow_hidden()
                             .child(div().px_1p5().child(match &prediction.completion {
-                                InlineCompletion::Move { target, snapshot } => {
+                                EditPrediction::Move { target, snapshot } => {
                                     use text::ToPoint as _;
                                     if target.text_anchor.to_point(&snapshot).row > cursor_point.row
                                     {
@@ -9161,7 +9161,7 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                InlineCompletion::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                EditPrediction::Edit { .. } => Icon::new(IconName::ZedPredict),
                             }))
                             .child(
                                 h_flex()
@@ -9220,7 +9220,7 @@ impl Editor {
                 )?
             }
 
-            None if is_refreshing => match &self.stale_inline_completion_in_menu {
+            None if is_refreshing => match &self.stale_edit_prediction_in_menu {
                 Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
                     stale_completion,
                     cursor_point,
@@ -9363,7 +9363,7 @@ impl Editor {
                 const MAX_CHARS: usize = 50;
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let (highlighted_edits, has_more_lines) = crate::inline_completion_edit_text(
+                let (highlighted_edits, has_more_lines) = crate::edit_prediction_edit_text(
                     &snapshot,
                     &edits,
                     edit_preview.as_ref()?,
