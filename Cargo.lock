@@ -7813,7 +7813,9 @@ dependencies = [
 name = "http_client_tls"
 version = "0.1.0"
 dependencies = [
+ "log",
  "rustls 0.23.26",
+ "rustls-pemfile 2.2.0",
  "rustls-platform-verifier",
  "workspace-hack",
 ]

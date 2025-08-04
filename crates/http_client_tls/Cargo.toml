@@ -16,6 +16,8 @@ path = "src/http_client_tls.rs"
 doctest = true
 
 [dependencies]
+log.workspace = true
 rustls.workspace = true
+rustls-pemfile = "2"
 rustls-platform-verifier.workspace = true
 workspace-hack.workspace = true
