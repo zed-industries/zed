@@ -468,16 +468,18 @@ impl PickerDelegate for BranchListDelegate {
             })
             .unwrap_or_else(|| (None, None));
 
-        let icon = if self.default_branch.is_some() && entry.is_new {
+        let icon = if let Some(default_branch) = self.default_branch.clone()
+            && entry.is_new
+        {
             Some(
                 IconButton::new("branch-from-default", IconName::GitBranchSmall)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);
                     }))
-                    .tooltip(|window, cx| {
+                    .tooltip(move |window, cx| {
                         Tooltip::for_action(
-                            "Create branch based off default",
+                            format!("Create branch based off default: {default_branch}"),
                             &menu::SecondaryConfirm,
                             window,
                             cx,

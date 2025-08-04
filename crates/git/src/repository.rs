@@ -1619,7 +1619,17 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let git = GitBinary::new(git_binary_path, working_directory, executor);
-                // FIXME check upstream first to match the behavior of git blame
+
+                if let Ok(output) = git
+                    .run(&["symbolic-ref", "refs/remotes/upstream/HEAD"])
+                    .await
+                {
+                    let output = output
+                        .strip_prefix("refs/remotes/upstream/")
+                        .map(|s| SharedString::from(s.to_owned()));
+                    return Ok(output);
+                }
+
                 let output = git
                     .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
                     .await?;
