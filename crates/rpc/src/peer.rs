@@ -422,9 +422,33 @@ impl Peer {
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
+        let request_start_time = Instant::now();
+        let payload_type = T::NAME;
+        tracing::info!(payload_type, "start forwarding request");
         self.request_internal(Some(sender_id), receiver_id, request)
             .map_ok(|envelope| envelope.payload)
-            .instrument(info_span!("waiting_for_host"))
+            .inspect_err({
+                let request_start_time = request_start_time.clone();
+                move |_| {
+                    let waiting_for_host_ms = request_start_time.elapsed().as_millis();
+                    tracing::error!(
+                        waiting_for_host_ms,
+                        payload_type,
+                        "error forwarding request"
+                    )
+                }
+            })
+            .inspect_ok({
+                let request_start_time = request_start_time.clone();
+                move |_| {
+                    let waiting_for_host_ms = request_start_time.elapsed().as_millis();
+                    tracing::info!(
+                        waiting_for_host_ms,
+                        payload_type,
+                        "finished forwarding request"
+                    )
+                }
+            })
     }
 
     fn request_internal<T: RequestMessage>(

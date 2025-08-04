@@ -683,6 +683,7 @@ impl Server {
                             total_duration_ms,
                             processing_duration_ms,
                             queue_duration_ms,
+                            payload_type,
                             "finished handling message"
                         ),
                     }
