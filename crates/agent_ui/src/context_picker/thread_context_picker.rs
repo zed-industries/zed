@@ -253,7 +253,7 @@ pub fn render_thread_context_entry(
                 .gap_1p5()
                 .max_w_72()
                 .child(
-                    Icon::new(IconName::MessageBubbles)
+                    Icon::new(IconName::Thread)
                         .size(IconSize::XSmall)
                         .color(Color::Muted),
                 )

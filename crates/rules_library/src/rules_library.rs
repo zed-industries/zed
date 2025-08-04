@@ -319,7 +319,7 @@ impl PickerDelegate for RulePickerDelegate {
                             })
                             .into_any()
                     } else {
-                        IconButton::new("delete-rule", IconName::TrashAlt)
+                        IconButton::new("delete-rule", IconName::Trash)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .shape(IconButtonShape::Square)
@@ -1163,7 +1163,7 @@ impl RulesLibrary {
                                                 })
                                                 .into_any()
                                         } else {
-                                            IconButton::new("delete-rule", IconName::TrashAlt)
+                                            IconButton::new("delete-rule", IconName::Trash)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(
