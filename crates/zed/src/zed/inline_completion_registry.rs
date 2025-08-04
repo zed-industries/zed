@@ -1,9 +1,10 @@
-use client::{Client, DisableAiSettings, UserStore};
+use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use project::DisableAiSettings;
 use settings::{Settings as _, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
