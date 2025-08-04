@@ -178,7 +178,7 @@ impl ToolCall {
             id: tool_call.id,
             label: cx.new(|cx| {
                 Markdown::new(
-                    tool_call.label.into(),
+                    tool_call.title.into(),
                     Some(language_registry.clone()),
                     None,
                     cx,
@@ -205,7 +205,7 @@ impl ToolCall {
         let acp::ToolCallUpdateFields {
             kind,
             status,
-            label,
+            title,
             content,
             locations,
             raw_input,
@@ -219,8 +219,8 @@ impl ToolCall {
             self.status = ToolCallStatus::Allowed { status };
         }
 
-        if let Some(label) = label {
-            self.label = cx.new(|cx| Markdown::new_text(label.into(), cx));
+        if let Some(title) = title {
+            self.label = cx.new(|cx| Markdown::new_text(title.into(), cx));
         }
 
         if let Some(content) = content {

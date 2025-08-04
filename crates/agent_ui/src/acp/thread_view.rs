@@ -1233,7 +1233,7 @@ impl AcpThreadView {
             })
             .children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.label.clone())
+                Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| match option.kind {
                         acp::PermissionOptionKind::AllowOnce => {
                             this.icon(IconName::Check).icon_color(Color::Success)
@@ -2464,7 +2464,7 @@ impl Render for AcpThreadView {
                         connection.auth_methods().into_iter().map(|method| {
                             Button::new(
                                 SharedString::from(method.id.0.clone()),
-                                method.label.clone(),
+                                method.name.clone(),
                             )
                             .on_click({
                                 let method_id = method.id.clone();
