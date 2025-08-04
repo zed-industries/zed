@@ -298,6 +298,7 @@ craneLib.buildPackage (
             export APP_ARGS="%U"
             mkdir -p "$out/share/applications"
             ${lib.getExe envsubst} < "crates/zed/resources/zed.desktop.in" > "$out/share/applications/dev.zed.Zed-Nightly.desktop"
+            chmod +x "$out/share/applications/dev.zed.Zed-Nightly.desktop"
           )
 
           runHook postInstall
