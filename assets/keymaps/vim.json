@@ -426,7 +426,7 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
 
-      "x": "editor::SelectLine",
+      "x": "vim::HelixSelectLine",
       "shift-x": "editor::SelectLine",
       "%": "editor::SelectAll",
       // Window mode
