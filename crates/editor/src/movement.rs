@@ -2,10 +2,10 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
+use crate::{DisplayRow, EditorStyle, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
 use language::Point;
-use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
+use multi_buffer::MultiBufferRow;
 use serde::Deserialize;
 use workspace::searchable::Direction;
 
@@ -527,7 +527,7 @@ pub fn find_preceding_boundary_display_point(
         prev_ch = Some(ch);
     }
 
-    map.clip_point(offset.to_display_point(map), Bias::Left)
+    offset.to_display_point(map)
 }
 
 /// Scans for a boundary following the given start point until a boundary is found, indicated by the

@@ -1836,7 +1836,7 @@ fn previous_word_start(
 
 fn previous_word_end(
     map: &DisplaySnapshot,
-    mut point: DisplayPoint,
+    point: DisplayPoint,
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
@@ -1844,12 +1844,16 @@ fn previous_word_end(
         .buffer_snapshot
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
+    let mut point = point.to_point(map);
 
-    // if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-    //     if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-    //         point.column += ch.len_utf8() as u32;
-    //     }
-    // }
+    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+            point.column += ch.len_utf8() as u32;
+        }
+    }
+
+    let mut point = point.to_display_point(map);
+
     for _ in 0..times {
         let new_point =
             movement::find_preceding_boundary(&map, point, FindRange::MultiLine, |left, right| {

@@ -1,6 +1,7 @@
-use editor::{Editor, SelectionEffects, ToOffset, ToPoint, movement};
+use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
+use language::{CharClassifier, CharKind};
 use text::{Bias, SelectionGoal};
 
 use crate::{
@@ -123,6 +124,119 @@ impl Vim {
         });
     }
 
+    fn helix_find_range_forward(
+        &mut self,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
+    ) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let times = times.unwrap_or(1);
+                    let new_goal = SelectionGoal::None;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
+
+                    if head == map.max_point() {
+                        return;
+                    }
+
+                    // collapse to block cursor
+                    if tail < head {
+                        tail = movement::left(map, head);
+                    } else {
+                        tail = head;
+                        head = movement::right(map, head);
+                    }
+
+                    // create a classifier
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+
+                    for _ in 0..times {
+                        let (maybe_next_tail, next_head) =
+                            movement::find_boundary_trail(map, head, |left, right| {
+                                is_boundary(left, right, &classifier)
+                            });
+
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
+                            break;
+                        }
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
+                    }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
+                });
+            });
+        });
+    }
+
+    fn helix_find_range_backward(
+        &mut self,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
+    ) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let times = times.unwrap_or(1);
+                    let new_goal = SelectionGoal::None;
+                    let mut head = selection.head();
+                    let mut tail = selection.tail();
+
+                    if head == DisplayPoint::zero() {
+                        return;
+                    }
+
+                    // collapse to block cursor
+                    if tail < head {
+                        tail = movement::left(map, head);
+                    } else {
+                        tail = head;
+                        head = movement::right(map, head);
+                    }
+
+                    selection.set_head(head, new_goal);
+                    selection.set_tail(tail, new_goal);
+                    // flip the selection
+                    selection.swap_head_tail();
+                    head = selection.head();
+                    tail = selection.tail();
+
+                    // create a classifier
+                    let classifier = map.buffer_snapshot.char_classifier_at(head.to_point(map));
+
+                    for _ in 0..times {
+                        let (maybe_next_tail, next_head) =
+                            movement::find_preceding_boundary_trail(map, head, |left, right| {
+                                is_boundary(left, right, &classifier)
+                            });
+
+                        if next_head == head && maybe_next_tail.unwrap_or(next_head) == tail {
+                            break;
+                        }
+
+                        head = next_head;
+                        if let Some(next_tail) = maybe_next_tail {
+                            tail = next_tail;
+                        }
+                    }
+
+                    selection.set_tail(tail, new_goal);
+                    selection.set_head(head, new_goal);
+                });
+            })
+        });
+    }
+
     pub fn helix_normal_motion(
         &mut self,
         motion: Motion,
@@ -131,12 +245,55 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match motion {
-            Motion::NextWordStart { .. }
-            | Motion::NextWordEnd { .. }
-            | Motion::PreviousWordStart { .. }
-            | Motion::PreviousWordEnd { .. }
-            | Motion::FindForward { .. }
-            | Motion::FindBackward { .. } => {
+            Motion::NextWordStart { ignore_punctuation } => {
+                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
+                    let left_kind = classifier.kind_with(left, ignore_punctuation);
+                    let right_kind = classifier.kind_with(right, ignore_punctuation);
+                    let at_newline = (left == '\n') ^ (right == '\n');
+
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
+
+                    found
+                })
+            }
+            Motion::NextWordEnd { ignore_punctuation } => {
+                self.helix_find_range_forward(times, window, cx, |left, right, classifier| {
+                    let left_kind = classifier.kind_with(left, ignore_punctuation);
+                    let right_kind = classifier.kind_with(right, ignore_punctuation);
+                    let at_newline = (left == '\n') ^ (right == '\n');
+
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
+
+                    found
+                })
+            }
+            Motion::PreviousWordStart { ignore_punctuation } => {
+                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
+                    let left_kind = classifier.kind_with(left, ignore_punctuation);
+                    let right_kind = classifier.kind_with(right, ignore_punctuation);
+                    let at_newline = (left == '\n') ^ (right == '\n');
+
+                    let found = (left_kind != right_kind && left_kind != CharKind::Whitespace)
+                        || at_newline;
+
+                    found
+                })
+            }
+            Motion::PreviousWordEnd { ignore_punctuation } => {
+                self.helix_find_range_backward(times, window, cx, |left, right, classifier| {
+                    let left_kind = classifier.kind_with(left, ignore_punctuation);
+                    let right_kind = classifier.kind_with(right, ignore_punctuation);
+                    let at_newline = (left == '\n') ^ (right == '\n');
+
+                    let found = (left_kind != right_kind && right_kind != CharKind::Whitespace)
+                        || at_newline;
+
+                    found
+                })
+            }
+            Motion::FindForward { .. } | Motion::FindBackward { .. } => {
                 return self.helix_move_and_select(times, window, cx, motion);
             }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
