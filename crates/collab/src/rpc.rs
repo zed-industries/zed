@@ -2339,6 +2339,7 @@ async fn multi_lsp_query(
     session: Session,
 ) -> Result<()> {
     tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    tracing::info!("multi_lsp_query message received");
     forward_mutating_project_request(request, response, session).await
 }
 
