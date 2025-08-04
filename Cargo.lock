@@ -19925,6 +19925,7 @@ dependencies = [
  "lyon_path",
  "md-5",
  "memchr",
+ "mime_guess",
  "miniz_oxide",
  "mio 1.0.3",
  "naga",

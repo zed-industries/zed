@@ -82,6 +82,7 @@ lyon = { version = "1", default-features = false, features = ["extra"] }
 lyon_path = { version = "1" }
 md-5 = { version = "0.10" }
 memchr = { version = "2" }
+mime_guess = { version = "2" }
 miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
@@ -212,6 +213,7 @@ lyon = { version = "1", default-features = false, features = ["extra"] }
 lyon_path = { version = "1" }
 md-5 = { version = "0.10" }
 memchr = { version = "2" }
+mime_guess = { version = "2" }
 miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
