@@ -12,7 +12,7 @@ use ui::{
     ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, prelude::*,
 };
 
-use crate::{CURSOR_IMPORTED, ImportCursorSettings, ImportVsCodeSettings, VSCODE_IMPORTED};
+use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
 
 fn read_show_mini_map(cx: &App) -> ShowMinimap {
     editor::EditorSettings::get_global(cx).minimap.show
@@ -212,19 +212,20 @@ fn render_setting_import_button(
     )
 }
 
-fn render_import_settings_section() -> impl IntoElement {
+fn render_import_settings_section(cx: &App) -> impl IntoElement {
+    let import_state = SettingsImportState::global(cx);
     let imports: [(SharedString, IconName, &dyn Action, bool); 2] = [
         (
             "VS Code".into(),
             IconName::EditorVsCode,
             &ImportVsCodeSettings { skip_prompt: false },
-            unsafe { VSCODE_IMPORTED },
+            import_state.vscode,
         ),
         (
             "Cursor".into(),
             IconName::EditorCursor,
             &ImportCursorSettings { skip_prompt: false },
-            unsafe { CURSOR_IMPORTED },
+            import_state.cursor,
         ),
     ];
 
@@ -462,6 +463,6 @@ fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl In
 pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
     v_flex()
         .gap_4()
-        .child(render_import_settings_section())
+        .child(render_import_settings_section(cx))
         .child(render_popular_settings_section(window, cx))
 }

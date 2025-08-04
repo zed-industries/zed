@@ -6,13 +6,13 @@ use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, KeyContext, Render, SharedString, Subscription, Task,
-    WeakEntity, Window, actions,
+    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
+    Task, UpdateGlobal, WeakEntity, Window, actions,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{SettingsStore, VsCodeSettingsSource};
+use settings::{Settings, SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
@@ -57,9 +57,6 @@ pub struct ImportCursorSettings {
 }
 
 pub const FIRST_OPEN: &str = "first_open";
-
-pub static mut VSCODE_IMPORTED: bool = false;
-pub static mut CURSOR_IMPORTED: bool = false;
 
 actions!(
     zed,
@@ -630,14 +627,14 @@ pub async fn handle_import_vscode_settings(
                             .dismiss_button(true)
                     },
                 );
-                match source {
-                    VsCodeSettingsSource::VsCode => unsafe {
-                        VSCODE_IMPORTED = true;
-                    },
-                    VsCodeSettingsSource::Cursor => unsafe {
-                        CURSOR_IMPORTED = true;
-                    },
-                }
+                SettingsImportState::update_global(cx, |state, _| match source {
+                    VsCodeSettingsSource::VsCode => {
+                        state.vscode = true;
+                    }
+                    VsCodeSettingsSource::Cursor => {
+                        state.cursor = true;
+                    }
+                });
                 workspace.toggle_status_toast(confirmation_toast, cx);
             }
             Err(_) => {
@@ -662,9 +659,21 @@ pub async fn handle_import_vscode_settings(
     // }
 }
 
-struct SettingsImportState {
-    cursor: bool,
-    vscode: bool,
+#[derive(Default, Copy, Clone)]
+pub struct SettingsImportState {
+    pub cursor: bool,
+    pub vscode: bool,
+}
+
+impl Global for SettingsImportState {}
+
+impl SettingsImportState {
+    pub fn global(cx: &App) -> Self {
+        cx.try_global().cloned().unwrap_or_default()
+    }
+    pub fn update<R>(cx: &mut App, f: impl FnOnce(&mut Self, &mut App) -> R) -> R {
+        cx.update_default_global(f)
+    }
 }
 
 impl workspace::SerializableItem for Onboarding {
