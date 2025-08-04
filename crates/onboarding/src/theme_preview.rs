@@ -260,14 +260,19 @@ impl ThemePreviewTile {
                         sidebar_width,
                         Self::SKELETON_HEIGHT_DEFAULT,
                     )))
-                    .child(div().size_full().absolute().left_1_2().bg(bg_color).child(
-                        Self::render_editor(
-                            seed,
-                            other_theme,
-                            sidebar_width,
-                            Self::SKELETON_HEIGHT_DEFAULT,
-                        ),
-                    )),
+                    .child(
+                        div()
+                            .size_full()
+                            .absolute()
+                            .left_1_2()
+                            .bg(other_theme.colors().editor_background)
+                            .child(Self::render_editor(
+                                seed,
+                                other_theme,
+                                sidebar_width,
+                                Self::SKELETON_HEIGHT_DEFAULT,
+                            )),
+                    ),
             )
             .into_any_element();
     }
