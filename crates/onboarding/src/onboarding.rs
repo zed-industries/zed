@@ -12,7 +12,7 @@ use gpui::{
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::{Settings, SettingsStore, VsCodeSettingsSource};
+use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
@@ -627,7 +627,7 @@ pub async fn handle_import_vscode_settings(
                             .dismiss_button(true)
                     },
                 );
-                SettingsImportState::update_global(cx, |state, _| match source {
+                SettingsImportState::update(cx, |state, _| match source {
                     VsCodeSettingsSource::VsCode => {
                         state.vscode = true;
                     }
@@ -770,6 +770,8 @@ mod persistence {
                         ON DELETE CASCADE
                     ) STRICT;
                 ),
+                // sql!( ALTER TABLE onboarding_pages ADD COLU
+                // )
             ];
     }
 
