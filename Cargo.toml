@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/activity_indicator",
     "crates/acp_thread",
-    "crates/agent_ui",
+    "crates/activity_indicator",
     "crates/agent",
-    "crates/agent_settings",
-    "crates/ai_onboarding",
     "crates/agent_servers",
+    "crates/agent_settings",
+    "crates/agent_ui",
+    "crates/ai_onboarding",
     "crates/anthropic",
     "crates/askpass",
     "crates/assets",
@@ -29,6 +29,8 @@ members = [
     "crates/cli",
     "crates/client",
     "crates/clock",
+    "crates/cloud_api_client",
+    "crates/cloud_api_types",
     "crates/cloud_llm_client",
     "crates/collab",
     "crates/collab_ui",
@@ -49,8 +51,8 @@ members = [
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
-    "crates/explorer_command_injector",
     "crates/eval",
+    "crates/explorer_command_injector",
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
@@ -99,7 +101,6 @@ members = [
     "crates/markdown_preview",
     "crates/media",
     "crates/menu",
-    "crates/svg_preview",
     "crates/migrator",
     "crates/mistral",
     "crates/multi_buffer",
@@ -140,6 +141,7 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_profile_selector",
     "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
@@ -152,6 +154,7 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
+    "crates/svg_preview",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -186,6 +189,7 @@ members = [
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
+    "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",
 
@@ -251,6 +255,8 @@ channel = { path = "crates/channel" }
 cli = { path = "crates/cli" }
 client = { path = "crates/client" }
 clock = { path = "crates/clock" }
+cloud_api_client = { path = "crates/cloud_api_client" }
+cloud_api_types = { path = "crates/cloud_api_types" }
 cloud_llm_client = { path = "crates/cloud_llm_client" }
 collab = { path = "crates/collab" }
 collab_ui = { path = "crates/collab_ui" }
@@ -338,6 +344,7 @@ picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
 plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
+settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
@@ -672,14 +679,16 @@ features = [
     "UI_ViewManagement",
     "Wdk_System_SystemServices",
     "Win32_Globalization",
-    "Win32_Graphics_Direct2D",
-    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_DirectComposition",
     "Win32_Graphics_DirectWrite",
     "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
-    "Win32_Graphics_Imaging_D2D",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",

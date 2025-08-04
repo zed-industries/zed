@@ -23,6 +23,7 @@ pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
 pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 pub(crate) const WM_GPUI_DOCK_MENU_ACTION: u32 = WM_USER + 4;
+pub(crate) const WM_GPUI_FORCE_UPDATE_WINDOW: u32 = WM_USER + 5;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -37,6 +38,7 @@ pub(crate) fn handle_msg(
     let handled = match msg {
         WM_ACTIVATE => handle_activate_msg(wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
+        WM_DEVICECHANGE => handle_device_change_msg(handle, wparam, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
         WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
         WM_GETMINMAXINFO => handle_get_min_max_info_msg(lparam, state_ptr),
@@ -48,7 +50,7 @@ pub(crate) fn handle_msg(
         WM_DISPLAYCHANGE => handle_display_change_msg(handle, state_ptr),
         WM_NCHITTEST => handle_hit_test_msg(handle, msg, wparam, lparam, state_ptr),
         WM_PAINT => handle_paint_msg(handle, state_ptr),
-        WM_CLOSE => handle_close_msg(handle, state_ptr),
+        WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE | WM_NCMOUSELEAVE => handle_mouse_leave_msg(state_ptr),
@@ -96,6 +98,7 @@ pub(crate) fn handle_msg(
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, wparam, lparam, state_ptr),
         WM_INPUTLANGCHANGE => handle_input_language_changed(lparam, state_ptr),
         WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
+        WM_GPUI_FORCE_UPDATE_WINDOW => draw_window(handle, true, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -181,11 +184,9 @@ fn handle_size_msg(
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
     if lock.restore_from_minimized.is_some() {
-        lock.renderer
-            .update_drawable_size_even_if_unchanged(new_size);
         lock.callbacks.request_frame = lock.restore_from_minimized.take();
     } else {
-        lock.renderer.update_drawable_size(new_size);
+        lock.renderer.resize(new_size).log_err();
     }
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
@@ -238,40 +239,14 @@ fn handle_timer_msg(
 }
 
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    if let Some(mut request_frame) = lock.callbacks.request_frame.take() {
-        drop(lock);
-        request_frame(Default::default());
-        state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
-    }
-    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
-    Some(0)
+    draw_window(handle, false, state_ptr)
 }
 
-fn handle_close_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
-    let mut lock = state_ptr.state.borrow_mut();
-    let output = if let Some(mut callback) = lock.callbacks.should_close.take() {
-        drop(lock);
-        let should_close = callback();
-        state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
-        if should_close { None } else { Some(0) }
-    } else {
-        None
-    };
-
-    // Workaround as window close animation is not played with `WS_EX_LAYERED` enabled.
-    if output.is_none() {
-        unsafe {
-            let current_style = get_window_long(handle, GWL_EXSTYLE);
-            set_window_long(
-                handle,
-                GWL_EXSTYLE,
-                current_style & !WS_EX_LAYERED.0 as isize,
-            );
-        }
-    }
-
-    output
+fn handle_close_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut callback = state_ptr.state.borrow_mut().callbacks.should_close.take()?;
+    let should_close = callback();
+    state_ptr.state.borrow_mut().callbacks.should_close = Some(callback);
+    if should_close { None } else { Some(0) }
 }
 
 fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -1220,6 +1195,53 @@ fn handle_input_language_changed(
     unsafe {
         PostThreadMessageW(thread, WM_INPUTLANGCHANGE, WPARAM(validation), lparam).log_err();
     }
+    Some(0)
+}
+
+fn handle_device_change_msg(
+    handle: HWND,
+    wparam: WPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    if wparam.0 == DBT_DEVNODES_CHANGED as usize {
+        // The reason for sending this message is to actually trigger a redraw of the window.
+        unsafe {
+            PostMessageW(
+                Some(handle),
+                WM_GPUI_FORCE_UPDATE_WINDOW,
+                WPARAM(0),
+                LPARAM(0),
+            )
+            .log_err();
+        }
+        // If the GPU device is lost, this redraw will take care of recreating the device context.
+        // The WM_GPUI_FORCE_UPDATE_WINDOW message will take care of redrawing the window, after
+        // the device context has been recreated.
+        draw_window(handle, true, state_ptr)
+    } else {
+        // Other device change messages are not handled.
+        None
+    }
+}
+
+#[inline]
+fn draw_window(
+    handle: HWND,
+    force_render: bool,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let mut request_frame = state_ptr
+        .state
+        .borrow_mut()
+        .callbacks
+        .request_frame
+        .take()?;
+    request_frame(RequestFrameOptions {
+        require_presentation: false,
+        force_render,
+    });
+    state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
+    unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
 
