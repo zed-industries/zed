@@ -852,7 +852,7 @@ impl Server {
             const MAX_CONCURRENT_HANDLERS: usize = 256;
             let mut foreground_message_handlers = FuturesUnordered::new();
             let concurrent_handlers = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
-            let get_handlers_remaining = {
+            let get_queue_size = {
                 let concurrent_handlers = concurrent_handlers.clone();
                 move || MAX_CONCURRENT_HANDLERS - concurrent_handlers.available_permits()
             };
@@ -860,9 +860,9 @@ impl Server {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
                     let message = incoming_rx.next().await;
-                    // Cache the handlers remaining here, so that we know what the queue looks like
-                    // for each handler
-                    (permit, message, get_handlers_remaining())
+                    // Cache the queue_size here, so that we know what the
+                    // queue looks like as each handler starts
+                    (permit, message, get_queue_size())
                 }
                 .fuse();
                 futures::pin_mut!(next_message);
@@ -876,7 +876,7 @@ impl Server {
                     }
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
-                        let (permit, message, handlers_remaining) = next_message;
+                        let (permit, message, queue_size) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
@@ -885,7 +885,7 @@ impl Server {
                                 %connection_id,
                                 %address,
                                 type_name,
-                                handlers_remaining,
+                                queue_size,
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
@@ -911,10 +911,7 @@ impl Server {
                                 tracing::error!("no message handler");
                             }
                         } else {
-                            // Requery the remaining handlers, in case a bunch have been
-                            // added since this message was received
-                            let handlers_remaining = get_handlers_remaining();
-                            tracing::info!(handlers_remaining, "connection closed");
+                            tracing::info!("connection closed");
                             break;
                         }
                     }
@@ -922,7 +919,8 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!("signing out");
+            let queue_size = get_queue_size();
+            tracing::info!(queue_size, "signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(?error, "error signing out");
             }
