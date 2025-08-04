@@ -1880,10 +1880,10 @@ impl AgentPanel {
                 }),
         );
 
-        let zoom_in_label = if self.is_zoomed(window, cx) {
-            "Zoom Out"
+        let full_screen_label = if self.is_zoomed(window, cx) {
+            "Disable Full Screen"
         } else {
-            "Zoom In"
+            "Enable Full Screen"
         };
 
         let active_thread = match &self.active_view {
@@ -2071,7 +2071,8 @@ impl AgentPanel {
                         menu = menu
                             .action("Rules…", Box::new(OpenRulesLibrary::default()))
                             .action("Settings", Box::new(OpenSettings))
-                            .action(zoom_in_label, Box::new(ToggleZoom));
+                            .separator()
+                            .action(full_screen_label, Box::new(ToggleZoom));
                         menu
                     }))
                 }
