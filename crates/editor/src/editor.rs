@@ -134,7 +134,7 @@ use language::{
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
-    LanguageServerId, LanguageServerName,
+    LanguageServerId,
 };
 use lsp_colors::LspColorData;
 use markdown::Markdown;
@@ -15844,7 +15844,7 @@ impl Editor {
                     let language_server_name = project
                         .language_server_statuses(cx)
                         .find(|(id, _)| server_id == *id)
-                        .map(|(_, status)| LanguageServerName::from(status.name.as_str()));
+                        .map(|(_, status)| status.name.clone());
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
                             lsp_location.uri.clone(),

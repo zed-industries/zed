@@ -1055,7 +1055,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1072,7 +1072,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
@@ -1089,7 +1089,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1099,7 +1099,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),

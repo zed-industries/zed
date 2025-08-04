@@ -3635,7 +3635,7 @@ pub enum LspStoreEvent {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
-    pub name: String,
+    pub name: LanguageServerName,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
@@ -7586,7 +7586,7 @@ impl LspStore {
                         project_id,
                         server: Some(proto::LanguageServer {
                             id: server_id.0 as u64,
-                            name: status.name.clone(),
+                            name: status.name.to_string(),
                             worktree_id: None,
                         }),
                         capabilities: serde_json::to_string(&server.capabilities())
@@ -7620,7 +7620,7 @@ impl LspStore {
                 (
                     LanguageServerId(server.id as usize),
                     LanguageServerStatus {
-                        name: server.name,
+                        name: LanguageServerName::from_proto(server.name),
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -8782,7 +8782,7 @@ impl LspStore {
             this.language_server_statuses.insert(
                 server_id,
                 LanguageServerStatus {
-                    name: server.name.clone(),
+                    name: LanguageServerName::from_proto(server.name.clone()),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -10299,7 +10299,7 @@ impl LspStore {
         let name = self
             .language_server_statuses
             .remove(&server_id)
-            .map(|status| LanguageServerName::from(status.name.as_str()))
+            .map(|status| status.name.clone())
             .or_else(|| {
                 if let Some(LanguageServerState::Running { adapter, .. }) = server_state.as_ref() {
                     Some(adapter.name())
@@ -10792,7 +10792,7 @@ impl LspStore {
         self.language_server_statuses.insert(
             server_id,
             LanguageServerStatus {
-                name: language_server.name().to_string(),
+                name: language_server.name(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
