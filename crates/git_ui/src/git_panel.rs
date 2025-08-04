@@ -2081,6 +2081,22 @@ impl GitPanel {
             .detach_and_log_err(cx);
     }
 
+    pub(crate) fn git_clone(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+        });
+
+        cx.spawn_in(window, async move |this, cx| {
+            let path = path.await.ok()?.ok()??;
+            dbg!(path);
+
+            Some(())
+        })
+        .detach();
+    }
+
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktrees = self
             .project

@@ -1462,6 +1462,25 @@ impl GitStore {
         }
     }
 
+    pub fn git_clone(
+        &self,
+        repo_url: String,
+        path: impl Into<Arc<std::path::Path>>,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        let path = path.into();
+        match &self.state {
+            GitStoreState::Local { fs, .. } => {
+                let fs = fs.clone();
+                cx.background_executor()
+                    .spawn(async move { fs.git_clone(&repo_url, &path) })
+            }
+            _ => {
+                todo!()
+            }
+        }
+    }
+
     async fn handle_update_repository(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::UpdateRepository>,

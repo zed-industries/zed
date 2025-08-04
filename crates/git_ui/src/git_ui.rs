@@ -10,11 +10,14 @@ use git::{
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, Context, FocusHandle, Window, actions};
+use gpui::{
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window,
+    actions,
+};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
-use ui::prelude::*;
-use workspace::Workspace;
+use ui::{Modal, prelude::*};
+use workspace::{ModalView, Workspace};
 use zed_actions;
 
 use crate::text_diff_view::TextDiffView;
@@ -167,6 +170,15 @@ pub fn init(cx: &mut App) {
             };
             panel.update(cx, |panel, cx| {
                 panel.git_init(window, cx);
+            });
+        });
+        workspace.register_action(|workspace, _action: &git::Clone, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+
+            panel.update(cx, |panel, cx| {
+                panel.git_clone(window, cx);
             });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
@@ -613,3 +625,23 @@ impl Component for GitStatusIcon {
         )
     }
 }
+
+struct GitRepoModal {
+    repo_input: Entity<Editor>,
+}
+
+impl Focusable for GitRepoModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        cx.focus_handle()
+    }
+}
+
+impl Render for GitRepoModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.repo_input.clone()
+    }
+}
+
+impl EventEmitter<DismissEvent> for GitRepoModal {}
+
+impl ModalView for GitRepoModal {}
