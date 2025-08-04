@@ -1292,13 +1292,15 @@ impl Element for Div {
                 window,
                 cx,
                 |style, window, cx| {
-                    window.with_text_style(style.text_style().cloned(), |window| {
-                        child_layout_ids = self
-                            .children
-                            .iter_mut()
-                            .map(|child| child.request_layout(window, cx))
-                            .collect::<SmallVec<_>>();
-                        window.request_layout(style, child_layout_ids.iter().copied(), cx)
+                    window.with_bidi_style(style.bidi_style(), |window| {
+                        window.with_text_style(style.text_style().cloned(), |window| {
+                            child_layout_ids = self
+                                .children
+                                .iter_mut()
+                                .map(|child| child.request_layout(window, cx))
+                                .collect::<SmallVec<_>>();
+                            window.request_layout(style, child_layout_ids.iter().copied(), cx)
+                        })
                     })
                 },
             )

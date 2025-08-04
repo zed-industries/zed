@@ -1,3 +1,4 @@
+use crate::BidiDirection;
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
     DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight,
@@ -740,6 +741,22 @@ pub trait Styled: Sized {
     fn row_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_ltr(mut self, opacity: f32) -> Self {
+        self.style().bidi = BidiStyleRefinement {
+            dir: BidiDirection::LeftToRight
+        };
+        self
+    }
+
+    /// Sets the drawing direction to LTR
+    fn dir_rtl(mut self, opacity: f32) -> Self {
+        self.style().bidi = BidiStyleRefinement {
+            dir: BidiDirection::RightToLeft
+        };
         self
     }
 
