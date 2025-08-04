@@ -1,8 +1,13 @@
+use std::sync::Arc;
+
 use client::TelemetrySettings;
 use fs::Fs;
 use gpui::{App, Entity, IntoElement, Window};
 use settings::{BaseKeymap, Settings, update_settings_file};
-use theme::{Appearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection, ThemeSettings};
+use theme::{
+    Appearance, SystemAppearance, ThemeMode, ThemeName, ThemeRegistry, ThemeSelection,
+    ThemeSettings,
+};
 use ui::{
     Divider, ParentElement as _, StatefulInteractiveElement, SwitchField, ToggleButtonGroup,
     ToggleButtonSimple, ToggleButtonWithIcon, prelude::*, rems_from_px,
@@ -30,18 +35,6 @@ use crate::theme_preview::ThemePreviewTile;
 fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
-    let appearance_state = window.use_state(cx, |_, _cx| {
-        theme_selection
-            .as_ref()
-            .and_then(|selection| selection.mode())
-            .and_then(|mode| match mode {
-                ThemeMode::System => None,
-                ThemeMode::Light => Some(Appearance::Light),
-                ThemeMode::Dark => Some(Appearance::Dark),
-            })
-            .unwrap_or(*system_appearance)
-    });
-    let appearance = *appearance_state.read(cx);
     let theme_selection = theme_selection.unwrap_or_else(|| ThemeSelection::Dynamic {
         mode: match *system_appearance {
             Appearance::Light => ThemeMode::Light,
@@ -52,17 +45,23 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     });
     let theme_registry = ThemeRegistry::global(cx);
 
+    let theme_mode = theme_selection
+        .mode()
+        .unwrap_or_else(|| match *system_appearance {
+            Appearance::Light => ThemeMode::Light,
+            Appearance::Dark => ThemeMode::Dark,
+        });
+    let appearance = match theme_mode {
+        ThemeMode::Light => Appearance::Light,
+        ThemeMode::Dark => Appearance::Dark,
+        ThemeMode::System => *system_appearance,
+    };
     let current_theme_name = theme_selection.theme(appearance);
-    let theme_mode = theme_selection.mode().unwrap_or_default();
 
-    let theme_mode = theme_selection.mode().unwrap_or(match *system_appearance {
-        Appearance::Light => ThemeMode::Light,
-        Appearance::Dark => ThemeMode::Dark,
-    });
-
-    let selected_index = match appearance {
-        Appearance::Light => 0,
-        Appearance::Dark => 1,
+    let selected_index = match theme_mode {
+        ThemeMode::Light => 0,
+        ThemeMode::Dark => 1,
+        ThemeMode::System => 2,
     };
 
     let theme_seed = 0xBEEF as f32;
@@ -126,7 +125,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                                             .overflow_hidden()
                                             .bg(colors.editor_background)
                                             .child(ThemePreviewTile::new(light, theme_seed).style(
-                                                theme_preview::ThemePreviewStyle::Borderless,
+                                                crate::theme_preview::ThemePreviewStyle::Borderless,
                                             )),
                                     )
                                     .child(
@@ -138,7 +137,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                                             .left_1_2()
                                             .bg(colors.editor_background)
                                             .child(ThemePreviewTile::new(dark, theme_seed).style(
-                                                theme_preview::ThemePreviewStyle::Borderless,
+                                                crate::theme_preview::ThemePreviewStyle::Borderless,
                                             )),
                                     ),
                             )
@@ -155,11 +154,7 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             .on_click({
                 let theme_name = theme.name.clone();
                 move |_, _, cx| {
-                    let fs = <dyn Fs>::global(cx);
-                    let theme_name = theme_name.clone();
-                    update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-                        settings.set_theme(theme_name, appearance);
-                    });
+                    write_theme_change(theme_name.clone(), cx);
                 }
             })
     });
@@ -172,27 +167,20 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
                     "theme-selector-onboarding-dark-light",
                     [
                         ToggleButtonSimple::new("Light", {
-                            let appearance_state = appearance_state.clone();
-                            move |_, _, cx| {
-                                write_appearance_change(&appearance_state, Appearance::Light, cx);
+                            |_, _, cx| {
+                                write_mode_change(ThemeMode::Light, cx);
                             }
                         }),
                         ToggleButtonSimple::new("Dark", {
-                            let appearance_state = appearance_state.clone();
                             move |_, _, cx| {
-                                write_appearance_change(&appearance_state, Appearance::Dark, cx);
+                                write_mode_change(ThemeMode::Dark, cx);
                             }
                         }),
-                        // TODO: Properly put the System back as a button within this group
-                        // Currently, given "System" is not an option in the Appearance enum,
-                        // this button doesn't get selected
                         ToggleButtonSimple::new("System", {
-                            let theme = theme_selection.clone();
-                            move |_, _, cx| {
-                                toggle_system_theme_mode(theme.clone(), appearance, cx);
+                            |_, _, cx| {
+                                write_mode_change(ThemeMode::System, cx);
                             }
-                        })
-                        .selected(theme_mode == ThemeMode::System),
+                        }),
                     ],
                 )
                 .selected_index(selected_index)
@@ -202,61 +190,19 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         )
         .child(h_flex().gap_4().justify_between().children(theme_previews));
 
-    fn write_appearance_change(
-        appearance_state: &Entity<Appearance>,
-        new_appearance: Appearance,
-        cx: &mut App,
-    ) {
+    fn write_mode_change(mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-        appearance_state.write(cx, new_appearance);
-
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-            if settings.theme.as_ref().and_then(ThemeSelection::mode) == Some(ThemeMode::System) {
-                return;
-            }
-            let new_mode = match new_appearance {
-                Appearance::Light => ThemeMode::Light,
-                Appearance::Dark => ThemeMode::Dark,
-            };
-            settings.set_mode(new_mode);
+        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+            settings.set_mode(mode);
         });
     }
 
-    fn toggle_system_theme_mode(
-        theme_selection: ThemeSelection,
-        appearance: Appearance,
-        cx: &mut App,
-    ) {
+    fn write_theme_change(theme: impl Into<Arc<str>>, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
-            settings.theme = Some(match theme_selection {
-                ThemeSelection::Static(theme_name) => ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
-                    light: theme_name.clone(),
-                    dark: theme_name.clone(),
-                },
-                ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
-                    light,
-                    dark,
-                } => {
-                    let mode = match appearance {
-                        Appearance::Light => ThemeMode::Light,
-                        Appearance::Dark => ThemeMode::Dark,
-                    };
-                    ThemeSelection::Dynamic { mode, light, dark }
-                }
-                ThemeSelection::Dynamic {
-                    mode: _,
-                    light,
-                    dark,
-                } => ThemeSelection::Dynamic {
-                    mode: ThemeMode::System,
-                    light,
-                    dark,
-                },
-            });
+        let appearance = *SystemAppearance::global(cx);
+        let theme = theme.into();
+        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+            settings.set_theme(theme.clone(), appearance);
         });
     }
 }

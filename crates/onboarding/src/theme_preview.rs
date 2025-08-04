@@ -32,7 +32,7 @@ impl ThemePreviewTile {
         }
     }
 
-    pub fn style(mut self, size: ThemePreviewStyle) -> Self {
+    pub fn style(mut self, style: ThemePreviewStyle) -> Self {
         self.style = style;
         self
     }
