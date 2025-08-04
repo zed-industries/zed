@@ -26,7 +26,7 @@ use std::{
     time::Duration,
     time::Instant,
 };
-use tracing::instrument;
+use tracing::{Instrument, info_span, instrument};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize)]
 pub struct ConnectionId {
@@ -424,6 +424,7 @@ impl Peer {
     ) -> impl Future<Output = Result<T::Response>> {
         self.request_internal(Some(sender_id), receiver_id, request)
             .map_ok(|envelope| envelope.payload)
+            .instrument(info_span!("waiting_for_host"))
     }
 
     fn request_internal<T: RequestMessage>(
