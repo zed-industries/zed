@@ -4,7 +4,7 @@ use crate::{
     GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
     TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
-use crate::{BidiDirection, BidiStyleRefinement};
+use crate::{LayoutDirection, BidiStyleRefinement};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
@@ -747,7 +747,7 @@ pub trait Styled: Sized {
     /// Sets the drawing direction to LTR
     fn dir_ltr(mut self) -> Self {
         self.style().bidi = Some(BidiStyleRefinement {
-            dir: Some(BidiDirection::LeftToRight),
+            dir: Some(LayoutDirection::LeftToRight),
         });
         self
     }
@@ -755,7 +755,7 @@ pub trait Styled: Sized {
     /// Sets the drawing direction to LTR
     fn dir_rtl(mut self) -> Self {
         self.style().bidi = Some(BidiStyleRefinement {
-            dir: Some(BidiDirection::RightToLeft),
+            dir: Some(LayoutDirection::RightToLeft),
         });
         self
     }

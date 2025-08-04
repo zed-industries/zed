@@ -501,25 +501,25 @@ impl TextStyle {
 
 /// The direction of layout.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
-pub enum BidiDirection {
+pub enum LayoutDirection {
     /// Left-to-right layout.
     LeftToRight,
     /// Right-to-left layout.
     RightToLeft,
 }
 
-impl Default for BidiDirection {
+impl Default for LayoutDirection {
     fn default() -> Self {
-        BidiDirection::LeftToRight
+        LayoutDirection::LeftToRight
     }
 }
 
-impl BidiDirection {
+impl LayoutDirection {
     /// Sets the flex direction on a style, given the bidi direction
     pub fn apply_flex_direction(self, mut style: Style) -> Style {
         match self {
-            BidiDirection::LeftToRight => style,
-            BidiDirection::RightToLeft => {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
                 style.flex_direction = style.flex_direction.flip_horizontal();
                 style
             }
@@ -529,8 +529,8 @@ impl BidiDirection {
     /// Sets the flex direction on a TextAlign, given the bidi direction
     pub fn apply_text_align_direction(self, mut text_align: TextAlign) -> TextAlign {
         match self {
-            BidiDirection::LeftToRight => text_align,
-            BidiDirection::RightToLeft => match text_align {
+            LayoutDirection::LeftToRight => text_align,
+            LayoutDirection::RightToLeft => match text_align {
                 TextAlign::Left => TextAlign::Right,
                 TextAlign::Center => TextAlign::Center,
                 TextAlign::Right => TextAlign::Left,
@@ -544,7 +544,7 @@ impl BidiDirection {
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BidiStyle {
     /// The direction of layout.
-    pub dir: BidiDirection,
+    pub dir: LayoutDirection,
 }
 
 /// A highlight style to apply, similar to a `TextStyle` except
