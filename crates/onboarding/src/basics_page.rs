@@ -43,7 +43,6 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
         light: ThemeName("One Light".into()),
         dark: ThemeName("One Dark".into()),
     });
-    let theme_registry = ThemeRegistry::global(cx);
 
     let theme_mode = theme_selection
         .mode()
@@ -51,113 +50,11 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             Appearance::Light => ThemeMode::Light,
             Appearance::Dark => ThemeMode::Dark,
         });
-    let appearance = match theme_mode {
-        ThemeMode::Light => Appearance::Light,
-        ThemeMode::Dark => Appearance::Dark,
-        ThemeMode::System => *system_appearance,
-    };
-    let current_theme_name = theme_selection.theme(appearance);
-
     let selected_index = match theme_mode {
         ThemeMode::Light => 0,
         ThemeMode::Dark => 1,
         ThemeMode::System => 2,
     };
-
-    let theme_seed = 0xBEEF as f32;
-
-    const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-    const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
-    const FAMILY_NAMES: [SharedString; 3] = [
-        SharedString::new_static("One"),
-        SharedString::new_static("Ayu"),
-        SharedString::new_static("Gruvbox"),
-    ];
-
-    let theme_names = match appearance {
-        Appearance::Light => LIGHT_THEMES,
-        Appearance::Dark => DARK_THEMES,
-    };
-
-    let themes = theme_names.map(|theme| theme_registry.get(theme).unwrap());
-
-    let theme_previews = themes.iter().enumerate().map(|(index, theme)| {
-        let is_selected = theme.name == current_theme_name;
-        let name = theme.name.clone();
-        let colors = cx.theme().colors();
-
-        v_flex()
-            .id(name.clone())
-            .w_full()
-            .items_center()
-            .gap_1()
-            .child(
-                h_flex()
-                    .relative()
-                    .w_full()
-                    .border_2()
-                    .border_color(colors.border_transparent)
-                    .rounded(ThemePreviewTile::CORNER_RADIUS)
-                    .map(|this| {
-                        if is_selected {
-                            this.border_color(colors.border_selected)
-                        } else {
-                            this.opacity(0.8).hover(|s| s.border_color(colors.border))
-                        }
-                    })
-                    .map(|this| {
-                        if theme_mode == ThemeMode::System {
-                            let (light, dark) = (
-                                theme_registry.get(LIGHT_THEMES[index]).unwrap(),
-                                theme_registry.get(DARK_THEMES[index]).unwrap(),
-                            );
-
-                            this.child(
-                                h_flex()
-                                    .relative()
-                                    .size_full()
-                                    .rounded_sm()
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .size_full()
-                                            .rounded_l_sm()
-                                            .overflow_hidden()
-                                            .bg(colors.editor_background)
-                                            .child(ThemePreviewTile::new(light, theme_seed).style(
-                                                crate::theme_preview::ThemePreviewStyle::Borderless,
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .size_full()
-                                            .overflow_hidden()
-                                            .rounded_r_sm()
-                                            .absolute()
-                                            .left_1_2()
-                                            .bg(colors.editor_background)
-                                            .child(ThemePreviewTile::new(dark, theme_seed).style(
-                                                crate::theme_preview::ThemePreviewStyle::Borderless,
-                                            )),
-                                    ),
-                            )
-                        } else {
-                            this.child(ThemePreviewTile::new(theme.clone(), theme_seed))
-                        }
-                    }),
-            )
-            .child(
-                Label::new(FAMILY_NAMES[index].clone())
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-            )
-            .on_click({
-                let theme_name = theme.name.clone();
-                move |_, _, cx| {
-                    write_theme_change(theme_name.clone(), cx);
-                }
-            })
-    });
 
     return v_flex()
         .gap_2()
@@ -165,30 +62,148 @@ fn render_theme_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
             h_flex().justify_between().child(Label::new("Theme")).child(
                 ToggleButtonGroup::single_row(
                     "theme-selector-onboarding-dark-light",
-                    [
-                        ToggleButtonSimple::new("Light", {
-                            |_, _, cx| {
-                                write_mode_change(ThemeMode::Light, cx);
-                            }
-                        }),
-                        ToggleButtonSimple::new("Dark", {
+                    [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System].map(|mode| {
+                        const MODE_NAMES: [SharedString; 3] = [
+                            SharedString::new_static("Light"),
+                            SharedString::new_static("Dark"),
+                            SharedString::new_static("System"),
+                        ];
+                        ToggleButtonSimple::new(
+                            MODE_NAMES[mode as usize].clone(),
                             move |_, _, cx| {
-                                write_mode_change(ThemeMode::Dark, cx);
-                            }
-                        }),
-                        ToggleButtonSimple::new("System", {
-                            |_, _, cx| {
-                                write_mode_change(ThemeMode::System, cx);
-                            }
-                        }),
-                    ],
+                                write_mode_change(mode, cx);
+                            },
+                        )
+                    }),
                 )
-                .selected_index(selected_index)
+                .selected_index(theme_mode as usize)
                 .style(ui::ToggleButtonGroupStyle::Outlined)
                 .button_width(rems_from_px(64.)),
             ),
         )
-        .child(h_flex().gap_4().justify_between().children(theme_previews));
+        .child(
+            h_flex()
+                .gap_4()
+                .justify_between()
+                .children(render_theme_previews(&theme_selection, cx)),
+        );
+
+    fn render_theme_previews(
+        theme_selection: &ThemeSelection,
+        cx: &mut App,
+    ) -> [impl IntoElement; 3] {
+        let system_appearance = SystemAppearance::global(cx);
+        let theme_registry = ThemeRegistry::global(cx);
+
+        let theme_seed = 0xBEEF as f32;
+        let theme_mode = theme_selection
+            .mode()
+            .unwrap_or_else(|| match *system_appearance {
+                Appearance::Light => ThemeMode::Light,
+                Appearance::Dark => ThemeMode::Dark,
+            });
+        let appearance = match theme_mode {
+            ThemeMode::Light => Appearance::Light,
+            ThemeMode::Dark => Appearance::Dark,
+            ThemeMode::System => *system_appearance,
+        };
+        let current_theme_name = theme_selection.theme(appearance);
+
+        const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+        const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+        const FAMILY_NAMES: [SharedString; 3] = [
+            SharedString::new_static("One"),
+            SharedString::new_static("Ayu"),
+            SharedString::new_static("Gruvbox"),
+        ];
+
+        let theme_names = match appearance {
+            Appearance::Light => LIGHT_THEMES,
+            Appearance::Dark => DARK_THEMES,
+        };
+
+        let themes = theme_names.map(|theme| theme_registry.get(theme).unwrap());
+
+        let theme_previews = [0, 1, 2].map(|index| {
+            let theme = &themes[index];
+            let is_selected = theme.name == current_theme_name;
+            let name = theme.name.clone();
+            let colors = cx.theme().colors();
+
+            v_flex()
+                .id(name.clone())
+                .w_full()
+                .items_center()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .relative()
+                        .w_full()
+                        .border_2()
+                        .border_color(colors.border_transparent)
+                        .rounded(ThemePreviewTile::CORNER_RADIUS)
+                        .map(|this| {
+                            if is_selected {
+                                this.border_color(colors.border_selected)
+                            } else {
+                                this.opacity(0.8).hover(|s| s.border_color(colors.border))
+                            }
+                        })
+                        .map(|this| {
+                            if theme_mode == ThemeMode::System {
+                                let (light, dark) = (
+                                    theme_registry.get(LIGHT_THEMES[index]).unwrap(),
+                                    theme_registry.get(DARK_THEMES[index]).unwrap(),
+                                );
+
+                                this.child(
+                                    h_flex()
+                                        .relative()
+                                        .size_full()
+                                        .rounded_sm()
+                                        .overflow_hidden()
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .rounded_l_sm()
+                                                .overflow_hidden()
+                                                .bg(colors.editor_background)
+                                                .child(ThemePreviewTile::new(light, theme_seed).style(
+                                                    crate::theme_preview::ThemePreviewStyle::Borderless,
+                                                )),
+                                        )
+                                        .child(
+                                            div()
+                                                .size_full()
+                                                .overflow_hidden()
+                                                .rounded_r_sm()
+                                                .absolute()
+                                                .left_1_2()
+                                                .bg(colors.editor_background)
+                                                .child(ThemePreviewTile::new(dark, theme_seed).style(
+                                                    crate::theme_preview::ThemePreviewStyle::Borderless,
+                                                )),
+                                        ),
+                                )
+                            } else {
+                                this.child(ThemePreviewTile::new(theme.clone(), theme_seed))
+                            }
+                        }),
+                )
+                .child(
+                    Label::new(FAMILY_NAMES[index].clone())
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
+                .on_click({
+                    let theme_name = theme.name.clone();
+                    move |_, _, cx| {
+                        write_theme_change(theme_name.clone(), cx);
+                    }
+                })
+        });
+        theme_previews
+    }
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
