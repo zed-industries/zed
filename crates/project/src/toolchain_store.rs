@@ -235,7 +235,7 @@ impl ToolchainStore {
             ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
-    pub(crate) fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
+    pub fn as_local_store(&self) -> Option<&Entity<LocalToolchainStore>> {
         match &self.0 {
             ToolchainStoreInner::Local(local, _) => Some(local),
             ToolchainStoreInner::Remote(_) => None,

@@ -7542,7 +7542,7 @@ impl LspStore {
         cx.spawn(async move |this, cx| {
             while let Some(()) = joint_future.next().await {
                 this.update(cx, |this, cx| {
-                    this.refresh_server_tree(todo!(), cx);
+                    this.refresh_server_tree(Default::default(), cx); // TODO
                 })
                 .ok();
 

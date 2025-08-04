@@ -351,12 +351,14 @@ impl LanguageRegistry {
             config.grammar.clone(),
             config.matcher.clone(),
             config.hidden,
+            None,
             Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
                     queries: Default::default(),
                     toolchain_provider: None,
                     context_provider: None,
+                    manifest_name: None,
                 })
             }),
         )
