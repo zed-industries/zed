@@ -138,8 +138,6 @@ dependencies = [
 [[package]]
 name = "agent-client-protocol"
 version = "0.0.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d4bdd412c153ebfb6029db6c0c0c61800936526f32b32bcca7577b2f8315d8e"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -179,6 +177,7 @@ dependencies = [
  "smol",
  "strum 0.27.1",
  "tempfile",
+ "thiserror 2.0.12",
  "ui",
  "util",
  "uuid",

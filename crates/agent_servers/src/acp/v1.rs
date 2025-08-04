@@ -9,7 +9,7 @@ use std::rc::Rc;
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 
-use crate::AgentServerCommand;
+use crate::{AgentServerCommand, acp::UnsupportedVersion};
 use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 pub struct AcpConnection {
@@ -24,6 +24,8 @@ pub struct AcpConnection {
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
 }
+
+const MINIMUM_SUPPORTED_VERSION: acp::ProtocolVersion = acp::V1;
 
 impl AcpConnection {
     pub async fn stdio(
@@ -71,6 +73,10 @@ impl AcpConnection {
                 },
             })
             .await?;
+
+        if response.protocol_version < MINIMUM_SUPPORTED_VERSION {
+            return Err(UnsupportedVersion.into());
+        }
 
         // todo! if child exits, display error in thread view
         Ok(Self {

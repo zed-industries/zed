@@ -352,15 +352,15 @@ fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatu
     }
 }
 
-pub struct OldAcpAgentConnection {
+pub struct AcpConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
     pub _child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
 }
 
-impl OldAcpAgentConnection {
-    pub fn new(
+impl AcpConnection {
+    pub fn stdio(
         name: &'static str,
         command: AgentServerCommand,
         root_dir: &Path,
@@ -417,7 +417,7 @@ impl OldAcpAgentConnection {
     }
 }
 
-impl AgentConnection for OldAcpAgentConnection {
+impl AgentConnection for AcpConnection {
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
