@@ -2392,17 +2392,9 @@ impl AcpThreadView {
             self.notification_subscriptions.remove(&window);
         }
     }
-}
 
-impl Focusable for AcpThreadView {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.message_editor.focus_handle(cx)
-    }
-}
-
-impl Render for AcpThreadView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
+    fn render_thread_controls(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -2421,6 +2413,28 @@ impl Render for AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
+        h_flex()
+            .mt_1()
+            .mr_1()
+            .py_2()
+            .px(RESPONSE_PADDING_X)
+            .opacity(0.4)
+            .hover(|style| style.opacity(1.))
+            .flex_wrap()
+            .justify_end()
+            .child(open_as_markdown)
+            .child(scroll_to_top)
+    }
+}
+
+impl Focusable for AcpThreadView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.message_editor.focus_handle(cx)
+    }
+}
+
+impl Render for AcpThreadView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .key_context("AcpThread")
@@ -2456,42 +2470,39 @@ impl Render for AcpThreadView {
                     .items_center()
                     .justify_center()
                     .child(self.render_error_state(e, cx)),
-                ThreadState::Ready { thread, .. } => v_flex().flex_1().map(|this| {
-                    if self.list_state.item_count() > 0 {
-                        this.child(
-                            list(self.list_state.clone())
-                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                .flex_grow()
-                                .into_any(),
-                        )
-                        .child(
-                            h_flex()
-                                .group("controls")
-                                .mt_1()
-                                .mr_1()
-                                .py_2()
-                                .px(RESPONSE_PADDING_X)
-                                .opacity(0.4)
-                                .hover(|style| style.opacity(1.))
-                                .flex_wrap()
-                                .justify_end()
-                                .child(open_as_markdown)
-                                .child(scroll_to_top)
-                                .into_any_element(),
-                        )
-                        .children(match thread.read(cx).status() {
-                            ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => None,
-                            ThreadStatus::Generating => div()
-                                .px_5()
-                                .py_2()
-                                .child(LoadingLabel::new("").size(LabelSize::Small))
-                                .into(),
-                        })
-                        .children(self.render_activity_bar(&thread, window, cx))
-                    } else {
-                        this.child(self.render_empty_state(cx))
-                    }
-                }),
+                ThreadState::Ready { thread, .. } => {
+                    let thread_clone = thread.clone();
+
+                    v_flex().flex_1().map(|this| {
+                        if self.list_state.item_count() > 0 {
+                            let is_generating =
+                                matches!(thread_clone.read(cx).status(), ThreadStatus::Generating);
+
+                            this.child(
+                                list(self.list_state.clone())
+                                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                    .flex_grow()
+                                    .into_any(),
+                            )
+                            .when(!is_generating, |this| {
+                                this.child(self.render_thread_controls(cx))
+                            })
+                            .children(match thread_clone.read(cx).status() {
+                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
+                                    None
+                                }
+                                ThreadStatus::Generating => div()
+                                    .px_5()
+                                    .py_2()
+                                    .child(LoadingLabel::new("").size(LabelSize::Small))
+                                    .into(),
+                            })
+                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                        } else {
+                            this.child(self.render_empty_state(cx))
+                        }
+                    })
+                }
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
