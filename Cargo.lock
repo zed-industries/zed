@@ -10928,6 +10928,7 @@ dependencies = [
  "language",
  "language_model",
  "menu",
+ "notifications",
  "project",
  "schemars",
  "serde",
