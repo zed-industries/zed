@@ -1504,7 +1504,7 @@ mod tests {
                             thread.handle_session_update(
                                 acp::SessionUpdate::ToolCall(acp::ToolCall {
                                     id: id.clone(),
-                                    label: "Label".into(),
+                                    title: "Label".into(),
                                     kind: acp::ToolKind::Fetch,
                                     status: acp::ToolCallStatus::InProgress,
                                     content: vec![],
@@ -1608,7 +1608,7 @@ mod tests {
                             thread.handle_session_update(
                                 acp::SessionUpdate::ToolCall(acp::ToolCall {
                                     id: acp::ToolCallId("test".into()),
-                                    label: "Label".into(),
+                                    title: "Label".into(),
                                     kind: acp::ToolKind::Edit,
                                     status: acp::ToolCallStatus::Completed,
                                     content: vec![acp::ToolCallContent::Diff {

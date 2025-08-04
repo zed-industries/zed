@@ -2772,7 +2772,7 @@ mod tests {
         let tool_call_id = acp::ToolCallId("1".into());
         let tool_call = acp::ToolCall {
             id: tool_call_id.clone(),
-            label: "Label".into(),
+            title: "Label".into(),
             kind: acp::ToolKind::Edit,
             status: acp::ToolCallStatus::Pending,
             content: vec!["hi".into()],
@@ -2784,7 +2784,7 @@ mod tests {
                 tool_call_id,
                 vec![acp::PermissionOption {
                     id: acp::PermissionOptionId("1".into()),
-                    label: "Allow".into(),
+                    name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
                 }],
             )]));
