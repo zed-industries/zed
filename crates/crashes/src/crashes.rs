@@ -135,9 +135,9 @@ pub fn handle_panic() {
     for _ in 0..5 {
         if CRASH_HANDLER.load(Ordering::Acquire) {
             log::error!("triggering a crash to generate a minidump...");
-            #[cfg(linux)]
-            CrashHandler.simulate_signal(crash_handler::SIGTRAP);
-            #[cfg(not(linux))]
+            #[cfg(target_os = "linux")]
+            CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
+            #[cfg(not(target_os = "linux"))]
             CrashHandler.simulate_exception(None);
             break;
         }
