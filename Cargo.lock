@@ -188,6 +188,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "workspace-hack",
  "worktree",
 ]
 

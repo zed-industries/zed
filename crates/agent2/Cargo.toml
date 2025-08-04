@@ -41,6 +41,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 worktree.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
