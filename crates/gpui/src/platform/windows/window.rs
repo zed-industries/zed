@@ -49,6 +49,7 @@ pub struct WindowsWindowState {
     pub hovered: bool,
 
     pub renderer: DirectXRenderer,
+    pub keydown_time: Option<std::time::Instant>,
 
     pub click_state: ClickState,
     pub system_settings: WindowsSystemSettings,
@@ -115,6 +116,7 @@ impl WindowsWindowState {
         let nc_button_pressed = None;
         let fullscreen = None;
         let initial_placement = None;
+        let keydown_time = None;
 
         Ok(Self {
             origin,
@@ -133,6 +135,7 @@ impl WindowsWindowState {
             system_key_handled,
             hovered,
             renderer,
+            keydown_time,
             click_state,
             system_settings,
             current_cursor,

@@ -380,6 +380,7 @@ fn handle_keydown_msg(
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
     let mut lock = state_ptr.state.borrow_mut();
+    lock.keydown_time = Some(std::time::Instant::now());
     let Some(input) = handle_key_event(handle, wparam, lparam, &mut lock, |keystroke| {
         PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
@@ -1237,10 +1238,15 @@ fn draw_window(
         .request_frame
         .take()?;
     request_frame(RequestFrameOptions {
-        require_presentation: false,
+        require_presentation: true,
         force_render,
     });
-    state_ptr.state.borrow_mut().callbacks.request_frame = Some(request_frame);
+    let mut lock = state_ptr.state.borrow_mut();
+    if let Some(keydown_time) = lock.keydown_time.take() {
+        let elapsed = keydown_time.elapsed();
+        println!("Elapsed keydown time: {:.02} ms", elapsed.as_secs_f64() * 1000.0);
+    }
+    lock.callbacks.request_frame = Some(request_frame);
     unsafe { ValidateRect(Some(handle), None).ok().log_err() };
     Some(0)
 }
