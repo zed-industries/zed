@@ -351,8 +351,8 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, window, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction());
-            // Since we have both, the copilot suggestion is not shown inline
+            assert!(editor.has_active_edit_prediction());
+            // Since we have both, the copilot suggestion is existing but does not show up as ghost text
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
             assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
 
@@ -942,7 +942,7 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
-            assert!(!editor.has_active_edit_prediction(),);
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
             assert_eq!(editor.display_text(cx), "one\ntwo.\nthree\n");
         });
