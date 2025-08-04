@@ -460,13 +460,19 @@ impl Vim {
             let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
             let mut selections = editor.selections.all::<Point>(cx);
             let max_point = display_map.buffer_snapshot.max_point();
+            let buffer_snapshot = &display_map.buffer_snapshot;
 
             for selection in &mut selections {
                 // Start always goes to column 0 of the first selected line
                 let start_row = selection.start.row;
                 let current_end_row = selection.end.row;
 
-                let end_row = current_end_row + count as u32;
+                // Check if cursor is on empty line by checking first character
+                let line_start_offset = buffer_snapshot.point_to_offset(Point::new(start_row, 0));
+                let first_char = buffer_snapshot.chars_at(line_start_offset).next();
+                let extra_line = if first_char == Some('\n') { 1 } else { 0 };
+
+                let end_row = current_end_row + count as u32 + extra_line;
 
                 selection.start = Point::new(start_row, 0);
                 selection.end = if end_row > max_point.row {
@@ -892,7 +898,7 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_helix_select_n_lines(cx: &mut gpui::TestAppContext) {
+    async fn test_helix_select_lines(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.set_state(
             "line one\nline ˇtwo\nline three\nline four",
@@ -903,11 +909,6 @@ mod test {
             "line one\n«line two\nline three\nˇ»line four",
             Mode::HelixNormal,
         );
-    }
-
-    #[gpui::test]
-    async fn test_helix_select_lines_with_selection(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
 
         // Test extending existing line selection
         cx.set_state(
@@ -918,9 +919,7 @@ mod test {
             line four"},
             Mode::HelixNormal,
         );
-
         cx.simulate_keystrokes("x");
-
         cx.assert_state(
             indoc! {"
             «line one
@@ -929,11 +928,80 @@ mod test {
             line four"},
             Mode::HelixNormal,
         );
-    }
 
-    #[gpui::test]
-    async fn test_helix_select_lines_with_merging(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, true).await;
+        // Pressing x in empty line, select next line (because helix considers cursor a selection)
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇ
+            line three
+            line four"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            ˇ»line four"},
+            Mode::HelixNormal,
+        );
+
+        // Empty line with count selects extra + count lines
+        cx.set_state(
+            indoc! {"
+            line one
+            ˇ
+            line three
+            line four
+            line five"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("2 x");
+        cx.assert_state(
+            indoc! {"
+            line one
+            «
+            line three
+            line four
+            ˇ»line five"},
+            Mode::HelixNormal,
+        );
+
+        // Compare empty vs non-empty line behavior
+        cx.set_state(
+            indoc! {"
+            ˇnon-empty line
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «non-empty line
+            ˇ»line two
+            line three"},
+            Mode::HelixNormal,
+        );
+
+        // Same test but with empty line - should select one extra
+        cx.set_state(
+            indoc! {"
+            ˇ
+            line two
+            line three"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x");
+        cx.assert_state(
+            indoc! {"
+            «
+            line two
+            ˇ»line three"},
+            Mode::HelixNormal,
+        );
 
         // Test selecting multiple lines with count
         cx.set_state(
