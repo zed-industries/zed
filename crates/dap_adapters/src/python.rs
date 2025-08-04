@@ -101,6 +101,9 @@ impl PythonDebugAdapter {
             .await
             .context("Could not find Python installation for DebugPy")?;
         let work_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
+        if !work_dir.exists() {
+            std::fs::create_dir_all(&work_dir)?;
+        }
         let mut path = work_dir.clone();
         path.push("debugpy-venv");
         if !path.exists() {
