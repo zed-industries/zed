@@ -7904,12 +7904,8 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "log",
-<<<<<<< HEAD
  "parking_lot",
-||||||| parent of 55ed03f762 (Add uploading)
-=======
  "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
->>>>>>> 55ed03f762 (Add uploading)
  "serde",
  "serde_json",
  "tokio",

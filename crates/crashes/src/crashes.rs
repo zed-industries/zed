@@ -20,6 +20,7 @@ use std::{
 pub static CRASH_HANDLER: AtomicBool = AtomicBool::new(false);
 // set when the first minidump request is made to avoid generating duplicate crash reports
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
+const CRASH_HANDLER_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub async fn init(id: String) {
     let exe = env::current_exe().expect("unable to find ourselves");
@@ -53,7 +54,10 @@ pub async fn init(id: String) {
     }
     let client = maybe_client.unwrap();
     client.send_message(1, id).unwrap(); // set session id on the server
+
+    let client = std::sync::Arc::new(client);
     let handler = crash_handler::CrashHandler::attach(unsafe {
+        let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
             let res = if REQUESTED_MINIDUMP
@@ -78,6 +82,11 @@ pub async fn init(id: String) {
     CRASH_HANDLER.store(true, Ordering::Release);
     std::mem::forget(handler);
     info!("crash handler registered");
+
+    loop {
+        client.ping().ok();
+        smol::Timer::after(Duration::from_secs(10)).await;
+    }
 }
 
 pub struct CrashServer {
@@ -157,7 +166,7 @@ pub fn crash_server(socket: &Path) {
                 session_id: OnceLock::new(),
             }),
             &ab,
-            None,
+            Some(CRASH_HANDLER_TIMEOUT),
         )
         .expect("failed to run server");
 }

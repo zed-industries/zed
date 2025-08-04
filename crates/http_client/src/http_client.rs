@@ -88,27 +88,17 @@ pub trait HttpClient: 'static + Send + Sync {
 
     fn proxy(&self) -> Option<&Url>;
 
-<<<<<<< HEAD
-<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
-||||||| parent of 55ed03f762 (Add uploading)
-=======
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        None
->>>>>>> 55ed03f762 (Add uploading)
-||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        None
-=======
+    }
+
     fn send_multipart_form<'a>(
         &'a self,
         _url: &str,
         _request: reqwest::multipart::Form,
     ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
->>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }
 }
 
@@ -156,17 +146,11 @@ impl HttpClient for HttpClientWithProxy {
     fn type_name(&self) -> &'static str {
         self.client.type_name()
     }
-<<<<<<< HEAD
 
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
     }
-}
-||||||| parent of 55ed03f762 (Add uploading)
-}
-=======
->>>>>>> 55ed03f762 (Add uploading)
 
     fn send_multipart_form<'a>(
         &'a self,
@@ -175,20 +159,6 @@ impl HttpClient for HttpClientWithProxy {
     ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         self.client.send_multipart_form(url, form)
     }
-<<<<<<< HEAD
-
-<<<<<<< HEAD
-    #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> &FakeHttpClient {
-        self.client.as_fake()
-    }
-||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
-=======
->>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
-||||||| parent of ccf43fa7b8 (Fix file uploading)
-
-=======
->>>>>>> ccf43fa7b8 (Fix file uploading)
 }
 
 /// An [`HttpClient`] that has a base URL.
@@ -298,57 +268,6 @@ impl HttpClientWithUrl {
     }
 }
 
-<<<<<<< HEAD
-impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send(req)
-    }
-
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        self.client.user_agent()
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.client.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
-    #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> &FakeHttpClient {
-        self.client.as_fake()
-    }
-}
-
-||||||| parent of 55ed03f762 (Add uploading)
-impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send(req)
-    }
-
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        self.client.user_agent()
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.client.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-}
-
-=======
->>>>>>> 55ed03f762 (Add uploading)
 impl HttpClient for HttpClientWithUrl {
     fn send(
         &self,
@@ -369,27 +288,17 @@ impl HttpClient for HttpClientWithUrl {
         self.client.type_name()
     }
 
-<<<<<<< HEAD
-<<<<<<< HEAD
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
-||||||| parent of 55ed03f762 (Add uploading)
-=======
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        self.client.as_real_client()
->>>>>>> 55ed03f762 (Add uploading)
-||||||| parent of 1623809b02 (Handle requesting crashes from remote servers)
-    fn as_real_client(&self) -> Option<(&reqwest::Client, tokio::runtime::Handle)> {
-        self.client.as_real_client()
-=======
+    }
+
     fn send_multipart_form<'a>(
         &'a self,
         url: &str,
         request: reqwest::multipart::Form,
     ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
         self.client.send_multipart_form(url, request)
->>>>>>> 1623809b02 (Handle requesting crashes from remote servers)
     }
 }
 

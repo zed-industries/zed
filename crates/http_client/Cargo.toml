@@ -23,12 +23,8 @@ futures.workspace = true
 http.workspace = true
 http-body.workspace = true
 log.workspace = true
-<<<<<<< HEAD
 parking_lot.workspace = true
-||||||| parent of 55ed03f762 (Add uploading)
-=======
 reqwest.workspace = true
->>>>>>> 55ed03f762 (Add uploading)
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
