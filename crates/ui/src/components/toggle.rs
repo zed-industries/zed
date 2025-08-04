@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, AnyView, ClickEvent, CursorStyle, ElementId, Hsla, IntoElement, Styled, Window,
-    div, hsla, prelude::*,
+    AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
+    prelude::*,
 };
 use std::sync::Arc;
 
@@ -566,7 +566,7 @@ impl RenderOnce for Switch {
 pub struct SwitchField {
     id: ElementId,
     label: SharedString,
-    description: SharedString,
+    description: Option<SharedString>,
     toggle_state: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
@@ -577,19 +577,24 @@ impl SwitchField {
     pub fn new(
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
-        description: impl Into<SharedString>,
+        description: Option<SharedString>,
         toggle_state: impl Into<ToggleState>,
         on_click: impl Fn(&ToggleState, &mut Window, &mut App) + 'static,
     ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
-            description: description.into(),
+            description: description,
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,
             color: SwitchColor::Accent,
         }
+    }
+
+    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -610,19 +615,21 @@ impl RenderOnce for SwitchField {
         h_flex()
             .id(SharedString::from(format!("{}-container", self.id)))
             .when(!self.disabled, |this| {
-                this.hover(|this| this.cursor(CursorStyle::PointingHand))
+                this.hover(|this| this.cursor_pointer())
             })
             .w_full()
             .gap_4()
             .justify_between()
             .flex_wrap()
-            .child(
-                v_flex()
+            .child(match &self.description {
+                Some(description) => v_flex()
                     .gap_0p5()
                     .max_w_5_6()
-                    .child(Label::new(self.label))
-                    .child(Label::new(self.description).color(Color::Muted)),
-            )
+                    .child(Label::new(self.label.clone()))
+                    .child(Label::new(description.clone()).color(Color::Muted))
+                    .into_any_element(),
+                None => Label::new(self.label.clone()).into_any_element(),
+            })
             .child(
                 Switch::new(
                     SharedString::from(format!("{}-switch", self.id)),
@@ -671,7 +678,7 @@ impl Component for SwitchField {
                                 SwitchField::new(
                                     "switch_field_unselected",
                                     "Enable notifications",
-                                    "Receive notifications when new messages arrive.",
+                                    Some("Receive notifications when new messages arrive.".into()),
                                     ToggleState::Unselected,
                                     |_, _, _| {},
                                 )
@@ -682,7 +689,7 @@ impl Component for SwitchField {
                                 SwitchField::new(
                                     "switch_field_selected",
                                     "Enable notifications",
-                                    "Receive notifications when new messages arrive.",
+                                    Some("Receive notifications when new messages arrive.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
                                 )
@@ -698,7 +705,7 @@ impl Component for SwitchField {
                                 SwitchField::new(
                                     "switch_field_default",
                                     "Default color",
-                                    "This uses the default switch color.",
+                                    Some("This uses the default switch color.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
                                 )
@@ -709,7 +716,7 @@ impl Component for SwitchField {
                                 SwitchField::new(
                                     "switch_field_accent",
                                     "Accent color",
-                                    "This uses the accent color scheme.",
+                                    Some("This uses the accent color scheme.".into()),
                                     ToggleState::Selected,
                                     |_, _, _| {},
                                 )
@@ -725,11 +732,25 @@ impl Component for SwitchField {
                             SwitchField::new(
                                 "switch_field_disabled",
                                 "Disabled field",
-                                "This field is disabled and cannot be toggled.",
+                                Some("This field is disabled and cannot be toggled.".into()),
                                 ToggleState::Selected,
                                 |_, _, _| {},
                             )
                             .disabled(true)
+                            .into_any_element(),
+                        )],
+                    ),
+                    example_group_with_title(
+                        "No Description",
+                        vec![single_example(
+                            "No Description",
+                            SwitchField::new(
+                                "switch_field_disabled",
+                                "Disabled field",
+                                None,
+                                ToggleState::Selected,
+                                |_, _, _| {},
+                            )
                             .into_any_element(),
                         )],
                     ),
