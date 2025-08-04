@@ -2920,11 +2920,16 @@ impl Project {
                         server_metadata_updated,
                     ) = message
                     {
-                        if let Some(capabilities) = server_metadata_updated.capabilities {
-                            // TODO kb this has to be stored inside collab's DB and re-shared on join!
-                            // Do the same as `proto::StartLanguageServer` path does to access the data, then update it
-                            // (see `lsp_store::handle_start_language_server`)
-                            dbg!(capabilities);
+                        if let Some(capabilities) = server_metadata_updated
+                            .capabilities
+                            .as_ref()
+                            .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                        {
+                            self.lsp_store.update(cx, |lsp_store, _| {
+                                lsp_store
+                                    .lsp_server_capabilities
+                                    .insert(*language_server_id, capabilities);
+                            });
                         }
                     }
                 }

@@ -1968,12 +1968,19 @@ async fn join_project(
     }
 
     // First, we send the metadata associated with each worktree.
+    let (language_servers, language_server_capabilities) = project
+        .language_servers
+        .clone()
+        .into_iter()
+        .map(|server| (server.server, server.capabilities))
+        .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
-        language_servers: project.language_servers.clone(),
+        language_servers,
+        language_server_capabilities,
         role: project.role.into(),
     })?;
 
@@ -2032,8 +2039,8 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
-                server_name: Some(language_server.name.clone()),
-                language_server_id: language_server.id,
+                server_name: Some(language_server.server.name.clone()),
+                language_server_id: language_server.server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                         proto::LspDiskBasedDiagnosticsUpdated {},
@@ -2245,18 +2252,20 @@ async fn update_language_server(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
-        .project_connection_ids(project_id, session.connection_id, true)
-        .await?;
+    let db = session.db().await;
+
     if let Some(proto::update_language_server::Variant::MetadataUpdated(server_metadata_updated)) =
         &request.variant
     {
-        if let Some(capabilities) = &server_metadata_updated.capabilities {
-            dbg!("TODO kb update the language server DB with new capabilities {capabilities}");
+        if let Some(capabilities) = server_metadata_updated.capabilities.clone() {
+            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+                .await?;
         }
     }
+
+    let project_connection_ids = db
+        .project_connection_ids(project_id, session.connection_id, true)
+        .await?;
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),

@@ -4218,17 +4218,15 @@ impl LspCommand for GetDocumentColor {
     }
 
     fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
-        dbg!(
-            server_capabilities
-                .server_capabilities
-                .color_provider
-                .as_ref()
-        )
-        .is_some_and(|capability| match capability {
-            lsp::ColorProviderCapability::Simple(supported) => *supported,
-            lsp::ColorProviderCapability::ColorProvider(..) => true,
-            lsp::ColorProviderCapability::Options(..) => true,
-        })
+        server_capabilities
+            .server_capabilities
+            .color_provider
+            .as_ref()
+            .is_some_and(|capability| match capability {
+                lsp::ColorProviderCapability::Simple(supported) => *supported,
+                lsp::ColorProviderCapability::ColorProvider(..) => true,
+                lsp::ColorProviderCapability::Options(..) => true,
+            })
     }
 
     fn to_lsp(

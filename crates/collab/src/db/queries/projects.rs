@@ -692,7 +692,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
-                // TODO kb add more: capabilities and share on [re]join
+                capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -1055,10 +1055,13 @@ impl Database {
             repositories,
             language_servers: language_servers
                 .into_iter()
-                .map(|language_server| proto::LanguageServer {
-                    id: language_server.id as u64,
-                    name: language_server.name,
-                    worktree_id: None,
+                .map(|language_server| LanguageServer {
+                    server: proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                        worktree_id: None,
+                    },
+                    capabilities: language_server.capabilities,
                 })
                 .collect(),
         };

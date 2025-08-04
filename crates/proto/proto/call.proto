@@ -70,8 +70,8 @@ message RejoinedProject {
     uint64 id = 1;
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
-    // TODO kb need to send the capabilities too
     repeated LanguageServer language_servers = 4;
+    repeated string language_server_capabilities = 5;
 }
 
 message LeaveRoom {}
@@ -199,8 +199,8 @@ message JoinProjectResponse {
     uint32 replica_id = 1;
     repeated WorktreeMetadata worktrees = 2;
     repeated Collaborator collaborators = 3;
-    // TODO kb need to send the capabilities too
     repeated LanguageServer language_servers = 4;
+    repeated string language_server_capabilities = 8;
     ChannelRole role = 6;
     reserved 7;
 }

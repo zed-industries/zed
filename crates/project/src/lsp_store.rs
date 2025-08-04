@@ -58,12 +58,12 @@ use language::{
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
-    DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter, FileOperationPatternKind,
-    FileOperationRegistrationOptions, FileRename, FileSystemWatcher, LanguageServer,
-    LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId, LanguageServerName,
-    LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType, OneOf,
-    RenameFilesParams, SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
+    AdapterServerCapabilities, CodeActionKind, CompletionContext, DiagnosticSeverity,
+    DiagnosticTag, DidChangeWatchedFilesRegistrationOptions, Edit, FileOperationFilter,
+    FileOperationPatternKind, FileOperationRegistrationOptions, FileRename, FileSystemWatcher,
+    LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
+    LanguageServerName, LanguageServerSelector, LspRequestFuture, MessageActionItem, MessageType,
+    OneOf, RenameFilesParams, SymbolKind, TextEdit, WillRenameFiles, WorkDoneProgressCancelParams,
     WorkspaceFolder, notification::DidRenameFiles,
 };
 use node_runtime::read_package_installed_version;
@@ -85,7 +85,6 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
-    collections::HashSet,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -3564,6 +3563,7 @@ pub struct LspStore {
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+    pub(super) lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
 }
@@ -3826,6 +3826,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
+            lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
             active_entry: None,
@@ -3884,6 +3885,7 @@ impl LspStore {
             language_server_statuses: Default::default(),
             nonce: StdRng::from_entropy().r#gen(),
             diagnostic_summaries: HashMap::default(),
+            lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
             lsp_code_lens: HashMap::default(),
             active_entry: None,
@@ -6811,8 +6813,29 @@ impl LspStore {
                     .map(|lsp_adapter| lsp_adapter.name())
                     .collect::<HashSet<_>>();
 
-                // TODO kb check for capabilities here
-                dbg!(("remote colors fetch!", relevant_language_servers));
+                let request = GetDocumentColor {};
+                let is_supported = self
+                    .language_server_statuses
+                    .iter()
+                    .filter_map(|(server_id, server_status)| {
+                        // let adapter = self.language_server_adapter_for_id(id)?;
+                        relevant_language_servers
+                            .contains(&server_status.name)
+                            .then_some(server_id)
+                    })
+                    .filter_map(|server_id| self.lsp_server_capabilities.get(&server_id))
+                    .any(|capabilities| {
+                        request.check_capabilities(AdapterServerCapabilities {
+                            server_capabilities: capabilities.clone(),
+                            code_action_kinds: None,
+                        })
+                    });
+                // TODO kb make generic, for each lsp-related request
+                dbg!((
+                    "remote colors fetch!",
+                    relevant_language_servers,
+                    is_supported,
+                ));
             }
 
             let request_task = client.request(proto::MultiLspQuery {
@@ -7585,7 +7608,7 @@ impl LspStore {
                     .send(proto::StartLanguageServer {
                         project_id,
                         server: Some(proto::LanguageServer {
-                            id: server_id.0 as u64,
+                            id: server_id.to_proto(),
                             name: status.name.to_string(),
                             worktree_id: None,
                         }),
@@ -8769,17 +8792,25 @@ impl LspStore {
     }
 
     async fn handle_start_language_server(
-        this: Entity<Self>,
+        lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::StartLanguageServer>,
         mut cx: AsyncApp,
     ) -> Result<()> {
-        // TODO kb handle new capabilities info here
-        dbg!(("@@@@@@@@@@@@@", &envelope.payload));
         let server = envelope.payload.server.context("invalid server")?;
-
-        this.update(&mut cx, |this, cx| {
+        let server_capabilities =
+            serde_json::from_str::<lsp::ServerCapabilities>(&envelope.payload.capabilities)
+                .with_context(|| {
+                    format!(
+                        "incorrect server capabilities {}",
+                        envelope.payload.capabilities
+                    )
+                })?;
+        lsp_store.update(&mut cx, |lsp_store, cx| {
             let server_id = LanguageServerId(server.id as usize);
-            this.language_server_statuses.insert(
+            lsp_store
+                .lsp_server_capabilities
+                .insert(server_id, server_capabilities);
+            lsp_store.language_server_statuses.insert(
                 server_id,
                 LanguageServerStatus {
                     name: LanguageServerName::from_proto(server.name.clone()),
@@ -10811,7 +10842,7 @@ impl LspStore {
                 .send(proto::StartLanguageServer {
                     project_id: *project_id,
                     server: Some(proto::LanguageServer {
-                        id: server_id.0 as u64,
+                        id: server_id.to_proto(),
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.0.to_proto()),
                     }),
@@ -11387,6 +11418,7 @@ impl LspStore {
     }
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
+        self.lsp_server_capabilities.remove(&for_server);
         for buffer_colors in self.lsp_document_colors.values_mut() {
             buffer_colors.colors.remove(&for_server);
             buffer_colors.cache_version += 1;
