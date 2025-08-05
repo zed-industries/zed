@@ -1599,23 +1599,32 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     }
                 }
 
-                // Always set the python interpreter path
-                // Get or create the python section
-                let python = object
+                // Set both pythonPath and defaultInterpreterPath for compatibility
+                if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                    .unwrap();
+                {
+                    python.insert(
+                        "pythonPath".to_owned(),
+                        Value::String(interpreter_path.clone()),
+                    );
+                    python.insert(
+                        "defaultInterpreterPath".to_owned(),
+                        Value::String(interpreter_path),
+                    );
+                }
 
-                // Set both pythonPath and defaultInterpreterPath for compatibility
-                python.insert(
-                    "pythonPath".to_owned(),
-                    Value::String(interpreter_path.clone()),
-                );
-                python.insert(
-                    "defaultInterpreterPath".to_owned(),
-                    Value::String(interpreter_path),
-                );
+                if !object.contains_key("typeCheckingMode")
+                    && let Some(analysis) = object
+                        .entry("basedpyright.analysis")
+                        .or_insert(Value::Object(serde_json::Map::default()))
+                        .as_object_mut()
+                {
+                    analysis
+                        .entry("typeCheckingMode")
+                        .or_insert("standard".into());
+                }
             }
 
             user_settings

@@ -9213,7 +9213,6 @@ dependencies = [
  "chrono",
  "collections",
  "dap",
- "feature_flags",
  "futures 0.3.31",
  "gpui",
  "http_client",
@@ -12890,6 +12889,20 @@ dependencies = [
  "log",
  "sptr",
  "wasmtime-math",
+]
+
+[[package]]
+name = "python_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "db",
+ "editor",
+ "gpui",
+ "project",
+ "ui",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -20466,6 +20479,7 @@ dependencies = [
  "project_symbols",
  "prompt_store",
  "proto",
+ "python_ui",
  "recent_projects",
  "release_channel",
  "remote",

@@ -397,6 +397,10 @@ impl LspAdapter for ExtensionLspAdapter {
 
         Ok(labels_from_extension(labels, language))
     }
+
+    fn is_extension(&self) -> bool {
+        true
+    }
 }
 
 fn labels_from_extension(
