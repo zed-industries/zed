@@ -95,7 +95,7 @@ pub enum AgentResponseEvent {
     Thinking(String),
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp::ToolCallUpdate),
-    Stop(StopReason),
+    Stop(acp::StopReason),
 }
 
 pub trait Prompt {
@@ -202,17 +202,31 @@ impl Thread {
                     let mut tool_uses = Vec::new();
                     while let Some(event) = events.next().await {
                         match event {
-                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                            Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
                                 events_tx
-                                    .unbounded_send(Ok(AgentResponseEvent::Stop(reason)))
+                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
+                                        acp::StopReason::Refusal,
+                                    )))
                                     .ok();
-
-                                if reason == StopReason::Refusal {
-                                    thread.update(cx, |thread, _cx| {
-                                        thread.messages.truncate(user_message_ix);
-                                    })?;
-                                    break 'outer;
-                                }
+                                thread.update(cx, |thread, _cx| {
+                                    thread.messages.truncate(user_message_ix);
+                                })?;
+                                break 'outer;
+                            }
+                            Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)) => break,
+                            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)) => {
+                                events_tx
+                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
+                                        acp::StopReason::EndTurn,
+                                    )))
+                                    .ok();
+                            }
+                            Ok(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)) => {
+                                events_tx
+                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
+                                        acp::StopReason::MaxTokens,
+                                    )))
+                                    .ok();
                             }
                             Ok(event) => {
                                 log::trace!("Received completion event: {:?}", event);

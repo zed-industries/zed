@@ -36,7 +36,7 @@ async fn test_echo(cx: &mut TestAppContext) {
             vec![MessageContent::Text("Hello".to_string())]
         );
     });
-    assert_eq!(stop_events(events), vec![StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -68,7 +68,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
             "}
         )
     });
-    assert_eq!(stop_events(events), vec![StopReason::EndTurn]);
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 }
 
 #[gpui::test]
@@ -87,10 +87,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         })
         .collect()
         .await;
-    assert_eq!(
-        stop_events(events),
-        vec![StopReason::ToolUse, StopReason::EndTurn]
-    );
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
 
     // Test a tool calls that's likely to complete *after* streaming stops.
     let events = thread
@@ -105,10 +102,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         })
         .collect()
         .await;
-    assert_eq!(
-        stop_events(events),
-        vec![StopReason::ToolUse, StopReason::EndTurn]
-    );
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
     thread.update(cx, |thread, _cx| {
         assert!(thread
             .messages()
@@ -191,20 +185,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         .await;
 
     let stop_reasons = stop_events(events);
-    if stop_reasons.len() == 2 {
-        assert_eq!(stop_reasons, vec![StopReason::ToolUse, StopReason::EndTurn]);
-    } else if stop_reasons.len() == 3 {
-        assert_eq!(
-            stop_reasons,
-            vec![
-                StopReason::ToolUse,
-                StopReason::ToolUse,
-                StopReason::EndTurn
-            ]
-        );
-    } else {
-        panic!("Expected either 1 or 2 tool uses followed by end turn");
-    }
+    assert_eq!(stop_reasons, vec![acp::StopReason::EndTurn]);
 
     thread.update(cx, |thread, _cx| {
         let last_message = thread.messages().last().unwrap();
@@ -261,7 +242,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
     let events = events.collect::<Vec<_>>().await;
-    assert_eq!(stop_events(events), vec![StopReason::Refusal]);
+    assert_eq!(stop_events(events), vec![acp::StopReason::Refusal]);
     thread.read_with(cx, |thread, _| {
         assert_eq!(thread.to_markdown(), "");
     });
@@ -393,7 +374,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 /// Filters out the stop events for asserting against in tests
 fn stop_events(
     result_events: Vec<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-) -> Vec<StopReason> {
+) -> Vec<acp::StopReason> {
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {

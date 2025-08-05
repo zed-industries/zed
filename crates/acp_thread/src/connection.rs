@@ -68,7 +68,8 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>>;
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App)
+    -> Task<Result<acp::PromptResponse>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 

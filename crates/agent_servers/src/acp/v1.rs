@@ -153,7 +153,11 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let conn = self.connection.clone();
         cx.foreground_executor()
             .spawn(async move { Ok(conn.prompt(params).await?) })

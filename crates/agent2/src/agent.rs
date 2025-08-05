@@ -186,7 +186,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Some(Rc::new(self.clone()) as Rc<dyn ModelSelector>)
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let session_id = params.session_id.clone();
         let agent = self.0.clone();
         log::info!("Received prompt request for session: {}", session_id);
@@ -225,80 +229,72 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 .update(cx, |thread, cx| thread.send(model, message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
-            let acp_thread = session.acp_thread.clone();
-            cx.spawn(async move |cx| {
-                while let Some(result) = response_stream.next().await {
-                    match result {
-                        Ok(event) => {
-                            log::trace!("Received completion event: {:?}", event);
+            while let Some(result) = response_stream.next().await {
+                match result {
+                    Ok(event) => {
+                        log::trace!("Received completion event: {:?}", event);
 
-                            match event {
-                                AgentResponseEvent::Text(text) => {
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::AgentMessageChunk {
-                                                content: acp::ContentBlock::Text(
-                                                    acp::TextContent {
-                                                        text,
-                                                        annotations: None,
-                                                    },
-                                                ),
-                                            },
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                AgentResponseEvent::Thinking(text) => {
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::AgentThoughtChunk {
-                                                content: acp::ContentBlock::Text(
-                                                    acp::TextContent {
-                                                        text,
-                                                        annotations: None,
-                                                    },
-                                                ),
-                                            },
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                AgentResponseEvent::ToolCall(tool_call) => {
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::ToolCall(tool_call),
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::ToolCallUpdate(tool_call_update),
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                AgentResponseEvent::Stop(stop_reason) => {
-                                    log::debug!("Assistant message complete: {:?}", stop_reason);
-                                }
+                        match event {
+                            AgentResponseEvent::Text(text) => {
+                                session.acp_thread.update(cx, |thread, cx| {
+                                    thread.handle_session_update(
+                                        acp::SessionUpdate::AgentMessageChunk {
+                                            content: acp::ContentBlock::Text(acp::TextContent {
+                                                text,
+                                                annotations: None,
+                                            }),
+                                        },
+                                        cx,
+                                    )
+                                })??;
+                            }
+                            AgentResponseEvent::Thinking(text) => {
+                                session.acp_thread.update(cx, |thread, cx| {
+                                    thread.handle_session_update(
+                                        acp::SessionUpdate::AgentThoughtChunk {
+                                            content: acp::ContentBlock::Text(acp::TextContent {
+                                                text,
+                                                annotations: None,
+                                            }),
+                                        },
+                                        cx,
+                                    )
+                                })??;
+                            }
+                            AgentResponseEvent::ToolCall(tool_call) => {
+                                session.acp_thread.update(cx, |thread, cx| {
+                                    thread.handle_session_update(
+                                        acp::SessionUpdate::ToolCall(tool_call),
+                                        cx,
+                                    )
+                                })??;
+                            }
+                            AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
+                                session.acp_thread.update(cx, |thread, cx| {
+                                    thread.handle_session_update(
+                                        acp::SessionUpdate::ToolCallUpdate(tool_call_update),
+                                        cx,
+                                    )
+                                })??;
+                            }
+                            AgentResponseEvent::Stop(stop_reason) => {
+                                log::debug!("Assistant message complete: {:?}", stop_reason);
+                                return Ok(acp::PromptResponse { stop_reason });
                             }
                         }
-                        Err(e) => {
-                            log::error!("Error in model response stream: {:?}", e);
-                            // TODO: Consider sending an error message to the UI
-                            break;
-                        }
+                    }
+                    Err(e) => {
+                        log::error!("Error in model response stream: {:?}", e);
+                        // TODO: Consider sending an error message to the UI
+                        break;
                     }
                 }
+            }
 
-                log::info!("Response stream completed");
-                anyhow::Ok(())
+            log::info!("Response stream completed");
+            anyhow::Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
             })
-            .detach();
-
-            log::info!("Successfully sent prompt to thread and started response handler");
-            Ok(())
         })
     }
 
