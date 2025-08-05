@@ -344,7 +344,6 @@ impl Thread {
             content: Vec::new(),
         };
 
-        // todo! add in system prompts
         for prompt in &self.system_prompts {
             if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
                 system_message
