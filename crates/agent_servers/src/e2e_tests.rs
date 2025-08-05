@@ -321,7 +321,6 @@ pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestA
         .await
         .unwrap();
 
-    // Wait for response
     thread.read_with(cx, |thread, _| {
         assert!(thread.entries().len() >= 2, "Expected at least 2 entries");
     });
