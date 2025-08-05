@@ -202,8 +202,8 @@ jobs:
 
   freebsd:
     timeout-minutes: 60
-    if: false && github.repository_owner == 'zed-industries'
-    runs-on: github-8vcpu-ubuntu-2404
+    if: github.repository_owner == 'zed-industries'
+    runs-on: github-16vcpu-ubuntu-2404
     needs: tests
     name: Build Zed on FreeBSD
     # env:
