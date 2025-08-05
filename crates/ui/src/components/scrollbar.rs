@@ -231,10 +231,6 @@ impl ScrollbarState {
             AutoHide::Visible { parent_id, _task } => *parent_id,
         };
 
-        if matches!(*self.auto_hide.borrow(), AutoHide::Disabled) {
-            return;
-        }
-
         if self.scroll_handle().viewport().contains(position) {
             self.show_temporarily(parent_id, cx);
         }
