@@ -332,7 +332,6 @@ impl<D: PickerDelegate> Picker<D> {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let entity = cx.entity().downgrade();
                 ElementContainer::List(ListState::new(0, gpui::ListAlignment::Top, px(1000.)))
             }
         }
