@@ -99,8 +99,38 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
                               [[buffer(QuadInputIndex_Quads)]]) {
   Quad quad = quads[input.quad_id];
+
+  // Signed distance field threshold for inclusion of pixels. 0.5 is the
+  // minimum distance between the center of the pixel and the edge.
+  const float antialias_threshold = 0.5;
+
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
+  float4 border_color = input.border_color;
+
+  // Apply content_mask corner radii clipping
+  ContentMask_ScaledPixels content_mask = quad.content_mask;
+  if (content_mask.corner_radii.top_left > quad.corner_radii.top_left ||
+        content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
+        content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
+        content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
+    float2 mask_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height);
+    float2 mask_half_size = mask_size / 2.0;
+    float2 mask_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + mask_half_size;
+    float2 mask_point = input.position.xy - mask_center;
+    float mask_corner_radius = pick_corner_radius(mask_point, content_mask.corner_radii);
+    float2 clip_center_to_point = fabs(mask_point) - mask_half_size + mask_corner_radius;
+
+    float clip_sdf = quad_sdf_impl(clip_center_to_point, mask_corner_radius);
+    float clip_alpha = saturate(antialias_threshold - clip_sdf);
+
+    if (clip_alpha < 0.001) {
+      return float4(0, 1, 0, 1);
+    }
+
+    background_color.a *= clip_alpha;
+    border_color.a *= clip_alpha;
+  }
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -120,10 +150,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float2 half_size = size / 2.0;
   float2 point = input.position.xy - float2(quad.bounds.origin.x, quad.bounds.origin.y);
   float2 center_to_point = point - half_size;
-
-  // Signed distance field threshold for inclusion of pixels. 0.5 is the
-  // minimum distance between the center of the pixel and the edge.
-  const float antialias_threshold = 0.5;
 
   // Radius of the nearest corner
   float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
@@ -163,7 +189,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   bool is_beyond_inner_straight_border =
     straight_border_inner_corner_to_point.x > 0.0 ||
     straight_border_inner_corner_to_point.y > 0.0;
-
 
   // Whether the point is far enough inside the quad, such that the pixels are
   // not affected by the straight border.
@@ -208,8 +233,6 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   float4 color = background_color;
   if (border_sdf < antialias_threshold) {
-    float4 border_color = input.border_color;
-
     // Dashed border logic when border_style == 1
     if (quad.border_style == 1) {
       // Position along the perimeter in "dash space", where each dash

@@ -411,7 +411,10 @@ impl Element for UniformList {
                         (self.render_items)(visible_range.clone(), window, cx)
                     };
 
-                    let content_mask = ContentMask { bounds };
+                    let content_mask = ContentMask {
+                        bounds,
+                        ..Default::default()
+                    };
                     window.with_content_mask(Some(content_mask), |window| {
                         for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_origin = padded_bounds.origin

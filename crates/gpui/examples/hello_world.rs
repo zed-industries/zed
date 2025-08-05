@@ -10,19 +10,49 @@ struct HelloWorld {
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .font_family(".SystemUIFont")
             .flex()
             .flex_col()
+            .size_full()
             .gap_3()
             .bg(rgb(0x505050))
             .size(px(500.0))
             .justify_center()
             .items_center()
             .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
             .text_xl()
             .text_color(rgb(0xffffff))
             .child(format!("Hello, {}!", &self.text))
+            .child(
+                div()
+                    .overflow_hidden()
+                    .rounded(px(24.))
+                    .child(
+                        div()
+                            .bg(gpui::black())
+                            .text_color(gpui::white())
+                            .text_base()
+                            .text_center()
+                            .py_2()
+                            .px_7()
+                            .border_3()
+                            .border_color(gpui::red())
+                            .child("Let build applications with GPUI."),
+                    )
+                    .child(
+                        div()
+                            .bg(rgb(0x222222))
+                            .text_color(gpui::white())
+                            .text_center()
+                            .text_sm()
+                            .py_2()
+                            .px_4()
+                            .border_3()
+                            .border_dashed()
+                            .border_color(gpui::black())
+                            .child("The fast, productive UI framework for Rust"),
+                    ),
+            )
             .child(
                 div()
                     .flex()
