@@ -3053,28 +3053,21 @@ impl EditorElement {
         let mut delta = 1;
         let mut i = head_idx + 1;
         while i < buffer_rows.len() as u32 {
-            if buffer_rows[i as usize].buffer_row.is_some() {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
+            if rows.contains(&DisplayRow(i + start.0)) {
+                relative_rows.insert(DisplayRow(i + start.0), delta);
             }
+            delta += 1;
             i += 1;
         }
         delta = 1;
         i = head_idx.min(buffer_rows.len() as u32 - 1);
-        while i > 0 && buffer_rows[i as usize].buffer_row.is_none() {
-            i -= 1;
-        }
 
         while i > 0 {
             i -= 1;
-            if buffer_rows[i as usize].buffer_row.is_some() {
-                if rows.contains(&DisplayRow(i + start.0)) {
-                    relative_rows.insert(DisplayRow(i + start.0), delta);
-                }
-                delta += 1;
+            if rows.contains(&DisplayRow(i + start.0)) {
+                relative_rows.insert(DisplayRow(i + start.0), delta);
             }
+            delta += 1;
         }
 
         relative_rows
@@ -3132,10 +3125,18 @@ impl EditorElement {
             .flat_map(|(ix, row_info)| {
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
                 line_number.clear();
-                let non_relative_number = row_info.buffer_row? + 1;
-                let number = relative_rows
-                    .get(&display_row)
-                    .unwrap_or(&non_relative_number);
+
+                let number = if is_relative {
+                    if let Some(relative_num) = relative_rows.get(&display_row) {
+                        *relative_num
+                    } else {
+                        // For wrapped lines in relative mode, show the buffer row number if available
+                        row_info.buffer_row.map(|r| r + 1).unwrap_or(0)
+                    }
+                } else {
+                    // In absolute mode, show buffer row number or skip wrapped lines without buffer rows
+                    row_info.buffer_row? + 1
+                };
                 write!(&mut line_number, "{number}").unwrap();
                 if row_info
                     .diff_status
@@ -10157,6 +10158,70 @@ mod tests {
         assert_eq!(relative_rows[&DisplayRow(0)], 5);
         assert_eq!(relative_rows[&DisplayRow(1)], 4);
         assert_eq!(relative_rows[&DisplayRow(2)], 3);
+    }
+
+    #[gpui::test]
+    fn test_relative_line_numbers_with_wrapped_lines(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
+        let element = EditorElement::new(&editor, style);
+        let snapshot = window
+            .update(cx, |editor, window, cx| editor.snapshot(window, cx))
+            .unwrap();
+
+        // Test with mix of buffer rows and wrapped lines (buffer_row = None)
+        let buffer_rows = vec![
+            RowInfo {
+                buffer_row: Some(0),
+                ..Default::default()
+            },
+            RowInfo {
+                buffer_row: None, // wrapped line
+                ..Default::default()
+            },
+            RowInfo {
+                buffer_row: Some(1),
+                ..Default::default()
+            },
+            RowInfo {
+                buffer_row: None, // wrapped line
+                ..Default::default()
+            },
+            RowInfo {
+                buffer_row: None, // wrapped line
+                ..Default::default()
+            },
+            RowInfo {
+                buffer_row: Some(2),
+                ..Default::default()
+            },
+        ];
+
+        // Calculate relative rows with cursor at DisplayRow(2) (which is buffer row 1)
+        let relative_rows = window
+            .update(cx, |editor, window, cx| {
+                let snapshot = editor.snapshot(window, cx);
+                element.calculate_relative_line_numbers(
+                    &snapshot,
+                    &(DisplayRow(0)..DisplayRow(6)),
+                    Some(DisplayRow(2)),
+                )
+            })
+            .unwrap();
+
+        // Verify that wrapped lines now get relative line numbers
+        assert_eq!(relative_rows[&DisplayRow(0)], 2); // buffer row 0, 2 display rows before cursor
+        assert_eq!(relative_rows[&DisplayRow(1)], 1); // wrapped line, 1 display row before cursor
+        // DisplayRow(2) is cursor line, no relative number
+        assert_eq!(relative_rows[&DisplayRow(3)], 1); // wrapped line, 1 display row after cursor
+        assert_eq!(relative_rows[&DisplayRow(4)], 2); // wrapped line, 2 display rows after cursor
+        assert_eq!(relative_rows[&DisplayRow(5)], 3); // buffer row 2, 3 display rows after cursor
     }
 
     #[gpui::test]
