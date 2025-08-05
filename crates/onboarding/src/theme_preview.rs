@@ -299,6 +299,18 @@ impl RenderOnce for ThemePreviewTile {
 }
 
 impl Component for ThemePreviewTile {
+    fn scope() -> ComponentScope {
+        ComponentScope::Onboarding
+    }
+
+    fn name() -> &'static str {
+        "Theme Preview Tile"
+    }
+
+    fn sort_name() -> &'static str {
+        "Theme Preview Tile"
+    }
+
     fn description() -> Option<&'static str> {
         Some(Self::DOCS)
     }
