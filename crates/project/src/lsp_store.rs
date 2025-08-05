@@ -3550,7 +3550,7 @@ pub struct LspStore {
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     pub languages: Arc<LanguageRegistry>,
-    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    pub(super) language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,

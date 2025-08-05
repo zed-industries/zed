@@ -5002,15 +5002,26 @@ impl Project {
     }
 
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
-        self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
-                .any(
-                    |(_, server)| match server.capabilities().inlay_hint_provider {
-                        Some(lsp::OneOf::Left(enabled)) => enabled,
-                        Some(lsp::OneOf::Right(_)) => true,
-                        None => false,
-                    },
-                )
+        let Some(language) = buffer.language().cloned() else {
+            return false;
+        };
+        self.lsp_store.update(cx, |lsp_store, _| {
+            let relevant_language_servers = lsp_store
+                .languages
+                .lsp_adapters(&language.name())
+                .into_iter()
+                .map(|lsp_adapter| lsp_adapter.name())
+                .collect::<HashSet<_>>();
+            lsp_store
+                .language_server_statuses
+                .iter()
+                .filter_map(|(server_id, server_status)| {
+                    relevant_language_servers
+                        .contains(&server_status.name)
+                        .then_some(server_id)
+                })
+                .filter_map(|server_id| lsp_store.lsp_server_capabilities.get(&server_id))
+                .any(InlayHints::check_capabilities)
         })
     }
 
