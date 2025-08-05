@@ -4,7 +4,7 @@ use crate::{
     GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
     TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
-use crate::{LayoutDirection, BidiStyleRefinement};
+use crate::{BidiStyleRefinement, LayoutDirection};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
