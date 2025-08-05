@@ -500,18 +500,13 @@ impl TextStyle {
 }
 
 /// The direction of layout.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize, JsonSchema, Default)]
 pub enum LayoutDirection {
     /// Left-to-right layout.
+    #[default]
     LeftToRight,
     /// Right-to-left layout.
     RightToLeft,
-}
-
-impl Default for LayoutDirection {
-    fn default() -> Self {
-        LayoutDirection::LeftToRight
-    }
 }
 
 impl LayoutDirection {
