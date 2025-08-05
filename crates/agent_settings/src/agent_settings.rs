@@ -13,6 +13,9 @@ use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
+pub const SUMMARIZE_THREAD_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
 }

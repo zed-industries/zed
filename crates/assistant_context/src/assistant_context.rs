@@ -2,7 +2,7 @@
 mod assistant_context_tests;
 mod context_store;
 
-use agent_settings::AgentSettings;
+use agent_settings::{AgentSettings, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Context as _, Result, bail};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
@@ -2677,10 +2677,7 @@ impl AssistantContext {
             let mut request = self.to_completion_request(Some(&model.model), cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
-                content: vec![
-                    "Generate a concise 3-7 word title for this conversation, omitting punctuation. Go straight to the title, without any preamble and prefix like `Here's a concise suggestion:...` or `Title:`"
-                        .into(),
-                ],
+                content: vec![SUMMARIZE_THREAD_PROMPT.into()],
                 cache: false,
             });
 
