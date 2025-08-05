@@ -169,23 +169,7 @@ impl AcpThreadView {
 
         let mention_set = mention_set.clone();
 
-        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0), {
-            let this = cx.entity().downgrade();
-            move |index: usize, window, cx| {
-                let Some(this) = this.upgrade() else {
-                    return Empty.into_any();
-                };
-                this.update(cx, |this, cx| {
-                    let Some((entry, len)) = this.thread().and_then(|thread| {
-                        let entries = &thread.read(cx).entries();
-                        Some((entries.get(index)?, entries.len()))
-                    }) else {
-                        return Empty.into_any();
-                    };
-                    this.render_entry(index, len, entry, window, cx)
-                })
-            }
-        });
+        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
         Self {
             agent: agent.clone(),
@@ -2501,10 +2485,21 @@ impl Render for AcpThreadView {
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
                             this.child(
-                                list(self.list_state.clone())
-                                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                    .flex_grow()
-                                    .into_any(),
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(|this, index: usize, window, cx| {
+                                        let Some((entry, len)) = this.thread().and_then(|thread| {
+                                            let entries = &thread.read(cx).entries();
+                                            Some((entries.get(index)?, entries.len()))
+                                        }) else {
+                                            return Empty.into_any();
+                                        };
+                                        this.render_entry(index, len, entry, window, cx)
+                                    }),
+                                )
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .flex_grow()
+                                .into_any(),
                             )
                             .children(match thread_clone.read(cx).status() {
                                 ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
