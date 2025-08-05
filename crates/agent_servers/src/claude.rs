@@ -120,8 +120,7 @@ impl AgentConnection for ClaudeAgentConnection {
                 session_id.clone(),
                 &mcp_config_path,
                 &cwd,
-            )
-            .await?;
+            )?;
 
             let stdin = child.stdin.take().unwrap();
             let stdout = child.stdout.take().unwrap();
@@ -272,7 +271,7 @@ enum ClaudeSessionMode {
     Resume,
 }
 
-async fn spawn_claude(
+fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,

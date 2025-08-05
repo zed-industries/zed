@@ -46,6 +46,7 @@ impl AcpConnection {
 
         let stdout = child.stdout.take().expect("Failed to take stdout");
         let stdin = child.stdin.take().expect("Failed to take stdin");
+        log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
@@ -60,7 +61,11 @@ impl AcpConnection {
             }
         });
 
-        let io_task = cx.background_spawn(io_task);
+        let io_task = cx.background_spawn(async move {
+            io_task.await?;
+            drop(child);
+            Ok(())
+        });
 
         cx.spawn({
             let sessions = sessions.clone();
@@ -170,8 +175,10 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let conn = self.connection.clone();
-        cx.foreground_executor()
-            .spawn(async move { Ok(conn.prompt(params).await?) })
+        cx.foreground_executor().spawn(async move {
+            conn.prompt(params).await?;
+            Ok(())
+        })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {

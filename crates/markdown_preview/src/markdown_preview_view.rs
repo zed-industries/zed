@@ -261,7 +261,7 @@ impl MarkdownPreviewView {
                                 .group("markdown-block")
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        if event.down.click_count == 2 {
+                                        if event.click_count() == 2 {
                                             if let Some(source_range) = this
                                                 .contents
                                                 .as_ref()

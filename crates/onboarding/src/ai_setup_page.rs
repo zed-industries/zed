@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
+use client::UserStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Window, prelude::*,
+    Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
+    Window, prelude::*,
 };
 use itertools;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
@@ -14,15 +16,14 @@ use ui::{
     prelude::*, tooltip_container,
 };
 use util::ResultExt;
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
-
-use crate::Onboarding;
 
 const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
 
 fn render_llm_provider_section(
-    onboarding: &Onboarding,
+    tab_index: &mut isize,
+    workspace: WeakEntity<Workspace>,
     disabled: bool,
     window: &mut Window,
     cx: &mut App,
@@ -37,10 +38,10 @@ fn render_llm_provider_section(
                         .color(Color::Muted),
                 ),
         )
-        .child(render_llm_provider_card(onboarding, disabled, window, cx))
+        .child(render_llm_provider_card(tab_index, workspace, disabled, window, cx))
 }
 
-fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
+fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> impl IntoElement {
     let privacy_badge = || {
         Badge::new("Privacy")
             .icon(IconName::ShieldCheck)
@@ -98,6 +99,10 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
                                     .icon_color(Color::Muted)
                                     .on_click(|_, _, cx| {
                                         cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
+                                    })
+                                    .tab_index({
+                                        *tab_index += 1;
+                                        *tab_index - 1
                                     }),
                             ),
                         ),
@@ -114,7 +119,8 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
 }
 
 fn render_llm_provider_card(
-    onboarding: &Onboarding,
+    tab_index: &mut isize,
+    workspace: WeakEntity<Workspace>,
     disabled: bool,
     _: &mut Window,
     cx: &mut App,
@@ -140,6 +146,10 @@ fn render_llm_provider_card(
 
                     ButtonLike::new(("onboarding-ai-setup-buttons", index))
                         .size(ButtonSize::Large)
+                        .tab_index({
+                            *tab_index += 1;
+                            *tab_index - 1
+                        })
                         .child(
                             h_flex()
                                 .group(&group_name)
@@ -188,7 +198,7 @@ fn render_llm_provider_card(
                                 ),
                         )
                         .on_click({
-                            let workspace = onboarding.workspace.clone();
+                            let workspace = workspace.clone();
                             move |_, window, cx| {
                                 workspace
                                     .update(cx, |workspace, cx| {
@@ -219,57 +229,56 @@ fn render_llm_provider_card(
                 .icon_size(IconSize::XSmall)
                 .on_click(|_event, window, cx| {
                     window.dispatch_action(OpenSettings.boxed_clone(), cx)
+                })
+                .tab_index({
+                    *tab_index += 1;
+                    *tab_index - 1
                 }),
         )
 }
 
 pub(crate) fn render_ai_setup_page(
-    onboarding: &Onboarding,
+    workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let mut tab_index = 0;
     let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-
-    let backdrop = div()
-        .id("backdrop")
-        .size_full()
-        .absolute()
-        .inset_0()
-        .bg(cx.theme().colors().editor_background)
-        .opacity(0.8)
-        .block_mouse_except_scroll();
 
     v_flex()
         .gap_2()
-        .child(SwitchField::new(
-            "enable_ai",
-            "Enable AI features",
-            None,
-            if is_ai_disabled {
-                ToggleState::Unselected
-            } else {
-                ToggleState::Selected
-            },
-            |toggle_state, _, cx| {
-                let enabled = match toggle_state {
-                    ToggleState::Indeterminate => {
-                        return;
-                    }
-                    ToggleState::Unselected => false,
-                    ToggleState::Selected => true,
-                };
-
-                let fs = <dyn Fs>::global(cx);
-                update_settings_file::<DisableAiSettings>(
-                    fs,
-                    cx,
-                    move |ai_settings: &mut Option<bool>, _| {
-                        *ai_settings = Some(!enabled);
-                    },
-                );
-            },
-        ))
-        .child(render_privacy_card(is_ai_disabled, cx))
+        .child(
+            SwitchField::new(
+                "enable_ai",
+                "Enable AI features",
+                None,
+                if is_ai_disabled {
+                    ToggleState::Unselected
+                } else {
+                    ToggleState::Selected
+                },
+                |&toggle_state, _, cx| {
+                    let fs = <dyn Fs>::global(cx);
+                    update_settings_file::<DisableAiSettings>(
+                        fs,
+                        cx,
+                        move |ai_settings: &mut Option<bool>, _| {
+                            *ai_settings = match toggle_state {
+                                ToggleState::Indeterminate => None,
+                                ToggleState::Unselected => Some(true),
+                                ToggleState::Selected => Some(false),
+                            };
+                        },
+                    );
+                },
+            )
+            .tab_index({
+                tab_index += 1;
+                tab_index - 1
+            }),
+        )
+        .child(render_privacy_card(&mut tab_index, is_ai_disabled, cx))
         .child(
             v_flex()
                 .mt_2()
@@ -277,15 +286,31 @@ pub(crate) fn render_ai_setup_page(
                 .child(AiUpsellCard {
                     sign_in_status: SignInStatus::SignedIn,
                     sign_in: Arc::new(|_, _| {}),
-                    user_plan: onboarding.user_store.read(cx).plan(),
+                    user_plan: user_store.read(cx).plan(),
+                    tab_index: Some({
+                        tab_index += 1;
+                        tab_index - 1
+                    }),
                 })
                 .child(render_llm_provider_section(
-                    onboarding,
+                    &mut tab_index,
+                    workspace,
                     is_ai_disabled,
                     window,
                     cx,
                 ))
-                .when(is_ai_disabled, |this| this.child(backdrop)),
+                .when(is_ai_disabled, |this| {
+                    this.child(
+                        div()
+                            .id("backdrop")
+                            .size_full()
+                            .absolute()
+                            .inset_0()
+                            .bg(cx.theme().colors().editor_background)
+                            .opacity(0.8)
+                            .block_mouse_except_scroll(),
+                    )
+                }),
         )
 }
 
