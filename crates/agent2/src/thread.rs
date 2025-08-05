@@ -184,14 +184,6 @@ impl Thread {
         let (events_tx, events_rx) =
             mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
 
-        let system_message = self.build_system_message(cx);
-        log::debug!(
-            "System messages count: {}",
-            if system_message.is_some() { 1 } else { 0 }
-        );
-        // todo!("shouldn't we prepend this instead of appending it?")
-        self.messages.extend(system_message);
-
         let user_message_ix = self.messages.len();
         self.messages.push(AgentMessage {
             role: Role::User,
@@ -331,13 +323,14 @@ impl Thread {
         events_rx
     }
 
-    pub fn build_system_message(&mut self, cx: &App) -> Option<AgentMessage> {
+    pub fn build_system_message(&self, cx: &App) -> Option<AgentMessage> {
         log::debug!("Building system message");
         let mut system_message = AgentMessage {
             role: Role::System,
             content: Vec::new(),
         };
 
+        // todo! add in system prompts
         for prompt in &self.system_prompts {
             if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
                 system_message
@@ -389,7 +382,7 @@ impl Thread {
                     tool_name,
                     raw_input,
                     json_parse_error,
-                )))
+                )));
             }
             UsageUpdate(_) | StatusUpdate(_) => {}
             Stop(_) => unreachable!(),
@@ -607,7 +600,7 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages();
+        let messages = self.build_request_messages(cx);
         log::info!("Request will include {} messages", messages.len());
 
         let tools: Vec<LanguageModelRequestTool> = self
@@ -645,14 +638,16 @@ impl Thread {
         request
     }
 
-    fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
         );
+
         let messages = self
-            .messages
+            .build_system_message(cx)
             .iter()
+            .chain(self.messages.iter())
             .map(|message| {
                 log::trace!(
                     "  - {} message with {} content items",
@@ -664,7 +659,7 @@ impl Thread {
                     message.content.len()
                 );
                 LanguageModelRequestMessage {
-                    role: message.role,
+                    role: dbg!(message.role),
                     content: message.content.clone(),
                     cache: false,
                 }

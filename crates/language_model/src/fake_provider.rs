@@ -224,7 +224,7 @@ impl LanguageModel for FakeLanguageModel {
     > {
         let (tx, rx) = mpsc::unbounded();
         self.current_completion_txs.lock().push((request, tx));
-        async move { Ok(rx.map(|event| Ok(event)).boxed()) }.boxed()
+        async move { Ok(rx.map(Ok).boxed()) }.boxed()
     }
 
     fn as_fake(&self) -> &Self {
