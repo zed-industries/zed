@@ -121,6 +121,7 @@ pub struct ProjectPanel {
     hover_expand_task: Option<Task<()>>,
     previous_drag_position: Option<Point<Pixels>>,
     sticky_items_count: usize,
+    last_reported_update: Instant,
 }
 
 struct DragTargetEntry {
@@ -626,6 +627,7 @@ impl ProjectPanel {
                 hover_expand_task: None,
                 previous_drag_position: None,
                 sticky_items_count: 0,
+                last_reported_update: Instant::now(),
             };
             this.update_visible_entries(None, cx);
 
@@ -3129,7 +3131,6 @@ impl ProjectPanel {
                 entry_iter.advance();
             }
 
-            dbg!("sort", visible_worktree_entries.len());
             project::sort_worktree_entries(&mut visible_worktree_entries);
 
             self.visible_entries.push(VisibleEntriesForWorktree {
@@ -3162,7 +3163,18 @@ impl ProjectPanel {
                 entry_id,
             });
         }
-        dbg!(now.elapsed());
+        let elapsed = now.elapsed();
+        if self.last_reported_update.elapsed() > Duration::from_secs(3600) {
+            telemetry::event!(
+                "Project Panel Updated",
+                elapsed_ms = elapsed.as_millis() as u64,
+                worktree_entries = self
+                    .visible_entries
+                    .iter()
+                    .map(|worktree| worktree.entries.len())
+                    .sum::<usize>(),
+            )
+        }
     }
 
     fn expand_entry(
@@ -4950,12 +4962,9 @@ impl ProjectPanel {
         };
         let worktree = worktree.read(cx).snapshot();
 
-        let paths = visible.index.get_or_init(|| {
-            visible.entries
-                .iter()
-                .map(|e| e.path.clone())
-                .collect()
-        });
+        let paths = visible
+            .index
+            .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
 
         let mut sticky_parents = Vec::new();
         let mut current_path = entry_ref.path.clone();
@@ -4985,7 +4994,8 @@ impl ProjectPanel {
         let root_name = OsStr::new(worktree.root_name());
 
         let git_summaries_by_id = if git_status_enabled {
-            visible.entries
+            visible
+                .entries
                 .iter()
                 .map(|e| (e.id, e.git_summary))
                 .collect::<HashMap<_, _>>()
