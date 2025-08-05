@@ -10,7 +10,6 @@ struct HelloWorld {
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .dir_rtl()
             .flex()
             .flex_col()
             .gap_3()
