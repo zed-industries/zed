@@ -4806,7 +4806,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: id,
+                                    id,
                                     leader_id: leader_peer_id,
                                 };
                             }
