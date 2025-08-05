@@ -62,18 +62,14 @@ impl CloudApiClient {
 
         let mut response = self.http_client.send(request).await?;
 
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Failed to get authenticated user.\nStatus: {:?}\nBody: {body}",
+            response.status(),
+        );
 
         Ok(serde_json::from_str(&body)?)
     }
@@ -90,18 +86,14 @@ impl CloudApiClient {
 
         let mut response = self.http_client.send(request).await?;
 
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to accept terms of service.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Failed to accept terms of service.\nStatus: {:?}\nBody: {body}",
+            response.status(),
+        );
 
         Ok(serde_json::from_str(&body)?)
     }
@@ -124,18 +116,14 @@ impl CloudApiClient {
 
         let mut response = self.http_client.send(request).await?;
 
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to create LLM token.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
         let mut body = String::new();
         response.body_mut().read_to_string(&mut body).await?;
+
+        anyhow::ensure!(
+            response.status().is_success(),
+            "Failed to create LLM token.\nStatus: {:?}\nBody: {body}",
+            response.status(),
+        );
 
         Ok(serde_json::from_str(&body)?)
     }
