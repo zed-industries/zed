@@ -292,7 +292,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let element_container = Self::create_element_container(container, cx);
+        let element_container = Self::create_element_container(container);
         let scrollbar_state = match &element_container {
             ElementContainer::UniformList(scroll_handle) => {
                 ScrollbarState::new(scroll_handle.clone())
@@ -323,10 +323,7 @@ impl<D: PickerDelegate> Picker<D> {
         this
     }
 
-    fn create_element_container(
-        container: ContainerKind,
-        cx: &mut Context<Self>,
-    ) -> ElementContainer {
+    fn create_element_container(container: ContainerKind) -> ElementContainer {
         match container {
             ContainerKind::UniformList => {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
