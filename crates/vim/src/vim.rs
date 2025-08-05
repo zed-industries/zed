@@ -220,6 +220,8 @@ actions!(
         PushReplayRegister,
         /// Replaces with register contents.
         PushReplaceWithRegister,
+        /// Mark mode for Helix
+        PushHelixMatchMode,
         /// Toggles comments.
         PushToggleComments,
     ]
@@ -500,11 +502,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
-                } else {
-                    vim.switch_mode(Mode::Normal, false, window, cx)
-                }
+                vim.switch_mode(Mode::Normal, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -709,6 +707,10 @@ impl Vim {
 
             Vim::action(editor, cx, |vim, _: &PushReplayRegister, window, cx| {
                 vim.push_operator(Operator::ReplayRegister, window, cx)
+            });
+
+            Vim::action(editor, cx, |vim, _: &PushHelixMatchMode, window, cx| {
+                vim.push_operator(Operator::HelixMatchMode, window, cx)
             });
 
             Vim::action(
@@ -949,6 +951,9 @@ impl Vim {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if HelixModeSetting::get_global(cx).0 && mode == Mode::Normal {
+            return self.switch_mode(Mode::HelixNormal, leave_selections, window, cx);
+        }
         if self.temp_mode && mode == Mode::Normal {
             self.temp_mode = false;
             self.switch_mode(Mode::Normal, leave_selections, window, cx);

@@ -403,7 +403,11 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::HelixNormal => {
+                // In Helix, we don't have a separate visual mode, so we treat it like normal mode
+                self.helix_object(object, count, window, cx);
+            }
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }

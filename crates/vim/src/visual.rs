@@ -514,7 +514,11 @@ impl Vim {
 
     fn toggle_mode(&mut self, mode: Mode, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == mode {
-            self.switch_mode(Mode::Normal, false, window, cx);
+            if HelixModeSetting::get_global(cx).0 {
+                self.switch_mode(Mode::HelixNormal, false, window, cx);
+            } else {
+                self.switch_mode(Mode::Normal, false, window, cx);
+            }
         } else {
             self.switch_mode(mode, false, window, cx);
         }

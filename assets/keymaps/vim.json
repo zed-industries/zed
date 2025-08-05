@@ -379,6 +379,7 @@
     "bindings": {
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
+      "m": "vim::PushHelixMatchMode",
       "ctrl-[": "editor::Cancel",
       ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
@@ -452,8 +453,8 @@
       "space y": "editor::Copy",
       "space p": "editor::Paste",
       // Match mode
-      "m m": "vim::Matching",
-      "m i w": ["workspace::SendKeystrokes", "v i w"],
+      // "m m": "vim::Matching",
+      // "m i w": ["workspace::SendKeystrokes", "v i w"],
       "shift-u": "editor::Redo",
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
@@ -462,6 +463,12 @@
       "alt-shift-c": "editor::AddSelectionAbove"
     }
   },
+  // {
+  //   "context": "VimControl && vim_mode == helix_normal && !menu",
+  //   "bindings": {
+  //     "m": "vim::Matching"
+  //   }
+  // },
   {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
     "bindings": {

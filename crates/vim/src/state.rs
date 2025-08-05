@@ -129,6 +129,7 @@ pub enum Operator {
     Register,
     RecordRegister,
     ReplayRegister,
+    HelixMatchMode,
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
@@ -1023,6 +1024,7 @@ impl Operator {
             Operator::Register => "\"",
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
+            Operator::HelixMatchMode => "m",
             Operator::ToggleComments => "gc",
         }
     }
@@ -1075,6 +1077,7 @@ impl Operator {
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
+            | Operator::HelixMatchMode
             | Operator::ToggleComments => false,
         }
     }
@@ -1112,6 +1115,7 @@ impl Operator {
             | Operator::AddSurrounds { .. }
             | Operator::ChangeSurrounds { .. }
             | Operator::Jump { .. }
+            | Operator::HelixMatchMode
             | Operator::Register
             | Operator::RecordRegister
             | Operator::ReplayRegister => false,
