@@ -270,6 +270,34 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                         )
                                     })??;
                                 }
+                                LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                    id,
+                                    tool_name,
+                                    raw_input,
+                                    json_parse_error,
+                                } => {
+                                    log::error!(
+                                        "Tool use JSON parse error for tool '{}' (id: {}): {} - input: {}",
+                                        tool_name,
+                                        id,
+                                        json_parse_error,
+                                        raw_input
+                                    );
+                                    acp_thread.update(cx, |thread, cx| {
+                                        thread.handle_session_update(
+                                            acp::SessionUpdate::ToolCall( acp::ToolCall {
+                                                id: acp::ToolCallId(id.to_string().into()),
+                                                title: tool_name.to_string(),
+                                                kind: acp::ToolKind::Other,
+                                                status: acp::ToolCallStatus::Failed,
+                                                content: vec![json_parse_error.into()],
+                                                locations: vec![],
+                                                raw_input: Some(raw_input.as_ref().into()),
+                                            }),
+                                            cx,
+                                        )
+                                    })??;
+                                }
                                 LanguageModelCompletionEvent::StartMessage { .. } => {
                                     log::debug!("Started new assistant message");
                                 }
@@ -300,20 +328,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                 }
                                 LanguageModelCompletionEvent::RedactedThinking { .. } => {
                                     log::trace!("Redacted thinking event");
-                                }
-                                LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                    id,
-                                    tool_name,
-                                    raw_input,
-                                    json_parse_error,
-                                } => {
-                                    log::error!(
-                                        "Tool use JSON parse error for tool '{}' (id: {}): {} - input: {}",
-                                        tool_name,
-                                        id,
-                                        json_parse_error,
-                                        raw_input
-                                    );
                                 }
                             }
                         }

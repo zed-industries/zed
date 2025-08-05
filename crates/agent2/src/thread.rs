@@ -12,7 +12,6 @@ use language_model::{
 use log;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
-use serde_json::json;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
 use util::ResultExt;
@@ -287,8 +286,7 @@ impl Thread {
 
     fn handle_stop_event(&mut self, stop_reason: StopReason) {
         match stop_reason {
-            StopReason::EndTurn | StopReason::ToolUse => {}
-            StopReason::MaxTokens => todo!(),
+            StopReason::EndTurn | StopReason::MaxTokens | StopReason::ToolUse => {}
             StopReason::Refusal => todo!(),
         }
     }
