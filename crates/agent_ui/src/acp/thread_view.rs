@@ -92,7 +92,7 @@ enum ThreadState {
         connection: Rc<dyn AgentConnection>,
     },
     ServerExited {
-        status: Option<ExitStatus>,
+        status: ExitStatus,
     },
 }
 
@@ -243,19 +243,19 @@ impl AcpThreadView {
                 }
             };
 
-            this.update_in(cx, |_this, _window, cx| {
-                let status = connection.exit_status(cx);
-                cx.spawn(async move |this, cx| {
-                    let status = status.await.ok();
-                    this.update(cx, |this, cx| {
-                        this.thread_state = ThreadState::ServerExited { status };
-                        cx.notify();
-                    })
-                    .ok();
-                })
-                .detach();
-            })
-            .ok();
+            // this.update_in(cx, |_this, _window, cx| {
+            //     let status = connection.exit_status(cx);
+            //     cx.spawn(async move |this, cx| {
+            //         let status = status.await.ok();
+            //         this.update(cx, |this, cx| {
+            //             this.thread_state = ThreadState::ServerExited { status };
+            //             cx.notify();
+            //         })
+            //         .ok();
+            //     })
+            //     .detach();
+            // })
+            // .ok();
 
             let result = match connection
                 .clone()
@@ -665,6 +665,9 @@ impl AcpThreadView {
                     window,
                     cx,
                 );
+            }
+            AcpThreadEvent::ServerExited(status) => {
+                self.thread_state = ThreadState::ServerExited { status: *status };
             }
         }
         cx.notify();
@@ -1389,7 +1392,7 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_server_exited(&self, status: Option<ExitStatus>, _cx: &Context<Self>) -> AnyElement {
+    fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
         v_flex()
             .items_center()
             .justify_center()
@@ -1402,13 +1405,11 @@ impl AcpThreadView {
                     .text_center()
                     .items_center()
                     .child(Headline::new("Server exited unexpectedly").size(HeadlineSize::Medium))
-                    .when_some(status, |el, status| {
-                        el.child(
-                            Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        )
-                    }),
+                    .child(
+                        Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
             )
             .into_any_element()
     }

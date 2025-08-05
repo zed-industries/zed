@@ -1,4 +1,4 @@
-use std::{error::Error, fmt, path::Path, process::ExitStatus, rc::Rc};
+use std::{error::Error, fmt, path::Path, rc::Rc};
 
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
@@ -23,10 +23,6 @@ pub trait AgentConnection {
     fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
-
-    fn exit_status(&self, cx: &mut App) -> Task<Result<ExitStatus>> {
-        cx.spawn(async move |_cx| futures::future::pending().await)
-    }
 }
 
 #[derive(Debug)]

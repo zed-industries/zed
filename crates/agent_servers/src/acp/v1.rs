@@ -1,14 +1,11 @@
 use agent_client_protocol::{self as acp, Agent as _};
 use anyhow::anyhow;
 use collections::HashMap;
-use futures::FutureExt;
 use futures::channel::oneshot;
-use futures::future::Shared;
 use project::Project;
+use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-use std::{cell::RefCell, process::ExitStatus};
-use ui::SharedString;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, AsyncApp, Entity, Task, WeakEntity};
@@ -21,7 +18,6 @@ pub struct AcpConnection {
     connection: Rc<acp::ClientSideConnection>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
-    exit_status: Shared<Task<Result<ExitStatus, SharedString>>>,
     _io_task: Task<Result<()>>,
 }
 
@@ -66,9 +62,22 @@ impl AcpConnection {
 
         let io_task = cx.background_spawn(io_task);
 
-        let exit_status = cx
-            .background_spawn(async move { child.status().await.map_err(|e| e.to_string().into()) })
-            .shared();
+        cx.spawn({
+            let sessions = sessions.clone();
+            async move |cx| {
+                let status = child.status().await?;
+
+                for session in sessions.borrow().values() {
+                    session
+                        .thread
+                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .ok();
+                }
+
+                anyhow::Ok(())
+            }
+        })
+        .detach();
 
         let response = connection
             .initialize(acp::InitializeRequest {
@@ -91,7 +100,6 @@ impl AcpConnection {
             connection: connection.into(),
             server_name,
             sessions,
-            exit_status,
             _io_task: io_task,
         })
     }
@@ -174,11 +182,6 @@ impl AgentConnection for AcpConnection {
         cx.foreground_executor()
             .spawn(async move { conn.cancel(params).await })
             .detach();
-    }
-
-    fn exit_status(&self, cx: &mut App) -> Task<Result<ExitStatus>> {
-        let shared = self.exit_status.clone();
-        cx.spawn(async move |_cx| shared.await.map_err(|e| anyhow!("{e}")))
     }
 }
 
