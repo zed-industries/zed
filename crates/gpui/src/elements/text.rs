@@ -445,9 +445,8 @@ impl TextLayout {
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
         let text_style = window.text_style();
-        let bidi_style = window.bidi_style();
-        let text_align = bidi_style
-            .dir
+        let text_align = window
+            .current_layout_direction()
             .apply_text_align_direction(text_style.text_align);
         for line in &element_state.lines {
             line.paint_background(

@@ -1360,15 +1360,16 @@ impl Window {
         style
     }
 
-    /// The current bidi style. Which is composed of all the style refinements provided to `with_bidi_style`.
-    pub fn bidi_style(&self) -> BidiStyle {
+    /// The current layout direction. Which is composed of all the style refinements provided to
+    /// `with_bidi_style` on top of the default window layout direction.
+    pub fn current_layout_direction(&self) -> LayoutDirection {
         let mut style = BidiStyle {
             dir: self.root_layout_direction,
         };
         for refinement in &self.bidi_style_stack {
             style.refine(refinement);
         }
-        style
+        style.dir
     }
 
     /// Check if the platform window is maximized
