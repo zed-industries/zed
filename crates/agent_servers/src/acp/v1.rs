@@ -61,11 +61,7 @@ impl AcpConnection {
             }
         });
 
-        let io_task = cx.background_spawn(async move {
-            io_task.await?;
-            drop(child);
-            Ok(())
-        });
+        let io_task = cx.background_spawn(io_task);
 
         cx.spawn({
             let sessions = sessions.clone();
