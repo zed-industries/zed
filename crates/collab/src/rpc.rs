@@ -23,6 +23,7 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
     body::Body,
@@ -41,7 +42,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::proto::split_repository_update;
+use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -314,7 +315,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
-            .add_request_handler(forward_find_search_candidates_request)
+            .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
@@ -373,7 +374,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
+            .add_request_handler(multi_lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -665,7 +666,6 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
-                    let payload_type = M::NAME;
 
                     match result {
                         Err(error) => {
@@ -674,7 +674,6 @@ impl Server {
                                 total_duration_ms,
                                 processing_duration_ms,
                                 queue_duration_ms,
-                                payload_type,
                                 "error handling message"
                             )
                         }
@@ -750,6 +749,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
@@ -762,9 +762,14 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
+            user_agent=field::Empty,
             geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(user_agent) = user_agent {
+            span.record("user_agent", user_agent);
+        }
+
         if let Some(country_code) = geoip_country_code.as_ref() {
             span.record("geoip_country_code", country_code);
         }
@@ -773,12 +778,11 @@ impl Server {
         async move {
             if *teardown.borrow() {
                 tracing::error!("server is tearing down");
-                return
+                return;
             }
 
-            let (connection_id, handle_io, mut incoming_rx) = this
-                .peer
-                .add_connection(connection, {
+            let (connection_id, handle_io, mut incoming_rx) =
+                this.peer.add_connection(connection, {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
@@ -795,10 +799,14 @@ impl Server {
                 }
             };
 
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
-                    supermaven_admin_api_key.to_string(),
-                    http_client.clone(),
-                )));
+            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(
+                |supermaven_admin_api_key| {
+                    Arc::new(SupermavenAdminApi::new(
+                        supermaven_admin_api_key.to_string(),
+                        http_client.clone(),
+                    ))
+                },
+            );
 
             let session = Session {
                 principal: principal.clone(),
@@ -813,7 +821,15 @@ impl Server {
                 supermaven_client,
             };
 
-            if let Err(error) = this.send_initial_client_update(connection_id, zed_version, send_connection_id, &session).await {
+            if let Err(error) = this
+                .send_initial_client_update(
+                    connection_id,
+                    zed_version,
+                    send_connection_id,
+                    &session,
+                )
+                .await
+            {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
@@ -830,14 +846,22 @@ impl Server {
             //
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
+            const MAX_CONCURRENT_HANDLERS: usize = 256;
             let mut foreground_message_handlers = FuturesUnordered::new();
-            let concurrent_handlers = Arc::new(Semaphore::new(512));
+            let concurrent_handlers = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
+            let get_concurrent_handlers = {
+                let concurrent_handlers = concurrent_handlers.clone();
+                move || MAX_CONCURRENT_HANDLERS - concurrent_handlers.available_permits()
+            };
             loop {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
                     let message = incoming_rx.next().await;
-                    (permit, message)
-                }.fuse();
+                    // Cache the concurrent_handlers here, so that we know what the
+                    // queue looks like as each handler starts
+                    (permit, message, get_concurrent_handlers())
+                }
+                .fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     _ = teardown.changed().fuse() => return,
@@ -849,15 +873,20 @@ impl Server {
                     }
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
-                        let (permit, message) = next_message;
+                        let (permit, message, concurrent_handlers) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                            let span = tracing::info_span!("receive message",
+                                %connection_id,
+                                %address,
+                                type_name,
+                                concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
+                                multi_lsp_query_request=field::Empty,
                             );
                             principal.update_span(&span);
                             let span_enter = span.enter();
@@ -887,12 +916,13 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!("signing out");
+            let concurrent_handlers = get_concurrent_handlers();
+            tracing::info!(concurrent_handlers, "signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(?error, "error signing out");
             }
-
-        }.instrument(span)
+        }
+        .instrument(span)
     }
 
     async fn send_initial_client_update(
@@ -1172,6 +1202,7 @@ pub async fn handle_websocket_request(
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     system_id_header: Option<TypedHeader<SystemIdHeader>>,
     ws: WebSocketUpgrade,
@@ -1227,6 +1258,7 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
                     None,
@@ -1958,12 +1990,19 @@ async fn join_project(
     }
 
     // First, we send the metadata associated with each worktree.
+    let (language_servers, language_server_capabilities) = project
+        .language_servers
+        .clone()
+        .into_iter()
+        .map(|server| (server.server, server.capabilities))
+        .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
-        language_servers: project.language_servers.clone(),
+        language_servers,
+        language_server_capabilities,
         role: project.role.into(),
     })?;
 
@@ -2022,8 +2061,8 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
-                server_name: Some(language_server.name.clone()),
-                language_server_id: language_server.id,
+                server_name: Some(language_server.server.name.clone()),
+                language_server_id: language_server.server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                         proto::LspDiskBasedDiagnosticsUpdated {},
@@ -2235,9 +2274,17 @@ async fn update_language_server(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
+    let db = session.db().await;
+
+    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+    {
+        if let Some(capabilities) = update.capabilities.clone() {
+            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+                .await?;
+        }
+    }
+
+    let project_connection_ids = db
         .project_connection_ids(project_id, session.connection_id, true)
         .await?;
     broadcast(
@@ -2276,25 +2323,6 @@ where
     Ok(())
 }
 
-async fn forward_find_search_candidates_request(
-    request: proto::FindSearchCandidates,
-    response: Response<proto::FindSearchCandidates>,
-    session: Session,
-) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.remote_entity_id());
-    let host_connection_id = session
-        .db()
-        .await
-        .host_for_read_only_project_request(project_id, session.connection_id)
-        .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
-}
-
 /// forward a project request to the host. These requests are disallowed
 /// for guests.
 async fn forward_mutating_project_request<T>(
@@ -2318,6 +2346,16 @@ where
         .await?;
     response.send(payload)?;
     Ok(())
+}
+
+async fn multi_lsp_query(
+    request: MultiLspQuery,
+    response: Response<MultiLspQuery>,
+    session: Session,
+) -> Result<()> {
+    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    tracing::info!("multi_lsp_query message received");
+    forward_mutating_project_request(request, response, session).await
 }
 
 /// Notify other participants that a new buffer has been created
@@ -2859,12 +2897,12 @@ async fn make_update_user_plan_message(
 }
 
 fn model_requests_limit(
-    plan: zed_llm_client::Plan,
+    plan: cloud_llm_client::Plan,
     feature_flags: &Vec<String>,
-) -> zed_llm_client::UsageLimit {
+) -> cloud_llm_client::UsageLimit {
     match plan.model_requests_limit() {
-        zed_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == zed_llm_client::Plan::ZedProTrial
+        cloud_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
                 && feature_flags
                     .iter()
                     .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
@@ -2874,9 +2912,9 @@ fn model_requests_limit(
                 limit
             };
 
-            zed_llm_client::UsageLimit::Limited(limit)
+            cloud_llm_client::UsageLimit::Limited(limit)
         }
-        zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
+        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
     }
 }
 
@@ -2886,21 +2924,21 @@ fn subscription_usage_to_proto(
     feature_flags: &Vec<String>,
 ) -> proto::SubscriptionUsage {
     let plan = match plan {
-        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
     };
 
     proto::SubscriptionUsage {
         model_requests_usage_amount: usage.model_requests as u32,
         model_requests_usage_limit: Some(proto::UsageLimit {
             variant: Some(match model_requests_limit(plan, feature_flags) {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2908,12 +2946,12 @@ fn subscription_usage_to_proto(
         edit_predictions_usage_amount: usage.edit_predictions as u32,
         edit_predictions_usage_limit: Some(proto::UsageLimit {
             variant: Some(match plan.edit_predictions_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2926,21 +2964,21 @@ fn make_default_subscription_usage(
     feature_flags: &Vec<String>,
 ) -> proto::SubscriptionUsage {
     let plan = match plan {
-        proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
     };
 
     proto::SubscriptionUsage {
         model_requests_usage_amount: 0,
         model_requests_usage_limit: Some(proto::UsageLimit {
             variant: Some(match model_requests_limit(plan, feature_flags) {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),
@@ -2948,12 +2986,12 @@ fn make_default_subscription_usage(
         edit_predictions_usage_amount: 0,
         edit_predictions_usage_limit: Some(proto::UsageLimit {
             variant: Some(match plan.edit_predictions_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
                     proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                         limit: limit as u32,
                     })
                 }
-                zed_llm_client::UsageLimit::Unlimited => {
+                cloud_llm_client::UsageLimit::Unlimited => {
                     proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
                 }
             }),

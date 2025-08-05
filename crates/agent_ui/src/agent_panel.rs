@@ -43,7 +43,8 @@ use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
-use client::{DisableAiSettings, UserStore, zed_urls};
+use client::{UserStore, zed_urls};
+use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, FeatureFlagAppExt};
 use fs::Fs;
@@ -57,9 +58,8 @@ use language::LanguageRegistry;
 use language_model::{
     ConfigurationError, ConfiguredModel, LanguageModelProviderTosView, LanguageModelRegistry,
 };
-use project::{Project, ProjectPath, Worktree};
+use project::{DisableAiSettings, Project, ProjectPath, Worktree};
 use prompt_store::{PromptBuilder, PromptStore, UserPromptId};
-use proto::Plan;
 use rules_library::{RulesLibrary, open_rules_library};
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, update_settings_file};
@@ -77,10 +77,9 @@ use workspace::{
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
-    agent::{OpenConfiguration, OpenOnboardingModal, ResetOnboarding, ToggleModelSelector},
+    agent::{OpenOnboardingModal, OpenSettings, ResetOnboarding, ToggleModelSelector},
     assistant::{OpenRulesLibrary, ToggleFocus},
 };
-use zed_llm_client::{CompletionIntent, UsageLimit};
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
 
@@ -105,7 +104,7 @@ pub fn init(cx: &mut App) {
                         panel.update(cx, |panel, cx| panel.open_history(window, cx));
                     }
                 })
-                .register_action(|workspace, _: &OpenConfiguration, window, cx| {
+                .register_action(|workspace, _: &OpenSettings, window, cx| {
                     if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                         workspace.focus_panel::<AgentPanel>(window, cx);
                         panel.update(cx, |panel, cx| panel.open_configuration(window, cx));
@@ -579,7 +578,6 @@ impl AgentPanel {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
-                user_store.clone(),
                 message_editor_context_store.clone(),
                 prompt_store.clone(),
                 thread_store.downgrade(),
@@ -848,7 +846,6 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
                 context_store.clone(),
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1122,7 +1119,6 @@ impl AgentPanel {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
-                self.user_store.clone(),
                 context_store,
                 self.prompt_store.clone(),
                 self.thread_store.downgrade(),
@@ -1884,10 +1880,10 @@ impl AgentPanel {
                 }),
         );
 
-        let zoom_in_label = if self.is_zoomed(window, cx) {
-            "Zoom Out"
+        let full_screen_label = if self.is_zoomed(window, cx) {
+            "Disable Full Screen"
         } else {
-            "Zoom In"
+            "Enable Full Screen"
         };
 
         let active_thread = match &self.active_view {
@@ -1915,27 +1911,6 @@ impl AgentPanel {
                             .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
                                 this.header("Zed Agent")
                             })
-                            .item(
-                                ContextMenuEntry::new("New Thread")
-                                    .icon(IconName::NewThread)
-                                    .icon_color(Color::Muted)
-                                    .action(NewThread::default().boxed_clone())
-                                    .handler(move |window, cx| {
-                                        window.dispatch_action(
-                                            NewThread::default().boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
-                            )
-                            .item(
-                                ContextMenuEntry::new("New Text Thread")
-                                    .icon(IconName::NewTextThread)
-                                    .icon_color(Color::Muted)
-                                    .action(NewTextThread.boxed_clone())
-                                    .handler(move |window, cx| {
-                                        window.dispatch_action(NewTextThread.boxed_clone(), cx);
-                                    }),
-                            )
                             .when_some(active_thread, |this, active_thread| {
                                 let thread = active_thread.read(cx);
 
@@ -1943,7 +1918,7 @@ impl AgentPanel {
                                     let thread_id = thread.id().clone();
                                     this.item(
                                         ContextMenuEntry::new("New From Summary")
-                                            .icon(IconName::NewFromSummary)
+                                            .icon(IconName::ThreadFromSummary)
                                             .icon_color(Color::Muted)
                                             .handler(move |window, cx| {
                                                 window.dispatch_action(
@@ -1958,6 +1933,27 @@ impl AgentPanel {
                                     this
                                 }
                             })
+                            .item(
+                                ContextMenuEntry::new("New Thread")
+                                    .icon(IconName::Thread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewThread::default().boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(
+                                            NewThread::default().boxed_clone(),
+                                            cx,
+                                        );
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Text Thread")
+                                    .icon(IconName::TextThread)
+                                    .icon_color(Color::Muted)
+                                    .action(NewTextThread.boxed_clone())
+                                    .handler(move |window, cx| {
+                                        window.dispatch_action(NewTextThread.boxed_clone(), cx);
+                                    }),
+                            )
                             .when(cx.has_flag::<feature_flags::AcpFeatureFlag>(), |this| {
                                 this.separator()
                                     .header("External Agents")
@@ -1985,20 +1981,6 @@ impl AgentPanel {
                                                         agent: Some(
                                                             crate::ExternalAgent::ClaudeCode,
                                                         ),
-                                                    }
-                                                    .boxed_clone(),
-                                                    cx,
-                                                );
-                                            }),
-                                    )
-                                    .item(
-                                        ContextMenuEntry::new("New Codex Thread")
-                                            .icon(IconName::AiOpenAi)
-                                            .icon_color(Color::Muted)
-                                            .handler(move |window, cx| {
-                                                window.dispatch_action(
-                                                    NewExternalAgentThread {
-                                                        agent: Some(crate::ExternalAgent::Codex),
                                                     }
                                                     .boxed_clone(),
                                                     cx,
@@ -2088,8 +2070,9 @@ impl AgentPanel {
 
                         menu = menu
                             .action("Rules…", Box::new(OpenRulesLibrary::default()))
-                            .action("Settings", Box::new(OpenConfiguration))
-                            .action(zoom_in_label, Box::new(ToggleZoom));
+                            .action("Settings", Box::new(OpenSettings))
+                            .separator()
+                            .action(full_screen_label, Box::new(ToggleZoom));
                         menu
                     }))
                 }
@@ -2293,10 +2276,10 @@ impl AgentPanel {
             | ActiveView::Configuration => return false,
         }
 
-        let plan = self.user_store.read(cx).current_plan();
+        let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        matches!(plan, Some(Plan::Free)) && has_previous_trial
+        matches!(plan, Some(Plan::ZedFree)) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2482,14 +2465,14 @@ impl AgentPanel {
                                                 .icon_color(Color::Muted)
                                                 .full_width()
                                                 .key_binding(KeyBinding::for_action_in(
-                                                    &OpenConfiguration,
+                                                    &OpenSettings,
                                                     &focus_handle,
                                                     window,
                                                     cx,
                                                 ))
                                                 .on_click(|_event, window, cx| {
                                                     window.dispatch_action(
-                                                        OpenConfiguration.boxed_clone(),
+                                                        OpenSettings.boxed_clone(),
                                                         cx,
                                                     )
                                                 }),
@@ -2576,7 +2559,7 @@ impl AgentPanel {
                                         NewThreadButton::new(
                                             "new-thread-btn",
                                             "New Thread",
-                                            IconName::NewThread,
+                                            IconName::Thread,
                                         )
                                         .keybinding(KeyBinding::for_action_in(
                                             &NewThread::default(),
@@ -2597,7 +2580,7 @@ impl AgentPanel {
                                         NewThreadButton::new(
                                             "new-text-thread-btn",
                                             "New Text Thread",
-                                            IconName::NewTextThread,
+                                            IconName::TextThread,
                                         )
                                         .keybinding(KeyBinding::for_action_in(
                                             &NewTextThread,
@@ -2666,25 +2649,6 @@ impl AgentPanel {
                                                     )
                                                 },
                                             ),
-                                        )
-                                        .child(
-                                            NewThreadButton::new(
-                                                "new-codex-thread-btn",
-                                                "New Codex Thread",
-                                                IconName::AiOpenAi,
-                                            )
-                                            .on_click(
-                                                |window, cx| {
-                                                    window.dispatch_action(
-                                                        Box::new(NewExternalAgentThread {
-                                                            agent: Some(
-                                                                crate::ExternalAgent::Codex,
-                                                            ),
-                                                        }),
-                                                        cx,
-                                                    )
-                                                },
-                                            ),
                                         ),
                                 )
                             }),
@@ -2713,16 +2677,11 @@ impl AgentPanel {
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
-                            KeyBinding::for_action_in(
-                                &OpenConfiguration,
-                                &focus_handle,
-                                window,
-                                cx,
-                            )
-                            .map(|kb| kb.size(rems_from_px(12.))),
+                            KeyBinding::for_action_in(&OpenSettings, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
                         .on_click(|_event, window, cx| {
-                            window.dispatch_action(OpenConfiguration.boxed_clone(), cx)
+                            window.dispatch_action(OpenSettings.boxed_clone(), cx)
                         }),
                 ),
             ConfigurationError::ProviderPendingTermsAcceptance(provider) => {
@@ -2916,7 +2875,7 @@ impl AgentPanel {
     ) -> AnyElement {
         let error_message = match plan {
             Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            Plan::ZedProTrial | Plan::Free => "Upgrade to Zed Pro for more prompts.",
+            Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
         };
 
         let icon = Icon::new(IconName::XCircle)
@@ -3226,7 +3185,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &OpenConfiguration, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.open_configuration(window, cx);
             }))
             .on_action(cx.listener(Self::open_active_thread_as_markdown))

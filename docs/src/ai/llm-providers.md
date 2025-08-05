@@ -86,7 +86,7 @@ To do this:
 
 1. Create an IAM User that you can assume in the [IAM Console](https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users).
 2. Create security credentials for that User, save them and keep them secure.
-3. Open the Agent Configuration with (`agent: open configuration`) and go to the Amazon Bedrock section
+3. Open the Agent Configuration with (`agent: open settings`) and go to the Amazon Bedrock section
 4. Copy the credentials from Step 2 into the respective **Access Key ID**, **Secret Access Key**, and **Region** fields.
 
 #### Cross-Region Inference
@@ -113,7 +113,7 @@ You can use Anthropic models by choosing them via the model dropdown in the Agen
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
 2. Make sure that your Anthropic account has credits
-3. Open the settings view (`agent: open configuration`) and go to the Anthropic section
+3. Open the settings view (`agent: open settings`) and go to the Anthropic section
 4. Enter your Anthropic API key
 
 Even if you pay for Claude Pro, you will still have to [pay for additional credits](https://console.anthropic.com/settings/plans) to use it via the API.
@@ -168,7 +168,7 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 > ✅ Supports tool use
 
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
-2. Open the settings view (`agent: open configuration`) and go to the DeepSeek section
+2. Open the settings view (`agent: open settings`) and go to the DeepSeek section
 3. Enter your DeepSeek API key
 
 The DeepSeek API key will be saved in your keychain.
@@ -213,14 +213,14 @@ You can also modify the `api_url` to use a custom endpoint if needed.
 
 You can use GitHub Copilot Chat with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
-1. Open the settings view (`agent: open configuration`) and go to the GitHub Copilot Chat section
+1. Open the settings view (`agent: open settings`) and go to the GitHub Copilot Chat section
 2. Click on `Sign in to use GitHub Copilot`, follow the steps shown in the modal.
 
 Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environment variable.
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
-To use Copilot Enterprise with Zed (for both agent and inline completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
 
 ### Google AI {#google-ai}
 
@@ -229,7 +229,7 @@ To use Copilot Enterprise with Zed (for both agent and inline completions), you 
 You can use Gemini models with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
 1. Go to the Google AI Studio site and [create an API key](https://aistudio.google.com/app/apikey).
-2. Open the settings view (`agent: open configuration`) and go to the Google AI section
+2. Open the settings view (`agent: open settings`) and go to the Google AI section
 3. Enter your Google AI API key and press enter.
 
 The Google AI API key will be saved in your keychain.
@@ -288,7 +288,7 @@ Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#
 > ✅ Supports tool use
 
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
-2. Open the configuration view (`agent: open configuration`) and navigate to the Mistral section
+2. Open the configuration view (`agent: open settings`) and navigate to the Mistral section
 3. Enter your Mistral API key
 
 The Mistral API key will be saved in your keychain.
@@ -399,7 +399,7 @@ If the model is tagged with `vision` in the Ollama catalog, set this option and 
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
-3. Open the settings view (`agent: open configuration`) and go to the OpenAI section
+3. Open the settings view (`agent: open settings`) and go to the OpenAI section
 4. Enter your OpenAI API key
 
 The OpenAI API key will be saved in your keychain.
@@ -441,36 +441,35 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible {#openai-api-compatible}
 
-Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider. This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
+Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
+This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-To configure a compatible API, you can add a custom API URL for OpenAI either via the UI (currently available only in Preview) or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
 
-For example, to connect to [Together AI](https://www.together.ai/) via the UI:
+To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
+Then, fill up the input fields available in the modal.
 
-1. Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
-2. Go to the Agent Panel's settings view, click on the "Add Provider" button, and then on the "OpenAI" menu item
-3. Add the requested fields, such as `api_url`, `api_key`, available models, and others
-
-Alternatively, you can also add it via the `settings.json`:
+To do it via your `settings.json`, add the following snippet under `language_models`:
 
 ```json
 {
   "language_models": {
     "openai": {
-      "api_url": "https://api.together.xyz/v1",
-      "api_key": "YOUR_TOGETHER_AI_API_KEY",
+      "api_url": "https://api.together.xyz/v1", // Using Together AI as an example
       "available_models": [
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768,
-          "supports_tools": true
+          "max_tokens": 32768
         }
       ]
     }
   }
 }
 ```
+
+Note that LLM API keys aren't stored in your settings file.
+So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
 
 ### OpenRouter {#openrouter}
 
@@ -480,7 +479,7 @@ OpenRouter provides access to multiple AI models through a single API. It suppor
 
 1. Visit [OpenRouter](https://openrouter.ai) and create an account
 2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys)
-3. Open the settings view (`agent: open configuration`) and go to the OpenRouter section
+3. Open the settings view (`agent: open settings`) and go to the OpenRouter section
 4. Enter your OpenRouter API key
 
 The OpenRouter API key will be saved in your keychain.
@@ -551,7 +550,7 @@ You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 Zed has first-class support for [xAI](https://x.ai/) models. You can use your own API key to access Grok models.
 
 1. [Create an API key in the xAI Console](https://console.x.ai/team/default/api-keys)
-2. Open the settings view (`agent: open configuration`) and go to the **xAI** section
+2. Open the settings view (`agent: open settings`) and go to the **xAI** section
 3. Enter your xAI API key
 
 The xAI API key will be saved in your keychain. Zed will also use the `XAI_API_KEY` environment variable if it's defined.

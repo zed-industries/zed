@@ -42,8 +42,12 @@ impl ClaudeZedMcpServer {
     }
 
     pub fn server_config(&self) -> Result<McpServerConfig> {
+        #[cfg(not(test))]
         let zed_path = std::env::current_exe()
             .context("finding current executable path for use in mcp_server")?;
+
+        #[cfg(test)]
+        let zed_path = crate::e2e_tests::get_zed_path();
 
         Ok(McpServerConfig {
             command: zed_path,
@@ -154,12 +158,12 @@ impl McpServerTool for PermissionTool {
                     vec![
                         acp::PermissionOption {
                             id: allow_option_id.clone(),
-                            label: "Allow".into(),
+                            name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
                         },
                         acp::PermissionOption {
                             id: reject_option_id.clone(),
-                            label: "Reject".into(),
+                            name: "Reject".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
                         },
                     ],
@@ -174,6 +178,7 @@ impl McpServerTool for PermissionTool {
                 updated_input: input.input,
             }
         } else {
+            debug_assert_eq!(chosen_option, reject_option_id);
             PermissionToolResponse {
                 behavior: PermissionToolBehavior::Deny,
                 updated_input: input.input,

@@ -97,7 +97,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -113,7 +113,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, Point};
+use text::{Anchor, BufferId, OffsetRangeExt, Point};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -277,6 +277,13 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
+    // [`lsp::notification::DidOpenTextDocument`] was sent to this server using the buffer data.
+    // Zed's buffer-related data is updated accordingly.
+    LanguageServerBufferRegistered {
+        server_id: LanguageServerId,
+        buffer_id: BufferId,
+        buffer_abs_path: PathBuf,
+    },
     Toast {
         notification_id: SharedString,
         message: String,
@@ -590,7 +597,7 @@ pub(crate) struct CoreCompletion {
 }
 
 /// A code action provided by a language server.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CodeAction {
     /// The id of the language server that produced this code action.
     pub server_id: LanguageServerId,
@@ -604,7 +611,7 @@ pub struct CodeAction {
 }
 
 /// An action sent back by a language server.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum LspAction {
     /// An action with the full data, may have a command or may not.
     /// May require resolving.
@@ -942,10 +949,38 @@ pub enum PulledDiagnostics {
     },
 }
 
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
+        DisableAiSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -998,8 +1033,9 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
+            let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
 
             let environment = cx.new(|_| ProjectEnvironment::new(env));
             let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
@@ -1167,8 +1203,9 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
+            let weak_self = cx.weak_entity();
             let context_server_store =
-                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx));
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
 
             let buffer_store = cx.new(|cx| {
                 BufferStore::remote(
@@ -1360,10 +1397,7 @@ impl Project {
         fs: Arc<dyn Fs>,
         cx: AsyncApp,
     ) -> Result<Entity<Self>> {
-        client
-            .authenticate_and_connect(true, &cx)
-            .await
-            .into_response()?;
+        client.connect(true, &cx).await.into_response()?;
 
         let subscriptions = [
             EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id)?),
@@ -1428,8 +1462,6 @@ impl Project {
         let image_store = cx.new(|cx| {
             ImageStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
-        let context_server_store =
-            cx.new(|cx| ContextServerStore::new(worktree_store.clone(), cx))?;
 
         let environment = cx.new(|_| ProjectEnvironment::new(None))?;
 
@@ -1495,6 +1527,10 @@ impl Project {
             let replica_id = response.payload.replica_id as ReplicaId;
 
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
+
+            let weak_self = cx.weak_entity();
+            let context_server_store =
+                cx.new(|cx| ContextServerStore::new(worktree_store.clone(), weak_self, cx));
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
@@ -2902,8 +2938,8 @@ impl Project {
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
-                message,
                 name,
+                message,
             } => {
                 if self.is_local() {
                     self.enqueue_buffer_ordered_message(
@@ -2914,6 +2950,32 @@ impl Project {
                         },
                     )
                     .ok();
+                }
+
+                match message {
+                    proto::update_language_server::Variant::MetadataUpdated(update) => {
+                        if let Some(capabilities) = update
+                            .capabilities
+                            .as_ref()
+                            .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                        {
+                            self.lsp_store.update(cx, |lsp_store, _| {
+                                lsp_store
+                                    .lsp_server_capabilities
+                                    .insert(*language_server_id, capabilities);
+                            });
+                        }
+                    }
+                    proto::update_language_server::Variant::RegisteredForBuffer(update) => {
+                        if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
+                            cx.emit(Event::LanguageServerBufferRegistered {
+                                buffer_id,
+                                server_id: *language_server_id,
+                                buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                            });
+                        }
+                    }
+                    _ => (),
                 }
             }
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
@@ -3368,7 +3430,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3386,7 +3448,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.declarations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3404,7 +3466,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3422,7 +3484,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.implementations(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
@@ -3440,25 +3502,11 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.references(buffer, position, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result
         })
-    }
-
-    fn document_highlights_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<DocumentHighlight>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDocumentHighlights { position },
-            cx,
-        )
     }
 
     pub fn document_highlights<T: ToPointUtf16>(
@@ -3468,7 +3516,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.document_highlights_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentHighlights { position },
+            cx,
+        )
     }
 
     pub fn document_symbols(
@@ -3569,14 +3622,14 @@ impl Project {
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
     }
 
-    pub fn linked_edit(
+    pub fn linked_edits(
         &self,
         buffer: &Entity<Buffer>,
         position: Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.linked_edit(buffer, position, cx)
+            lsp_store.linked_edits(buffer, position, cx)
         })
     }
 
@@ -3607,20 +3660,29 @@ impl Project {
         })
     }
 
-    pub fn code_lens<T: Clone + ToOffset>(
+    pub fn code_lens_actions<T: Clone + ToOffset>(
         &mut self,
-        buffer_handle: &Entity<Buffer>,
+        buffer: &Entity<Buffer>,
         range: Range<T>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<CodeAction>>> {
-        let snapshot = buffer_handle.read(cx).snapshot();
-        let range = snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end);
+        let snapshot = buffer.read(cx).snapshot();
+        let range = range.clone().to_owned().to_point(&snapshot);
+        let range_start = snapshot.anchor_before(range.start);
+        let range_end = if range.start == range.end {
+            range_start
+        } else {
+            snapshot.anchor_after(range.end)
+        };
+        let range = range_start..range_end;
         let code_lens_actions = self
             .lsp_store
-            .update(cx, |lsp_store, cx| lsp_store.code_lens(buffer_handle, cx));
+            .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(buffer, cx));
 
         cx.background_spawn(async move {
-            let mut code_lens_actions = code_lens_actions.await?;
+            let mut code_lens_actions = code_lens_actions
+                .await
+                .map_err(|e| anyhow!("code lens fetch failed: {e:#}"))?;
             code_lens_actions.retain(|code_lens_action| {
                 range
                     .start
@@ -3659,19 +3721,6 @@ impl Project {
         })
     }
 
-    fn prepare_rename_impl(
-        &mut self,
-        buffer: Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<PrepareRenameResponse>> {
-        self.request_lsp(
-            buffer,
-            LanguageServerToQuery::FirstCapable,
-            PrepareRename { position },
-            cx,
-        )
-    }
     pub fn prepare_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3679,7 +3728,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.prepare_rename_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer,
+            LanguageServerToQuery::FirstCapable,
+            PrepareRename { position },
+            cx,
+        )
     }
 
     pub fn perform_rename<T: ToPointUtf16>(
@@ -3983,7 +4037,7 @@ impl Project {
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.request_lsp(buffer_handle, server, request, cx)
         });
-        cx.spawn(async move |_, _| {
+        cx.background_spawn(async move {
             let result = task.await;
             drop(guard);
             result

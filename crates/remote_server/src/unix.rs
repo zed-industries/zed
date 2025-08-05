@@ -17,6 +17,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
+use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
@@ -33,6 +34,7 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::ops::ControlFlow;
 use std::str::FromStr;
@@ -109,8 +111,9 @@ fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
     Ok(rx)
 }
 
-fn init_panic_hook() {
-    std::panic::set_hook(Box::new(|info| {
+fn init_panic_hook(session_id: String) {
+    std::panic::set_hook(Box::new(move |info| {
+        crashes::handle_panic();
         let payload = info
             .payload()
             .downcast_ref::<&str>()
@@ -171,9 +174,11 @@ fn init_panic_hook() {
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
-            system_id: None,            // Set on SSH client
-            installation_id: None,      // Set on SSH client
-            session_id: "".to_string(), // Set on SSH client
+            system_id: None,       // Set on SSH client
+            installation_id: None, // Set on SSH client
+
+            // used on this end to associate panics with minidumps, but will be replaced on the SSH client
+            session_id: session_id.clone(),
         };
 
         if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
@@ -194,44 +199,69 @@ fn init_panic_hook() {
     }));
 }
 
-fn handle_panic_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
+fn handle_crash_files_requests(project: &Entity<HeadlessProject>, client: &Arc<ChannelClient>) {
     let client: AnyProtoClient = client.clone().into();
     client.add_request_handler(
         project.downgrade(),
-        |_, _: TypedEnvelope<proto::GetPanicFiles>, _cx| async move {
+        |_, _: TypedEnvelope<proto::GetCrashFiles>, _cx| async move {
+            let mut crashes = Vec::new();
+            let mut minidumps_by_session_id = HashMap::new();
             let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
-            let mut panic_files = Vec::new();
             while let Some(child) = children.next().await {
                 let child = child?;
                 let child_path = child.path();
 
-                if child_path.extension() != Some(OsStr::new("panic")) {
-                    continue;
+                let extension = child_path.extension();
+                if extension == Some(OsStr::new("panic")) {
+                    let filename = if let Some(filename) = child_path.file_name() {
+                        filename.to_string_lossy()
+                    } else {
+                        continue;
+                    };
+
+                    if !filename.starts_with("zed") {
+                        continue;
+                    }
+
+                    let file_contents = smol::fs::read_to_string(&child_path)
+                        .await
+                        .context("error reading panic file")?;
+
+                    crashes.push(proto::CrashReport {
+                        panic_contents: Some(file_contents),
+                        minidump_contents: None,
+                    });
+                } else if extension == Some(OsStr::new("dmp")) {
+                    let session_id = child_path.file_stem().unwrap().to_string_lossy();
+                    minidumps_by_session_id
+                        .insert(session_id.to_string(), smol::fs::read(&child_path).await?);
                 }
-                let filename = if let Some(filename) = child_path.file_name() {
-                    filename.to_string_lossy()
-                } else {
-                    continue;
-                };
-
-                if !filename.starts_with("zed") {
-                    continue;
-                }
-
-                let file_contents = smol::fs::read_to_string(&child_path)
-                    .await
-                    .context("error reading panic file")?;
-
-                panic_files.push(file_contents);
 
                 // We've done what we can, delete the file
-                std::fs::remove_file(child_path)
+                smol::fs::remove_file(&child_path)
+                    .await
                     .context("error removing panic")
                     .log_err();
             }
-            anyhow::Ok(proto::GetPanicFilesResponse {
-                file_contents: panic_files,
-            })
+
+            for crash in &mut crashes {
+                let panic: telemetry_events::Panic =
+                    serde_json::from_str(crash.panic_contents.as_ref().unwrap())?;
+                if let dump @ Some(_) = minidumps_by_session_id.remove(&panic.session_id) {
+                    crash.minidump_contents = dump;
+                }
+            }
+
+            crashes.extend(
+                minidumps_by_session_id
+                    .into_values()
+                    .map(|dmp| CrashReport {
+                        panic_contents: None,
+                        minidump_contents: Some(dmp),
+                    }),
+            );
+
+            anyhow::Ok(proto::GetCrashFilesResponse { crashes })
         },
     );
 }
@@ -409,7 +439,12 @@ pub fn execute_run(
         ControlFlow::Continue(_) => {}
     }
 
-    init_panic_hook();
+    let app = gpui::Application::headless();
+    let id = std::process::id().to_string();
+    app.background_executor()
+        .spawn(crashes::init(id.clone()))
+        .detach();
+    init_panic_hook(id);
     let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -425,7 +460,7 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
-    gpui::Application::headless().run(move |cx| {
+    app.run(move |cx| {
         settings::init(cx);
         let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
         release_channel::init(app_version, cx);
@@ -486,7 +521,7 @@ pub fn execute_run(
             )
         });
 
-        handle_panic_requests(&project, &session);
+        handle_crash_files_requests(&project, &session);
 
         cx.background_spawn(async move { cleanup_old_binaries() })
             .detach();
@@ -530,11 +565,14 @@ impl ServerPaths {
 
 pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     init_logging_proxy();
-    init_panic_hook();
-
-    log::info!("starting proxy process. PID: {}", std::process::id());
 
     let server_paths = ServerPaths::new(&identifier)?;
+
+    let id = std::process::id().to_string();
+    smol::spawn(crashes::init(id.clone())).detach();
+    init_panic_hook(id);
+
+    log::info!("starting proxy process. PID: {}", std::process::id());
 
     let server_pid = check_pid_file(&server_paths.pid_file)?;
     let server_running = server_pid.is_some();

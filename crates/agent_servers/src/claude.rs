@@ -70,10 +70,6 @@ struct ClaudeAgentConnection {
 }
 
 impl AgentConnection for ClaudeAgentConnection {
-    fn name(&self) -> &'static str {
-        ClaudeCode.name()
-    }
-
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -168,8 +164,9 @@ impl AgentConnection for ClaudeAgentConnection {
                 }
             });
 
-            let thread =
-                cx.new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))?;
+            let thread = cx.new(|cx| {
+                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+            })?;
 
             thread_tx.send(thread.downgrade())?;
 
@@ -186,11 +183,15 @@ impl AgentConnection for ClaudeAgentConnection {
         })
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn authenticate(&self, _: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -438,7 +439,7 @@ impl ClaudeAgentSession {
                     }
                 }
             }
-            SdkMessage::System { .. } => {}
+            SdkMessage::System { .. } | SdkMessage::ControlResponse { .. } => {}
         }
     }
 
@@ -642,6 +643,8 @@ enum SdkMessage {
         request_id: String,
         request: ControlRequest,
     },
+    /// Response to a control request
+    ControlResponse { response: ControlResponse },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,6 +652,12 @@ enum SdkMessage {
 enum ControlRequest {
     /// Cancel the current conversation
     Interrupt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ControlResponse {
+    request_id: String,
+    subtype: ResultErrorType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -707,7 +716,7 @@ pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode);
+    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {

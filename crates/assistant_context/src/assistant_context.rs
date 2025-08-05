@@ -11,6 +11,7 @@ use assistant_slash_command::{
 use assistant_slash_commands::FileCommandMetadata;
 use client::{self, Client, proto, telemetry::Telemetry};
 use clock::ReplicaId;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
@@ -46,7 +47,6 @@ use text::{BufferSnapshot, ToPoint};
 use ui::IconName;
 use util::{ResultExt, TryFutureExt, post_inc};
 use uuid::Uuid;
-use zed_llm_client::CompletionIntent;
 
 pub use crate::context_store::*;
 

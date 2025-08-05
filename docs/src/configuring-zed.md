@@ -2588,6 +2588,7 @@ List of `integer` column numbers
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
+    "minimum_contrast": 45,
     "option_as_meta": false,
     "button": true,
     "shell": "system",
@@ -2879,6 +2880,30 @@ See Buffer Font Features
     "line_height": {
       "custom": 2
     }
+  }
+}
+```
+
+### Terminal: Minimum Contrast
+
+- Description: Controls the minimum contrast between foreground and background colors in the terminal. Uses the APCA (Accessible Perceptual Contrast Algorithm) for color adjustments. Set this to 0 to disable this feature.
+- Setting: `minimum_contrast`
+- Default: `45`
+
+**Options**
+
+`integer` values from 0 to 106. Common recommended values:
+
+- `0`: No contrast adjustment
+- `45`: Minimum for large fluent text (default)
+- `60`: Minimum for other content text
+- `75`: Minimum for body text
+- `90`: Preferred for body text
+
+```json
+{
+  "terminal": {
+    "minimum_contrast": 45
   }
 }
 ```
@@ -3390,7 +3415,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Agent
 
-Visit [the Configuration page](/ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [the Configuration page](./ai/configuration.md) under the AI section to learn more about all the agent-related settings.
 
 ## Outline Panel
 
