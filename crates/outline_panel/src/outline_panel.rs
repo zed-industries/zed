@@ -1041,7 +1041,7 @@ impl OutlinePanel {
 
     fn open_excerpts(
         &mut self,
-        action: &editor::OpenExcerpts,
+        action: &editor::actions::OpenExcerpts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1057,7 +1057,7 @@ impl OutlinePanel {
 
     fn open_excerpts_split(
         &mut self,
-        action: &editor::OpenExcerptsSplit,
+        action: &editor::actions::OpenExcerptsSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -5958,7 +5958,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_excerpts(&editor::OpenExcerpts, window, cx);
+            outline_panel.open_excerpts(&editor::actions::OpenExcerpts, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

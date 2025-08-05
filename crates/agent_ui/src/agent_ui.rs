@@ -31,7 +31,7 @@ use std::sync::Arc;
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::{Client, DisableAiSettings};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
@@ -40,6 +40,7 @@ use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
+use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -262,6 +263,8 @@ fn update_command_palette_filter(cx: &mut App) {
         if disable_ai {
             filter.hide_namespace("agent");
             filter.hide_namespace("assistant");
+            filter.hide_namespace("copilot");
+            filter.hide_namespace("supermaven");
             filter.hide_namespace("zed_predict_onboarding");
             filter.hide_namespace("edit_prediction");
 
@@ -282,6 +285,7 @@ fn update_command_palette_filter(cx: &mut App) {
         } else {
             filter.show_namespace("agent");
             filter.show_namespace("assistant");
+            filter.show_namespace("copilot");
             filter.show_namespace("zed_predict_onboarding");
 
             filter.show_namespace("edit_prediction");

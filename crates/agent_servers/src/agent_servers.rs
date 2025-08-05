@@ -1,3 +1,4 @@
+mod acp;
 mod claude;
 mod gemini;
 mod settings;
@@ -35,7 +36,6 @@ pub trait AgentServer: Send {
 
     fn connect(
         &self,
-        // these will go away when old_acp is fully removed
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,

@@ -286,6 +286,17 @@ message Unstage {
     repeated string paths = 4;
 }
 
+message Stash {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    repeated string paths = 3;
+}
+
+message StashPop {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
 message Commit {
     uint64 project_id = 1;
     reserved 2;
@@ -410,4 +421,13 @@ message BlameBufferResponse {
     optional BlameResponse blame_response = 5;
 
     reserved 1 to 4;
+}
+
+message GetDefaultBranch {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+}
+
+message GetDefaultBranchResponse {
+    optional string branch = 1;
 }

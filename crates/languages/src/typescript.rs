@@ -8,7 +8,8 @@ use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
-    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -512,7 +513,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 fn replace_test_name_parameters(test_name: &str) -> String {
     let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
 
-    pattern.replace_all(test_name, "(.+?)").to_string()
+    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
 }
 
 pub struct TypeScriptLspAdapter {
@@ -741,11 +742,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         }))
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            ("TypeScript".into(), "typescript".into()),
-            ("JavaScript".into(), "javascript".into()),
-            ("TSX".into(), "typescriptreact".into()),
+            (LanguageName::new("TypeScript"), "typescript".into()),
+            (LanguageName::new("JavaScript"), "javascript".into()),
+            (LanguageName::new("TSX"), "typescriptreact".into()),
         ])
     }
 }

@@ -31,6 +31,7 @@ audio.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
@@ -46,9 +47,9 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 html_to_markdown.workspace = true
-indoc.workspace = true
 http_client.workspace = true
 indexed_docs.workspace = true
+indoc.workspace = true
 inventory.workspace = true
 itertools.workspace = true
 jsonschema.workspace = true
@@ -97,7 +98,6 @@ watch.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-zed_llm_client.workspace = true
 
 [dev-dependencies]
 assistant_tools.workspace = true

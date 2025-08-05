@@ -704,6 +704,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
+    tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -1021,7 +1022,7 @@ impl Window {
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
-                if invalidator.is_dirty() {
+                if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
@@ -2210,6 +2211,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            tab_handle_index: self.next_frame.tab_handles.handles.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2238,6 +2240,12 @@ impl Window {
                 ..range.end.accessed_element_states_index]
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
+        self.next_frame.tab_handles.handles.extend(
+            self.rendered_frame.tab_handles.handles
+                [range.start.tab_handle_index..range.end.tab_handle_index]
+                .iter()
+                .cloned(),
         );
 
         self.text_system

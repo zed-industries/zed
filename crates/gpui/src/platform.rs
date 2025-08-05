@@ -13,8 +13,7 @@ mod mac;
         any(target_os = "linux", target_os = "freebsd"),
         any(feature = "x11", feature = "wayland")
     ),
-    target_os = "windows",
-    feature = "macos-blade"
+    all(target_os = "macos", feature = "macos-blade")
 ))]
 mod blade;
 
@@ -448,6 +447,8 @@ impl Tiling {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct RequestFrameOptions {
     pub(crate) require_presentation: bool,
+    /// Force refresh of all rendering states when true
+    pub(crate) force_render: bool,
 }
 
 pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
@@ -809,7 +810,6 @@ pub(crate) struct AtlasTextureId {
 pub(crate) enum AtlasTextureKind {
     Monochrome = 0,
     Polychrome = 1,
-    Path = 2,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

@@ -1,7 +1,7 @@
 # Billing
 
 We use Stripe as our billing and payments provider. All Pro plans require payment via credit card.
-For invoice-based billing, a Business plan is required. Contact sales@zed.dev for more information.
+For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](mailto:sales@zed.dev) for more information.
 
 ## Settings {#settings}
 
@@ -12,7 +12,8 @@ Clicking the button under Account Settings will navigate you to Stripe’s secur
 
 Zed is billed on a monthly basis based on the date you initially subscribe.
 
-We’ll also bill in-month for additional prompts used beyond your plan’s prompt limit, if usage exceeds $20 before month end. See [usage-based pricing](./plans-and-usage.md#ubp) for more.
+We’ll also bill in-month for additional prompts used beyond your plan’s prompt limit, if usage exceeds $20 before month end.
+See [usage-based pricing](./plans-and-usage.md#ubp) for more.
 
 ## Invoice History {#invoice-history}
 
@@ -33,4 +34,4 @@ Zed partners with [Sphere](https://www.getsphere.com/) to calculate indirect tax
 If you have a VAT/GST ID, you can add it at [zed.dev/account](https://zed.dev/account) by clicking "Manage" on your subscription. Check the box that denotes you as a business.
 
 Please note that changes to VAT/GST IDs and address will **only** affect future invoices — **we cannot modify historical invoices**.
-Questions or issues can be directed to billing-support@zed.dev.
+Questions or issues can be directed to [billing-support@zed.dev](mailto:billing-support@zed.dev).

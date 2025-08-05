@@ -963,7 +963,7 @@ impl RemoteServerProjects {
                                 .child({
                                     let project = project.clone();
                                     // Right-margin to offset it from the Scrollbar
-                                    IconButton::new("remove-remote-project", IconName::TrashAlt)
+                                    IconButton::new("remove-remote-project", IconName::Trash)
                                         .icon_size(IconSize::Small)
                                         .shape(IconButtonShape::Square)
                                         .size(ButtonSize::Large)
