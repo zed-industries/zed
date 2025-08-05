@@ -24,10 +24,7 @@ use language::{
 };
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
-    lsp_store::{
-        lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
-        rust_analyzer_ext::RUST_ANALYZER_NAME,
-    },
+    lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
     project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
@@ -3790,7 +3787,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            name: RUST_ANALYZER_NAME,
+            name: "rust-analyzer",
             ..FakeLspAdapter::default()
         },
     );

@@ -3550,7 +3550,7 @@ pub struct LspStore {
     worktree_store: Entity<WorktreeStore>,
     toolchain_store: Option<Entity<ToolchainStore>>,
     pub languages: Arc<LanguageRegistry>,
-    pub(super) language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
+    language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
@@ -3671,7 +3671,6 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
-        client.add_entity_request_handler(Self::handle_language_server_id_for_name);
         client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
@@ -8743,34 +8742,6 @@ impl LspStore {
             Ok(())
         })??;
         Ok(proto::Ack {})
-    }
-
-    async fn handle_language_server_id_for_name(
-        lsp_store: Entity<Self>,
-        envelope: TypedEnvelope<proto::LanguageServerIdForName>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::LanguageServerIdForNameResponse> {
-        let name = &envelope.payload.name;
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        lsp_store
-            .update(&mut cx, |lsp_store, cx| {
-                let buffer = lsp_store.buffer_store.read(cx).get_existing(buffer_id)?;
-                let server_id = buffer.update(cx, |buffer, cx| {
-                    lsp_store
-                        .language_servers_for_local_buffer(buffer, cx)
-                        .find_map(|(adapter, server)| {
-                            if adapter.name.0.as_ref() == name {
-                                Some(server.server_id())
-                            } else {
-                                None
-                            }
-                        })
-                });
-                Ok(server_id)
-            })?
-            .map(|server_id| proto::LanguageServerIdForNameResponse {
-                server_id: server_id.map(|id| id.to_proto()),
-            })
     }
 
     async fn handle_rename_project_entry(
