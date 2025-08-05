@@ -145,7 +145,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             anyhow!("No default model configured. Please configure a default model in settings.")
                         })?;
 
-                    let thread = cx.new(|_| Thread::new(agent.templates.clone(), default_model));
+                    let thread = cx.new(|_| Thread::new(project.clone(), agent.templates.clone(), default_model));
 
                     // Generate session ID
                     let session_id = acp::SessionId(uuid::Uuid::new_v4().to_string().into());

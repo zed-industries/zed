@@ -6,9 +6,14 @@ use anyhow::Result;
 use gpui::{App, Entity};
 use project::Project;
 
-#[allow(dead_code)]
-struct BasePrompt {
+pub struct BasePrompt {
     project: Entity<Project>,
+}
+
+impl BasePrompt {
+    pub fn new(project: Entity<Project>) -> Self {
+        Self { project }
+    }
 }
 
 impl Prompt for BasePrompt {

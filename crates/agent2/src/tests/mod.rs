@@ -3,6 +3,7 @@ use crate::templates::Templates;
 use acp_thread::AgentConnection as _;
 use agent_client_protocol as acp;
 use client::{Client, UserStore};
+use fs::FakeFs;
 use gpui::{AppContext, Entity, Task, TestAppContext};
 use indoc::indoc;
 use language_model::{
@@ -14,8 +15,10 @@ use project::Project;
 use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use smol::stream::StreamExt;
 use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
+use util::path;
 
 mod test_tools;
 use test_tools::*;
@@ -446,8 +449,15 @@ impl TestModel {
 
 async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.executor().allow_parking();
-    cx.update(settings::init);
+    cx.update(|cx| {
+        settings::init(cx);
+        Project::init_settings(cx);
+    });
     let templates = Templates::new();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
     let model = cx
         .update(|cx| {
@@ -482,7 +492,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         })
         .await;
 
-    let thread = cx.new(|_| Thread::new(templates, model.clone()));
+    let thread = cx.new(|_| Thread::new(project, templates, model.clone()));
 
     ThreadTest { model, thread }
 }

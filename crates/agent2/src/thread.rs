@@ -1,10 +1,10 @@
-use crate::templates::Templates;
+use crate::{prompts::BasePrompt, templates::Templates};
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{channel::mpsc, stream::FuturesUnordered};
-use gpui::{App, Context, ImageFormat, SharedString, Task};
+use gpui::{App, Context, Entity, ImageFormat, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
@@ -12,6 +12,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use log;
+use project::Project;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
@@ -119,11 +120,15 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(templates: Arc<Templates>, default_model: Arc<dyn LanguageModel>) -> Self {
+    pub fn new(
+        project: Entity<Project>,
+        templates: Arc<Templates>,
+        default_model: Arc<dyn LanguageModel>,
+    ) -> Self {
         Self {
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
-            system_prompts: Vec::new(),
+            system_prompts: vec![Arc::new(BasePrompt::new(project))],
             running_turn: None,
             pending_tool_uses: HashMap::default(),
             tools: BTreeMap::default(),
