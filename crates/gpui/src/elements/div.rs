@@ -2521,12 +2521,14 @@ impl Interactivity {
             }
         }
 
-        let layout_direction = window.current_layout_direction();
-        let flex_mapped_style = layout_direction.apply_flex_direction(style);
-        let spacing_mapped_style = layout_direction.apply_spacing_direction(flex_mapped_style);
-        let border_mapped_style = layout_direction.apply_border_direction(spacing_mapped_style);
+        window.with_bidi_style(self.base_style.bidi.clone(), |window| {
+            let layout_direction = window.current_layout_direction();
+            let flex_mapped_style = layout_direction.apply_flex_direction(style);
+            let spacing_mapped_style = layout_direction.apply_spacing_direction(flex_mapped_style);
+            let border_mapped_style = layout_direction.apply_border_direction(spacing_mapped_style);
 
-        border_mapped_style
+            border_mapped_style
+        })
     }
 }
 
