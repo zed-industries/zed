@@ -114,6 +114,7 @@ impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>, D3: Dimension<'
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
+        self.2.add_summary(summary, cx);
     }
 }
 
