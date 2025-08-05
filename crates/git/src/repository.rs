@@ -463,6 +463,8 @@ pub trait GitRepository: Send + Sync {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
 }
 
 pub enum DiffType {
@@ -1604,6 +1606,37 @@ impl GitRepository for RealGitRepository {
                     &target_checkpoint.commit_sha.to_string(),
                 ])
                 .await
+            })
+            .boxed()
+    }
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = self.executor.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+                if let Ok(output) = git
+                    .run(&["symbolic-ref", "refs/remotes/upstream/HEAD"])
+                    .await
+                {
+                    let output = output
+                        .strip_prefix("refs/remotes/upstream/")
+                        .map(|s| SharedString::from(s.to_owned()));
+                    return Ok(output);
+                }
+
+                let output = git
+                    .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+                    .await?;
+
+                Ok(output
+                    .strip_prefix("refs/remotes/origin/")
+                    .map(|s| SharedString::from(s.to_owned())))
             })
             .boxed()
     }

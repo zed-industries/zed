@@ -95,8 +95,28 @@ impl ContextServer {
         self.client.read().clone()
     }
 
-    pub async fn start(self: Arc<Self>, cx: &AsyncApp) -> Result<()> {
-        let client = match &self.configuration {
+    pub async fn start(&self, cx: &AsyncApp) -> Result<()> {
+        self.initialize(self.new_client(cx)?).await
+    }
+
+    /// Starts the context server, making sure handlers are registered before initialization happens
+    pub async fn start_with_handlers(
+        &self,
+        notification_handlers: Vec<(
+            &'static str,
+            Box<dyn 'static + Send + FnMut(serde_json::Value, AsyncApp)>,
+        )>,
+        cx: &AsyncApp,
+    ) -> Result<()> {
+        let client = self.new_client(cx)?;
+        for (method, handler) in notification_handlers {
+            client.on_notification(method, handler);
+        }
+        self.initialize(client).await
+    }
+
+    fn new_client(&self, cx: &AsyncApp) -> Result<Client> {
+        Ok(match &self.configuration {
             ContextServerTransport::Stdio(command, working_directory) => Client::stdio(
                 client::ContextServerId(self.id.0.clone()),
                 client::ModelContextServerBinary {
@@ -113,8 +133,7 @@ impl ContextServer {
                 transport.clone(),
                 cx.clone(),
             )?,
-        };
-        self.initialize(client).await
+        })
     }
 
     async fn initialize(&self, client: Client) -> Result<()> {

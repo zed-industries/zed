@@ -1521,6 +1521,9 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
+            AcpThreadEvent::Stopped
+            | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::Error => {}
         }
     }
 
@@ -1893,7 +1896,6 @@ mod tests {
     use agent::thread_store::{self, ThreadStore};
     use agent_settings::AgentSettings;
     use assistant_tool::ToolWorkingSet;
-    use client::CloudUserStore;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
@@ -1933,17 +1935,11 @@ mod tests {
             })
             .unwrap();
 
-        let (client, user_store) =
-            project.read_with(cx, |project, _cx| (project.client(), project.user_store()));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store, cx));
-
         let prompt_store = None;
         let thread_store = cx
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
-                    cloud_user_store,
                     cx.new(|_| ToolWorkingSet::default()),
                     prompt_store,
                     Arc::new(PromptBuilder::new(None).unwrap()),
@@ -2105,17 +2101,11 @@ mod tests {
             })
             .unwrap();
 
-        let (client, user_store) =
-            project.read_with(cx, |project, _cx| (project.client(), project.user_store()));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store, cx));
-
         let prompt_store = None;
         let thread_store = cx
             .update(|cx| {
                 ThreadStore::load(
                     project.clone(),
-                    cloud_user_store,
                     cx.new(|_| ToolWorkingSet::default()),
                     prompt_store,
                     Arc::new(PromptBuilder::new(None).unwrap()),

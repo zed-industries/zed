@@ -38,7 +38,7 @@
       },
       "build-commands": [
         "install -Dm644 $ICON_FILE.png /app/share/icons/hicolor/512x512/apps/$APP_ID.png",
-        "envsubst < zed.desktop.in > zed.desktop && install -Dm644 zed.desktop /app/share/applications/$APP_ID.desktop",
+        "envsubst < zed.desktop.in > zed.desktop && install -Dm755 zed.desktop /app/share/applications/$APP_ID.desktop",
         "envsubst < flatpak/zed.metainfo.xml.in > zed.metainfo.xml && install -Dm644 zed.metainfo.xml /app/share/metainfo/$APP_ID.metainfo.xml",
         "sed -i -e '/@release_info@/{r flatpak/release-info/$CHANNEL' -e 'd}' /app/share/metainfo/$APP_ID.metainfo.xml",
         "install -Dm755 bin/zed /app/bin/zed",

@@ -355,8 +355,9 @@ impl ProjectSearch {
 
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
-                        .update(cx, |project_search, _| {
+                        .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
+                            cx.notify();
                         })
                         .ok()?;
                 }

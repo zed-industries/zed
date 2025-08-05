@@ -1,6 +1,6 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint2 _global_pad;
+    uint2 _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -1069,6 +1069,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
 };
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
@@ -1091,10 +1092,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 }
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float4 color = input.color;
-    color.a *= sample.a;
-    return color;
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+    return float4(input.color.rgb, input.color.a * sample);
 }
 
 /*

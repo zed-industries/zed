@@ -161,7 +161,7 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    language_ids: HashMap<String, String>,
+    language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
@@ -277,10 +277,11 @@ impl CachedLspAdapter {
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language_name.as_ref())
+            .get(language_name)
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
     pub fn manifest_name(&self) -> Option<ManifestName> {
         self.manifest_name
             .get_or_init(|| self.adapter.manifest_name())
@@ -573,8 +574,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
-        Default::default()
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
+        HashMap::default()
     }
 
     /// Support custom initialize params.

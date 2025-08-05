@@ -7,10 +7,8 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
- "agentic-coding-protocol",
  "anyhow",
  "assistant_tool",
- "async-pipe",
  "buffer_diff",
  "editor",
  "env_logger 0.11.8",
@@ -20,7 +18,9 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "markdown",
+ "parking_lot",
  "project",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "settings",
@@ -114,7 +114,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "proto",
  "rand 0.8.5",
  "ref-cast",
  "rope",
@@ -138,10 +137,14 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.11"
+version = "0.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72ec54650c1fc2d63498bab47eeeaa9eddc7d239d53f615b797a0e84f7ccc87b"
+checksum = "f8e4c1dccb35e69d32566f0d11948d902f9942fc3f038821816c1150cf5925f4"
 dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "log",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
@@ -176,6 +179,7 @@ dependencies = [
  "smol",
  "strum 0.27.1",
  "tempfile",
+ "thiserror 2.0.12",
  "ui",
  "util",
  "uuid",
@@ -359,7 +363,6 @@ dependencies = [
  "component",
  "gpui",
  "language_model",
- "proto",
  "serde",
  "smallvec",
  "telemetry",
@@ -1074,17 +1077,6 @@ dependencies = [
  "futures-lite 2.6.0",
  "rustix 0.38.44",
  "tracing",
-]
-
-[[package]]
-name = "async-recursion"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7d78656ba01f1b93024b7c3a0467f1608e4be67d725749fdcd7d2c7678fd7a2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
 ]
 
 [[package]]
@@ -2972,7 +2964,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 0.3.2",
  "async-tungstenite",
  "base64 0.22.1",
  "chrono",
@@ -3551,13 +3542,13 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "dirs 4.0.0",
+ "edit_prediction",
  "editor",
  "fs",
  "futures 0.3.31",
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "itertools 0.14.0",
  "language",
  "log",
@@ -4866,6 +4857,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "language",
+ "project",
+ "workspace-hack",
+]
+
+[[package]]
+name = "edit_prediction_button"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "cloud_llm_client",
+ "copilot",
+ "edit_prediction",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "lsp",
+ "paths",
+ "project",
+ "regex",
+ "serde_json",
+ "settings",
+ "supermaven",
+ "telemetry",
+ "theme",
+ "ui",
+ "workspace",
+ "workspace-hack",
+ "zed_actions",
+ "zeta",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -4880,6 +4914,7 @@ dependencies = [
  "ctor",
  "dap",
  "db",
+ "edit_prediction",
  "emojis",
  "file_icons",
  "fs",
@@ -4889,7 +4924,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "itertools 0.14.0",
  "language",
  "languages",
@@ -6325,7 +6359,6 @@ dependencies = [
  "buffer_diff",
  "call",
  "chrono",
- "client",
  "cloud_llm_client",
  "collections",
  "command_palette_hooks",
@@ -6337,6 +6370,7 @@ dependencies = [
  "fuzzy",
  "git",
  "gpui",
+ "indoc",
  "itertools 0.14.0",
  "language",
  "language_model",
@@ -7815,6 +7849,7 @@ dependencies = [
  "http 1.3.1",
  "http-body 1.0.1",
  "log",
+ "parking_lot",
  "serde",
  "serde_json",
  "url",
@@ -8295,49 +8330,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "inline_completion"
-version = "0.1.0"
-dependencies = [
- "client",
- "gpui",
- "language",
- "project",
- "workspace-hack",
-]
-
-[[package]]
-name = "inline_completion_button"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "cloud_llm_client",
- "copilot",
- "editor",
- "feature_flags",
- "fs",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "inline_completion",
- "language",
- "lsp",
- "paths",
- "project",
- "regex",
- "serde_json",
- "settings",
- "supermaven",
- "telemetry",
- "theme",
- "ui",
- "workspace",
- "workspace-hack",
- "zed_actions",
- "zeta",
 ]
 
 [[package]]
@@ -9086,7 +9078,6 @@ dependencies = [
  "open_router",
  "partial-json-fixer",
  "project",
- "proto",
  "release_channel",
  "schemars",
  "serde",
@@ -9585,9 +9576,9 @@ dependencies = [
 
 [[package]]
 name = "lock_api"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07af8b9cdd281b7915f413fa73f29ebd5d55d0d3f0155584dade1ff18cea1b17"
+checksum = "96936507f153605bddfcda068dd804796c84324ed2510809e5b2a624c81da765"
 dependencies = [
  "autocfg",
  "scopeguard",
@@ -9824,7 +9815,7 @@ name = "markdown_preview"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "collections",
  "editor",
  "fs",
@@ -10924,6 +10915,7 @@ dependencies = [
 name = "onboarding"
 version = "0.1.0"
 dependencies = [
+ "ai_onboarding",
  "anyhow",
  "client",
  "command_palette_hooks",
@@ -10934,7 +10926,10 @@ dependencies = [
  "feature_flags",
  "fs",
  "gpui",
+ "itertools 0.14.0",
  "language",
+ "language_model",
+ "menu",
  "project",
  "schemars",
  "serde",
@@ -11297,9 +11292,9 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
-version = "0.12.3"
+version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1bf18183cf54e8d6059647fc3063646a1801cf30896933ec2311622cc4b9a27"
+checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
 dependencies = [
  "lock_api",
  "parking_lot_core",
@@ -11307,9 +11302,9 @@ dependencies = [
 
 [[package]]
 name = "parking_lot_core"
-version = "0.9.10"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e401f977ab385c9e4e3ab30627d6f26d00e2c73eef317493c4ec6d468726cf8"
+checksum = "bc838d2a56b5b1a6c25f55575dfc605fabb63bb2365f6c2353ef9159aa69e4a5"
 dependencies = [
  "cfg-if",
  "libc",
@@ -15591,12 +15586,12 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "edit_prediction",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
  "gpui",
  "http_client",
- "inline_completion",
  "language",
  "log",
  "postage",
@@ -16189,7 +16184,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_slash_command",
- "async-recursion 1.1.1",
+ "async-recursion",
  "breadcrumbs",
  "client",
  "collections",
@@ -19614,7 +19609,7 @@ version = "0.1.0"
 dependencies = [
  "any_vec",
  "anyhow",
- "async-recursion 1.1.1",
+ "async-recursion",
  "bincode",
  "call",
  "client",
@@ -20139,7 +20134,7 @@ dependencies = [
  "async-io",
  "async-lock",
  "async-process",
- "async-recursion 1.1.1",
+ "async-recursion",
  "async-task",
  "async-trait",
  "blocking",
@@ -20228,6 +20223,7 @@ dependencies = [
  "debugger_tools",
  "debugger_ui",
  "diagnostics",
+ "edit_prediction_button",
  "editor",
  "env_logger 0.11.8",
  "extension",
@@ -20247,7 +20243,6 @@ dependencies = [
  "http_client",
  "image_viewer",
  "indoc",
- "inline_completion_button",
  "inspector_ui",
  "install_cli",
  "itertools 0.14.0",
@@ -20579,6 +20574,7 @@ dependencies = [
  "copilot",
  "ctor",
  "db",
+ "edit_prediction",
  "editor",
  "feature_flags",
  "fs",
@@ -20586,7 +20582,6 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "inline_completion",
  "language",
  "language_model",
  "log",
@@ -20615,6 +20610,42 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zlog",
+]
+
+[[package]]
+name = "zeta_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "client",
+ "debug_adapter_extension",
+ "extension",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "language",
+ "language_extension",
+ "language_model",
+ "language_models",
+ "languages",
+ "node_runtime",
+ "paths",
+ "project",
+ "prompt_store",
+ "release_channel",
+ "reqwest_client",
+ "serde",
+ "serde_json",
+ "settings",
+ "shellexpand 2.1.2",
+ "smol",
+ "terminal_view",
+ "util",
+ "watch",
+ "workspace-hack",
+ "zeta",
 ]
 
 [[package]]
