@@ -13,7 +13,6 @@ use std::sync::Arc;
 use crate::{templates::Templates, AgentResponseEvent, Thread};
 
 /// Holds both the internal Thread and the AcpThread for a session
-#[derive(Clone)]
 struct Session {
     /// The internal thread that processes messages
     thread: Entity<Thread>,
@@ -94,12 +93,15 @@ impl ModelSelector for NativeAgentConnection {
         let agent = self.0.clone();
         let session_id = session_id.clone();
         cx.spawn(async move |cx| {
-            let session = agent
-                .read_with(cx, |agent, _| agent.sessions.get(&session_id).cloned())?
+            let thread = agent
+                .read_with(cx, |agent, _| {
+                    agent
+                        .sessions
+                        .get(&session_id)
+                        .map(|session| session.thread.clone())
+                })?
                 .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
-            let selected = session
-                .thread
-                .read_with(cx, |thread, _| thread.selected_model.clone())?;
+            let selected = thread.read_with(cx, |thread, _| thread.selected_model.clone())?;
             Ok(selected)
         })
     }
