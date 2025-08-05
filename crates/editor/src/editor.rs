@@ -22192,7 +22192,6 @@ impl SemanticsProvider for Entity<Project> {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        // TODO: make this work for remote projects
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)
