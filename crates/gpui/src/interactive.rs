@@ -155,7 +155,7 @@ pub struct KeyboardClickEvent {
     /// The keyboard button that was pressed to trigger the click.
     pub button: KeyboardButton,
 
-    /// The hitbox of the element that was clicked.
+    /// The bounds of the element that was clicked.
     pub bounds: Bounds<Pixels>,
 }
 
