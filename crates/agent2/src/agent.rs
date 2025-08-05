@@ -200,12 +200,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
         cx.spawn(async move |cx| {
             // Get session
-            let session = agent
+            let (thread, acp_thread) = agent
                 .read_with(cx, |agent, _| {
-                    agent.sessions.get(&session_id).map(|s| Session {
-                        thread: s.thread.clone(),
-                        acp_thread: s.acp_thread.clone(),
-                    })
+                    agent
+                        .sessions
+                        .get(&session_id)
+                        .map(|s| (s.thread.clone(), s.acp_thread.clone()))
                 })?
                 .ok_or_else(|| {
                     log::error!("Session not found: {}", session_id);
@@ -220,15 +220,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Get model using the ModelSelector capability (always available for agent2)
             // Get the selected model from the thread directly
-            let model = session
-                .thread
-                .read_with(cx, |thread, _| thread.selected_model.clone())?;
+            let model = thread.read_with(cx, |thread, _| thread.selected_model.clone())?;
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream = session
-                .thread
-                .update(cx, |thread, cx| thread.send(model, message, cx))?;
+            let mut response_stream =
+                thread.update(cx, |thread, cx| thread.send(model, message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = response_stream.next().await {
@@ -238,7 +235,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
                         match event {
                             AgentResponseEvent::Text(text) => {
-                                session.acp_thread.update(cx, |thread, cx| {
+                                acp_thread.update(cx, |thread, cx| {
                                     thread.handle_session_update(
                                         acp::SessionUpdate::AgentMessageChunk {
                                             content: acp::ContentBlock::Text(acp::TextContent {
@@ -251,7 +248,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                 })??;
                             }
                             AgentResponseEvent::Thinking(text) => {
-                                session.acp_thread.update(cx, |thread, cx| {
+                                acp_thread.update(cx, |thread, cx| {
                                     thread.handle_session_update(
                                         acp::SessionUpdate::AgentThoughtChunk {
                                             content: acp::ContentBlock::Text(acp::TextContent {
@@ -264,7 +261,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                 })??;
                             }
                             AgentResponseEvent::ToolCall(tool_call) => {
-                                session.acp_thread.update(cx, |thread, cx| {
+                                acp_thread.update(cx, |thread, cx| {
                                     thread.handle_session_update(
                                         acp::SessionUpdate::ToolCall(tool_call),
                                         cx,
@@ -272,7 +269,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                 })??;
                             }
                             AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
-                                session.acp_thread.update(cx, |thread, cx| {
+                                acp_thread.update(cx, |thread, cx| {
                                     thread.handle_session_update(
                                         acp::SessionUpdate::ToolCallUpdate(tool_call_update),
                                         cx,
