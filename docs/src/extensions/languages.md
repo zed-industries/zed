@@ -406,7 +406,6 @@ languages = ["JavaScript", "JSX", "HTML", "CSS"]
 
 [language-servers.my-language-server.language_ids]
 "JavaScript" = "javascript"
-"JSX" = "javascriptreact"
 "TSX" = "typescriptreact"
 "HTML" = "html"
 "CSS" = "css"
