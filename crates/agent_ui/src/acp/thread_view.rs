@@ -2438,9 +2438,8 @@ impl AcpThreadView {
             }));
 
         h_flex()
-            .mt_1()
             .mr_1()
-            .py_2()
+            .pb_2()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
