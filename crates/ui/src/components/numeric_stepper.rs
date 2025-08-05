@@ -96,7 +96,7 @@ impl RenderOnce for NumericStepper {
                             this.overflow_hidden()
                                 .bg(cx.theme().colors().surface_background)
                                 .border_1()
-                                .border_color(cx.theme().colors().border)
+                                .border_color(cx.theme().colors().border_variant)
                         } else {
                             this.px_1().bg(cx.theme().colors().editor_background)
                         }
@@ -111,7 +111,7 @@ impl RenderOnce for NumericStepper {
                                     .justify_center()
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .border_r_1()
-                                    .border_color(cx.theme().colors().border)
+                                    .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Dash).size(IconSize::Small))
                                     .on_click(self.on_decrement),
                             )
@@ -124,7 +124,6 @@ impl RenderOnce for NumericStepper {
                             )
                         }
                     })
-                    .when(is_outlined, |this| this)
                     .child(Label::new(self.value).mx_3())
                     .map(|increment| {
                         if is_outlined {
@@ -136,7 +135,7 @@ impl RenderOnce for NumericStepper {
                                     .justify_center()
                                     .hover(|s| s.bg(cx.theme().colors().element_hover))
                                     .border_l_1()
-                                    .border_color(cx.theme().colors().border)
+                                    .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Plus).size(IconSize::Small))
                                     .on_click(self.on_increment),
                             )
