@@ -488,6 +488,7 @@ impl Render for Onboarding {
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
                 ctx.add("Onboarding");
+                ctx.add("menu");
                 ctx
             })
             .track_focus(&self.focus_handle)
@@ -501,6 +502,14 @@ impl Render for Onboarding {
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
                 this.set_page(SelectedPage::AiSetup, cx);
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
+                window.focus_next();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectPrevious, window, cx| {
+                window.focus_prev();
+                cx.notify();
             }))
             .child(
                 h_flex()
