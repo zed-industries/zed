@@ -310,17 +310,31 @@ impl LspAdapter for RustLspAdapter {
                 (&metadata.digest, expected_digest)
             {
                 if actual_digest == expected_digest {
-                    // Binary is up to date, skip downloading.
-                    return Ok(LanguageServerBinary {
-                        path: server_path,
-                        env: None,
-                        arguments: Default::default(),
-                    });
+                    let result = delegate
+                        .try_exec(LanguageServerBinary {
+                            path: server_path.clone(),
+                            arguments: vec!["--version".into()],
+                            env: None,
+                        })
+                        .await;
+                    match result {
+                        // Binary is up to date and executable, skip downloading.
+                        Ok(()) => {
+                            return Ok(LanguageServerBinary {
+                                path: server_path,
+                                env: None,
+                                arguments: Default::default(),
+                            });
+                        }
+                        Err(err) => {
+                            log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",);
+                        }
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
                 }
-
-                log::info!(
-                    "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
-                );
             }
         }
         download_server_binary(
