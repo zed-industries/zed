@@ -201,7 +201,6 @@ impl Model {
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
     }
-
 }
 
 #[derive(Debug, Serialize, Deserialize)]
