@@ -2506,9 +2506,6 @@ impl Render for AcpThreadView {
                                     .flex_grow()
                                     .into_any(),
                             )
-                            // .when(!is_generating, |this| {
-                            //     this.child(self.render_thread_controls(cx))
-                            // })
                             .children(match thread_clone.read(cx).status() {
                                 ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
                                     None
