@@ -74,10 +74,10 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
         })
 });
 
-pub static SENTRY_MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
-    option_env!("SENTRY_MINIDUMP_ENDPOINT")
+pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
+    option_env!("ZED_MINIDUMP_ENDPOINT")
         .map(|s| s.to_owned())
-        .or_else(|| env::var("SENTRY_MINIDUMP_ENDPOINT").ok())
+        .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
