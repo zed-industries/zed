@@ -255,7 +255,7 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
     let ui_font_picker = cx.new(|cx| {
         font_picker(
             ui_font_family.clone(),
-            |font, cx| write_ui_font_family(font, cx),
+            write_ui_font_family,
             window,
             cx,
         )
@@ -264,7 +264,7 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
     let buffer_font_picker = cx.new(|cx| {
         font_picker(
             buffer_font_family.clone(),
-            |font, cx| write_buffer_font_family(font, cx),
+            write_buffer_font_family,
             window,
             cx,
         )
@@ -411,7 +411,6 @@ impl FontPickerDelegate {
         let fonts: Vec<SharedString> = font_family_cache
             .list_font_families(cx)
             .into_iter()
-            .map(|f| f.into())
             .collect();
 
         let selected_index = fonts
