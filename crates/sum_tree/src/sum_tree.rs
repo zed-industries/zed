@@ -129,18 +129,6 @@ where
     }
 }
 
-// impl<'a, S, D1, D2, D3> SeekTarget<'a, S, ((D1, D2), D3)> for D1
-// where
-//     S: Summary,
-//     D1: SeekTarget<'a, S, D1> + Dimension<'a, S>,
-//     D2: Dimension<'a, S>,
-//     D3: Dimension<'a, S>,
-// {
-//     fn cmp(&self, cursor_location: &((D1, D2), D3), cx: &S::Context) -> Ordering {
-//         self.cmp(&cursor_location.0.0, cx)
-//     }
-// }
-
 /// Bias is used to settle ambiguities when determining positions in an ordered sequence.
 ///
 /// The primary use case is for text, where Bias influences
