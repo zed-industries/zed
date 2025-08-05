@@ -260,7 +260,7 @@ actions!(
         Open,
         /// Opens the selected file in a right editor.
         OpenSplitRight,
-        /// Opens the selected file in an up editor.
+        /// Opens the selected file in an above editor.
         OpenSplitUp,
         /// Opens the selected file in a permanent tab.
         OpenPermanent,
