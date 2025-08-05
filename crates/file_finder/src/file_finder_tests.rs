@@ -2863,3 +2863,35 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
         );
     });
 }
+
+#[gpui::test]
+async fn test_confirm_on_directory_does_not_open_editor(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(path!("/root"), json!({ "foo_dir": {} }))
+        .await;
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, vtc) = build_find_picker(project.clone(), cx);
+    vtc.simulate_input("foo_dir");
+    picker.update(vtc, |picker, _| {
+        assert!(
+            picker
+                .delegate
+                .matches
+                .matches
+                .iter()
+                .any(|m| m.project_path().path.as_ref() == Path::new("foo_dir")),
+            "Expected directory 'foo_dir' in matches"
+        );
+    });
+    vtc.dispatch_action(Confirm);
+    vtc.read(|cx| {
+        let active = workspace.read(cx).active_item_as::<Editor>(cx);
+        assert!(
+            active.is_none(),
+            "Expected no editor opened for directory confirm"
+        );
+    });
+}
