@@ -77,6 +77,7 @@ impl WindowsPlatformState {
             callbacks,
             jump_list,
             current_cursor,
+            default_layout_direction: LayoutDirection::RightToLeft,
             menus: Vec::new(),
         }
     }
