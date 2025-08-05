@@ -5137,7 +5137,10 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(window, cx);
                     }
                 }))
-                .on_click(cx.listener(|this, _event, _, cx| {
+                .on_click(cx.listener(|this, event, _, cx| {
+                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        return;
+                    }
                     cx.stop_propagation();
                     this.selection = None;
                     this.marked_entries.clear();
