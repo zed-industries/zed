@@ -2,21 +2,32 @@ use crate::stdout_is_a_pty;
 use anyhow::{Context as _, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::{TelemetrySettings, telemetry};
+use client::{
+    TelemetrySettings,
+    telemetry::{self, SENTRY_MINIDUMP_ENDPOINT},
+};
 use db::kvp::KEY_VALUE_STORE;
+use futures::AsyncReadExt;
 use gpui::{App, AppContext as _, SemanticVersion};
 use http_client::{self, HttpClient, HttpClientWithUrl, HttpRequestExt, Method};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
 use release_channel::{AppCommitSha, RELEASE_CHANNEL, ReleaseChannel};
+use reqwest::multipart::{Form, Part};
 use settings::Settings;
 use smol::stream::StreamExt;
 use std::{
     env,
     ffi::{OsStr, c_void},
-    sync::{Arc, atomic::Ordering},
+    fs,
+    io::Write,
+    panic,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    thread,
 };
-use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::{LocationData, Panic, PanicRequest};
 use url::Url;
 use util::ResultExt;
@@ -37,9 +48,10 @@ pub fn init_panic_hook(
         if prior_panic_count > 0 {
             // Give the panic-ing thread time to write the panic file
             loop {
-                std::thread::yield_now();
+                thread::yield_now();
             }
         }
+        crashes::handle_panic();
 
         let thread = thread::current();
         let thread_name = thread.name().unwrap_or("<unnamed>");
@@ -136,9 +148,8 @@ pub fn init_panic_hook(
             if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
-                let panic_file = std::fs::OpenOptions::new()
-                    .append(true)
-                    .create(true)
+                let panic_file = fs::OpenOptions::new()
+                    .create_new(true)
                     .open(&panic_file_path)
                     .log_err();
                 if let Some(mut panic_file) = panic_file {
@@ -205,27 +216,31 @@ pub fn init(
         if let Some(ssh_client) = project.ssh_client() {
             ssh_client.update(cx, |client, cx| {
                 if TelemetrySettings::get_global(cx).diagnostics {
-                    let request = client.proto_client().request(proto::GetPanicFiles {});
+                    let request = client.proto_client().request(proto::GetCrashFiles {});
                     cx.background_spawn(async move {
-                        let panic_files = request.await?;
-                        for file in panic_files.file_contents {
-                            let panic: Option<Panic> = serde_json::from_str(&file)
-                                .log_err()
-                                .or_else(|| {
-                                    file.lines()
-                                        .next()
-                                        .and_then(|line| serde_json::from_str(line).ok())
-                                })
-                                .unwrap_or_else(|| {
-                                    log::error!("failed to deserialize panic file {:?}", file);
-                                    None
-                                });
+                        let crash_files = request.await?;
+                        for crash in crash_files.crashes {
+                            let mut panic: Option<Panic> = crash
+                                .panic_contents
+                                .and_then(|s| serde_json::from_str(&s).log_err());
 
-                            if let Some(mut panic) = panic {
+                            if let Some(panic) = panic.as_mut() {
                                 panic.session_id = session_id.clone();
                                 panic.system_id = system_id.clone();
                                 panic.installation_id = installation_id.clone();
+                            }
 
+                            if let Some(minidump) = crash.minidump_contents {
+                                upload_minidump(
+                                    http_client.clone(),
+                                    minidump.clone(),
+                                    panic.as_ref(),
+                                )
+                                .await
+                                .log_err();
+                            }
+
+                            if let Some(panic) = panic {
                                 upload_panic(&http_client, &panic_report_url, panic, &mut None)
                                     .await?;
                             }
@@ -510,6 +525,22 @@ async fn upload_previous_panics(
                 });
 
             if let Some(panic) = panic {
+                let minidump_path = paths::logs_dir()
+                    .join(&panic.session_id)
+                    .with_extension("dmp");
+                if minidump_path.exists() {
+                    let minidump = smol::fs::read(&minidump_path)
+                        .await
+                        .context("Failed to read minidump")?;
+                    if upload_minidump(http.clone(), minidump, Some(&panic))
+                        .await
+                        .log_err()
+                        .is_some()
+                    {
+                        fs::remove_file(minidump_path).ok();
+                    }
+                }
+
                 if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
                     continue;
                 }
@@ -517,11 +548,73 @@ async fn upload_previous_panics(
         }
 
         // We've done what we can, delete the file
-        std::fs::remove_file(child_path)
+        fs::remove_file(child_path)
             .context("error removing panic")
             .log_err();
     }
+
+    // loop back over the directory again to upload any minidumps that are missing panics
+    let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
+    while let Some(child) = children.next().await {
+        let child = child?;
+        let child_path = child.path();
+        if child_path.extension() != Some(OsStr::new("dmp")) {
+            continue;
+        }
+        if upload_minidump(
+            http.clone(),
+            smol::fs::read(&child_path)
+                .await
+                .context("Failed to read minidump")?,
+            None,
+        )
+        .await
+        .log_err()
+        .is_some()
+        {
+            fs::remove_file(child_path).ok();
+        }
+    }
+
     Ok(most_recent_panic)
+}
+
+async fn upload_minidump(
+    http: Arc<HttpClientWithUrl>,
+    minidump: Vec<u8>,
+    panic: Option<&Panic>,
+) -> Result<()> {
+    let sentry_upload_url = SENTRY_MINIDUMP_ENDPOINT
+        .to_owned()
+        .ok_or_else(|| anyhow::anyhow!("Minidump endpoint not set"))?;
+
+    let mut form = Form::new()
+        .part(
+            "upload_file_minidump",
+            Part::bytes(minidump)
+                .file_name("minidump.dmp")
+                .mime_str("application/octet-stream")?,
+        )
+        .text("platform", "rust");
+    if let Some(panic) = panic {
+        form = form.text(
+            "release",
+            format!("{}-{}", panic.release_channel, panic.app_version),
+        );
+        // TODO: tack on more fields
+    }
+
+    let mut response_text = String::new();
+    let mut response = http.send_multipart_form(&sentry_upload_url, form).await?;
+    response
+        .body_mut()
+        .read_to_string(&mut response_text)
+        .await?;
+    if !response.status().is_success() {
+        anyhow::bail!("failed to upload minidump: {response_text}");
+    }
+    log::info!("Uploaded minidump. event id: {response_text}");
+    Ok(())
 }
 
 async fn upload_panic(
