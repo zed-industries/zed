@@ -181,11 +181,11 @@ impl ClickEvent {
 
     /// Returns the position of the click event
     ///
-    /// `Keyboard`: The bottom right corner of the clicked hitbox
+    /// `Keyboard`: The bottom left corner of the clicked hitbox
     /// `Mouse`: The position of the mouse when the button was released.
     pub fn position(&self) -> Point<Pixels> {
         match self {
-            ClickEvent::Keyboard(event) => event.hitbox.bottom_right(),
+            ClickEvent::Keyboard(event) => event.hitbox.bottom_left(),
             ClickEvent::Mouse(event) => event.up.position,
         }
     }
