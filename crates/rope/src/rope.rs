@@ -12,7 +12,7 @@ use std::{
     ops::{self, AddAssign, Range},
     str,
 };
-use sum_tree::{Bias, Dimension, SumTree};
+use sum_tree::{Bias, Dimension, Dimensions, SumTree};
 
 pub use chunk::ChunkSlice;
 pub use offset_utf16::OffsetUtf16;
@@ -282,7 +282,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().len_utf16;
         }
-        let mut cursor = self.chunks.cursor::<(usize, OffsetUtf16)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, OffsetUtf16>>(&());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -295,7 +295,7 @@ impl Rope {
         if offset >= self.summary().len_utf16 {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<(OffsetUtf16, usize)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<OffsetUtf16, usize>>(&());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -308,7 +308,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<(usize, Point)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, Point>>(&());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -321,7 +321,7 @@ impl Rope {
         if offset >= self.summary().len {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<usize, PointUtf16>>(&());
         cursor.seek(&offset, Bias::Left);
         let overshoot = offset - cursor.start().0;
         cursor.start().1
@@ -334,7 +334,7 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().lines_utf16();
         }
-        let mut cursor = self.chunks.cursor::<(Point, PointUtf16)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<Point, PointUtf16>>(&());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -347,7 +347,7 @@ impl Rope {
         if point >= self.summary().lines {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<(Point, usize)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<Point, usize>>(&());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -368,7 +368,7 @@ impl Rope {
         if point >= self.summary().lines_utf16() {
             return self.summary().len;
         }
-        let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, usize>>(&());
         cursor.seek(&point, Bias::Left);
         let overshoot = point - cursor.start().0;
         cursor.start().1
@@ -381,7 +381,7 @@ impl Rope {
         if point.0 >= self.summary().lines_utf16() {
             return self.summary().lines;
         }
-        let mut cursor = self.chunks.cursor::<(PointUtf16, Point)>(&());
+        let mut cursor = self.chunks.cursor::<Dimensions<PointUtf16, Point>>(&());
         cursor.seek(&point.0, Bias::Left);
         let overshoot = Unclipped(point.0 - cursor.start().0);
         cursor.start().1
@@ -1168,16 +1168,17 @@ pub trait TextDimension:
     fn add_assign(&mut self, other: &Self);
 }
 
-impl<D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
+impl<D1: TextDimension, D2: TextDimension> TextDimension for Dimensions<D1, D2, ()> {
     fn from_text_summary(summary: &TextSummary) -> Self {
-        (
+        Dimensions(
             D1::from_text_summary(summary),
             D2::from_text_summary(summary),
+            (),
         )
     }
 
     fn from_chunk(chunk: ChunkSlice) -> Self {
-        (D1::from_chunk(chunk), D2::from_chunk(chunk))
+        Dimensions(D1::from_chunk(chunk), D2::from_chunk(chunk), ())
     }
 
     fn add_assign(&mut self, other: &Self) {
