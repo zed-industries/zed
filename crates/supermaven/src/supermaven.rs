@@ -237,13 +237,11 @@ fn find_relevant_completion<'a>(
         let text_inserted_since_completion_request: String = buffer
             .text_for_range(original_cursor_offset..current_cursor_offset)
             .collect();
-        let trimmed_completion = if let Some(suffix) =
-            state_completion.strip_prefix(&text_inserted_since_completion_request)
-        {
-            suffix
-        } else {
-            continue 'completions;
-        };
+        let trimmed_completion =
+            match state_completion.strip_prefix(&text_inserted_since_completion_request) {
+                Some(suffix) => suffix,
+                None => continue 'completions,
+            };
 
         if best_completion.map_or(false, |best| best.len() > trimmed_completion.len()) {
             continue;
