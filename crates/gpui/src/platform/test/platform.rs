@@ -1,9 +1,4 @@
-use crate::{
-    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
-    ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout,
-    PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
-    SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size,
-};
+use crate::{AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size, LayoutDirection};
 use anyhow::Result;
 use collections::VecDeque;
 use futures::channel::oneshot;
@@ -38,6 +33,7 @@ pub(crate) struct TestPlatform {
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
+    default_layout_direction: RefCell<LayoutDirection>
 }
 
 #[derive(Clone)]
@@ -119,6 +115,7 @@ impl TestPlatform {
             #[cfg(target_os = "windows")]
             bitmap_factory,
             text_system,
+            default_layout_direction: Default::default()
         })
     }
 
@@ -424,6 +421,14 @@ impl Platform for TestPlatform {
 
     fn open_with_system(&self, _path: &Path) {
         unimplemented!()
+    }
+
+    fn set_default_layout_direction(&self, direction: LayoutDirection) {
+        *self.default_layout_direction.borrow_mut() = direction
+    }
+
+    fn get_default_layout_direction(&self) -> LayoutDirection {
+        *self.default_layout_direction.borrow()
     }
 }
 
