@@ -2254,10 +2254,9 @@ async fn update_language_server(
     let project_id = ProjectId::from_proto(request.project_id);
     let db = session.db().await;
 
-    if let Some(proto::update_language_server::Variant::MetadataUpdated(server_metadata_updated)) =
-        &request.variant
+    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
     {
-        if let Some(capabilities) = server_metadata_updated.capabilities.clone() {
+        if let Some(capabilities) = update.capabilities.clone() {
             db.update_server_capabilities(project_id, request.language_server_id, capabilities)
                 .await?;
         }

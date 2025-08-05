@@ -2442,7 +2442,6 @@ impl LocalLspStore {
                 let server_id = server_node.server_id_or_init(
                     |LaunchDisposition {
                          server_name,
-
                          path,
                          settings,
                      }| {
@@ -2484,18 +2483,6 @@ impl LocalLspStore {
                                }
 
                         };
-                        let lsp_store = self.weak.clone();
-                        let server_name = server_node.name();
-                        let buffer_abs_path = abs_path.to_string_lossy().to_string();
-                        cx.defer(move |cx| {
-                            lsp_store.update(cx, |_, cx| cx.emit(LspStoreEvent::LanguageServerUpdate {
-                                language_server_id: server_id,
-                                name: server_name,
-                                message: proto::update_language_server::Variant::RegisteredForBuffer(proto::RegisteredForBuffer {
-                                    buffer_abs_path,
-                                })
-                            })).ok();
-                        });
                         server_id
                     },
                 )?;
@@ -2556,6 +2543,7 @@ impl LocalLspStore {
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
                         buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_id: buffer_id.to_proto(),
                     },
                 ),
             });
@@ -4478,10 +4466,12 @@ impl LspStore {
         self.check_if_capable_for_proto_request(
             buffer,
             |capabilities| {
-                request.check_capabilities(AdapterServerCapabilities {
-                    server_capabilities: capabilities.clone(),
-                    code_action_kinds: None,
-                })
+                dbg!(
+                    dbg!(&request).check_capabilities(AdapterServerCapabilities {
+                        server_capabilities: capabilities.clone(),
+                        code_action_kinds: None,
+                    })
+                )
             },
             cx,
         )
@@ -4712,7 +4702,8 @@ impl LspStore {
                     )
                 }) {
                     let buffer = buffer_handle.read(cx);
-                    if !local.registered_buffers.contains_key(&buffer.remote_id()) {
+                     let buffer_id = buffer.remote_id();
+                    if !local.registered_buffers.contains_key(&buffer_id) {
                         continue;
                     }
                     if let Some((file, language)) = File::from_dyn(buffer.file())
@@ -4813,6 +4804,7 @@ impl LspStore {
                                             proto::update_language_server::Variant::RegisteredForBuffer(
                                                 proto::RegisteredForBuffer {
                                                     buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                                                    buffer_id: buffer_id.to_proto(),
                                                 },
                                             ),
                                     });
@@ -6914,9 +6906,11 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
+        dbg!("????????");
         if let Some((client, project_id)) = self.upstream_client() {
             let request = GetDocumentColor {};
-            if !self.is_capable_for_proto_request(buffer, &request, cx) {
+            dbg!(self.languages.all_lsp_adapters());
+            if !dbg!(self.is_capable_for_proto_request(buffer, dbg!(&request), cx)) {
                 return Task::ready(Ok(HashMap::default()));
             }
 
@@ -10991,10 +10985,11 @@ impl LspStore {
 
                 let local = self.as_local_mut().unwrap();
 
-                if local.registered_buffers.contains_key(&buffer.remote_id()) {
+                let buffer_id = buffer.remote_id();
+                if local.registered_buffers.contains_key(&buffer_id) {
                     let versions = local
                         .buffer_snapshots
-                        .entry(buffer.remote_id())
+                        .entry(buffer_id)
                         .or_default()
                         .entry(server_id)
                         .and_modify(|_| {
@@ -11020,10 +11015,10 @@ impl LspStore {
                         version,
                         initial_snapshot.text(),
                     );
-                    buffer_paths_registered.push(file.abs_path(cx));
+                    buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
                     local
                         .buffers_opened_in_servers
-                        .entry(buffer.remote_id())
+                        .entry(buffer_id)
                         .or_default()
                         .insert(server_id);
                 }
@@ -11047,13 +11042,14 @@ impl LspStore {
             }
         });
 
-        for abs_path in buffer_paths_registered {
+        for (buffer_id, abs_path) in buffer_paths_registered {
             cx.emit(LspStoreEvent::LanguageServerUpdate {
                 language_server_id: server_id,
                 name: Some(adapter.name()),
                 message: proto::update_language_server::Variant::RegisteredForBuffer(
                     proto::RegisteredForBuffer {
                         buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                        buffer_id: buffer_id.to_proto(),
                     },
                 ),
             });

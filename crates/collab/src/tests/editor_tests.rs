@@ -2120,7 +2120,10 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .downcast::<Editor>()
         .unwrap();
 
+    // TODO kb send a special event and reload after didOpen LSP registration for the buffer
+    dbg!("33");
     color_request_handle.next().await.unwrap();
+    dbg!("????????????");
     executor.run_until_parked();
 
     assert_eq!(

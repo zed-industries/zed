@@ -1864,7 +1864,6 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1884,6 +1883,16 @@ impl Editor {
                                             .ok();
                                     }
                                 }
+                            }
+                        }
+                        project::Event::LanguageServerBufferRegistered {
+                            buffer_id,
+                            buffer_abs_path,
+                            ..
+                        } => {
+                            if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
+                                dbg!("language server buffer registered", &buffer_abs_path);
+                                editor.update_lsp_data(true, Some(*buffer_id), window, cx);
                             }
                         }
                         _ => {}
@@ -2317,7 +2326,6 @@ impl Editor {
             editor.minimap =
                 editor.create_minimap(EditorSettings::get_global(cx).minimap, window, cx);
             editor.colors = Some(LspColorData::new(cx));
-            editor.update_lsp_data(false, None, window, cx);
         }
 
         if editor.mode.is_full() {

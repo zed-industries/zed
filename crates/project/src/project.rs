@@ -277,6 +277,13 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
+    // [`lsp::notification::DidOpenTextDocument`] was sent to this server using the buffer data.
+    // Zed's buffer-related data is updated accordingly.
+    LanguageServerBufferRegistered {
+        server_id: LanguageServerId,
+        buffer_id: BufferId,
+        buffer_abs_path: PathBuf,
+    },
     Toast {
         notification_id: SharedString,
         message: String,
@@ -2903,8 +2910,8 @@ impl Project {
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
-                message,
                 name,
+                message,
             } => {
                 if self.is_local() {
                     self.enqueue_buffer_ordered_message(
@@ -2915,12 +2922,11 @@ impl Project {
                         },
                     )
                     .ok();
-                } else {
-                    if let proto::update_language_server::Variant::MetadataUpdated(
-                        server_metadata_updated,
-                    ) = message
-                    {
-                        if let Some(capabilities) = server_metadata_updated
+                }
+
+                match message {
+                    proto::update_language_server::Variant::MetadataUpdated(update) => {
+                        if let Some(capabilities) = update
                             .capabilities
                             .as_ref()
                             .and_then(|capabilities| serde_json::from_str(capabilities).ok())
@@ -2932,6 +2938,16 @@ impl Project {
                             });
                         }
                     }
+                    proto::update_language_server::Variant::RegisteredForBuffer(update) => {
+                        if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
+                            cx.emit(Event::LanguageServerBufferRegistered {
+                                buffer_id,
+                                server_id: *language_server_id,
+                                buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                            });
+                        }
+                    }
+                    _ => (),
                 }
             }
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
