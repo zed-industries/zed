@@ -202,7 +202,7 @@ impl AcpThreadView {
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
             list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state),
+            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -2471,7 +2471,7 @@ impl AcpThreadView {
             .bottom_0()
             .w(px(12.))
             .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 }
 
