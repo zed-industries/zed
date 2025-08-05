@@ -168,7 +168,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204-arm
+      - buildjet-32vcpu-ubuntu-2204-arm
     needs: tests
     steps:
       - name: Checkout repo
