@@ -737,6 +737,8 @@ impl DebugAdapter for PythonDebugAdapter {
 
 #[cfg(test)]
 mod tests {
+    use util::path;
+
     use super::*;
     use std::{net::Ipv4Addr, path::PathBuf};
 
@@ -761,7 +763,8 @@ mod tests {
         assert_eq!(user_args[1], "--host=127.0.0.1");
         assert_eq!(user_args[2], "--port=5678");
 
-        assert!(venv_args[0].ends_with("debug_adapters/Debugpy/debugpy/adapter"));
+        let expected_suffix = path!("debug_adapters/Debugpy/debugpy/adapter");
+        assert!(venv_args[0].ends_with(expected_suffix));
         assert_eq!(venv_args[1], "--host=127.0.0.1");
         assert_eq!(venv_args[2], "--port=5678");
 
@@ -786,7 +789,7 @@ mod tests {
         assert!(user_args[0].ends_with("src/debugpy/adapter"));
         assert_eq!(user_args[1], "foo");
 
-        assert!(venv_args[0].ends_with("debug_adapters/Debugpy/debugpy/adapter"));
+        assert!(venv_args[0].ends_with(expected_suffix));
         assert_eq!(venv_args[1], "foo");
 
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
