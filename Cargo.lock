@@ -138,7 +138,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.18"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "550b2da7d940f8420f6e928a0f7aa5c726ca685127092e78fbcfcdddf2a5410a"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
