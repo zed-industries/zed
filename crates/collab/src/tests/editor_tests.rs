@@ -838,6 +838,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .downcast::<Editor>()
         .unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     // Move cursor to a location that can be renamed.
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
@@ -2116,6 +2118,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     let requests_made = Arc::new(AtomicUsize::new(0));
     let closure_requests_made = Arc::clone(&requests_made);
@@ -2395,6 +2399,8 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
     let expected_push_diagnostic_main_message = "pushed main diagnostic";
     let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
     let expected_pull_diagnostic_main_message = "pulled main diagnostic";
@@ -2750,6 +2756,7 @@ async fn test_lsp_pull_diagnostics(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+    cx_b.run_until_parked();
 
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(

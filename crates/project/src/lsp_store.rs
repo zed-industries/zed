@@ -8900,13 +8900,6 @@ impl LspStore {
                     progress_tokens: Default::default(),
                 },
             );
-            // TODO kb add an lsp adapter, if missing
-            dbg!(lsp_store.languages.load_available_lsp_adapter(&server_name));
-            dbg!((
-                "!!!!!!!!!!!!!!",
-                lsp_store.as_local().is_some(),
-                lsp_store.languages.adapter_for_name(&server_name),
-            ));
             cx.emit(LspStoreEvent::LanguageServerAdded(
                 server_id,
                 server_name,
