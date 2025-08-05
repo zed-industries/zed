@@ -36,7 +36,12 @@ mod windows;
 pub(crate) mod scap_screen_capture;
 
 use crate::{
-    hash, point, px, size, Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LayoutDirection, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, ScaledPixels, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer, SvgSize, Task, TaskLabel, Window, WindowControlArea, DEFAULT_WINDOW_SIZE
+    Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
+    ForegroundExecutor, GlyphId, GpuSpecs, ImageSource, Keymap, LayoutDirection, LineLayout,
+    Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage, RenderImageParams,
+    RenderSvgParams, ScaledPixels, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
+    SvgSize, Task, TaskLabel, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 use async_task::Runnable;
@@ -1139,6 +1144,7 @@ pub(crate) struct WindowParams {
 
     pub window_min_size: Option<Size<Pixels>>,
 
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub layout_direction: LayoutDirection,
 }
 

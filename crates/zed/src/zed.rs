@@ -26,9 +26,9 @@ use git_ui::git_panel::GitPanel;
 use git_ui::project_diff::ProjectDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, Context, DismissEvent, Element, Entity, Focusable, KeyBinding,
-    ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Styled, Task,
-    TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions, image_cache, point,
-    px, retain_all,
+    LayoutDirection, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal, SharedString,
+    Styled, Task, TitlebarOptions, UpdateGlobal, Window, WindowKind, WindowOptions, actions,
+    image_cache, point, px, retain_all,
 };
 use image_viewer::ImageInfo;
 use language_tools::lsp_tool::{self, LspTool};
@@ -282,6 +282,7 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
+        layout_direction: LayoutDirection::LeftToRight,
         window_decorations: Some(window_decorations),
         window_min_size: Some(gpui::Size {
             width: px(360.0),
