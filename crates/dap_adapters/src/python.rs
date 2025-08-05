@@ -8,7 +8,6 @@ use gpui::{AsyncApp, SharedString};
 use json_dotpath::DotPaths;
 use language::LanguageName;
 use paths::debug_adapters_dir;
-use serde::Deserialize;
 use serde_json::Value;
 use smol::fs::File;
 use smol::io::AsyncReadExt;
