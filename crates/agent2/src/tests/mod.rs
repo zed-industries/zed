@@ -336,14 +336,14 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         })],
     };
 
-    cx.update(|cx| connection.prompt(prompt_request, cx))
-        .await
-        .expect("prompt should succeed");
-
-    // The prompt was sent successfully
+    let request = cx.update(|cx| connection.prompt(prompt_request, cx));
+    let request = cx.background_spawn(request);
+    cx.executor().timer(Duration::from_millis(100)).await;
 
     // Test cancel
     cx.update(|cx| connection.cancel(&session_id, cx));
+
+    request.await.expect("prompt should fail gracefully");
 
     // After cancel, selected_model should fail
     let result = cx

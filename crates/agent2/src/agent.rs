@@ -14,6 +14,7 @@ use crate::{templates::Templates, AgentResponseEvent, Thread};
 
 /// Holds both the internal Thread and the AcpThread for a session
 struct Session {
+    current_send: Option<()>,
     /// The internal thread that processes messages
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
@@ -166,6 +167,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 agent.sessions.insert(
                     session_id,
                     Session {
+                        current_send: None,
                         thread,
                         acp_thread: acp_thread.clone(),
                     },
@@ -200,12 +202,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
         cx.spawn(async move |cx| {
             // Get session
-            let (thread, acp_thread) = agent
-                .read_with(cx, |agent, _| {
-                    agent
-                        .sessions
-                        .get(&session_id)
-                        .map(|s| (s.thread.clone(), s.acp_thread.clone()))
+            let (current_send, thread, acp_thread) = agent
+                .update(cx, |agent, _| {
+                    agent.sessions.get_mut(&session_id).map(|s| {
+                        (
+                            s.current_send.take(),
+                            s.thread.clone(),
+                            s.acp_thread.clone(),
+                        )
+                    })
                 })?
                 .ok_or_else(|| {
                     log::error!("Session not found: {}", session_id);
