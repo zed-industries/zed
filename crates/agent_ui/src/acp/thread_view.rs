@@ -785,7 +785,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        match &entry {
+        let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => div()
                 .py_4()
                 .px_2()
@@ -850,6 +850,19 @@ impl AcpThreadView {
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
+        };
+
+        let Some(thread) = self.thread() else {
+            return primary;
+        };
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+        if index == total_entries - 1 && !is_generating {
+            v_flex()
+                .child(primary)
+                .child(self.render_thread_controls(cx))
+                .into_any_element()
+        } else {
+            primary
         }
     }
 
@@ -1233,7 +1246,7 @@ impl AcpThreadView {
             })
             .children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.label.clone())
+                Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| match option.kind {
                         acp::PermissionOptionKind::AllowOnce => {
                             this.icon(IconName::Check).icon_color(Color::Success)
@@ -2404,7 +2417,7 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thread_controls(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
@@ -2425,9 +2438,8 @@ impl AcpThreadView {
             }));
 
         h_flex()
-            .mt_1()
             .mr_1()
-            .py_2()
+            .pb_2()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
@@ -2465,7 +2477,7 @@ impl Render for AcpThreadView {
                         connection.auth_methods().into_iter().map(|method| {
                             Button::new(
                                 SharedString::from(method.id.0.clone()),
-                                method.label.clone(),
+                                method.name.clone(),
                             )
                             .on_click({
                                 let method_id = method.id.clone();
@@ -2487,18 +2499,12 @@ impl Render for AcpThreadView {
 
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
-                            let is_generating =
-                                matches!(thread_clone.read(cx).status(), ThreadStatus::Generating);
-
                             this.child(
                                 list(self.list_state.clone())
                                     .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                                     .flex_grow()
                                     .into_any(),
                             )
-                            .when(!is_generating, |this| {
-                                this.child(self.render_thread_controls(cx))
-                            })
                             .children(match thread_clone.read(cx).status() {
                                 ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
                                     None
@@ -2773,7 +2779,7 @@ mod tests {
         let tool_call_id = acp::ToolCallId("1".into());
         let tool_call = acp::ToolCall {
             id: tool_call_id.clone(),
-            label: "Label".into(),
+            title: "Label".into(),
             kind: acp::ToolKind::Edit,
             status: acp::ToolCallStatus::Pending,
             content: vec!["hi".into()],
@@ -2785,7 +2791,7 @@ mod tests {
                 tool_call_id,
                 vec![acp::PermissionOption {
                     id: acp::PermissionOptionId("1".into()),
-                    label: "Allow".into(),
+                    name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
                 }],
             )]));

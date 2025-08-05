@@ -16,7 +16,7 @@ use crate::{
 use collections::VecDeque;
 use refineable::Refineable as _;
 use std::{cell::RefCell, ops::Range, rc::Rc};
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Dimensions, SumTree};
 
 /// Construct a new list element
 pub fn list(state: ListState) -> List {
@@ -371,14 +371,14 @@ impl ListState {
             return None;
         }
 
-        let mut cursor = state.items.cursor::<(Count, Height)>(&());
+        let mut cursor = state.items.cursor::<Dimensions<Count, Height>>(&());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right);
 
         let scroll_top = cursor.start().1.0 + scroll_top.offset_in_item;
 
         cursor.seek_forward(&Count(ix), Bias::Right);
         if let Some(&ListItem::Measured { size, .. }) = cursor.item() {
-            let &(Count(count), Height(top)) = cursor.start();
+            let &Dimensions(Count(count), Height(top), _) = cursor.start();
             if count == ix {
                 let top = bounds.top() + top - scroll_top;
                 return Some(Bounds::from_corners(

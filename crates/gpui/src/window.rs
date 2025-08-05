@@ -4701,6 +4701,8 @@ pub enum ElementId {
     Path(Arc<std::path::Path>),
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
+    /// A labeled child of an element.
+    NamedChild(Box<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4721,6 +4723,7 @@ impl Display for ElementId {
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
             ElementId::CodeLocation(location) => write!(f, "{}", location)?,
+            ElementId::NamedChild(id, name) => write!(f, "{}-{}", id, name)?,
         }
 
         Ok(())
@@ -4808,6 +4811,12 @@ impl From<Uuid> for ElementId {
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id.into())
+    }
+}
+
+impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
+    fn from((id, name): (ElementId, T)) -> Self {
+        ElementId::NamedChild(Box::new(id), name.into())
     }
 }
 

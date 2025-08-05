@@ -12,6 +12,7 @@ pub struct AiUpsellCard {
     pub sign_in_status: SignInStatus,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
     pub user_plan: Option<Plan>,
+    pub tab_index: Option<isize>,
 }
 
 impl AiUpsellCard {
@@ -28,6 +29,7 @@ impl AiUpsellCard {
                 })
                 .detach_and_log_err(cx);
             }),
+            tab_index: None,
         }
     }
 }
@@ -112,7 +114,8 @@ impl RenderOnce for AiUpsellCard {
                         .on_click(move |_, _window, cx| {
                             telemetry::event!("Start Trial Clicked", state = "post-sign-in");
                             cx.open_url(&zed_urls::start_trial_url(cx))
-                        }),
+                        })
+                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index)),
                 )
                 .child(
                     Label::new("No credit card required")
@@ -123,6 +126,7 @@ impl RenderOnce for AiUpsellCard {
             _ => Button::new("sign_in", "Sign In")
                 .full_width()
                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
                 .on_click({
                     let callback = self.sign_in.clone();
                     move |_, window, cx| {
@@ -193,6 +197,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedOut,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: None,
+                            tab_index: Some(0),
                         }
                         .into_any_element(),
                     ),
@@ -202,6 +207,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: None,
+                            tab_index: Some(1),
                         }
                         .into_any_element(),
                     ),

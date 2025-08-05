@@ -308,7 +308,7 @@ impl ClaudeTool {
             id,
             kind: self.kind(),
             status: acp::ToolCallStatus::InProgress,
-            label: self.label(),
+            title: self.label(),
             content: self.content(),
             locations: self.locations(),
             raw_input: None,
