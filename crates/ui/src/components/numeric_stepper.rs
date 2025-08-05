@@ -19,6 +19,7 @@ pub struct NumericStepper {
     /// Whether to reserve space for the reset button.
     reserve_space_for_reset: bool,
     on_reset: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
+    tab_index: Option<isize>,
 }
 
 impl NumericStepper {
@@ -36,6 +37,7 @@ impl NumericStepper {
             on_increment: Box::new(on_increment),
             reserve_space_for_reset: false,
             on_reset: None,
+            tab_index: None,
         }
     }
 
@@ -56,6 +58,11 @@ impl NumericStepper {
         self.on_reset = Some(Box::new(on_reset));
         self
     }
+
+    pub fn tab_index(mut self, tab_index: isize) -> Self {
+        self.tab_index = Some(tab_index);
+        self
+    }
 }
 
 impl RenderOnce for NumericStepper {
@@ -64,6 +71,7 @@ impl RenderOnce for NumericStepper {
         let icon_size = IconSize::Small;
 
         let is_outlined = matches!(self.style, NumericStepperStyle::Outlined);
+        let mut tab_index = self.tab_index;
 
         h_flex()
             .id(self.id)
@@ -74,6 +82,10 @@ impl RenderOnce for NumericStepper {
                         IconButton::new("reset", IconName::RotateCcw)
                             .shape(shape)
                             .icon_size(icon_size)
+                            .when_some(tab_index.as_mut(), |this, tab_index| {
+                                *tab_index += 1;
+                                this.tab_index(*tab_index - 1)
+                            })
                             .on_click(on_reset),
                     )
                 } else if self.reserve_space_for_reset {
@@ -113,6 +125,12 @@ impl RenderOnce for NumericStepper {
                                     .border_r_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Dash).size(IconSize::Small))
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1).focus(|style| {
+                                            style.bg(cx.theme().colors().element_hover)
+                                        })
+                                    })
                                     .on_click(self.on_decrement),
                             )
                         } else {
@@ -120,6 +138,10 @@ impl RenderOnce for NumericStepper {
                                 IconButton::new("decrement", IconName::Dash)
                                     .shape(shape)
                                     .icon_size(icon_size)
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1)
+                                    })
                                     .on_click(self.on_decrement),
                             )
                         }
@@ -137,6 +159,12 @@ impl RenderOnce for NumericStepper {
                                     .border_l_1()
                                     .border_color(cx.theme().colors().border_variant)
                                     .child(Icon::new(IconName::Plus).size(IconSize::Small))
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1).focus(|style| {
+                                            style.bg(cx.theme().colors().element_hover)
+                                        })
+                                    })
                                     .on_click(self.on_increment),
                             )
                         } else {
@@ -144,6 +172,10 @@ impl RenderOnce for NumericStepper {
                                 IconButton::new("increment", IconName::Dash)
                                     .shape(shape)
                                     .icon_size(icon_size)
+                                    .when_some(tab_index.as_mut(), |this, tab_index| {
+                                        *tab_index += 1;
+                                        this.tab_index(*tab_index - 1)
+                                    })
                                     .on_click(self.on_increment),
                             )
                         }
