@@ -9977,6 +9977,7 @@ pub fn register_action<T: Action>(
         if phase == DispatchPhase::Bubble {
             editor.update(cx, |editor, cx| {
                 listener(editor, action, window, cx);
+                editor.reset_mark(window, cx);
             })
         }
     })
