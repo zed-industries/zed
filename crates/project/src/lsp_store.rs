@@ -4466,12 +4466,10 @@ impl LspStore {
         self.check_if_capable_for_proto_request(
             buffer,
             |capabilities| {
-                dbg!(
-                    dbg!(&request).check_capabilities(AdapterServerCapabilities {
-                        server_capabilities: capabilities.clone(),
-                        code_action_kinds: None,
-                    })
-                )
+                request.check_capabilities(AdapterServerCapabilities {
+                    server_capabilities: capabilities.clone(),
+                    code_action_kinds: None,
+                })
             },
             cx,
         )
@@ -6906,11 +6904,9 @@ impl LspStore {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<HashMap<LanguageServerId, HashSet<DocumentColor>>>> {
-        dbg!("????????");
         if let Some((client, project_id)) = self.upstream_client() {
             let request = GetDocumentColor {};
-            dbg!(self.languages.all_lsp_adapters());
-            if !dbg!(self.is_capable_for_proto_request(buffer, dbg!(&request), cx)) {
+            if !self.is_capable_for_proto_request(buffer, &request, cx) {
                 return Task::ready(Ok(HashMap::default()));
             }
 
@@ -8891,21 +8887,29 @@ impl LspStore {
                 })?;
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let server_id = LanguageServerId(server.id as usize);
+            let server_name = LanguageServerName::from_proto(server.name.clone());
             lsp_store
                 .lsp_server_capabilities
                 .insert(server_id, server_capabilities);
             lsp_store.language_server_statuses.insert(
                 server_id,
                 LanguageServerStatus {
-                    name: LanguageServerName::from_proto(server.name.clone()),
+                    name: server_name.clone(),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                 },
             );
+            // TODO kb add an lsp adapter, if missing
+            dbg!(lsp_store.languages.load_available_lsp_adapter(&server_name));
+            dbg!((
+                "!!!!!!!!!!!!!!",
+                lsp_store.as_local().is_some(),
+                lsp_store.languages.adapter_for_name(&server_name),
+            ));
             cx.emit(LspStoreEvent::LanguageServerAdded(
                 server_id,
-                LanguageServerName(server.name.into()),
+                server_name,
                 server.worktree_id.map(WorktreeId::from_proto),
             ));
             cx.notify();
