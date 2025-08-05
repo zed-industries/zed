@@ -61,11 +61,24 @@ impl AcpConnection {
             }
         });
 
-        let io_task = cx.background_spawn(async move {
-            io_task.await?;
-            drop(child);
-            Ok(())
-        });
+        let io_task = cx.background_spawn(io_task);
+
+        cx.spawn({
+            let sessions = sessions.clone();
+            async move |cx| {
+                let status = child.status().await?;
+
+                for session in sessions.borrow().values() {
+                    session
+                        .thread
+                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .ok();
+                }
+
+                anyhow::Ok(())
+            }
+        })
+        .detach();
 
         let response = connection
             .initialize(acp::InitializeRequest {

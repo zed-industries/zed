@@ -18,6 +18,7 @@ use project::{AgentLocation, Project};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::Formatter;
+use std::process::ExitStatus;
 use std::rc::Rc;
 use std::{
     fmt::Display,
@@ -581,6 +582,7 @@ pub enum AcpThreadEvent {
     ToolAuthorizationRequired,
     Stopped,
     Error,
+    ServerExited(ExitStatus),
 }
 
 impl EventEmitter<AcpThreadEvent> for AcpThread {}
@@ -1228,6 +1230,10 @@ impl AcpThread {
 
     pub fn to_markdown(&self, cx: &App) -> String {
         self.entries.iter().map(|e| e.to_markdown(cx)).collect()
+    }
+
+    pub fn emit_server_exited(&mut self, status: ExitStatus, cx: &mut Context<Self>) {
+        cx.emit(AcpThreadEvent::ServerExited(status));
     }
 }
 
