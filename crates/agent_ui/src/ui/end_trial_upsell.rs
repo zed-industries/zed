@@ -94,18 +94,20 @@ impl RenderOnce for EndTrialUpsell {
 
 impl Component for EndTrialUpsell {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
+    }
+
+    fn name() -> &'static str {
+        "End of Trial Upsell Banner"
     }
 
     fn sort_name() -> &'static str {
-        "AgentEndTrialUpsell"
+        "End of Trial Upsell Banner"
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
-                .p_4()
-                .gap_4()
                 .child(EndTrialUpsell {
                     dismiss_upsell: Arc::new(|_, _| {}),
                 })

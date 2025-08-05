@@ -368,7 +368,15 @@ impl RenderOnce for ZedAiOnboarding {
 
 impl Component for ZedAiOnboarding {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
+    }
+
+    fn name() -> &'static str {
+        "Agent Panel Banners"
+    }
+
+    fn sort_name() -> &'static str {
+        "Agent Panel Banners"
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
