@@ -1,4 +1,4 @@
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
 use client::UserStore;
@@ -18,8 +18,6 @@ use ui::{
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
-
-use crate::Onboarding;
 
 const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
 

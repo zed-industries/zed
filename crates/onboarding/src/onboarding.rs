@@ -453,9 +453,7 @@ impl Onboarding {
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selected_page {
-            SelectedPage::Basics => {
-                crate::basics_page::render_basics_page(window, cx).into_any_element()
-            }
+            SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
