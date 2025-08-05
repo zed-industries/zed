@@ -286,6 +286,7 @@ impl DirectXRenderer {
         Ok(())
     }
 
+    #[profiling::function]
     pub(crate) fn draw(&mut self, scene: &Scene) -> Result<()> {
         self.pre_draw()?;
         for batch in scene.batches() {

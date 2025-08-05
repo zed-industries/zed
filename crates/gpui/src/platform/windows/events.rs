@@ -238,6 +238,7 @@ fn handle_timer_msg(
     }
 }
 
+#[profiling::function]
 fn handle_paint_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
     draw_window(handle, false, state_ptr)
 }
@@ -373,6 +374,7 @@ fn handle_syskeyup_msg(
 
 // It's a known bug that you can't trigger `ctrl-shift-0`. See:
 // https://superuser.com/questions/1455762/ctrl-shift-number-key-combination-has-stopped-working-for-a-few-numbers
+#[profiling::function]
 fn handle_keydown_msg(
     handle: HWND,
     wparam: WPARAM,
@@ -1302,6 +1304,7 @@ fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
     unsafe { TranslateMessage(&msg).ok().log_err() };
 }
 
+#[profiling::function]
 fn handle_key_event<F>(
     handle: HWND,
     wparam: WPARAM,

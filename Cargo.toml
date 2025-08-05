@@ -537,7 +537,7 @@ portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
-profiling = "1"
+profiling = "1.0.17"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"

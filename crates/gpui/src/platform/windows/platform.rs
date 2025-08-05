@@ -14,19 +14,20 @@ use itertools::Itertools;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
-    UI::ViewManagement::UISettings,
-    Win32::{
+    core::*, Win32::{
         Foundation::*,
         Graphics::{
             DirectComposition::DCompositionWaitForCompositorClock,
+            Dxgi::{
+                CreateDXGIFactory2, IDXGIAdapter1, IDXGIFactory6, IDXGIOutput, DXGI_CREATE_FACTORY_FLAGS, DXGI_GPU_PREFERENCE_MINIMUM_POWER
+            },
             Gdi::*,
             Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
         },
         Security::Credentials::*,
         System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
-    },
-    core::*,
+    }, UI::ViewManagement::UISettings
 };
 
 use crate::*;
@@ -132,9 +133,11 @@ impl WindowsPlatform {
     fn begin_vsync_thread(&self) {
         let raw_window_handles = self.raw_window_handles.clone();
         std::thread::spawn(move || {
+            let vsync_provider = VSyncProvider::new();
             loop {
                 unsafe {
-                    DCompositionWaitForCompositorClock(None, INFINITE);
+                    // DCompositionWaitForCompositorClock(None, INFINITE);
+                    vsync_provider.wait_for_vsync();
                     for handle in raw_window_handles.read().iter() {
                         RedrawWindow(Some(**handle), None, None, RDW_INVALIDATE)
                             .ok()
@@ -741,6 +744,46 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) main_thread_id_win32: u32,
+}
+
+struct VSyncProvider {
+    dxgi_output: IDXGIOutput,
+}
+
+impl VSyncProvider {
+    fn new() -> Self {
+        let dxgi_factory: IDXGIFactory6 =
+            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS::default()) }.unwrap();
+        let adapter: IDXGIAdapter1 = get_adapter(&dxgi_factory);
+        unsafe {
+            let dxgi_output = adapter.EnumOutputs(0).unwrap();
+            Self { dxgi_output }
+        }
+    }
+
+    fn wait_for_vsync(&self) {
+        unsafe {
+            self.dxgi_output.WaitForVBlank().unwrap();
+        }
+    }
+}
+
+fn get_adapter(dxgi_factory: &IDXGIFactory6) -> IDXGIAdapter1 {
+    unsafe {
+        for index in 0.. {
+            let adapter = dxgi_factory
+                .EnumAdapterByGpuPreference(index, DXGI_GPU_PREFERENCE_MINIMUM_POWER)
+                .unwrap();
+            return adapter;
+        }
+    }
+    unreachable!("No DXGI adapter found")
+}
+
+impl Default for VSyncProvider {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn open_target(target: &str) {
