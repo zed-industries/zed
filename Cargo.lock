@@ -172,6 +172,7 @@ dependencies = [
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",
+ "indoc",
  "language_model",
  "language_models",
  "log",

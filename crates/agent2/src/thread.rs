@@ -16,10 +16,42 @@ use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
 use util::ResultExt;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AgentMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
+}
+
+impl AgentMessage {
+    pub fn to_markdown(&self) -> String {
+        let mut markdown = format!("## {}\n", self.role);
+
+        for content in &self.content {
+            match content {
+                MessageContent::Text(text) => {
+                    markdown.push_str(text);
+                    markdown.push('\n');
+                }
+                MessageContent::Thinking { text, .. } => {
+                    markdown.push_str("<think>");
+                    markdown.push_str(text);
+                    markdown.push_str("</think>\n");
+                }
+                MessageContent::RedactedThinking(_) => markdown.push_str("<redacted_thinking />\n"),
+                MessageContent::Image(_) => {
+                    markdown.push_str("<image />\n");
+                }
+                MessageContent::ToolUse(_) => {
+                    todo!()
+                }
+                MessageContent::ToolResult(_) => {
+                    todo!()
+                }
+            }
+        }
+
+        markdown
+    }
 }
 
 pub type AgentResponseEvent = LanguageModelCompletionEvent;
@@ -221,12 +253,7 @@ impl Thread {
 
         match event {
             Text(new_text) => self.handle_text_event(new_text, cx),
-            Thinking {
-                text: _text,
-                signature: _signature,
-            } => {
-                todo!()
-            }
+            Thinking { text, signature } => self.handle_thinking_event(text, signature, cx),
             ToolUse(tool_use) => {
                 return self.handle_tool_use_event(tool_use, cx);
             }
@@ -265,6 +292,27 @@ impl Thread {
             text.push_str(&new_text);
         } else {
             last_message.content.push(MessageContent::Text(new_text));
+        }
+
+        cx.notify();
+    }
+
+    fn handle_thinking_event(
+        &mut self,
+        new_text: String,
+        new_signature: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let last_message = self.last_assistant_message();
+        if let Some(MessageContent::Thinking { text, signature }) = last_message.content.last_mut()
+        {
+            text.push_str(&new_text);
+            *signature = new_signature.or(signature.take());
+        } else {
+            last_message.content.push(MessageContent::Thinking {
+                text: new_text,
+                signature: new_signature,
+            });
         }
 
         cx.notify();
@@ -392,7 +440,7 @@ impl Thread {
             tool_choice: None,
             stop: Vec::new(),
             temperature: None,
-            thinking_allowed: false,
+            thinking_allowed: true,
         };
 
         log::debug!("Completion request built successfully");

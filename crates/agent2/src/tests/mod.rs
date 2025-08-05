@@ -4,6 +4,7 @@ use acp_thread::AgentConnection as _;
 use agent_client_protocol as acp;
 use client::{Client, UserStore};
 use gpui::{AppContext, Entity, TestAppContext};
+use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRegistry, MessageContent, StopReason,
@@ -18,9 +19,12 @@ use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
 mod test_tools;
 use test_tools::*;
 
+const SONNET_4: &str = "claude-sonnet-4-latest";
+const SONNET_4_THINKING: &str = "claude-sonnet-4-thinking-latest";
+
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx).await;
+    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
 
     let events = thread
         .update(cx, |thread, cx| {
@@ -38,8 +42,40 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_thinking(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4_THINKING).await;
+
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(
+                model.clone(),
+                indoc! {"
+                    Testing:
+
+                    Generate a thinking step where you just think the word 'Think',
+                    and have your final answer be 'Hello'
+                "},
+                cx,
+            )
+        })
+        .collect()
+        .await;
+    thread.update(cx, |thread, _cx| {
+        assert_eq!(
+            thread.messages().last().unwrap().to_markdown(),
+            indoc! {"
+                ## assistant
+                <think>Think</think>
+                Hello
+            "}
+        )
+    });
+    assert_eq!(stop_events(events), vec![StopReason::EndTurn]);
+}
+
+#[gpui::test]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx).await;
+    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
 
     // Test a tool call that's likely to complete *before* streaming stops.
     let events = thread
@@ -94,7 +130,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx).await;
+    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
 
     // Test a tool call that's likely to complete *before* streaming stops.
     let mut events = thread.update(cx, |thread, cx| {
@@ -141,7 +177,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx).await;
+    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
 
     // Test concurrent tool calls with different delay times
     let events = thread
@@ -331,7 +367,7 @@ struct ThreadTest {
     thread: Entity<Thread>,
 }
 
-async fn setup(cx: &mut TestAppContext) -> ThreadTest {
+async fn setup(cx: &mut TestAppContext, model_name: &'static str) -> ThreadTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
     let templates = Templates::new();
@@ -351,7 +387,7 @@ async fn setup(cx: &mut TestAppContext) -> ThreadTest {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
-                .find(|model| model.id().0 == "claude-3-7-sonnet-latest")
+                .find(|model| model.id().0 == model_name)
                 .unwrap();
 
             let provider = models.provider(&model.provider_id()).unwrap();
