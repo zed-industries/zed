@@ -171,6 +171,9 @@ impl RenderOnce for AiUpsellCard {
                                 Button::new("start_trial", "Start 14-day Free Pro Trial")
                                     .full_width()
                                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                    .when_some(self.tab_index, |this, tab_index| {
+                                        this.tab_index(tab_index)
+                                    })
                                     .on_click(move |_, _window, cx| {
                                         telemetry::event!(
                                             "Start Trial Clicked",
@@ -218,6 +221,7 @@ impl RenderOnce for AiUpsellCard {
                     Button::new("sign_in", "Sign In")
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
                         .on_click({
                             let callback = self.sign_in.clone();
                             move |_, window, cx| {
@@ -268,6 +272,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: Some(Plan::ZedFree),
+                            tab_index: Some(1),
                         }
                         .into_any_element(),
                     ),
@@ -277,6 +282,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: Some(Plan::ZedProTrial),
+                            tab_index: Some(1),
                         }
                         .into_any_element(),
                     ),
@@ -286,6 +292,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedIn,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: Some(Plan::ZedPro),
+                            tab_index: Some(1),
                         }
                         .into_any_element(),
                     ),
