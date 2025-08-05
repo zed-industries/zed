@@ -2139,7 +2139,7 @@ impl Interactivity {
                                 {
                                     let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
                                         button,
-                                        bounds: hitbox.bounds.clone(),
+                                        bounds: hitbox.bounds,
                                     });
 
                                     for listener in &click_listeners {
