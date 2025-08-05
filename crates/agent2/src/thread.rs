@@ -1,4 +1,5 @@
 use crate::templates::Templates;
+use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use futures::{channel::mpsc, future};
@@ -88,7 +89,13 @@ impl AgentMessage {
     }
 }
 
-pub type AgentResponseEvent = LanguageModelCompletionEvent;
+pub enum AgentResponseEvent {
+    Text(String),
+    Thinking(String),
+    ToolCall(acp::ToolCall),
+    ToolCallUpdate(acp::ToolCallUpdate),
+    Stop(StopReason),
+}
 
 pub trait Prompt {
     fn render(&self, prompts: &Templates, cx: &App) -> Result<String>;
