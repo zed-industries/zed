@@ -7,11 +7,12 @@ use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, Role, StopReason,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
 };
 use log;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
+use serde_json::json;
 use smol::stream::StreamExt;
 use std::{collections::BTreeMap, sync::Arc};
 use util::ResultExt;
@@ -252,27 +253,33 @@ impl Thread {
         events_tx.unbounded_send(Ok(event.clone())).ok();
 
         match event {
-            Text(new_text) => self.handle_text_event(new_text, cx),
-            Thinking { text, signature } => self.handle_thinking_event(text, signature, cx),
-            RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
-            ToolUse(tool_use) => {
-                return self.handle_tool_use_event(tool_use, cx);
-            }
             StartMessage { .. } => {
                 self.messages.push(AgentMessage {
                     role: Role::Assistant,
                     content: Vec::new(),
                 });
             }
-            UsageUpdate(_) => {}
-            Stop(stop_reason) => self.handle_stop_event(stop_reason),
-            StatusUpdate(_completion_request_status) => {}
+            Text(new_text) => self.handle_text_event(new_text, cx),
+            Thinking { text, signature } => self.handle_thinking_event(text, signature, cx),
+            RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
+            ToolUse(tool_use) => {
+                return self.handle_tool_use_event(tool_use, cx);
+            }
             ToolUseJsonParseError {
-                id: _id,
-                tool_name: _tool_name,
-                raw_input: _raw_input,
-                json_parse_error: _json_parse_error,
-            } => todo!(),
+                id,
+                tool_name,
+                raw_input,
+                json_parse_error,
+            } => {
+                return Some(Task::ready(self.handle_tool_use_json_parse_error_event(
+                    id,
+                    tool_name,
+                    raw_input,
+                    json_parse_error,
+                )))
+            }
+            UsageUpdate(_) | StatusUpdate(_) => {}
+            Stop(stop_reason) => self.handle_stop_event(stop_reason),
         }
 
         None
@@ -318,16 +325,14 @@ impl Thread {
         cx.notify();
     }
 
-    fn handle_redacted_thinking_event(
-        &mut self,
-        data: String,
-        cx: &mut Context<Self>,
-    ) {
+    fn handle_redacted_thinking_event(&mut self, data: String, cx: &mut Context<Self>) {
         let last_message = self.last_assistant_message();
-        last_message.content.push(MessageContent::RedactedThinking(data));
+        last_message
+            .content
+            .push(MessageContent::RedactedThinking(data));
         cx.notify();
     }
-    
+
     fn handle_tool_use_event(
         &mut self,
         tool_use: LanguageModelToolUse,
@@ -392,6 +397,24 @@ impl Thread {
                 is_error: true,
                 output: None,
             }))
+        }
+    }
+
+    fn handle_tool_use_json_parse_error_event(
+        &mut self,
+        tool_use_id: LanguageModelToolUseId,
+        tool_name: Arc<str>,
+        raw_input: Arc<str>,
+        json_parse_error: String,
+    ) -> LanguageModelToolResult {
+        LanguageModelToolResult {
+            tool_use_id,
+            tool_name,
+            is_error: true,
+            content: LanguageModelToolResultContent::Text(
+                format!("Error parsing input JSON: {json_parse_error}").into(),
+            ),
+            output: Some(serde_json::Value::String(raw_input.to_string())),
         }
     }
 
