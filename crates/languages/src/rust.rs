@@ -261,7 +261,6 @@ impl LspAdapter for RustLspAdapter {
         )
         .await?;
         let asset_name = Self::build_asset_name();
-
         let asset = release
             .assets
             .iter()
@@ -296,20 +295,18 @@ impl LspAdapter for RustLspAdapter {
                 .await
                 .with_context(|| format!("downloading release from {}", version.url))?;
 
-            match version.digest.as_deref().and_then(|digest| {
-                if digest.starts_with("sha256:") {
-                    Some(&digest[7..])
-                } else {
-                    None
-                }
-            }) {
+            match version
+                .digest
+                .as_deref()
+                .and_then(|digest| digest.strip_prefix("sha256:"))
+            {
                 Some(expected_sha_256) => {
                     let temp_asset_file = tempfile::NamedTempFile::new().with_context(|| {
                         format!("creating a temporary file for {}", version.url)
                     })?;
-                    dbg!(temp_asset_file.path());
+                    let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
                     let mut writer = HashingWriter {
-                        writer: async_fs::File::from(temp_asset_file.into_file()),
+                        writer: async_fs::File::from(temp_asset_file),
                         hasher: Sha256::new(),
                     };
                     futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
@@ -321,9 +318,8 @@ impl LspAdapter for RustLspAdapter {
                             )
                         })?;
                     let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-                    dbg!(&version.url);
                     anyhow::ensure!(
-                        dbg!(&asset_sha_256) == dbg!(expected_sha_256),
+                        asset_sha_256 == expected_sha_256,
                         "{} asset got SHA-256 mismatch. Expected: {}, Got: {}",
                         version.url,
                         expected_sha_256,
