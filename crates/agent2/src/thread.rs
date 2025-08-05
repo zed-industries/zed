@@ -160,13 +160,12 @@ impl Thread {
                         match event {
                             Ok(event) => {
                                 log::trace!("Received completion event: {:?}", event);
+                                events_tx.unbounded_send(Ok(event.clone())).ok();
                                 thread
                                     .update(cx, |thread, cx| {
-                                        tool_uses.extend(thread.handle_streamed_completion_event(
-                                            event,
-                                            events_tx.clone(),
-                                            cx,
-                                        ));
+                                        tool_uses.extend(
+                                            thread.handle_streamed_completion_event(event, cx),
+                                        );
                                     })
                                     .ok();
                             }
@@ -244,12 +243,10 @@ impl Thread {
     fn handle_streamed_completion_event(
         &mut self,
         event: LanguageModelCompletionEvent,
-        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
         log::trace!("Handling streamed completion event: {:?}", event);
         use LanguageModelCompletionEvent::*;
-        events_tx.unbounded_send(Ok(event.clone())).ok();
 
         match event {
             StartMessage { .. } => {
