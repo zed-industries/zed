@@ -174,20 +174,37 @@ impl WindowsWindowInner {
         let width = lparam.loword().max(1) as i32;
         let height = lparam.hiword().max(1) as i32;
         let new_size = size(DevicePixels(width), DevicePixels(height));
+
         let scale_factor = lock.scale_factor;
+        let mut should_resize_renderer = false;
         if lock.restore_from_minimized.is_some() {
             lock.callbacks.request_frame = lock.restore_from_minimized.take();
         } else {
-            lock.renderer.resize(new_size).log_err();
+            should_resize_renderer = true;
         }
-        let new_size = new_size.to_pixels(scale_factor);
-        lock.logical_size = new_size;
+        drop(lock);
+
+        self.handle_size_change(new_size, scale_factor, should_resize_renderer);
+        Some(0)
+    }
+
+    fn handle_size_change(
+        &self,
+        device_size: Size<DevicePixels>,
+        scale_factor: f32,
+        should_resize_renderer: bool,
+    ) {
+        let new_logical_size = device_size.to_pixels(scale_factor);
+        let mut lock = self.state.borrow_mut();
+        lock.logical_size = new_logical_size;
+        if should_resize_renderer {
+            lock.renderer.resize(device_size).log_err();
+        }
         if let Some(mut callback) = lock.callbacks.resize.take() {
             drop(lock);
-            callback(new_size, scale_factor);
+            callback(new_logical_size, scale_factor);
             self.state.borrow_mut().callbacks.resize = Some(callback);
         }
-        Some(0)
     }
 
     fn handle_size_move_loop(&self, handle: HWND) -> Option<isize> {
@@ -747,7 +764,9 @@ impl WindowsWindowInner {
     ) -> Option<isize> {
         let new_dpi = wparam.loword() as f32;
         let mut lock = self.state.borrow_mut();
-        lock.scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+        let is_maximized = lock.is_maximized();
+        let new_scale_factor = new_dpi / USER_DEFAULT_SCREEN_DPI as f32;
+        lock.scale_factor = new_scale_factor;
         lock.border_offset.update(handle).log_err();
         drop(lock);
 
@@ -769,6 +788,13 @@ impl WindowsWindowInner {
             )
             .context("unable to set window position after dpi has changed")
             .log_err();
+        }
+
+        // When maximized, SetWindowPos doesn't send WM_SIZE, so we need to manually
+        // update the size and call the resize callback
+        if is_maximized {
+            let device_size = size(DevicePixels(width), DevicePixels(height));
+            self.handle_size_change(device_size, new_scale_factor, true);
         }
 
         Some(0)
