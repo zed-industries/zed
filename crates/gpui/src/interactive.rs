@@ -1,5 +1,5 @@
 use crate::{
-    Capslock, Context, Empty, Hitbox, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
+    Bounds, Capslock, Context, Empty, IntoElement, Keystroke, Modifiers, Pixels, Point, Render,
     Window, point, seal::Sealed,
 };
 use smallvec::SmallVec;
@@ -156,7 +156,7 @@ pub struct KeyboardClickEvent {
     pub button: KeyboardButton,
 
     /// The hitbox of the element that was clicked.
-    pub hitbox: Hitbox,
+    pub bounds: Bounds<Pixels>,
 }
 
 /// A click event, generated when a mouse button or keyboard button is pressed and released.
@@ -169,13 +169,18 @@ pub enum ClickEvent {
 }
 
 impl ClickEvent {
-    /// Returns the modifiers that were held down during both the
-    /// mouse down and mouse up events for a MouseClickEvent
-    /// otherwise the modifiers held down during the keyboard event.
+    /// Returns the modifiers that were held during the click event
+    ///
+    /// `Keyboard`: The keyboard click events never have modifiers.
+    /// `Mouse`: Modifiers that were held during the mouse key up event.
     pub fn modifiers(&self) -> Modifiers {
         match self {
+            // Click events are only generated from keyboard events _without any modifiers_, so we know the modifiers are always Default
             ClickEvent::Keyboard(_) => Modifiers::default(),
-            ClickEvent::Mouse(event) => event.up.modifiers.and(&event.down.modifiers),
+            // Click events on the web only reflect the modifiers for the keyup event,
+            // tested via observing the behavior of the `ClickEvent.shiftKey` field in Chrome 138
+            // under various combinations of modifiers and keyUp / keyDown events.
+            ClickEvent::Mouse(event) => event.up.modifiers,
         }
     }
 
@@ -185,7 +190,7 @@ impl ClickEvent {
     /// `Mouse`: The position of the mouse when the button was released.
     pub fn position(&self) -> Point<Pixels> {
         match self {
-            ClickEvent::Keyboard(event) => event.hitbox.bottom_left(),
+            ClickEvent::Keyboard(event) => event.bounds.bottom_left(),
             ClickEvent::Mouse(event) => event.up.position,
         }
     }
