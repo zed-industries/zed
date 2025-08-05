@@ -1885,13 +1885,8 @@ impl Editor {
                                 }
                             }
                         }
-                        project::Event::LanguageServerBufferRegistered {
-                            buffer_id,
-                            buffer_abs_path,
-                            ..
-                        } => {
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
                             if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
-                                dbg!("language server buffer registered", &buffer_abs_path);
                                 editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                             }
                         }

@@ -2518,11 +2518,13 @@ impl LocalLspStore {
                 snapshot: initial_snapshot.clone(),
             };
 
+            let mut registered = false;
             self.buffer_snapshots
                 .entry(buffer_id)
                 .or_default()
                 .entry(server.server_id())
                 .or_insert_with(|| {
+                    registered = true;
                     server.register_buffer(
                         uri.clone(),
                         adapter.language_id(&language.name()),
@@ -2537,16 +2539,18 @@ impl LocalLspStore {
                 .entry(buffer_id)
                 .or_default()
                 .insert(server.server_id());
-            cx.emit(LspStoreEvent::LanguageServerUpdate {
-                language_server_id: server.server_id(),
-                name: None,
-                message: proto::update_language_server::Variant::RegisteredForBuffer(
-                    proto::RegisteredForBuffer {
-                        buffer_abs_path: abs_path.to_string_lossy().to_string(),
-                        buffer_id: buffer_id.to_proto(),
-                    },
-                ),
-            });
+            if registered {
+                cx.emit(LspStoreEvent::LanguageServerUpdate {
+                    language_server_id: server.server_id(),
+                    name: None,
+                    message: proto::update_language_server::Variant::RegisteredForBuffer(
+                        proto::RegisteredForBuffer {
+                            buffer_abs_path: abs_path.to_string_lossy().to_string(),
+                            buffer_id: buffer_id.to_proto(),
+                        },
+                    ),
+                });
+            }
         }
     }
 
