@@ -3,15 +3,18 @@ use std::sync::Arc;
 use editor::{EditorSettings, ShowMinimap};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::{Action, AnyElement, App, Context, FontFeatures, IntoElement, Pixels, SharedString, Task, Window};
+use gpui::{
+    Action, AnyElement, App, Context, FontFeatures, IntoElement, Pixels, SharedString, Task, Window,
+};
 use language::language_settings::{AllLanguageSettings, FormatOnSave};
 use picker::{Picker, PickerDelegate};
 use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField, ToggleButtonGroup,
-    ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip, prelude::*,
+    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
+    ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip,
+    prelude::*,
 };
 
 use crate::{ImportCursorSettings, ImportVsCodeSettings, SettingsImportState};
@@ -252,14 +255,8 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
     let buffer_font_family = theme_settings.buffer_font.family.clone();
     let buffer_font_size = theme_settings.buffer_font_size(cx);
 
-    let ui_font_picker = cx.new(|cx| {
-        font_picker(
-            ui_font_family.clone(),
-            write_ui_font_family,
-            window,
-            cx,
-        )
-    });
+    let ui_font_picker =
+        cx.new(|cx| font_picker(ui_font_family.clone(), write_ui_font_family, window, cx));
 
     let buffer_font_picker = cx.new(|cx| {
         font_picker(
@@ -306,8 +303,8 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
                                                     Icon::new(IconName::ChevronUpDown)
                                                         .color(Color::Muted)
                                                         .size(IconSize::XSmall),
-                                                )
-                                        )
+                                                ),
+                                        ),
                                 )
                                 .full_width(true)
                                 .anchor(gpui::Corner::TopLeft)
@@ -315,7 +312,7 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
                                     x: px(0.0),
                                     y: px(4.0),
                                 })
-                                .with_handle(ui_font_handle)
+                                .with_handle(ui_font_handle),
                         )
                         .child(
                             NumericStepper::new(
@@ -362,8 +359,8 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
                                                     Icon::new(IconName::ChevronUpDown)
                                                         .color(Color::Muted)
                                                         .size(IconSize::XSmall),
-                                                )
-                                        )
+                                                ),
+                                        ),
                                 )
                                 .full_width(true)
                                 .anchor(gpui::Corner::TopLeft)
@@ -371,7 +368,7 @@ fn render_font_customization_section(window: &mut Window, cx: &mut App) -> impl 
                                     x: px(0.0),
                                     y: px(4.0),
                                 })
-                                .with_handle(buffer_font_handle)
+                                .with_handle(buffer_font_handle),
                         )
                         .child(
                             NumericStepper::new(
@@ -558,7 +555,6 @@ fn font_picker(
         .width(rems_from_px(210.))
         .max_height(Some(rems(20.).into()))
 }
-
 
 fn render_popular_settings_section(window: &mut Window, cx: &mut App) -> impl IntoElement {
     const LIGATURE_TOOLTIP: &'static str = "Ligatures are when a font creates a special character out of combining two characters into one. For example, with ligatures turned on, =/= would become ≠.";
