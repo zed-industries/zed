@@ -6,8 +6,7 @@ use client::{Client, UserStore};
 use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelRegistry, MessageContent, StopReason,
+    LanguageModel, LanguageModelCompletionError, LanguageModelRegistry, MessageContent, StopReason,
 };
 use project::Project;
 use reqwest_client::ReqwestClient;
@@ -130,49 +129,50 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
+    todo!();
+    // let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
 
-    // Test a tool call that's likely to complete *before* streaming stops.
-    let mut events = thread.update(cx, |thread, cx| {
-        thread.add_tool(WordListTool);
-        thread.send(model.clone(), "Test the word_list tool.", cx)
-    });
+    // // Test a tool call that's likely to complete *before* streaming stops.
+    // let mut events = thread.update(cx, |thread, cx| {
+    //     thread.add_tool(WordListTool);
+    //     thread.send(model.clone(), "Test the word_list tool.", cx)
+    // });
 
-    let mut saw_partial_tool_use = false;
-    while let Some(event) = events.next().await {
-        if let Ok(LanguageModelCompletionEvent::ToolUse(tool_use_event)) = event {
-            thread.update(cx, |thread, _cx| {
-                // Look for a tool use in the thread's last message
-                let last_content = thread.messages().last().unwrap().content.last().unwrap();
-                if let MessageContent::ToolUse(last_tool_use) = last_content {
-                    assert_eq!(last_tool_use.name.as_ref(), "word_list");
-                    if tool_use_event.is_input_complete {
-                        last_tool_use
-                            .input
-                            .get("a")
-                            .expect("'a' has streamed because input is now complete");
-                        last_tool_use
-                            .input
-                            .get("g")
-                            .expect("'g' has streamed because input is now complete");
-                    } else {
-                        if !last_tool_use.is_input_complete
-                            && last_tool_use.input.get("g").is_none()
-                        {
-                            saw_partial_tool_use = true;
-                        }
-                    }
-                } else {
-                    panic!("last content should be a tool use");
-                }
-            });
-        }
-    }
+    // let mut saw_partial_tool_use = false;
+    // while let Some(event) = events.next().await {
+    //     if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
+    //         thread.update(cx, |thread, _cx| {
+    //             // Look for a tool use in the thread's last message
+    //             let last_content = thread.messages().last().unwrap().content.last().unwrap();
+    //             if let MessageContent::ToolUse(last_tool_use) = last_content {
+    //                 assert_eq!(last_tool_use.name.as_ref(), "word_list");
+    //                 if tool_call.status {
+    //                     last_tool_use
+    //                         .input
+    //                         .get("a")
+    //                         .expect("'a' has streamed because input is now complete");
+    //                     last_tool_use
+    //                         .input
+    //                         .get("g")
+    //                         .expect("'g' has streamed because input is now complete");
+    //                 } else {
+    //                     if !last_tool_use.is_input_complete
+    //                         && last_tool_use.input.get("g").is_none()
+    //                     {
+    //                         saw_partial_tool_use = true;
+    //                     }
+    //                 }
+    //             } else {
+    //                 panic!("last content should be a tool use");
+    //             }
+    //         });
+    //     }
+    // }
 
-    assert!(
-        saw_partial_tool_use,
-        "should see at least one partially streamed tool use in the history"
-    );
+    // assert!(
+    //     saw_partial_tool_use,
+    //     "should see at least one partially streamed tool use in the history"
+    // );
 }
 
 #[gpui::test]
@@ -356,7 +356,7 @@ fn stop_events(
     result_events
         .into_iter()
         .filter_map(|event| match event.unwrap() {
-            LanguageModelCompletionEvent::Stop(stop_reason) => Some(stop_reason),
+            AgentResponseEvent::Stop(stop_reason) => Some(stop_reason),
             _ => None,
         })
         .collect()

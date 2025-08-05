@@ -1,6 +1,7 @@
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use project::Project;
@@ -9,7 +10,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{templates::Templates, Thread};
+use crate::{templates::Templates, AgentResponseEvent, Thread};
 
 /// Holds both the internal Thread and the AcpThread for a session
 #[derive(Clone)]
@@ -219,26 +220,20 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let response_stream = session
+            let mut response_stream = session
                 .thread
                 .update(cx, |thread, cx| thread.send(model, message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             let acp_thread = session.acp_thread.clone();
             cx.spawn(async move |cx| {
-                use futures::StreamExt;
-                use language_model::LanguageModelCompletionEvent;
-
-                let mut response_stream = response_stream;
-
                 while let Some(result) = response_stream.next().await {
                     match result {
                         Ok(event) => {
                             log::trace!("Received completion event: {:?}", event);
 
                             match event {
-                                LanguageModelCompletionEvent::Text(text) => {
-                                    // Send text chunk as agent message
+                                AgentResponseEvent::Text(text) => {
                                     acp_thread.update(cx, |thread, cx| {
                                         thread.handle_session_update(
                                             acp::SessionUpdate::AgentMessageChunk {
@@ -253,59 +248,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                         )
                                     })??;
                                 }
-                                LanguageModelCompletionEvent::ToolUse(tool_use) => {
-                                    // Convert LanguageModelToolUse to ACP ToolCall
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::ToolCall(acp::ToolCall {
-                                                id: acp::ToolCallId(tool_use.id.to_string().into()),
-                                                title: tool_use.name.to_string(),
-                                                kind: acp::ToolKind::Other,
-                                                status: acp::ToolCallStatus::Pending,
-                                                content: vec![],
-                                                locations: vec![],
-                                                raw_input: Some(tool_use.input),
-                                            }),
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                LanguageModelCompletionEvent::ToolUseJsonParseError {
-                                    id,
-                                    tool_name,
-                                    raw_input,
-                                    json_parse_error,
-                                } => {
-                                    log::error!(
-                                        "Tool use JSON parse error for tool '{}' (id: {}): {} - input: {}",
-                                        tool_name,
-                                        id,
-                                        json_parse_error,
-                                        raw_input
-                                    );
-                                    acp_thread.update(cx, |thread, cx| {
-                                        thread.handle_session_update(
-                                            acp::SessionUpdate::ToolCall( acp::ToolCall {
-                                                id: acp::ToolCallId(id.to_string().into()),
-                                                title: tool_name.to_string(),
-                                                kind: acp::ToolKind::Other,
-                                                status: acp::ToolCallStatus::Failed,
-                                                content: vec![json_parse_error.into()],
-                                                locations: vec![],
-                                                raw_input: Some(raw_input.as_ref().into()),
-                                            }),
-                                            cx,
-                                        )
-                                    })??;
-                                }
-                                LanguageModelCompletionEvent::StartMessage { .. } => {
-                                    log::debug!("Started new assistant message");
-                                }
-                                LanguageModelCompletionEvent::UsageUpdate(usage) => {
-                                    log::debug!("Token usage update: {:?}", usage);
-                                }
-                                LanguageModelCompletionEvent::Thinking { text, .. } => {
-                                    // Send thinking text as agent thought chunk
+                                AgentResponseEvent::Thinking(text) => {
                                     acp_thread.update(cx, |thread, cx| {
                                         thread.handle_session_update(
                                             acp::SessionUpdate::AgentThoughtChunk {
@@ -320,14 +263,24 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                         )
                                     })??;
                                 }
-                                LanguageModelCompletionEvent::StatusUpdate(status) => {
-                                    log::trace!("Status update: {:?}", status);
+                                AgentResponseEvent::ToolCall(tool_call) => {
+                                    acp_thread.update(cx, |thread, cx| {
+                                        thread.handle_session_update(
+                                            acp::SessionUpdate::ToolCall(tool_call),
+                                            cx,
+                                        )
+                                    })??;
                                 }
-                                LanguageModelCompletionEvent::Stop(stop_reason) => {
+                                AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
+                                    acp_thread.update(cx, |thread, cx| {
+                                        thread.handle_session_update(
+                                            acp::SessionUpdate::ToolCallUpdate(tool_call_update),
+                                            cx,
+                                        )
+                                    })??;
+                                }
+                                AgentResponseEvent::Stop(stop_reason) => {
                                     log::debug!("Assistant message complete: {:?}", stop_reason);
-                                }
-                                LanguageModelCompletionEvent::RedactedThinking { .. } => {
-                                    log::trace!("Redacted thinking event");
                                 }
                             }
                         }
