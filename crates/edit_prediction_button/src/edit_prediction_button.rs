@@ -2,11 +2,7 @@ use anyhow::Result;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
 use copilot::{Copilot, Status};
-use editor::{
-    Editor, SelectionEffects,
-    actions::{ShowEditPrediction, ToggleEditPrediction},
-    scroll::Autoscroll,
-};
+use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
 use fs::Fs;
 use gpui::{
@@ -441,9 +437,13 @@ impl EditPredictionButton {
         if let Some(editor_focus_handle) = self.editor_focus_handle.clone() {
             let entry = ContextMenuEntry::new("This Buffer")
                 .toggleable(IconPosition::Start, self.editor_show_predictions)
-                .action(Box::new(ToggleEditPrediction))
+                .action(Box::new(editor::actions::ToggleEditPrediction))
                 .handler(move |window, cx| {
-                    editor_focus_handle.dispatch_action(&ToggleEditPrediction, window, cx);
+                    editor_focus_handle.dispatch_action(
+                        &editor::actions::ToggleEditPrediction,
+                        window,
+                        cx,
+                    );
                 });
 
             match language_state.clone() {
@@ -478,10 +478,13 @@ impl EditPredictionButton {
         let settings = AllLanguageSettings::get_global(cx);
 
         let globally_enabled = settings.show_edit_predictions(None, cx);
-        menu = menu.toggleable_entry("All Files", globally_enabled, IconPosition::Start, None, {
-            let fs = fs.clone();
-            move |_, cx| toggle_edit_predictions_globally(fs.clone(), cx)
-        });
+        let entry = ContextMenuEntry::new("All Files")
+            .toggleable(IconPosition::Start, globally_enabled)
+            .action(workspace::ToggleEditPrediction.boxed_clone())
+            .handler(|window, cx| {
+                window.dispatch_action(workspace::ToggleEditPrediction.boxed_clone(), cx)
+            });
+        menu = menu.item(entry);
 
         let provider = settings.edit_predictions.provider;
         let current_mode = settings.edit_predictions_mode();
@@ -941,13 +944,6 @@ async fn open_disabled_globs_setting_in_editor(
         })?;
 
     anyhow::Ok(())
-}
-
-fn toggle_edit_predictions_globally(fs: Arc<dyn Fs>, cx: &mut App) {
-    let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.defaults.show_edit_predictions = Some(!show_edit_predictions)
-    });
 }
 
 fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
