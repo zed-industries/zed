@@ -123,13 +123,18 @@ pub struct ScrollbarState {
 #[derive(Debug)]
 enum AutoHide {
     Disabled,
-    Hidden,
-    Visible { _task: Task<()> },
+    Hidden {
+        parent_id: EntityId,
+    },
+    Visible {
+        parent_id: EntityId,
+        _task: Task<()>,
+    },
 }
 
 impl AutoHide {
     fn is_hidden(&self) -> bool {
-        matches!(self, AutoHide::Hidden)
+        matches!(self, AutoHide::Hidden { .. })
     }
 }
 
@@ -199,28 +204,17 @@ impl ScrollbarState {
         Some(thumb_percentage_start..thumb_percentage_end)
     }
 
-    pub fn show_temporarily(&self, cx: &mut App) {
+    fn show_temporarily(&self, parent_id: EntityId, cx: &mut App) {
         const SHOW_INTERVAL: Duration = Duration::from_secs(1);
-
-        let Some(parent_id) = self.parent_id else {
-            if cfg!(debug_assertions) {
-                // TODO: Make parent entity required for all scrollbars
-                panic!(
-                    "Scrollbar::auto_hide requires a parent entity to notify. Use ScrollbarState::parent_entity."
-                );
-            } else {
-                self.auto_hide.replace(AutoHide::Disabled);
-                return;
-            }
-        };
 
         let auto_hide = self.auto_hide.clone();
         auto_hide.replace(AutoHide::Visible {
+            parent_id,
             _task: cx.spawn({
                 let this = auto_hide.clone();
                 async move |cx| {
                     cx.background_executor().timer(SHOW_INTERVAL).await;
-                    this.replace(AutoHide::Hidden);
+                    this.replace(AutoHide::Hidden { parent_id });
                     cx.update(|cx| {
                         cx.notify(parent_id);
                     })
@@ -230,13 +224,19 @@ impl ScrollbarState {
         });
     }
 
-    pub fn unhide(&self, position: &Point<Pixels>, cx: &mut App) {
+    fn unhide(&self, position: &Point<Pixels>, cx: &mut App) {
+        let parent_id = match &*self.auto_hide.borrow() {
+            AutoHide::Disabled => return,
+            AutoHide::Hidden { parent_id } => *parent_id,
+            AutoHide::Visible { parent_id, _task } => *parent_id,
+        };
+
         if matches!(*self.auto_hide.borrow(), AutoHide::Disabled) {
             return;
         }
 
         if self.scroll_handle().viewport().contains(position) {
-            self.show_temporarily(cx);
+            self.show_temporarily(parent_id, cx);
         }
     }
 }
@@ -255,9 +255,10 @@ impl Scrollbar {
         Some(Self { thumb, state, kind })
     }
 
-    pub fn auto_hide(self, cx: &mut App) -> Self {
+    /// Automatically hide the scrollbar when idle
+    pub fn auto_hide<V: 'static>(self, cx: &mut Context<V>) -> Self {
         if matches!(*self.state.auto_hide.borrow(), AutoHide::Disabled) {
-            self.state.show_temporarily(cx);
+            self.state.show_temporarily(cx.entity_id(), cx);
         }
         self
     }
