@@ -849,7 +849,7 @@ impl Server {
             const MAX_CONCURRENT_HANDLERS: usize = 256;
             let mut foreground_message_handlers = FuturesUnordered::new();
             let concurrent_handlers = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
-            let get_queue_size = {
+            let get_concurrent_handlers = {
                 let concurrent_handlers = concurrent_handlers.clone();
                 move || MAX_CONCURRENT_HANDLERS - concurrent_handlers.available_permits()
             };
@@ -857,9 +857,9 @@ impl Server {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
                     let message = incoming_rx.next().await;
-                    // Cache the queue_size here, so that we know what the
+                    // Cache the concurrent_handlers here, so that we know what the
                     // queue looks like as each handler starts
-                    (permit, message, get_queue_size())
+                    (permit, message, get_concurrent_handlers())
                 }
                 .fuse();
                 futures::pin_mut!(next_message);
@@ -873,7 +873,7 @@ impl Server {
                     }
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
-                        let (permit, message, queue_size) = next_message;
+                        let (permit, message, concurrent_handlers) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
@@ -882,7 +882,7 @@ impl Server {
                                 %connection_id,
                                 %address,
                                 type_name,
-                                queue_size,
+                                concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
@@ -916,8 +916,8 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            let queue_size = get_queue_size();
-            tracing::info!(queue_size, "signing out");
+            let concurrent_handlers = get_concurrent_handlers();
+            tracing::info!(concurrent_handlers, "signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(?error, "error signing out");
             }
