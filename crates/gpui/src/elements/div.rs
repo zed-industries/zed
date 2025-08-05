@@ -1295,19 +1295,19 @@ impl Element for Div {
                 |style, window, cx| {
                     window.with_bidi_style(style.bidi_style().cloned(), |window| {
                         window.with_text_style(style.text_style().cloned(), |window| {
-                            let bidi_style = window.bidi_style();
-                            let mapped_style = bidi_style.dir.apply_flex_direction(style);
+                            // let bidi_style = window.bidi_style();
+                            // let flex_mapped_style = bidi_style.dir.apply_flex_direction(style);
+                            // let spacing_mapped_style =
+                            //     bidi_style.dir.apply_spacing_direction(flex_mapped_style);
+                            // let border_mapped_style =
+                            //     bidi_style.dir.apply_border_direction(spacing_mapped_style);
 
                             child_layout_ids = self
                                 .children
                                 .iter_mut()
                                 .map(|child| child.request_layout(window, cx))
                                 .collect::<SmallVec<_>>();
-                            window.request_layout(
-                                mapped_style,
-                                child_layout_ids.iter().copied(),
-                                cx,
-                            )
+                            window.request_layout(style, child_layout_ids.iter().copied(), cx)
                         })
                     })
                 },
@@ -2521,7 +2521,12 @@ impl Interactivity {
             }
         }
 
-        style
+        let bidi_style = window.bidi_style();
+        let flex_mapped_style = bidi_style.dir.apply_flex_direction(style);
+        let spacing_mapped_style = bidi_style.dir.apply_spacing_direction(flex_mapped_style);
+        let border_mapped_style = bidi_style.dir.apply_border_direction(spacing_mapped_style);
+
+        border_mapped_style
     }
 }
 

@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     hash::{Hash, Hasher},
     iter, mem,
     ops::Range,
@@ -521,6 +522,29 @@ impl LayoutDirection {
         }
     }
 
+    /// Sets the margin and padding orientations on a style, given the bidi direction
+    pub fn apply_spacing_direction(self, mut style: Style) -> Style {
+        match self {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
+                style.margin = self.apply_edge_direction(style.margin);
+                style.padding = self.apply_edge_direction(style.padding);
+                style
+            }
+        }
+    }
+
+    /// Sets the border orientations on a style, given the bidi direction
+    pub fn apply_border_direction(self, mut style: Style) -> Style {
+        match self {
+            LayoutDirection::LeftToRight => style,
+            LayoutDirection::RightToLeft => {
+                style.border_widths = self.apply_edge_direction(style.border_widths);
+                style
+            }
+        }
+    }
+
     /// Sets the flex direction on a TextAlign, given the bidi direction
     pub fn apply_text_align_direction(self, mut text_align: TextAlign) -> TextAlign {
         match self {
@@ -530,6 +554,20 @@ impl LayoutDirection {
                 TextAlign::Center => TextAlign::Center,
                 TextAlign::Right => TextAlign::Left,
             },
+        }
+    }
+
+    /// Maps a set of edges to the correct orientation based on the bidi direction
+    pub fn apply_edge_direction<T>(self, mut edge: Edges<T>) -> Edges<T>
+    where
+        T: Clone + Debug + Default + PartialEq,
+    {
+        match self {
+            LayoutDirection::LeftToRight => edge,
+            LayoutDirection::RightToLeft => {
+                std::mem::swap(&mut edge.left, &mut edge.right);
+                edge
+            }
         }
     }
 }
