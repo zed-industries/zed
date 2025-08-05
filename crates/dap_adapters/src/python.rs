@@ -747,30 +747,23 @@ mod tests {
 
         // Case 1: User-defined debugpy path (highest precedence)
         let user_path = PathBuf::from("/custom/path/to/debugpy/src/debugpy/adapter");
-        let user_args = PythonDebugAdapter::generate_debugpy_arguments(
-            &host,
-            port,
-            Some(&user_path),
-            None,
-            false,
-        )
-        .await
-        .unwrap();
-
-        // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
-        let venv_args =
-            PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, None, true)
+        let user_args =
+            PythonDebugAdapter::generate_debugpy_arguments(&host, port, Some(&user_path), None)
                 .await
                 .unwrap();
+
+        // Case 2: Venv-installed debugpy (uses -m debugpy.adapter)
+        let venv_args = PythonDebugAdapter::generate_debugpy_arguments(&host, port, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(user_args[0], "/custom/path/to/debugpy/src/debugpy/adapter");
         assert_eq!(user_args[1], "--host=127.0.0.1");
         assert_eq!(user_args[2], "--port=5678");
 
-        assert_eq!(venv_args[0], "-m");
-        assert_eq!(venv_args[1], "debugpy.adapter");
-        assert_eq!(venv_args[2], "--host=127.0.0.1");
-        assert_eq!(venv_args[3], "--port=5678");
+        assert!(venv_args[0].ends_with("debug_adapters/Debugpy/debugpy/adapter"));
+        assert_eq!(venv_args[1], "--host=127.0.0.1");
+        assert_eq!(venv_args[2], "--port=5678");
 
         // The same cases, with arguments overridden by the user
         let user_args = PythonDebugAdapter::generate_debugpy_arguments(
@@ -778,7 +771,6 @@ mod tests {
             port,
             Some(&user_path),
             Some(vec!["foo".into()]),
-            false,
         )
         .await
         .unwrap();
@@ -787,7 +779,6 @@ mod tests {
             port,
             None,
             Some(vec!["foo".into()]),
-            true,
         )
         .await
         .unwrap();
@@ -795,9 +786,8 @@ mod tests {
         assert!(user_args[0].ends_with("src/debugpy/adapter"));
         assert_eq!(user_args[1], "foo");
 
-        assert_eq!(venv_args[0], "-m");
-        assert_eq!(venv_args[1], "debugpy.adapter");
-        assert_eq!(venv_args[2], "foo");
+        assert!(venv_args[0].ends_with("debug_adapters/Debugpy/debugpy/adapter"));
+        assert_eq!(venv_args[1], "foo");
 
         // Note: Case 3 (GitHub-downloaded debugpy) is not tested since this requires mocking the Github API.
     }
