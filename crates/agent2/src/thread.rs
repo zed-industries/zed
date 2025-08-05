@@ -254,6 +254,7 @@ impl Thread {
         match event {
             Text(new_text) => self.handle_text_event(new_text, cx),
             Thinking { text, signature } => self.handle_thinking_event(text, signature, cx),
+            RedactedThinking { data } => self.handle_redacted_thinking_event(data, cx),
             ToolUse(tool_use) => {
                 return self.handle_tool_use_event(tool_use, cx);
             }
@@ -266,7 +267,6 @@ impl Thread {
             UsageUpdate(_) => {}
             Stop(stop_reason) => self.handle_stop_event(stop_reason),
             StatusUpdate(_completion_request_status) => {}
-            RedactedThinking { data: _data } => todo!(),
             ToolUseJsonParseError {
                 id: _id,
                 tool_name: _tool_name,
@@ -318,6 +318,16 @@ impl Thread {
         cx.notify();
     }
 
+    fn handle_redacted_thinking_event(
+        &mut self,
+        data: String,
+        cx: &mut Context<Self>,
+    ) {
+        let last_message = self.last_assistant_message();
+        last_message.content.push(MessageContent::RedactedThinking(data));
+        cx.notify();
+    }
+    
     fn handle_tool_use_event(
         &mut self,
         tool_use: LanguageModelToolUse,
