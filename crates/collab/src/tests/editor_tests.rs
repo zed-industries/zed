@@ -296,19 +296,28 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        completion_provider: Some(lsp::CompletionOptions {
+            trigger_characters: Some(vec![".".to_string()]),
+            resolve_provider: Some(true),
+            ..lsp::CompletionOptions::default()
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string()]),
-                    resolve_provider: Some(true),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -566,9 +575,12 @@ async fn test_collaborating_with_code_actions(
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a
+        .language_registry()
+        .register_fake_lsp("Rust", FakeLspAdapter::default());
+    client_b.language_registry().add(rust_lang());
+    client_b
         .language_registry()
         .register_fake_lsp("Rust", FakeLspAdapter::default());
 
@@ -775,19 +787,27 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
 
     cx_b.update(editor::init);
 
-    // Set up a fake language server.
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -818,6 +838,8 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
         .downcast::<Editor>()
         .unwrap();
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     // Move cursor to a location that can be renamed.
     let prepare_rename = editor_b.update_in(cx_b, |editor, window, cx| {
@@ -1055,7 +1077,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1072,7 +1094,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
@@ -1089,7 +1111,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_a.read_with(cx_a, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1099,7 +1121,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "the-language-server");
+        assert_eq!(status.name.0, "the-language-server");
         assert_eq!(status.pending_work.len(), 1);
         assert_eq!(
             status.pending_work["the-token"].message.as_ref().unwrap(),
@@ -1422,18 +1444,27 @@ async fn test_on_input_format_from_guest_to_host(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
+            first_trigger_character: ":".to_string(),
+            more_trigger_character: Some(vec![">".to_string()]),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                document_on_type_formatting_provider: Some(lsp::DocumentOnTypeFormattingOptions {
-                    first_trigger_character: ":".to_string(),
-                    more_trigger_character: Some(vec![">".to_string()]),
-                }),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1588,16 +1619,24 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         });
     });
 
+    let capabilities = lsp::ServerCapabilities {
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1830,16 +1869,24 @@ async fn test_inlay_hint_refresh_is_forwarded(
         });
     });
 
+    let capabilities = lsp::ServerCapabilities {
+        inlay_hint_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                inlay_hint_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -2004,15 +2051,23 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         });
     });
 
+    let capabilities = lsp::ServerCapabilities {
+        color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                color_provider: Some(lsp::ColorProviderCapability::Simple(true)),
-                ..lsp::ServerCapabilities::default()
-            },
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
             ..FakeLspAdapter::default()
         },
     );
@@ -2063,6 +2118,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     let requests_made = Arc::new(AtomicUsize::new(0));
     let closure_requests_made = Arc::clone(&requests_made);
@@ -2264,24 +2321,32 @@ async fn test_lsp_pull_diagnostics(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
 
+    let capabilities = lsp::ServerCapabilities {
+        diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+            lsp::DiagnosticOptions {
+                identifier: Some("test-pulls".to_string()),
+                inter_file_dependencies: true,
+                workspace_diagnostics: true,
+                work_done_progress_options: lsp::WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
+            },
+        )),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            capabilities: lsp::ServerCapabilities {
-                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
-                    lsp::DiagnosticOptions {
-                        identifier: Some("test-pulls".to_string()),
-                        inter_file_dependencies: true,
-                        workspace_diagnostics: true,
-                        work_done_progress_options: lsp::WorkDoneProgressOptions {
-                            work_done_progress: None,
-                        },
-                    },
-                )),
-                ..lsp::ServerCapabilities::default()
-            },
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
             ..FakeLspAdapter::default()
         },
     );
@@ -2334,6 +2399,8 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
     let expected_push_diagnostic_main_message = "pushed main diagnostic";
     let expected_push_diagnostic_lib_message = "pushed lib diagnostic";
     let expected_pull_diagnostic_main_message = "pulled main diagnostic";
@@ -2689,6 +2756,7 @@ async fn test_lsp_pull_diagnostics(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+    cx_b.run_until_parked();
 
     pull_diagnostics_handle.next().await.unwrap();
     assert_eq!(

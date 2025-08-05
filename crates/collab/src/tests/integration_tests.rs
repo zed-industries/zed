@@ -4778,10 +4778,27 @@ async fn test_definition(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
+    let capabilities = lsp::ServerCapabilities {
+        definition_provider: Some(OneOf::Left(true)),
+        type_definition_provider: Some(lsp::TypeDefinitionProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
 
     client_a
         .fs()
@@ -4827,13 +4844,19 @@ async fn test_definition(
             )))
         },
     );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     let definitions_1 = project_b
         .update(cx_b, |p, cx| p.definitions(&buffer_b, 23, cx))
         .await
         .unwrap();
     cx_b.read(|cx| {
-        assert_eq!(definitions_1.len(), 1);
+        assert_eq!(
+            definitions_1.len(),
+            1,
+            "Unexpected definitions: {definitions_1:?}"
+        );
         assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
         let target_buffer = definitions_1[0].target.buffer.read(cx);
         assert_eq!(
@@ -4901,7 +4924,11 @@ async fn test_definition(
         .await
         .unwrap();
     cx_b.read(|cx| {
-        assert_eq!(type_definitions.len(), 1);
+        assert_eq!(
+            type_definitions.len(),
+            1,
+            "Unexpected type definitions: {type_definitions:?}"
+        );
         let target_buffer = type_definitions[0].target.buffer.read(cx);
         assert_eq!(target_buffer.text(), "type T2 = usize;");
         assert_eq!(
@@ -4925,16 +4952,26 @@ async fn test_references(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        references_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
             name: "my-fake-lsp-adapter",
-            capabilities: lsp::ServerCapabilities {
-                references_provider: Some(lsp::OneOf::Left(true)),
-                ..Default::default()
-            },
-            ..Default::default()
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "my-fake-lsp-adapter",
+            capabilities: capabilities,
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -4989,6 +5026,8 @@ async fn test_references(
             }
         }
     });
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     let references = project_b.update(cx_b, |p, cx| p.references(&buffer_b, 7, cx));
 
@@ -4996,7 +5035,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "my-fake-lsp-adapter");
+        assert_eq!(status.name.0, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
             Some("Finding references...".into())
@@ -5054,7 +5093,7 @@ async fn test_references(
     executor.run_until_parked();
     project_b.read_with(cx_b, |project, cx| {
         let status = project.language_server_statuses(cx).next().unwrap().1;
-        assert_eq!(status.name, "my-fake-lsp-adapter");
+        assert_eq!(status.name.0, "my-fake-lsp-adapter");
         assert_eq!(
             status.pending_work.values().next().unwrap().message,
             Some("Finding references...".into())
@@ -5204,10 +5243,26 @@ async fn test_document_highlights(
         )
         .await;
 
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
     client_a.language_registry().add(rust_lang());
+    let capabilities = lsp::ServerCapabilities {
+        document_highlight_provider: Some(lsp::OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
 
     let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
@@ -5256,6 +5311,8 @@ async fn test_document_highlights(
             ]))
         },
     );
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     let highlights = project_b
         .update(cx_b, |p, cx| p.document_highlights(&buffer_b, 34, cx))
@@ -5306,30 +5363,49 @@ async fn test_lsp_hover(
 
     client_a.language_registry().add(rust_lang());
     let language_server_names = ["rust-analyzer", "CrabLang-ls"];
+    let capabilities_1 = lsp::ServerCapabilities {
+        hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
+    let capabilities_2 = lsp::ServerCapabilities {
+        hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     let mut language_servers = [
         client_a.language_registry().register_fake_lsp(
             "Rust",
             FakeLspAdapter {
-                name: "rust-analyzer",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
+                name: language_server_names[0],
+                capabilities: capabilities_1.clone(),
                 ..FakeLspAdapter::default()
             },
         ),
         client_a.language_registry().register_fake_lsp(
             "Rust",
             FakeLspAdapter {
-                name: "CrabLang-ls",
-                capabilities: lsp::ServerCapabilities {
-                    hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
-                    ..lsp::ServerCapabilities::default()
-                },
+                name: language_server_names[1],
+                capabilities: capabilities_2.clone(),
                 ..FakeLspAdapter::default()
             },
         ),
     ];
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: language_server_names[0],
+            capabilities: capabilities_1,
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: language_server_names[1],
+            capabilities: capabilities_2,
+            ..FakeLspAdapter::default()
+        },
+    );
 
     let (project_a, worktree_id) = client_a.build_local_project(path!("/root-1"), cx_a).await;
     let project_id = active_call_a
@@ -5423,6 +5499,8 @@ async fn test_lsp_hover(
             unexpected => panic!("Unexpected server name: {unexpected}"),
         }
     }
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
 
     // Request hover information as the guest.
     let mut hovers = project_b
@@ -5605,10 +5683,26 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .await;
     let active_call_a = cx_a.read(ActiveCall::global);
 
+    let capabilities = lsp::ServerCapabilities {
+        definition_provider: Some(OneOf::Left(true)),
+        ..lsp::ServerCapabilities::default()
+    };
     client_a.language_registry().add(rust_lang());
-    let mut fake_language_servers = client_a
-        .language_registry()
-        .register_fake_lsp("Rust", Default::default());
+    let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
 
     client_a
         .fs()
@@ -5649,6 +5743,8 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let definitions;
     let buffer_b2;
     if rng.r#gen() {
+        cx_a.run_until_parked();
+        cx_b.run_until_parked();
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
@@ -5663,11 +5759,17 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
             })
             .await
             .unwrap();
+        cx_a.run_until_parked();
+        cx_b.run_until_parked();
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
     }
 
     let definitions = definitions.await.unwrap();
-    assert_eq!(definitions.len(), 1);
+    assert_eq!(
+        definitions.len(),
+        1,
+        "Unexpected definitions: {definitions:?}"
+    );
     assert_eq!(definitions[0].target.buffer, buffer_b2);
 }
 
