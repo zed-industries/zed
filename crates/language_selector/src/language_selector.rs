@@ -86,7 +86,10 @@ impl LanguageSelector {
 
 impl Render for LanguageSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("LanguageSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
