@@ -116,6 +116,7 @@ impl LinuxCommon {
             auto_hide_scrollbars: false,
             callbacks,
             signal,
+            default_layout_direction: LayoutDirection::RightToLeft,
             menus: Vec::new(),
         };
 
