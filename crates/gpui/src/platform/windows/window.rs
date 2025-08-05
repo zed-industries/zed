@@ -387,6 +387,9 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+        if params.layout_direction == LayoutDirection::RightToLeft {
+            dwexstyle |= WS_EX_LAYOUTRTL;
+        }
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
         }
