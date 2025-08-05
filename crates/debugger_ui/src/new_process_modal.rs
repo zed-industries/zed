@@ -1015,9 +1015,7 @@ impl DebugDelegate {
         let language_names = languages.language_names();
         let language = dap_registry
             .adapter_language(&scenario.adapter)
-            .map(|language| TaskSourceKind::Language {
-                name: language.into(),
-            });
+            .map(|language| TaskSourceKind::Language { name: language.0 });
 
         let language = language.or_else(|| {
             scenario.label.split_whitespace().find_map(|word| {
