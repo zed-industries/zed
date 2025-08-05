@@ -221,14 +221,32 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
     // Wait until both tools are called.
     let mut expected_tool_calls = vec!["echo", "infinite"];
+    let mut echo_id = None;
+    let mut echo_completed = false;
     while let Some(event) = events.next().await {
-        if let AgentResponseEvent::ToolCall(tool_call) = event.unwrap() {
-            assert_eq!(tool_call.title, expected_tool_calls.remove(0));
-            if expected_tool_calls.is_empty() {
-                break;
+        match event.unwrap() {
+            AgentResponseEvent::ToolCall(tool_call) => {
+                assert_eq!(tool_call.title, expected_tool_calls.remove(0));
+                if tool_call.title == "echo" {
+                    echo_id = Some(tool_call.id);
+                }
             }
+            AgentResponseEvent::ToolCallUpdate(acp::ToolCallUpdate {
+                id,
+                fields:
+                    acp::ToolCallUpdateFields {
+                        status: Some(acp::ToolCallStatus::Completed),
+                        ..
+                    },
+            }) if Some(&id) == echo_id.as_ref() => {
+                echo_completed = true;
+            }
+            _ => {}
         }
-        // todo!("ensure echo is called before breaking")
+
+        if expected_tool_calls.is_empty() && echo_completed {
+            break;
+        }
     }
 
     // Cancel the current send and ensure that the event stream is closed, even
