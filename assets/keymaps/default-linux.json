@@ -1175,7 +1175,8 @@
     "bindings": {
       "ctrl-1": "onboarding::ActivateBasicsPage",
       "ctrl-2": "onboarding::ActivateEditingPage",
-      "ctrl-3": "onboarding::ActivateAISetupPage"
+      "ctrl-3": "onboarding::ActivateAISetupPage",
+      "ctrl-escape": "onboarding::Finish"
     }
   }
 ]

@@ -15,6 +15,7 @@ pub struct AiUpsellCard {
     pub sign_in_status: SignInStatus,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
     pub user_plan: Option<Plan>,
+    pub tab_index: Option<isize>,
 }
 
 impl AiUpsellCard {
@@ -31,6 +32,7 @@ impl AiUpsellCard {
                 })
                 .detach_and_log_err(cx);
             }),
+            tab_index: None,
         }
     }
 }
@@ -256,6 +258,7 @@ impl Component for AiUpsellCard {
                             sign_in_status: SignInStatus::SignedOut,
                             sign_in: Arc::new(|_, _| {}),
                             user_plan: None,
+                            tab_index: Some(0),
                         }
                         .into_any_element(),
                     ),
