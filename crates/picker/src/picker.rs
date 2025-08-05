@@ -333,21 +333,7 @@ impl<D: PickerDelegate> Picker<D> {
             }
             ContainerKind::List => {
                 let entity = cx.entity().downgrade();
-                ElementContainer::List(ListState::new(
-                    0,
-                    gpui::ListAlignment::Top,
-                    px(1000.),
-                    move |ix, window, cx| {
-                        entity
-                            .upgrade()
-                            .map(|entity| {
-                                entity.update(cx, |this, cx| {
-                                    this.render_element(window, cx, ix).into_any_element()
-                                })
-                            })
-                            .unwrap_or_else(|| div().into_any_element())
-                    },
-                ))
+                ElementContainer::List(ListState::new(0, gpui::ListAlignment::Top, px(1000.)))
             }
         }
     }
@@ -786,11 +772,16 @@ impl<D: PickerDelegate> Picker<D> {
             .py_1()
             .track_scroll(scroll_handle.clone())
             .into_any_element(),
-            ElementContainer::List(state) => list(state.clone())
-                .with_sizing_behavior(sizing_behavior)
-                .flex_grow()
-                .py_2()
-                .into_any_element(),
+            ElementContainer::List(state) => list(
+                state.clone(),
+                cx.processor(|this, ix, window, cx| {
+                    this.render_element(window, cx, ix).into_any_element()
+                }),
+            )
+            .with_sizing_behavior(sizing_behavior)
+            .flex_grow()
+            .py_2()
+            .into_any_element(),
         }
     }
 
