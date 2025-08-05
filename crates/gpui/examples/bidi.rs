@@ -1,5 +1,7 @@
-use metal::MTLPrimitiveType::Point;
-use gpui::{App, Application, Bounds, Context, KeyBinding, LayoutDirection, Menu, MenuItem, Window, WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size, TitlebarOptions, point};
+use gpui::{
+    App, Application, Bounds, Context, KeyBinding, LayoutDirection, Menu, MenuItem, Window,
+    WindowBounds, WindowOptions, actions, div, prelude::*, px, rgb, size,
+};
 
 #[derive(IntoElement)]
 struct BidiExampleComponent {
