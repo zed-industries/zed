@@ -702,7 +702,7 @@ impl ProjectPanel {
                                         path: entry.path.clone(),
                                     },
                                     false,
-split_direction,
+                                    split_direction,
                                     window, cx,
                                 )
                                 .detach_and_log_err(cx);
