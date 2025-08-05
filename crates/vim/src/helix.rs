@@ -53,14 +53,47 @@ impl Vim {
         return;
     }
 
-    pub fn helix_normal_motion(
+    // Helix motion which creates a selection
+    fn helix_move_and_select(
         &mut self,
-        motion: Motion,
         times: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
+        motion: Motion, //mut is_boundary: impl FnMut(char, char, &CharClassifier) -> bool,
     ) {
-        self.helix_move_cursor(motion, times, window, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let goal = selection.goal;
+                    let old_point = selection.head();
+                    let was_empty = selection.is_empty();
+
+                    let (new_point, new_goal) = motion
+                        .move_point(
+                            map,
+                            old_point,
+                            selection.goal,
+                            times,
+                            &text_layout_details,
+                            true,
+                        )
+                        .unwrap_or((old_point, goal));
+
+                    selection.set_tail(old_point, goal);
+                    selection.set_head(new_point, new_goal);
+
+                    // include old position only if selection was empty
+                    if was_empty && selection.end == old_point {
+                        selection.end = movement::right(map, selection.end)
+                    }
+                    // must include cursor position
+                    if selection.end == new_point {
+                        selection.end = movement::right(map, selection.end)
+                    }
+                });
+            });
+        });
     }
 
     fn helix_find_range_forward(
@@ -176,6 +209,7 @@ impl Vim {
         });
     }
 
+    // Helix motion which do not create any selection
     pub fn helix_move_and_collapse(
         &mut self,
         motion: Motion,
@@ -195,7 +229,14 @@ impl Vim {
                     };
 
                     let (point, goal) = motion
-                        .move_point(map, cursor, selection.goal, times, &text_layout_details)
+                        .move_point(
+                            map,
+                            cursor,
+                            selection.goal,
+                            times,
+                            &text_layout_details,
+                            true,
+                        )
                         .unwrap_or((cursor, goal));
 
                     selection.collapse_to(point, goal)
@@ -204,7 +245,7 @@ impl Vim {
         });
     }
 
-    pub fn helix_move_cursor(
+    pub fn helix_normal_motion(
         &mut self,
         motion: Motion,
         times: Option<usize>,
@@ -260,59 +301,8 @@ impl Vim {
                     found
                 })
             }
-            Motion::FindForward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(movement::right(map, point), goal);
-                        })
-                    });
-                });
-            }
-            Motion::FindBackward { .. } => {
-                self.update_editor(window, cx, |_, editor, window, cx| {
-                    let text_layout_details = editor.text_layout_details(window);
-                    editor.change_selections(Default::default(), window, cx, |s| {
-                        s.move_with(|map, selection| {
-                            let goal = selection.goal;
-                            let cursor = if selection.is_empty() || selection.reversed {
-                                selection.head()
-                            } else {
-                                movement::left(map, selection.head())
-                            };
-
-                            let (point, goal) = motion
-                                .move_point(
-                                    map,
-                                    cursor,
-                                    selection.goal,
-                                    times,
-                                    &text_layout_details,
-                                )
-                                .unwrap_or((cursor, goal));
-                            selection.set_tail(selection.head(), goal);
-                            selection.set_head(point, goal);
-                        })
-                    });
-                });
+            Motion::FindForward { .. } | Motion::FindBackward { .. } => {
+                return self.helix_move_and_select(times, window, cx, motion);
             }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }

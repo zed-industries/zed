@@ -1,9 +1,7 @@
 use editor::{
     Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
     display_map::{DisplayRow, DisplaySnapshot, FoldPoint, ToDisplayPoint},
-    movement::{
-        self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
-    },
+    movement::{self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary},
 };
 use gpui::{Action, Context, Window, actions, px};
 use language::{CharKind, Point, Selection, SelectionGoal};
@@ -961,6 +959,7 @@ impl Motion {
         goal: SelectionGoal,
         maybe_times: Option<usize>,
         text_layout_details: &TextLayoutDetails,
+        helix_mode: bool,
     ) -> Option<(DisplayPoint, SelectionGoal)> {
         let times = maybe_times.unwrap_or(1);
         use Motion::*;
@@ -983,7 +982,11 @@ impl Motion {
             Right => (right(map, point, times), SelectionGoal::None),
             WrappingRight => (wrapping_right(map, point, times), SelectionGoal::None),
             NextWordStart { ignore_punctuation } => (
-                next_word_start(map, point, *ignore_punctuation, times),
+                if helix_mode {
+                    next_word_start_helix(map, point, *ignore_punctuation, times)
+                } else {
+                    next_word_start(map, point, *ignore_punctuation, times)
+                },
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
@@ -1364,9 +1367,10 @@ impl Motion {
         let maybe_new_point = self.move_point(
             map,
             selection.head(),
-            selection.goal,
+            SelectionGoal::None,
             times,
             text_layout_details,
+            false,
         );
 
         let (new_head, goal) = match (maybe_new_point, forced_motion) {
@@ -1717,6 +1721,41 @@ pub(crate) fn next_word_start(
     point
 }
 
+pub fn next_word_start_helix(
+    map: &DisplaySnapshot,
+    mut point: DisplayPoint,
+    ignore_punctuation: bool,
+    times: usize,
+) -> DisplayPoint {
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(point.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+    for _ in 0..times {
+        let new_point = movement::right(map, point);
+        let new_point = movement::find_boundary_exclusive(
+            map,
+            new_point,
+            FindRange::MultiLine,
+            |left, right| {
+                let left_kind = classifier.kind_with(left, ignore_punctuation);
+                let right_kind = classifier.kind_with(right, ignore_punctuation);
+                let at_newline = (left == '\n') ^ (right == '\n');
+
+                let found =
+                    (left_kind != right_kind && right_kind != CharKind::Whitespace) || at_newline;
+
+                found
+            },
+        );
+        if point == new_point {
+            break;
+        }
+        point = new_point;
+    }
+    point
+}
+
 pub(crate) fn next_word_end(
     map: &DisplaySnapshot,
     mut point: DisplayPoint,
@@ -1780,17 +1819,13 @@ fn previous_word_start(
     for _ in 0..times {
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
-        let new_point = movement::find_preceding_boundary_display_point(
-            map,
-            point,
-            FindRange::MultiLine,
-            |left, right| {
+        let new_point =
+            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
                 (left_kind != right_kind && !right.is_whitespace()) || left == '\n'
-            },
-        );
+            });
         if point == new_point {
             break;
         }
@@ -1816,12 +1851,12 @@ fn previous_word_end(
             point.column += ch.len_utf8() as u32;
         }
     }
+
+    let mut point = point.to_display_point(map);
+
     for _ in 0..times {
-        let new_point = movement::find_preceding_boundary_point(
-            &map.buffer_snapshot,
-            point,
-            FindRange::MultiLine,
-            |left, right| {
+        let new_point =
+            movement::find_preceding_boundary(&map, point, FindRange::MultiLine, |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 match (left_kind, right_kind) {
@@ -1832,14 +1867,13 @@ fn previous_word_end(
                     (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
                     _ => false,
                 }
-            },
-        );
+            });
         if new_point == point {
             break;
         }
         point = new_point;
     }
-    movement::saturating_left(map, point.to_display_point(map))
+    movement::saturating_left(map, point)
 }
 
 fn next_subword_start(
@@ -1944,11 +1978,8 @@ fn previous_subword_start(
         let mut crossed_newline = false;
         // This works even though find_preceding_boundary is called for every character in the line containing
         // cursor because the newline is checked only once.
-        let new_point = movement::find_preceding_boundary_display_point(
-            map,
-            point,
-            FindRange::MultiLine,
-            |left, right| {
+        let new_point =
+            movement::find_preceding_boundary(map, point, FindRange::MultiLine, |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
                 let at_newline = right == '\n';
@@ -1964,8 +1995,7 @@ fn previous_subword_start(
                 crossed_newline |= at_newline;
 
                 found
-            },
-        );
+            });
         if point == new_point {
             break;
         }
@@ -1976,7 +2006,7 @@ fn previous_subword_start(
 
 fn previous_subword_end(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
+    mut point: DisplayPoint,
     ignore_punctuation: bool,
     times: usize,
 ) -> DisplayPoint {
@@ -1984,19 +2014,16 @@ fn previous_subword_end(
         .buffer_snapshot
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    let mut point = point.to_point(map);
+    // let mut point = point.to_point(map);
 
-    if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
-        if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
-            point.column += ch.len_utf8() as u32;
-        }
-    }
+    // if point.column < map.buffer_snapshot.line_len(MultiBufferRow(point.row)) {
+    //     if let Some(ch) = map.buffer_snapshot.chars_at(point).next() {
+    //         point.column += ch.len_utf8() as u32;
+    //     }
+    // }
     for _ in 0..times {
-        let new_point = movement::find_preceding_boundary_point(
-            &map.buffer_snapshot,
-            point,
-            FindRange::MultiLine,
-            |left, right| {
+        let new_point =
+            movement::find_preceding_boundary(&map, point, FindRange::MultiLine, |left, right| {
                 let left_kind = classifier.kind(left);
                 let right_kind = classifier.kind(right);
 
@@ -2013,14 +2040,13 @@ fn previous_subword_end(
                     (CharKind::Whitespace, CharKind::Whitespace) => left == '\n' && right == '\n',
                     _ => false,
                 }
-            },
-        );
+            });
         if new_point == point {
             break;
         }
         point = new_point;
     }
-    movement::saturating_left(map, point.to_display_point(map))
+    movement::saturating_left(map, point)
 }
 
 pub(crate) fn first_non_whitespace(
@@ -2617,7 +2643,7 @@ fn find_backward(
     let mut to = from;
 
     for _ in 0..times {
-        let new_to = find_preceding_boundary_display_point(map, to, mode, |_, right| {
+        let new_to = find_preceding_boundary(map, to, mode, |_, right| {
             is_character_match(target, right, smartcase)
         });
         if to == new_to {
@@ -2700,12 +2726,11 @@ fn sneak_backward(
 
     for _ in 0..times {
         found = false;
-        let new_to =
-            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
-                found = is_character_match(first_target, left, smartcase)
-                    && is_character_match(second_target, right, smartcase);
-                found
-            });
+        let new_to = find_preceding_boundary(map, to, FindRange::MultiLine, |left, right| {
+            found = is_character_match(first_target, left, smartcase)
+                && is_character_match(second_target, right, smartcase);
+            found
+        });
         if to == new_to {
             break;
         }
