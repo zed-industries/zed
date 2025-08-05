@@ -1023,7 +1023,7 @@ impl DebugDelegate {
             scenario.label.split_whitespace().find_map(|word| {
                 language_names
                     .iter()
-                    .find(|name| name.eq_ignore_ascii_case(word))
+                    .find(|name| name.as_ref().eq_ignore_ascii_case(word))
                     .map(|name| TaskSourceKind::Language {
                         name: name.to_owned().into(),
                     })
