@@ -82,6 +82,7 @@ lyon = { version = "1", default-features = false, features = ["extra"] }
 lyon_path = { version = "1" }
 md-5 = { version = "0.10" }
 memchr = { version = "2" }
+mime_guess = { version = "2" }
 miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
@@ -212,6 +213,7 @@ lyon = { version = "1", default-features = false, features = ["extra"] }
 lyon_path = { version = "1" }
 md-5 = { version = "0.10" }
 memchr = { version = "2" }
+mime_guess = { version = "2" }
 miniz_oxide = { version = "0.8", features = ["simd"] }
 nom = { version = "7" }
 num-bigint = { version = "0.4" }
@@ -290,7 +292,7 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
@@ -318,7 +320,7 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
@@ -347,7 +349,7 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
@@ -375,7 +377,7 @@ gimli = { version = "0.31", default-features = false, features = ["read", "std",
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFArray", "CFCGTypes", "CFData", "CFDate", "CFDictionary", "CFRunLoop", "CFString", "CFURL", "objc2", "std"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
@@ -414,7 +416,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -454,7 +457,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
@@ -492,7 +496,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -532,7 +537,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
@@ -617,7 +623,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
@@ -657,7 +664,8 @@ linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", d
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
-nix = { version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
