@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
+use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use futures::{StreamExt, io::BufReader};
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
@@ -28,7 +28,6 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::archive::{extract_seekable_zip, extract_zip};
 use util::merge_json_value_into;
 use util::{
     ResultExt,
@@ -127,7 +126,7 @@ impl RustLspAdapter {
             AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
             AssetKind::Gz => extract_gz(destination_path, url, response).await?,
             AssetKind::Zip => {
-                extract_zip(&destination_path, response).await?;
+                util::archive::extract_zip(&destination_path, response).await?;
             }
         };
         Ok(())
@@ -141,8 +140,13 @@ impl RustLspAdapter {
         match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
             AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
+            #[cfg(not(windows))]
             AssetKind::Zip => {
-                extract_seekable_zip(&destination_path, file_archive).await?;
+                util::archive::extract_seekable_zip(&destination_path, file_archive).await?;
+            }
+            #[cfg(windows)]
+            AssetKind::Zip => {
+                util::archive::extract_zip(&destination_path, file_archive).await?;
             }
         };
         Ok(())
@@ -282,7 +286,7 @@ impl LspAdapter for RustLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let GitHubLspBinaryVersion { name, url, digest } =
             &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let digest = digest
+        let expected_digest = digest
             .as_ref()
             .and_then(|digest| digest.strip_prefix("sha256:"));
         let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
@@ -290,56 +294,44 @@ impl LspAdapter for RustLspAdapter {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
-        let digest_path = destination_path.with_extension("digest");
+        let metadata_path = destination_path.with_extension("metadata");
 
         remove_matching(&container_dir, |entry| {
-            entry != destination_path && entry != digest_path
+            entry != destination_path && entry != metadata_path
         })
         .await;
-        let mut digest_file = async_fs::OpenOptions::new()
-            .read(true)
-            .open(&digest_path)
-            .await;
-        if let Some(expected_sha_256) = digest {
-            if let Ok(file) = &mut digest_file {
-                let mut asset_sha_256 = String::with_capacity(64);
-                file.read_to_string(&mut asset_sha_256)
-                    .await
-                    .with_context(|| {
-                        format!("validating server binary digest at {destination_path:?}")
-                    })?;
-                if asset_sha_256 != *expected_sha_256 {
-                    log::info!(
-                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_sha_256}, Got: {asset_sha_256}"
-                    );
-                    download_server_binary(
-                        delegate,
-                        url,
-                        digest,
-                        &digest_path,
-                        &destination_path,
-                        &server_path,
-                    )
-                    .await?;
+
+        let metadata = async_fs::read_to_string(&metadata_path)
+            .await
+            .ok()
+            .and_then(|json| serde_json::from_str::<GithubBinaryMetadata>(&json).ok());
+        if let Some(metadata) = metadata {
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    // Binary is up to date, skip downloading.
+                    return Ok(LanguageServerBinary {
+                        path: server_path,
+                        env: None,
+                        arguments: Default::default(),
+                    });
                 }
-                return Ok(LanguageServerBinary {
-                    path: server_path,
-                    env: None,
-                    arguments: Default::default(),
-                });
+
+                log::info!(
+                    "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                );
             }
         }
-        if digest_file.is_err() {
-            download_server_binary(
-                delegate,
-                url,
-                digest,
-                &digest_path,
-                &destination_path,
-                &server_path,
-            )
-            .await?;
-        }
+        download_server_binary(
+            delegate,
+            url,
+            expected_digest,
+            &metadata_path,
+            &destination_path,
+            &server_path,
+        )
+        .await?;
 
         Ok(LanguageServerBinary {
             path: server_path,
@@ -649,11 +641,17 @@ impl LspAdapter for RustLspAdapter {
     }
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug)]
+struct GithubBinaryMetadata {
+    metadata_version: u64,
+    digest: Option<String>,
+}
+
 async fn download_server_binary(
     delegate: &dyn LspAdapterDelegate,
     url: &str,
     digest: Option<&str>,
-    digest_path: &Path,
+    metadata_path: &Path,
     destination_path: &Path,
     server_path: &Path,
 ) -> Result<(), anyhow::Error> {
@@ -693,23 +691,24 @@ async fn download_server_binary(
                 .with_context(|| {
                     format!("extracting downloaded asset for {url} into {destination_path:?}",)
                 })?;
-            async_fs::File::create(&digest_path)
-                .await
-                .with_context(|| format!("creating digest file at {digest_path:?}",))?
-                .write_all(asset_sha_256.as_bytes())
-                .await
-                .with_context(|| format!("writing digest file at {digest_path:?}",))?;
         }
-        None => {
-            _ = async_fs::remove_file(digest_path).await;
-            RustLspAdapter::stream_response_archive(body, url, destination_path)
-                .await
-                .with_context(|| {
-                    format!("extracting response for asset {url} into {destination_path:?}",)
-                })?
-        }
+        None => RustLspAdapter::stream_response_archive(body, url, destination_path)
+            .await
+            .with_context(|| {
+                format!("extracting response for asset {url} into {destination_path:?}",)
+            })?,
     }
     make_file_executable(server_path).await?;
+    let metadata = serde_json::to_string(&GithubBinaryMetadata {
+        metadata_version: 1,
+        digest: digest.map(|d| d.to_owned()),
+    })?;
+    async_fs::File::create(metadata_path)
+        .await
+        .with_context(|| format!("creating metadata file at {metadata_path:?}",))?
+        .write_all(metadata.as_bytes())
+        .await
+        .with_context(|| format!("writing metadata file at {metadata_path:?}",))?;
     Ok(())
 }
 
