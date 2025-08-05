@@ -187,14 +187,6 @@ fn render_theme_section(_window: &mut Window, cx: &mut App) -> impl IntoElement 
     }
 }
 
-fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
-    let fs = <dyn Fs>::global(cx);
-
-    update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
-        *setting = Some(keymap_base);
-    });
-}
-
 fn render_telemetry_section(cx: &App) -> impl IntoElement {
     let fs = <dyn Fs>::global(cx);
 
@@ -254,7 +246,7 @@ fn render_telemetry_section(cx: &App) -> impl IntoElement {
         ))
 }
 
-pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
+fn render_base_keymap_section(cx: &mut App) -> impl IntoElement {
     let base_keymap = match BaseKeymap::get_global(cx) {
         BaseKeymap::VSCode => Some(0),
         BaseKeymap::JetBrains => Some(1),
@@ -265,67 +257,83 @@ pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl Into
         BaseKeymap::TextMate | BaseKeymap::None => None,
     };
 
+    return v_flex().gap_2().child(Label::new("Base Keymap")).child(
+        ToggleButtonGroup::two_rows(
+            "base_keymap_selection",
+            [
+                ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::VSCode, cx);
+                }),
+                ToggleButtonWithIcon::new("Jetbrains", IconName::EditorJetBrains, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::JetBrains, cx);
+                }),
+                ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::SublimeText, cx);
+                }),
+            ],
+            [
+                ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::Atom, cx);
+                }),
+                ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::Emacs, cx);
+                }),
+                ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::Cursor, cx);
+                }),
+            ],
+        )
+        .when_some(base_keymap, |this, base_keymap| {
+            this.selected_index(base_keymap)
+        })
+        .button_width(rems_from_px(216.))
+        .size(ui::ToggleButtonGroupSize::Medium)
+        .style(ui::ToggleButtonGroupStyle::Outlined),
+    );
+
+    fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
+        let fs = <dyn Fs>::global(cx);
+
+        update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
+            *setting = Some(keymap_base);
+        });
+    }
+}
+
+fn render_vim_mode_switch(cx: &mut App) -> impl IntoElement {
+    let toggle_state = if VimModeSetting::get_global(cx).0 {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
+    SwitchField::new(
+        "onboarding-vim-mode",
+        "Vim Mode",
+        Some(
+            "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back."
+                .into(),
+        ),
+        toggle_state,
+        {
+            let fs = <dyn Fs>::global(cx);
+            move |&selection, _, cx| {
+                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
+                    *setting = match selection {
+                        ToggleState::Selected => Some(true),
+                        ToggleState::Unselected => Some(false),
+                        ToggleState::Indeterminate => None,
+                    }
+                });
+            }
+        },
+    )
+}
+
+pub(crate) fn render_basics_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
     v_flex()
         .gap_6()
-         .child(render_theme_section(window, cx))
-        .child(
-            v_flex().gap_2().child(Label::new("Base Keymap")).child(
-                ToggleButtonGroup::two_rows(
-                    "multiple_row_test",
-                    [
-                        ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::VSCode, cx);
-                        }),
-                        ToggleButtonWithIcon::new("Jetbrains", IconName::EditorJetBrains, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::JetBrains, cx);
-                        }),
-                        ToggleButtonWithIcon::new("Sublime Text", IconName::EditorSublime, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::SublimeText, cx);
-                        }),
-                    ],
-                    [
-                        ToggleButtonWithIcon::new("Atom", IconName::EditorAtom, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::Atom, cx);
-                        }),
-                        ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::Emacs, cx);
-                        }),
-                        ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
-                            write_keymap_base(BaseKeymap::Cursor, cx);
-                        }),
-                    ],
-                )
-                .when_some(base_keymap, |this, base_keymap| this.selected_index(base_keymap))
-                .button_width(rems_from_px(216.))
-                .size(ui::ToggleButtonGroupSize::Medium)
-                .style(ui::ToggleButtonGroupStyle::Outlined)
-            ),
-        )
-        .child(SwitchField::new(
-            "onboarding-vim-mode",
-            "Vim Mode",
-            Some("Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back.".into()),
-            if VimModeSetting::get_global(cx).0 {
-                ui::ToggleState::Selected
-            } else {
-                ui::ToggleState::Unselected
-            },
-            {
-                let fs = <dyn Fs>::global(cx);
-                move |selection, _, cx| {
-                    let enabled = match selection {
-                        ToggleState::Selected => true,
-                        ToggleState::Unselected => false,
-                        ToggleState::Indeterminate => { return; },
-                    };
-
-                    update_settings_file::<VimModeSetting>(
-                        fs.clone(),
-                        cx,
-                        move |setting, _| *setting = Some(enabled),
-                    );
-                }
-            },
-        ))
+        .child(render_theme_section(window, cx))
+        .child(render_base_keymap_section(cx))
+        .child(render_vim_mode_switch(cx))
         .child(render_telemetry_section(cx))
 }

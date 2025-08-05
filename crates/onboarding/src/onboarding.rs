@@ -470,9 +470,13 @@ impl Onboarding {
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => {
-                crate::ai_setup_page::render_ai_setup_page(&self, window, cx).into_any_element()
-            }
+            SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
+                self.workspace.clone(),
+                self.user_store.clone(),
+                window,
+                cx,
+            )
+            .into_any_element(),
         }
     }
 }

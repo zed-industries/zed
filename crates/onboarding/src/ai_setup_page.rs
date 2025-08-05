@@ -1,9 +1,11 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
+use client::UserStore;
 use fs::Fs;
 use gpui::{
-    Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Window, prelude::*,
+    Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
+    Window, prelude::*,
 };
 use itertools;
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
@@ -14,7 +16,7 @@ use ui::{
     prelude::*, tooltip_container,
 };
 use util::ResultExt;
-use workspace::ModalView;
+use workspace::{ModalView, Workspace};
 use zed_actions::agent::OpenSettings;
 
 use crate::Onboarding;
@@ -22,7 +24,7 @@ use crate::Onboarding;
 const FEATURED_PROVIDERS: [&'static str; 4] = ["anthropic", "google", "openai", "ollama"];
 
 fn render_llm_provider_section(
-    onboarding: &Onboarding,
+    workspace: WeakEntity<Workspace>,
     disabled: bool,
     window: &mut Window,
     cx: &mut App,
@@ -37,7 +39,7 @@ fn render_llm_provider_section(
                         .color(Color::Muted),
                 ),
         )
-        .child(render_llm_provider_card(onboarding, disabled, window, cx))
+        .child(render_llm_provider_card(workspace, disabled, window, cx))
 }
 
 fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
@@ -114,7 +116,7 @@ fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
 }
 
 fn render_llm_provider_card(
-    onboarding: &Onboarding,
+    workspace: WeakEntity<Workspace>,
     disabled: bool,
     _: &mut Window,
     cx: &mut App,
@@ -188,7 +190,7 @@ fn render_llm_provider_card(
                                 ),
                         )
                         .on_click({
-                            let workspace = onboarding.workspace.clone();
+                            let workspace = workspace.clone();
                             move |_, window, cx| {
                                 workspace
                                     .update(cx, |workspace, cx| {
@@ -224,7 +226,8 @@ fn render_llm_provider_card(
 }
 
 pub(crate) fn render_ai_setup_page(
-    onboarding: &Onboarding,
+    workspace: WeakEntity<Workspace>,
+    user_store: Entity<UserStore>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -277,10 +280,10 @@ pub(crate) fn render_ai_setup_page(
                 .child(AiUpsellCard {
                     sign_in_status: SignInStatus::SignedIn,
                     sign_in: Arc::new(|_, _| {}),
-                    user_plan: onboarding.user_store.read(cx).plan(),
+                    user_plan: user_store.read(cx).plan(),
                 })
                 .child(render_llm_provider_section(
-                    onboarding,
+                    workspace,
                     is_ai_disabled,
                     window,
                     cx,
