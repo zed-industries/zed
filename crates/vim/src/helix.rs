@@ -15,6 +15,8 @@ actions!(
     [
         /// Switches to normal mode after the cursor (Helix-style).
         HelixNormalAfter,
+        /// Yanks the current selection or character if no selection.
+        HelixYank,
         /// Inserts at the beginning of the selection.
         HelixInsert,
         /// Appends at the end of the selection.
@@ -26,6 +28,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_insert);
     Vim::action(editor, cx, Vim::helix_append);
+    Vim::action(editor, cx, Vim::helix_yank);
 }
 
 impl Vim {
@@ -308,6 +311,47 @@ impl Vim {
             }
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
+    }
+
+    pub fn helix_yank(&mut self, _: &HelixYank, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |vim, editor, window, cx| {
+            let has_selection = editor
+                .selections
+                .all_adjusted(cx)
+                .iter()
+                .any(|selection| !selection.is_empty());
+
+            if !has_selection {
+                // If no selection, expand to current character (like 'v' does)
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|map, selection| {
+                        let head = selection.head();
+                        let new_head = movement::saturating_right(map, head);
+                        selection.set_tail(head, SelectionGoal::None);
+                        selection.set_head(new_head, SelectionGoal::None);
+                    });
+                });
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.move_with(|_map, selection| {
+                        selection.collapse_to(selection.start, SelectionGoal::None);
+                    });
+                });
+            } else {
+                // Yank the selection(s)
+                vim.yank_selections_content(
+                    editor,
+                    crate::motion::MotionKind::Exclusive,
+                    window,
+                    cx,
+                );
+            }
+        });
     }
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
@@ -702,5 +746,30 @@ mod test {
         cx.simulate_keystrokes("r x");
 
         cx.assert_state("«xxˇ»", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_yank(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Test yanking current character with no selection
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+
+        // Test cursor remains at the same position after yanking single character
+        cx.assert_state("hello ˇworld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
+
+        // Move cursor and yank another character
+        cx.simulate_keystrokes("l");
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("o");
+
+        // Test yanking with existing selection
+        cx.set_state("hello «worlˇ»d", Mode::HelixNormal);
+        cx.simulate_keystrokes("y");
+        cx.shared_clipboard().assert_eq("worl");
+        cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
     }
 }
