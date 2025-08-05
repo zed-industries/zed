@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use client::{Client, zed_urls};
 use cloud_llm_client::Plan;
-use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
+use gpui::{
+    Animation, AnimationExt, AnyElement, App, IntoElement, RenderOnce, Transformation, Window,
+    percentage,
+};
 use ui::{Divider, Vector, VectorName, prelude::*};
 
 use crate::{SignInStatus, plan_definitions::PlanDefinitions};
@@ -116,6 +119,39 @@ impl RenderOnce for AiUpsellCard {
 
         let footer_container = v_flex().items_center().gap_1();
 
+        let certified_user_stamp = div()
+            .absolute()
+            .top_2()
+            .right_2()
+            .size(rems_from_px(72.))
+            .child(
+                Vector::new(
+                    VectorName::CertifiedUserStamp,
+                    rems_from_px(72.),
+                    rems_from_px(72.),
+                )
+                .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.3)))
+                .with_animation(
+                    "loading_stamp",
+                    Animation::new(Duration::from_secs(10)).repeat(),
+                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
+                ),
+            );
+
+        let pro_trial_stamp = div()
+            .absolute()
+            .top_2()
+            .right_2()
+            .size(rems_from_px(72.))
+            .child(
+                Vector::new(
+                    VectorName::ProTrialStamp,
+                    rems_from_px(72.),
+                    rems_from_px(72.),
+                )
+                .color(Color::Custom(cx.theme().colors().text.alpha(0.2))),
+            );
+
         match self.sign_in_status {
             SignInStatus::SignedIn => match self.user_plan {
                 None | Some(Plan::ZedFree) => card
@@ -148,30 +184,23 @@ impl RenderOnce for AiUpsellCard {
                             ),
                     ),
                 Some(Plan::ZedProTrial) => card
-                    .child(Label::new("Welcome to the Zed Pro Trial").size(LabelSize::Large))
+                    .child(pro_trial_stamp)
+                    .child(Label::new("You're in the Zed Pro Trial").size(LabelSize::Large))
                     .child(
-                        div()
-                            .max_w_3_4()
-                            .mb_2()
-                            .child(Label::new(description).color(Color::Muted)),
+                        Label::new("Here's what you get for the next 14 days:")
+                            .color(Color::Muted)
+                            .mb_2(),
                     )
-                    .child(plans_section)
-                    .child(
-                        footer_container.child(
-                            Button::new("upgrade_to_pro", "Upgrade to Pro")
-                                .full_width()
-                                .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                .on_click(move |_, _window, cx| {
-                                    telemetry::event!("Upgrade to Pro Clicked", state = "trial");
-                                    cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
-                                }),
-                        ),
-                    ),
+                    .child(plan_definitions.pro_trial(false)),
                 Some(Plan::ZedPro) => card
-                    .child(Label::new("Welcome to Zed Pro").size(LabelSize::Large))
-                    .child(footer_container.child(
-                        Label::new("You're all set with Zed Pro!").size(LabelSize::Default),
-                    )),
+                    .child(certified_user_stamp)
+                    .child(Label::new("You're in the Zed Pro plan").size(LabelSize::Large))
+                    .child(
+                        Label::new("Here's what you get:")
+                            .color(Color::Muted)
+                            .mb_2(),
+                    )
+                    .child(plan_definitions.pro_plan(false)),
             },
             // Signed Out State
             _ => card
