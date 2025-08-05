@@ -380,6 +380,7 @@ impl AcpConnection {
 
             let stdin = child.stdin.take().unwrap();
             let stdout = child.stdout.take().unwrap();
+            log::trace!("Spawned (pid: {})", child.id());
 
             let foreground_executor = cx.foreground_executor().clone();
 
