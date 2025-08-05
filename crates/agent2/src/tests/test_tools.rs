@@ -1,6 +1,7 @@
 use super::*;
 use anyhow::Result;
 use gpui::{App, SharedString, Task};
+use std::future;
 
 /// A tool that echoes its input
 #[derive(JsonSchema, Serialize, Deserialize)]
@@ -46,6 +47,26 @@ impl AgentTool for DelayTool {
         cx.foreground_executor().spawn(async move {
             smol::Timer::after(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
+        })
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct InfiniteToolInput {}
+
+pub struct InfiniteTool;
+
+impl AgentTool for InfiniteTool {
+    type Input = InfiniteToolInput;
+
+    fn name(&self) -> SharedString {
+        "infinite".into()
+    }
+
+    fn run(self: Arc<Self>, _input: Self::Input, cx: &mut App) -> Task<Result<String>> {
+        cx.foreground_executor().spawn(async move {
+            future::pending::<()>().await;
+            unreachable!()
         })
     }
 }

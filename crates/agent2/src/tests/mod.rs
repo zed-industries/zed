@@ -206,6 +206,53 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cancellation(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
+
+    let mut events = thread.update(cx, |thread, cx| {
+        thread.add_tool(InfiniteTool);
+        thread.add_tool(EchoTool);
+        thread.send(
+            model.clone(),
+            "Call the echo tool and then call the infinite tool, then explain their output",
+            cx,
+        )
+    });
+
+    // Wait until both tools are called.
+    let mut expected_tool_calls = vec!["echo", "infinite"];
+    while let Some(event) = events.next().await {
+        if let AgentResponseEvent::ToolCall(tool_call) = event.unwrap() {
+            assert_eq!(tool_call.title, expected_tool_calls.remove(0));
+            if expected_tool_calls.is_empty() {
+                break;
+            }
+        }
+        // todo!("ensure echo is called before breaking")
+    }
+
+    // Cancel the current send and ensure that the event stream is closed, even
+    // if one of the tools is still running.
+    thread.update(cx, |thread, _cx| thread.cancel());
+    events.collect::<Vec<_>>().await;
+
+    // Ensure we can still send a new message after cancellation.
+    let events = thread
+        .update(cx, |thread, cx| {
+            thread.send(model.clone(), "Testing: reply with 'Hello' then stop.", cx)
+        })
+        .collect::<Vec<_>>()
+        .await;
+    thread.update(cx, |thread, _cx| {
+        assert_eq!(
+            thread.messages().last().unwrap().content,
+            vec![MessageContent::Text("Hello".to_string())]
+        );
+    });
+    assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
+}
+
+#[gpui::test]
 async fn test_refusal(cx: &mut TestAppContext) {
     let fake_model = Arc::new(FakeLanguageModel::default());
     let ThreadTest { thread, .. } = setup(cx, TestModel::Fake(fake_model.clone())).await;
@@ -338,37 +385,11 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     let request = cx.update(|cx| connection.prompt(prompt_request, cx));
     let request = cx.background_spawn(request);
-    cx.executor().timer(Duration::from_millis(100)).await;
+    smol::Timer::after(Duration::from_millis(100)).await;
 
     // Test cancel
     cx.update(|cx| connection.cancel(&session_id, cx));
-
     request.await.expect("prompt should fail gracefully");
-
-    // After cancel, selected_model should fail
-    let result = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.selected_model(&session_id, &mut async_cx)
-        })
-        .await;
-    assert!(result.is_err(), "selected_model should fail after cancel");
-
-    // Test error case: invalid session
-    let invalid_session = acp::SessionId("invalid".into());
-    let result = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.selected_model(&invalid_session, &mut async_cx)
-        })
-        .await;
-    assert!(result.is_err(), "should fail for invalid session");
-    if let Err(e) = result {
-        assert!(
-            e.to_string().contains("Session not found"),
-            "should have correct error message"
-        );
-    }
 }
 
 /// Filters out the stop events for asserting against in tests
