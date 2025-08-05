@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use gpui::Transformation;
 use gpui::{App, IntoElement, Rems, RenderOnce, Size, Styled, Window, svg};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -12,11 +13,13 @@ use crate::prelude::*;
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
+    AiGrid,
+    CertifiedUserStamp,
+    DebuggerGrid,
+    Grid,
+    ProTrialStamp,
     ZedLogo,
     ZedXCopilot,
-    Grid,
-    AiGrid,
-    DebuggerGrid,
 }
 
 impl VectorName {
@@ -37,6 +40,7 @@ pub struct Vector {
     path: Arc<str>,
     color: Color,
     size: Size<Rems>,
+    transformation: Transformation,
 }
 
 impl Vector {
@@ -46,6 +50,7 @@ impl Vector {
             path: vector.path(),
             color: Color::default(),
             size: Size { width, height },
+            transformation: Transformation::default(),
         }
     }
 
@@ -66,6 +71,11 @@ impl Vector {
         self.size = size;
         self
     }
+
+    pub fn transform(mut self, transformation: Transformation) -> Self {
+        self.transformation = transformation;
+        self
+    }
 }
 
 impl RenderOnce for Vector {
@@ -81,6 +91,7 @@ impl RenderOnce for Vector {
             .h(height)
             .path(self.path)
             .text_color(self.color.color(cx))
+            .with_transformation(self.transformation)
     }
 }
 
