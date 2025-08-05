@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
 };
 use streaming_iterator::StreamingIterator;
-use sum_tree::{Bias, SeekTarget, SumTree};
+use sum_tree::{Bias, Dimensions, SeekTarget, SumTree};
 use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point, Rope, ToOffset, ToPoint};
 use tree_sitter::{Node, Query, QueryCapture, QueryCaptures, QueryCursor, QueryMatches, Tree};
 
@@ -285,7 +285,7 @@ impl SyntaxSnapshot {
 
     pub fn interpolate(&mut self, text: &BufferSnapshot) {
         let edits = text
-            .anchored_edits_since::<(usize, Point)>(&self.interpolated_version)
+            .anchored_edits_since::<Dimensions<usize, Point>>(&self.interpolated_version)
             .collect::<Vec<_>>();
         self.interpolated_version = text.version().clone();
 
@@ -333,7 +333,8 @@ impl SyntaxSnapshot {
             };
 
             let Some(layer) = cursor.item() else { break };
-            let (start_byte, start_point) = layer.range.start.summary::<(usize, Point)>(text);
+            let Dimensions(start_byte, start_point, _) =
+                layer.range.start.summary::<Dimensions<usize, Point>>(text);
 
             // Ignore edits that end before the start of this layer, and don't consider them
             // for any subsequent layers at this same depth.
@@ -562,8 +563,8 @@ impl SyntaxSnapshot {
             }
 
             let Some(step) = step else { break };
-            let (step_start_byte, step_start_point) =
-                step.range.start.summary::<(usize, Point)>(text);
+            let Dimensions(step_start_byte, step_start_point, _) =
+                step.range.start.summary::<Dimensions<usize, Point>>(text);
             let step_end_byte = step.range.end.to_offset(text);
 
             let mut old_layer = cursor.item();
