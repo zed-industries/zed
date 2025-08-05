@@ -63,7 +63,7 @@ impl AcpConnection {
 
         let io_task = cx.background_spawn(async move {
             io_task.await?;
-            log::trace!("Stopped (pid: {})", child.id());
+            drop(child);
             Ok(())
         });
 
