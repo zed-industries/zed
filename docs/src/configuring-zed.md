@@ -3174,8 +3174,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ## Vim
 
-- Description: Whether or not to enable vim mode (work in progress).
+- Description: Whether or not to enable vim mode. See the [Vim documentation](./vim.md) for more details on configuration.
 - Setting: `vim_mode`
+- Default: `false`
+
+## Helix Mode
+
+- Description: Whether or not to enable Helix mode. Enabling `helix_mode` also enables `vim_mode`. See the [Helix documentation](./helix.md) for more details.
+- Setting: `helix_mode`
 - Default: `false`
 
 ## Project Panel
