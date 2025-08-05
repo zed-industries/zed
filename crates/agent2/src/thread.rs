@@ -167,8 +167,10 @@ impl Thread {
             "System messages count: {}",
             if system_message.is_some() { 1 } else { 0 }
         );
+        // todo!("shouldn't we prepend this instead of appending it?")
         self.messages.extend(system_message);
 
+        let user_message_ix = self.messages.len();
         self.messages.push(AgentMessage {
             role: Role::User,
             content: vec![content],
@@ -179,7 +181,7 @@ impl Thread {
             let turn_result = async {
                 // Perform one request, then keep looping if the model makes tool calls.
                 let mut completion_intent = CompletionIntent::UserPrompt;
-                loop {
+                'outer: loop {
                     log::debug!(
                         "Building completion request with intent: {:?}",
                         completion_intent
@@ -200,6 +202,18 @@ impl Thread {
                     let mut tool_uses = Vec::new();
                     while let Some(event) = events.next().await {
                         match event {
+                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                                events_tx
+                                    .unbounded_send(Ok(AgentResponseEvent::Stop(reason)))
+                                    .ok();
+
+                                if reason == StopReason::Refusal {
+                                    thread.update(cx, |thread, _cx| {
+                                        thread.messages.truncate(user_message_ix);
+                                    })?;
+                                    break 'outer;
+                                }
+                            }
                             Ok(event) => {
                                 log::trace!("Received completion event: {:?}", event);
                                 thread
@@ -292,7 +306,6 @@ impl Thread {
 
         match event {
             StartMessage { .. } => {
-                // todo!(should this be supported in ACP?)
                 self.messages.push(AgentMessage {
                     role: Role::Assistant,
                     content: Vec::new(),
@@ -321,24 +334,10 @@ impl Thread {
                 )))
             }
             UsageUpdate(_) | StatusUpdate(_) => {}
-            Stop(stop_reason) => self.handle_stop_event(stop_reason, events_tx),
+            Stop(_) => unreachable!(),
         }
 
         None
-    }
-
-    fn handle_stop_event(
-        &mut self,
-        stop_reason: StopReason,
-        events_tx: &mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-    ) {
-        events_tx
-            .unbounded_send(Ok(AgentResponseEvent::Stop(stop_reason)))
-            .ok();
-        match stop_reason {
-            StopReason::EndTurn | StopReason::MaxTokens | StopReason::ToolUse => {}
-            StopReason::Refusal => todo!(),
-        }
     }
 
     fn handle_text_event(
@@ -658,6 +657,14 @@ impl Thread {
             })
             .collect();
         messages
+    }
+
+    pub fn to_markdown(&self) -> String {
+        let mut markdown = String::new();
+        for message in &self.messages {
+            markdown.push_str(&message.to_markdown());
+        }
+        markdown
     }
 }
 

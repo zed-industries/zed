@@ -3,10 +3,12 @@ use crate::templates::Templates;
 use acp_thread::AgentConnection as _;
 use agent_client_protocol as acp;
 use client::{Client, UserStore};
-use gpui::{AppContext, Entity, TestAppContext};
+use gpui::{AppContext, Entity, Task, TestAppContext};
 use indoc::indoc;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelRegistry, MessageContent, StopReason,
+    fake_provider::FakeLanguageModel, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, MessageContent,
+    StopReason,
 };
 use project::Project;
 use reqwest_client::ReqwestClient;
@@ -18,12 +20,9 @@ use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
 mod test_tools;
 use test_tools::*;
 
-const SONNET_4: &str = "claude-sonnet-4-latest";
-const SONNET_4_THINKING: &str = "claude-sonnet-4-thinking-latest";
-
 #[gpui::test]
 async fn test_echo(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
     let events = thread
         .update(cx, |thread, cx| {
@@ -42,7 +41,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_thinking(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4_THINKING).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
 
     let events = thread
         .update(cx, |thread, cx| {
@@ -74,7 +73,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
     // Test a tool call that's likely to complete *before* streaming stops.
     let events = thread
@@ -129,7 +128,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
     // Test a tool call that's likely to complete *before* streaming stops.
     let mut events = thread.update(cx, |thread, cx| {
@@ -176,7 +175,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
-    let ThreadTest { model, thread, .. } = setup(cx, SONNET_4).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
     // Test concurrent tool calls with different delay times
     let events = thread
@@ -222,6 +221,49 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
             .collect::<String>();
 
         assert!(text.contains("Ding"));
+    });
+}
+
+#[gpui::test]
+async fn test_refusal(cx: &mut TestAppContext) {
+    let fake_model = Arc::new(FakeLanguageModel::default());
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake(fake_model.clone())).await;
+
+    let events = thread.update(cx, |thread, cx| {
+        thread.send(fake_model.clone(), "Hello", cx)
+    });
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## user
+                Hello
+            "}
+        );
+    });
+
+    fake_model.send_last_completion_stream_text_chunk("Hey!");
+    cx.run_until_parked();
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(
+            thread.to_markdown(),
+            indoc! {"
+                ## user
+                Hello
+                ## assistant
+                Hey!
+            "}
+        );
+    });
+
+    // If the model refuses to continue, the thread should remove all the messages after the last user message.
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::Refusal));
+    let events = events.collect::<Vec<_>>().await;
+    assert_eq!(stop_events(events), vec![StopReason::Refusal]);
+    thread.read_with(cx, |thread, _| {
+        assert_eq!(thread.to_markdown(), "");
     });
 }
 
@@ -366,7 +408,23 @@ struct ThreadTest {
     thread: Entity<Thread>,
 }
 
-async fn setup(cx: &mut TestAppContext, model_name: &'static str) -> ThreadTest {
+enum TestModel {
+    Sonnet4,
+    Sonnet4Thinking,
+    Fake(Arc<FakeLanguageModel>),
+}
+
+impl TestModel {
+    fn id(&self) -> LanguageModelId {
+        match self {
+            TestModel::Sonnet4 => LanguageModelId("claude-sonnet-4-latest".into()),
+            TestModel::Sonnet4Thinking => LanguageModelId("claude-sonnet-4-thinking-latest".into()),
+            TestModel::Fake(fake_model) => fake_model.id(),
+        }
+    }
+}
+
+async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.executor().allow_parking();
     cx.update(settings::init);
     let templates = Templates::new();
@@ -383,19 +441,24 @@ async fn setup(cx: &mut TestAppContext, model_name: &'static str) -> ThreadTest 
             language_model::init(client.clone(), cx);
             language_models::init(user_store.clone(), client.clone(), cx);
 
-            let models = LanguageModelRegistry::read_global(cx);
-            let model = models
-                .available_models(cx)
-                .find(|model| model.id().0 == model_name)
-                .unwrap();
+            if let TestModel::Fake(model) = model {
+                Task::ready(model as Arc<_>)
+            } else {
+                let model_id = model.id();
+                let models = LanguageModelRegistry::read_global(cx);
+                let model = models
+                    .available_models(cx)
+                    .find(|model| model.id() == model_id)
+                    .unwrap();
 
-            let provider = models.provider(&model.provider_id()).unwrap();
-            let authenticated = provider.authenticate(cx);
+                let provider = models.provider(&model.provider_id()).unwrap();
+                let authenticated = provider.authenticate(cx);
 
-            cx.spawn(async move |_cx| {
-                authenticated.await.unwrap();
-                model
-            })
+                cx.spawn(async move |_cx| {
+                    authenticated.await.unwrap();
+                    model
+                })
+            }
         })
         .await;
 
