@@ -2945,7 +2945,7 @@ impl Pane {
                                 this.handle_external_paths_drop(paths, window, cx)
                             }))
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.up.click_count == 2 {
+                                if event.click_count() == 2 {
                                     window.dispatch_action(
                                         this.double_click_dispatch_action.boxed_clone(),
                                         cx,
@@ -3640,7 +3640,7 @@ impl Render for Pane {
                                 .justify_center()
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        if event.up.click_count == 2 {
+                                        if event.click_count() == 2 {
                                             window.dispatch_action(
                                                 this.double_click_dispatch_action.boxed_clone(),
                                                 cx,

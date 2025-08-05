@@ -43,11 +43,11 @@ use gpui::{
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -949,8 +949,12 @@ impl EditorElement {
 
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &event.modifiers(), cx);
 
-        if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(event.up.position);
+        if let Some(mouse_position) = event.mouse_position()
+            && !pending_nonempty_selections
+            && hovered_link_modifier
+            && text_hitbox.is_hovered(window)
+        {
+            let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
             editor.selection_drag_state = SelectionDragState::None;
 
@@ -3735,7 +3739,7 @@ impl EditorElement {
                                 move |editor, e: &ClickEvent, window, cx| {
                                     editor.open_excerpts_common(
                                         Some(jump_data.clone()),
-                                        e.down.modifiers.secondary(),
+                                        e.modifiers().secondary(),
                                         window,
                                         cx,
                                     );
@@ -6882,10 +6886,10 @@ impl EditorElement {
                 // Fire click handlers during the bubble phase.
                 DispatchPhase::Bubble => editor.update(cx, |editor, cx| {
                     if let Some(mouse_down) = captured_mouse_down.take() {
-                        let event = ClickEvent {
+                        let event = ClickEvent::Mouse(MouseClickEvent {
                             down: mouse_down,
                             up: event.clone(),
-                        };
+                        });
                         Self::click(editor, &event, &position_map, window, cx);
                     }
                 }),
