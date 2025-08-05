@@ -258,9 +258,9 @@ actions!(
         Rename,
         /// Opens the selected file in the editor.
         Open,
-        /// Opens the selected file in a right editor pane.
+        /// Opens the selected file in a right editor.
         OpenSplitRight,
-        /// Opens the selected file in an up editor pane.
+        /// Opens the selected file in an up editor.
         OpenSplitUp,
         /// Opens the selected file in a permanent tab.
         OpenPermanent,
