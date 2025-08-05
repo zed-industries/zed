@@ -236,7 +236,7 @@ impl RenderOnce for AiUpsellCard {
 
 impl Component for AiUpsellCard {
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
     }
 
     fn name() -> &'static str {

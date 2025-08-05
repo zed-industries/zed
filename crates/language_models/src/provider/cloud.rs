@@ -1267,8 +1267,16 @@ impl Render for ConfigurationView {
 }
 
 impl Component for ZedAiConfiguration {
+    fn name() -> &'static str {
+        "AI Configuration Content"
+    }
+
+    fn sort_name() -> &'static str {
+        "AI Configuration Content"
+    }
+
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
