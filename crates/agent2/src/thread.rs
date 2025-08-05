@@ -13,8 +13,8 @@ use log;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
-use std::{collections::BTreeMap, sync::Arc};
-use util::ResultExt;
+use std::{collections::BTreeMap, fmt::Write, sync::Arc};
+use util::{markdown::MarkdownCodeBlock, ResultExt};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {
@@ -41,11 +41,45 @@ impl AgentMessage {
                 MessageContent::Image(_) => {
                     markdown.push_str("<image />\n");
                 }
-                MessageContent::ToolUse(_) => {
-                    todo!()
+                MessageContent::ToolUse(tool_use) => {
+                    markdown.push_str(&format!(
+                        "**Tool Use**: {} (ID: {})\n",
+                        tool_use.name, tool_use.id
+                    ));
+                    markdown.push_str(&format!(
+                        "{}\n",
+                        MarkdownCodeBlock {
+                            tag: "json",
+                            text: &format!("{:#}", tool_use.input)
+                        }
+                    ));
                 }
-                MessageContent::ToolResult(_) => {
-                    todo!()
+                MessageContent::ToolResult(tool_result) => {
+                    markdown.push_str(&format!(
+                        "**Tool Result**: {} (ID: {})\n\n",
+                        tool_result.tool_name, tool_result.tool_use_id
+                    ));
+                    if tool_result.is_error {
+                        markdown.push_str("**ERROR:**\n");
+                    }
+
+                    match &tool_result.content {
+                        LanguageModelToolResultContent::Text(text) => {
+                            writeln!(markdown, "{text}\n").ok();
+                        }
+                        LanguageModelToolResultContent::Image(_) => {
+                            writeln!(markdown, "<image />\n").ok();
+                        }
+                    }
+
+                    if let Some(output) = tool_result.output.as_ref() {
+                        writeln!(
+                            markdown,
+                            "**Debug Output**:\n\n```json\n{}\n```\n",
+                            serde_json::to_string_pretty(output).unwrap()
+                        )
+                        .unwrap();
+                    }
                 }
             }
         }
