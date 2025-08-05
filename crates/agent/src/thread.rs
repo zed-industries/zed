@@ -4047,8 +4047,8 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Brief");
-        fake_model.stream_last_completion_response(" Introduction");
+        fake_model.send_last_completion_stream_text_chunk("Brief");
+        fake_model.send_last_completion_stream_text_chunk(" Introduction");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4141,7 +4141,7 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("A successful summary");
+        fake_model.send_last_completion_stream_text_chunk("A successful summary");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4774,7 +4774,7 @@ fn main() {{
             !pending.is_empty(),
             "Should have a pending completion after retry"
         );
-        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.send_completion_stream_text_chunk(&pending[0], "Success!");
         fake_model.end_completion_stream(&pending[0]);
         cx.run_until_parked();
 
@@ -4942,7 +4942,7 @@ fn main() {{
 
         // Check for pending completions and complete them
         if let Some(pending) = inner_fake.pending_completions().first() {
-            inner_fake.stream_completion_response(pending, "Success!");
+            inner_fake.send_completion_stream_text_chunk(pending, "Success!");
             inner_fake.end_completion_stream(pending);
         }
         cx.run_until_parked();
@@ -5427,7 +5427,7 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response");
+        fake_model.send_last_completion_stream_text_chunk("Assistant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }
