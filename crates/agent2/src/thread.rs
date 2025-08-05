@@ -4,9 +4,9 @@ use anyhow::{anyhow, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{channel::mpsc, stream::FuturesUnordered};
-use gpui::{App, Context, SharedString, Task};
+use gpui::{App, Context, ImageFormat, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
@@ -280,7 +280,16 @@ impl Thread {
                         };
                         let content = match &tool_result.content {
                             LanguageModelToolResultContent::Text(text) => text.to_string().into(),
-                            LanguageModelToolResultContent::Image(_) => todo!(),
+                            LanguageModelToolResultContent::Image(LanguageModelImage {
+                                source,
+                                ..
+                            }) => acp::ToolCallContent::Content {
+                                content: acp::ContentBlock::Image(acp::ImageContent {
+                                    annotations: None,
+                                    data: source.to_string(),
+                                    mime_type: ImageFormat::Png.mime_type().to_string(),
+                                }),
+                            },
                         };
                         events_tx
                             .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
@@ -659,7 +668,7 @@ impl Thread {
                     message.content.len()
                 );
                 LanguageModelRequestMessage {
-                    role: dbg!(message.role),
+                    role: message.role,
                     content: message.content.clone(),
                     cache: false,
                 }
