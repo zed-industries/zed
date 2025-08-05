@@ -1720,7 +1720,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.send_last_completion_stream_text_chunk(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1777,7 +1779,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.send_last_completion_stream_text_chunk(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
