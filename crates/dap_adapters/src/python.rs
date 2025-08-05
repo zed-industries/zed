@@ -101,6 +101,9 @@ impl PythonDebugAdapter {
             .await
             .context("Could not find Python installation for DebugPy")?;
         let work_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
+        if !work_dir.exists() {
+            std::fs::create_dir_all(&work_dir)?;
+        }
         let mut path = work_dir.clone();
         path.push("debugpy-venv");
         if !path.exists() {
@@ -126,36 +129,40 @@ impl PythonDebugAdapter {
         }
         None
     }
-
+    const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+        "Scripts"
+    } else {
+        "bin"
+    };
     async fn base_venv(&self, delegate: &dyn DapDelegate) -> Result<Arc<Path>, String> {
-        const BINARY_DIR: &str = if cfg!(target_os = "windows") {
-            "Scripts"
-        } else {
-            "bin"
-        };
         self.python_venv_base
             .get_or_init(move || async move {
                 let venv_base = Self::ensure_venv(delegate)
                     .await
                     .map_err(|e| format!("{e}"))?;
-                let pip_path = venv_base.join(BINARY_DIR).join("pip3");
-                let installation_succeeded = util::command::new_smol_command(pip_path.as_path())
-                    .arg("install")
-                    .arg("debugpy")
-                    .arg("-U")
-                    .output()
-                    .await
-                    .map_err(|e| format!("{e}"))?
-                    .status
-                    .success();
-                if !installation_succeeded {
-                    return Err("debugpy installation failed".into());
-                }
-
+                Self::install_debugpy_into_venv(&venv_base).await?;
                 Ok(venv_base)
             })
             .await
             .clone()
+    }
+
+    async fn install_debugpy_into_venv(venv_path: &Path) -> Result<(), String> {
+        let pip_path = venv_path.join(Self::BINARY_DIR).join("pip3");
+        let installation_succeeded = util::command::new_smol_command(pip_path.as_path())
+            .arg("install")
+            .arg("debugpy")
+            .arg("-U")
+            .output()
+            .await
+            .map_err(|e| format!("{e}"))?
+            .status
+            .success();
+        if !installation_succeeded {
+            return Err("debugpy installation failed".into());
+        }
+
+        Ok(())
     }
 
     async fn get_installed_binary(
@@ -629,11 +636,22 @@ impl DebugAdapter for PythonDebugAdapter {
                 .await;
         }
 
+        let base_path = config
+            .config
+            .get("cwd")
+            .and_then(|cwd| {
+                cwd.as_str()
+                    .map(Path::new)?
+                    .strip_prefix(delegate.worktree_root_path())
+                    .ok()
+            })
+            .unwrap_or_else(|| "".as_ref())
+            .into();
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(
                 delegate.worktree_id(),
-                Arc::from("".as_ref()),
+                base_path,
                 language::LanguageName::new(Self::LANGUAGE_NAME),
                 cx,
             )
@@ -641,6 +659,10 @@ impl DebugAdapter for PythonDebugAdapter {
 
         if let Some(toolchain) = &toolchain {
             if let Some(path) = Path::new(&toolchain.path.to_string()).parent() {
+                if let Some(parent) = path.parent() {
+                    Self::install_debugpy_into_venv(parent).await.ok();
+                }
+
                 let debugpy_path = path.join("debugpy");
                 if delegate.fs().is_file(&debugpy_path).await {
                     log::debug!(

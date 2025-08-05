@@ -294,9 +294,6 @@ message Envelope {
         GetPathMetadata get_path_metadata = 278;
         GetPathMetadataResponse get_path_metadata_response = 279;
 
-        GetPanicFiles get_panic_files = 280;
-        GetPanicFilesResponse get_panic_files_response = 281;
-
         CancelLanguageServerWork cancel_language_server_work = 282;
 
         LspExtOpenDocs lsp_ext_open_docs = 283;
@@ -399,7 +396,13 @@ message Envelope {
         GetColorPresentationResponse get_color_presentation_response = 356;
 
         Stash stash = 357;
-        StashPop stash_pop = 358; // current max
+        StashPop stash_pop = 358;
+
+        GetDefaultBranch get_default_branch = 359;
+        GetDefaultBranchResponse get_default_branch_response = 360;
+
+        GetCrashFiles get_crash_files = 361;
+        GetCrashFilesResponse get_crash_files_response = 362; // current max
     }
 
     reserved 87 to 88;
@@ -420,6 +423,7 @@ message Envelope {
     reserved 270;
     reserved 247 to 254;
     reserved 255 to 256;
+    reserved 280 to 281;
 }
 
 message Hello {

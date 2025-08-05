@@ -220,7 +220,7 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 
 > **Note**: If you don't see specific models in the dropdown, you may need to enable them in your [GitHub Copilot settings](https://github.com/settings/copilot/features).
 
-To use Copilot Enterprise with Zed (for both agent and inline completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
+To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
 
 ### Google AI {#google-ai}
 
@@ -441,36 +441,35 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### OpenAI API Compatible {#openai-api-compatible}
 
-Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider. This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
+Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
+This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-To configure a compatible API, you can add a custom API URL for OpenAI either via the UI (currently available only in Preview) or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
 
-For example, to connect to [Together AI](https://www.together.ai/) via the UI:
+To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
+Then, fill up the input fields available in the modal.
 
-1. Get an API key from your [Together AI account](https://api.together.ai/settings/api-keys).
-2. Go to the Agent Panel's settings view, click on the "Add Provider" button, and then on the "OpenAI" menu item
-3. Add the requested fields, such as `api_url`, `api_key`, available models, and others
-
-Alternatively, you can also add it via the `settings.json`:
+To do it via your `settings.json`, add the following snippet under `language_models`:
 
 ```json
 {
   "language_models": {
     "openai": {
-      "api_url": "https://api.together.xyz/v1",
-      "api_key": "YOUR_TOGETHER_AI_API_KEY",
+      "api_url": "https://api.together.xyz/v1", // Using Together AI as an example
       "available_models": [
         {
           "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
           "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768,
-          "supports_tools": true
+          "max_tokens": 32768
         }
       ]
     }
   }
 }
 ```
+
+Note that LLM API keys aren't stored in your settings file.
+So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
 
 ### OpenRouter {#openrouter}
 

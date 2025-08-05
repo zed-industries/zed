@@ -630,6 +630,11 @@ impl ActionLog {
                         false
                     }
                 });
+                if tracked_buffer.unreviewed_edits.is_empty() {
+                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
+                        tracked_buffer.status = TrackedBufferStatus::Modified;
+                    }
+                }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }
@@ -775,6 +780,9 @@ impl ActionLog {
             .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
                 TrackedBufferStatus::Deleted => false,
                 _ => {
+                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
+                        tracked_buffer.status = TrackedBufferStatus::Modified;
+                    }
                     tracked_buffer.unreviewed_edits.clear();
                     tracked_buffer.diff_base = tracked_buffer.snapshot.as_rope().clone();
                     tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
@@ -2073,6 +2081,134 @@ mod tests {
 
         let content = buffer.read_with(cx, |buffer, _| buffer.text());
         assert_eq!(content, "ai content\nuser added this line");
+    }
+
+    #[gpui::test]
+    async fn test_reject_after_accepting_hunk_on_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/new_file", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path.clone(), cx))
+            .await
+            .unwrap();
+
+        // AI creates file with initial content
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v1", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User accepts the single hunk
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+
+        // AI modifies the file
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v2", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User rejects the hunk
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await,);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "ai content v1"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test]
+    async fn test_reject_edits_on_previously_accepted_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/new_file", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path.clone(), cx))
+            .await
+            .unwrap();
+
+        // AI creates file with initial content
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v1", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // User clicks "Accept All"
+        action_log.update(cx, |log, cx| log.keep_all_edits(cx));
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]); // Hunks are cleared
+
+        // AI modifies file again
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v2", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User clicks "Reject All"
+        action_log
+            .update(cx, |log, cx| log.reject_all_edits(cx))
+            .await;
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "ai content v1"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[gpui::test(iterations = 100)]

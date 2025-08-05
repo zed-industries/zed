@@ -483,7 +483,7 @@ impl ManageProfilesModal {
 
         let icon = match mode.profile_id.as_str() {
             "write" => IconName::Pencil,
-            "ask" => IconName::MessageBubbles,
+            "ask" => IconName::Chat,
             _ => IconName::UserRoundPen,
         };
 

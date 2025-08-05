@@ -1,5 +1,5 @@
 [package]
-name = "inline_completion_button"
+name = "edit_prediction_button"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/inline_completion_button.rs"
+path = "src/edit_prediction_button.rs"
 doctest = false
 
 [dependencies]
@@ -22,9 +22,10 @@ feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 indoc.workspace = true
-inline_completion.workspace = true
+edit_prediction.workspace = true
 language.workspace = true
 paths.workspace = true
+project.workspace = true
 regex.workspace = true
 settings.workspace = true
 supermaven.workspace = true

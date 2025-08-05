@@ -6,7 +6,6 @@ mod sign_in;
 use crate::sign_in::initiate_sign_in_within_workspace;
 use ::fs::Fs;
 use anyhow::{Context as _, Result, anyhow};
-use client::DisableAiSettings;
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future::Shared};
@@ -24,6 +23,7 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
+use project::DisableAiSettings;
 use request::StatusNotification;
 use serde_json::json;
 use settings::Settings;
@@ -39,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -239,7 +240,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);

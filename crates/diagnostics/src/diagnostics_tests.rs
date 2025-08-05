@@ -873,7 +873,7 @@ async fn test_random_diagnostics_with_inlays(cx: &mut TestAppContext, mut rng: S
 
                         editor.splice_inlays(
                             &[],
-                            vec![Inlay::inline_completion(
+                            vec![Inlay::edit_prediction(
                                 post_inc(&mut next_inlay_id),
                                 snapshot.buffer_snapshot.anchor_before(position),
                                 format!("Test inlay {next_inlay_id}"),

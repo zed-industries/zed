@@ -1,22 +1,20 @@
 use std::sync::Arc;
 
 use ai_onboarding::{AiUpsellCard, SignInStatus};
-use client::DisableAiSettings;
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, EventEmitter, FocusHandle, Focusable, Window, prelude::*,
 };
 use itertools;
-
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use project::DisableAiSettings;
 use settings::{Settings, update_settings_file};
 use ui::{
     Badge, ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, ToggleState,
-    prelude::*,
+    prelude::*, tooltip_container,
 };
-use workspace::ModalView;
-
 use util::ResultExt;
+use workspace::ModalView;
 use zed_actions::agent::OpenSettings;
 
 use crate::Onboarding;
@@ -43,7 +41,11 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(disabled: bool, cx: &mut App) -> impl IntoElement {
-    let privacy_badge = || Badge::new("Privacy").icon(IconName::ShieldCheck);
+    let privacy_badge = || {
+        Badge::new("Privacy")
+            .icon(IconName::ShieldCheck)
+            .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into())
+    };
 
     v_flex()
         .relative()
@@ -355,5 +357,39 @@ impl Render for AiConfigurationModal {
                         ),
                     ),
             )
+    }
+}
+
+pub struct AiPrivacyTooltip {}
+
+impl AiPrivacyTooltip {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Render for AiPrivacyTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        const DESCRIPTION: &'static str = "One of Zed's most important principles is transparency. This is why we are and value open-source so much. And it wouldn't be any different with AI.";
+
+        tooltip_container(window, cx, move |this, _, _| {
+            this.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::ShieldCheck)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .child(Label::new("Privacy Principle")),
+            )
+            .child(
+                div().max_w_64().child(
+                    Label::new(DESCRIPTION)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+        })
     }
 }

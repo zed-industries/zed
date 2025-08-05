@@ -1,18 +1,19 @@
 // Translates old acp agents into the new schema
 use agent_client_protocol as acp;
 use agentic_coding_protocol::{self as acp_old, AgentRequest as _};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
 use project::Project;
-use std::{cell::RefCell, error::Error, fmt, path::Path, rc::Rc};
+use std::{cell::RefCell, path::Path, rc::Rc};
 use ui::App;
 use util::ResultExt as _;
 
-use crate::{AcpThread, AgentConnection};
+use crate::AgentServerCommand;
+use acp_thread::{AcpThread, AgentConnection, AuthRequired};
 
 #[derive(Clone)]
-pub struct OldAcpClientDelegate {
+struct OldAcpClientDelegate {
     thread: Rc<RefCell<WeakEntity<AcpThread>>>,
     cx: AsyncApp,
     next_tool_call_id: Rc<RefCell<u64>>,
@@ -20,7 +21,7 @@ pub struct OldAcpClientDelegate {
 }
 
 impl OldAcpClientDelegate {
-    pub fn new(thread: Rc<RefCell<WeakEntity<AcpThread>>>, cx: AsyncApp) -> Self {
+    fn new(thread: Rc<RefCell<WeakEntity<AcpThread>>>, cx: AsyncApp) -> Self {
         Self {
             thread,
             cx,
@@ -126,7 +127,7 @@ impl acp_old::Client for OldAcpClientDelegate {
             outcomes.push(outcome);
             acp_options.push(acp::PermissionOption {
                 id: acp::PermissionOptionId(index.to_string().into()),
-                label,
+                name: label,
                 kind,
             })
         }
@@ -265,7 +266,7 @@ impl acp_old::Client for OldAcpClientDelegate {
 fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams) -> acp::ToolCall {
     acp::ToolCall {
         id: id,
-        label: request.label,
+        title: request.label,
         kind: acp_kind_from_old_icon(request.icon),
         status: acp::ToolCallStatus::InProgress,
         content: request
@@ -351,28 +352,71 @@ fn into_new_plan_status(status: acp_old::PlanEntryStatus) -> acp::PlanEntryStatu
     }
 }
 
-#[derive(Debug)]
-pub struct Unauthenticated;
-
-impl Error for Unauthenticated {}
-impl fmt::Display for Unauthenticated {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unauthenticated")
-    }
-}
-
-pub struct OldAcpAgentConnection {
+pub struct AcpConnection {
     pub name: &'static str,
     pub connection: acp_old::AgentConnection,
-    pub child_status: Task<Result<()>>,
+    pub _child_status: Task<Result<()>>,
     pub current_thread: Rc<RefCell<WeakEntity<AcpThread>>>,
 }
 
-impl AgentConnection for OldAcpAgentConnection {
-    fn name(&self) -> &'static str {
-        self.name
-    }
+impl AcpConnection {
+    pub fn stdio(
+        name: &'static str,
+        command: AgentServerCommand,
+        root_dir: &Path,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Self>> {
+        let root_dir = root_dir.to_path_buf();
 
+        cx.spawn(async move |cx| {
+            let mut child = util::command::new_smol_command(&command.path)
+                .args(command.args.iter())
+                .current_dir(root_dir)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::inherit())
+                .kill_on_drop(true)
+                .spawn()?;
+
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
+
+            let foreground_executor = cx.foreground_executor().clone();
+
+            let thread_rc = Rc::new(RefCell::new(WeakEntity::new_invalid()));
+
+            let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
+                OldAcpClientDelegate::new(thread_rc.clone(), cx.clone()),
+                stdin,
+                stdout,
+                move |fut| foreground_executor.spawn(fut).detach(),
+            );
+
+            let io_task = cx.background_spawn(async move {
+                io_fut.await.log_err();
+            });
+
+            let child_status = cx.background_spawn(async move {
+                let result = match child.status().await {
+                    Err(e) => Err(anyhow!(e)),
+                    Ok(result) if result.success() => Ok(()),
+                    Ok(result) => Err(anyhow!(result)),
+                };
+                drop(io_task);
+                result
+            });
+
+            Ok(Self {
+                name,
+                connection,
+                _child_status: child_status,
+                current_thread: thread_rc,
+            })
+        })
+    }
+}
+
+impl AgentConnection for AcpConnection {
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -391,13 +435,13 @@ impl AgentConnection for OldAcpAgentConnection {
             let result = acp_old::InitializeParams::response_from_any(result)?;
 
             if !result.is_authenticated {
-                anyhow::bail!(Unauthenticated)
+                anyhow::bail!(AuthRequired)
             }
 
             cx.update(|cx| {
                 let thread = cx.new(|cx| {
                     let session_id = acp::SessionId("acp-old-no-id".into());
-                    AcpThread::new(self.clone(), project, session_id, cx)
+                    AcpThread::new(self.name, self.clone(), project, session_id, cx)
                 });
                 current_thread.replace(thread.downgrade());
                 thread
@@ -405,7 +449,11 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn authenticate(&self, cx: &mut App) -> Task<Result<()>> {
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn authenticate(&self, _method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
         let task = self
             .connection
             .request_any(acp_old::AuthenticateParams.into_any());
@@ -415,7 +463,7 @@ impl AgentConnection for OldAcpAgentConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
         let chunks = params
             .prompt
             .into_iter()
