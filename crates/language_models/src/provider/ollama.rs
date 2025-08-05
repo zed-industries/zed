@@ -631,7 +631,7 @@ impl Render for ConfigurationView {
                                     }
                                 })
                                 .child(
-                                    Button::new("view-models", "All Models")
+                                    Button::new("view-models", "View All Models")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
                                         .icon_size(IconSize::XSmall)

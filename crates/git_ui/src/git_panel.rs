@@ -2899,7 +2899,9 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast { .. } => this,
+                    Toast { .. } => {
+                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                    }
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
                         .action("View Log", move |window, cx| {
@@ -2912,9 +2914,9 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { link } => this
+                    PushPrLink { text, link } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("Open Pull Request", move |_, cx| cx.open_url(&link)),
+                        .action(text, move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)

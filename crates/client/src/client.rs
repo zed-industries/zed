@@ -687,7 +687,10 @@ impl Client {
                             }
                         }
 
-                        if matches!(*client.status().borrow(), Status::ConnectionError) {
+                        if matches!(
+                            *client.status().borrow(),
+                            Status::AuthenticationError | Status::ConnectionError
+                        ) {
                             client.set_status(
                                 Status::ReconnectionError {
                                     next_reconnection: Instant::now() + delay,
@@ -856,28 +859,14 @@ impl Client {
 
         let old_credentials = self.state.read().credentials.clone();
         if let Some(old_credentials) = old_credentials {
-            if self
-                .cloud_client
-                .validate_credentials(
-                    old_credentials.user_id as u32,
-                    &old_credentials.access_token,
-                )
-                .await?
-            {
+            if self.validate_credentials(&old_credentials, cx).await? {
                 credentials = Some(old_credentials);
             }
         }
 
         if credentials.is_none() && try_provider {
             if let Some(stored_credentials) = self.credentials_provider.read_credentials(cx).await {
-                if self
-                    .cloud_client
-                    .validate_credentials(
-                        stored_credentials.user_id as u32,
-                        &stored_credentials.access_token,
-                    )
-                    .await?
-                {
+                if self.validate_credentials(&stored_credentials, cx).await? {
                     credentials = Some(stored_credentials);
                 } else {
                     self.credentials_provider
@@ -924,6 +913,24 @@ impl Client {
         self.set_status(Status::Authenticated, cx);
 
         Ok(credentials)
+    }
+
+    async fn validate_credentials(
+        self: &Arc<Self>,
+        credentials: &Credentials,
+        cx: &AsyncApp,
+    ) -> Result<bool> {
+        match self
+            .cloud_client
+            .validate_credentials(credentials.user_id as u32, &credentials.access_token)
+            .await
+        {
+            Ok(valid) => Ok(valid),
+            Err(err) => {
+                self.set_status(Status::AuthenticationError, cx);
+                Err(anyhow!("failed to validate credentials: {}", err))
+            }
+        }
     }
 
     /// Performs a sign-in and also connects to Collab.
@@ -1731,6 +1738,46 @@ mod tests {
         cx.executor().advance_clock(Duration::from_secs(10));
         while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_auth_failure_during_reconnection(cx: &mut TestAppContext) {
+        init_test(cx);
+        let http_client = FakeHttpClient::with_200_response();
+        let client =
+            cx.update(|cx| Client::new(Arc::new(FakeSystemClock::new()), http_client.clone(), cx));
+        let server = FakeServer::for_client(42, &client, cx).await;
+        let mut status = client.status();
+        assert!(matches!(
+            status.next().await,
+            Some(Status::Connected { .. })
+        ));
+        assert_eq!(server.auth_count(), 1);
+
+        // Simulate an auth failure during reconnection.
+        http_client
+            .as_fake()
+            .replace_handler(|_, _request| async move {
+                Ok(http_client::Response::builder()
+                    .status(503)
+                    .body("".into())
+                    .unwrap())
+            });
+        server.disconnect();
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
+
+        // Restore the ability to authenticate.
+        http_client
+            .as_fake()
+            .replace_handler(|_, _request| async move {
+                Ok(http_client::Response::builder()
+                    .status(200)
+                    .body("".into())
+                    .unwrap())
+            });
+        cx.executor().advance_clock(Duration::from_secs(10));
+        while !matches!(status.next().await, Some(Status::Connected { .. })) {}
+        assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
     }
 
     #[gpui::test(iterations = 10)]

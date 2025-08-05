@@ -789,7 +789,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        match &entry {
+        let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => div()
                 .py_4()
                 .px_2()
@@ -854,6 +854,19 @@ impl AcpThreadView {
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
+        };
+
+        let Some(thread) = self.thread() else {
+            return primary;
+        };
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+        if index == total_entries - 1 && !is_generating {
+            v_flex()
+                .child(primary)
+                .child(self.render_thread_controls(cx))
+                .into_any_element()
+        } else {
+            primary
         }
     }
 
@@ -2408,7 +2421,7 @@ impl AcpThreadView {
         }
     }
 
-    fn render_thread_controls(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
@@ -2429,9 +2442,8 @@ impl AcpThreadView {
             }));
 
         h_flex()
-            .mt_1()
             .mr_1()
-            .py_2()
+            .pb_2()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
@@ -2524,9 +2536,6 @@ impl Render for AcpThreadView {
 
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
-                            let is_generating =
-                                matches!(thread_clone.read(cx).status(), ThreadStatus::Generating);
-
                             this.child(
                                 list(self.list_state.clone())
                                     .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
@@ -2534,9 +2543,6 @@ impl Render for AcpThreadView {
                                     .into_any(),
                             )
                             .child(self.render_vertical_scrollbar(cx))
-                            .when(!is_generating, |this| {
-                                this.child(self.render_thread_controls(cx))
-                            })
                             .children(match thread_clone.read(cx).status() {
                                 ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
                                     None
