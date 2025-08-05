@@ -1813,10 +1813,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                match latest_project_path_opened {
-                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
-                    None => true,
-                }
+                latest_project_path_opened.map_or(true, |path| path == history_path)
             })
     }
 
@@ -4796,7 +4793,7 @@ impl Workspace {
                             .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
-                        if let Some(id) = id.clone() {
+                        if let Some(id) = id {
                             if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: id.clone(),
@@ -4809,7 +4806,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: id.clone(),
+                                    id: id,
                                     leader_id: leader_peer_id,
                                 };
                             }
