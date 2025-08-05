@@ -2570,11 +2570,11 @@ impl OutlinePanel {
             .on_click({
                 let clicked_entry = rendered_entry.clone();
                 cx.listener(move |outline_panel, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right || event.down.first_mouse {
+                    if event.is_right_click() || event.first_focus() {
                         return;
                     }
 
-                    let change_focus = event.down.click_count > 1;
+                    let change_focus = event.click_count() > 1;
                     outline_panel.toggle_expanded(&clicked_entry, window, cx);
 
                     outline_panel.scroll_editor_to_entry(

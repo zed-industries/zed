@@ -2605,7 +2605,7 @@ impl CollabPanel {
                                     let contact = contact.clone();
                                     move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
-                                            event.down.position,
+                                            event.position(),
                                             contact.clone(),
                                             window,
                                             cx,

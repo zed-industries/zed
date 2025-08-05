@@ -8177,7 +8177,7 @@ impl Editor {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    event.down.position,
+                    event.position(),
                     window,
                     cx,
                 );
@@ -8342,7 +8342,11 @@ impl Editor {
             .icon_color(color)
             .toggle_state(is_active)
             .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-                let quick_launch = e.down.button == MouseButton::Left;
+                let quick_launch = match e {
+                    ClickEvent::Keyboard(_) => true,
+                    ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+                };
+
                 window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
@@ -8354,7 +8358,7 @@ impl Editor {
                 );
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-                editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+                editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
             }))
     }
 

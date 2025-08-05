@@ -418,6 +418,7 @@ impl Modifiers {
     }
 
     /// Returns the XOR of two modifier sets
+    #[inline]
     pub fn xor(&self, other: &Modifiers) -> Modifiers {
         Modifiers {
             control: self.control ^ other.control,
@@ -425,6 +426,18 @@ impl Modifiers {
             shift: self.shift ^ other.shift,
             platform: self.platform ^ other.platform,
             function: self.function ^ other.function,
+        }
+    }
+
+    /// Returns the AND of two modifier sets
+    #[inline]
+    pub fn and(&self, other: &Modifiers) -> Modifiers {
+        Modifiers {
+            control: self.control && other.control,
+            alt: self.alt && other.alt,
+            shift: self.shift && other.shift,
+            platform: self.platform && other.platform,
+            function: self.function && other.function,
         }
     }
 

@@ -19,10 +19,10 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
     HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
-    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
+    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -2122,13 +2122,26 @@ impl Interactivity {
                     // Press enter, space to trigger click, when the element is focused.
                     window.on_key_event({
                         let click_listeners = click_listeners.clone();
+                        let hitbox = hitbox.clone();
                         move |event: &KeyUpEvent, phase, window, cx| {
                             if phase.bubble() && !window.default_prevented() {
                                 let stroke = &event.keystroke;
-                                if !stroke.modifiers.modified()
-                                    && (stroke.key.eq("enter") || stroke.key.eq("space"))
+                                let keyboard_button = if stroke.key.eq("enter") {
+                                    Some(KeyboardButton::Enter)
+                                } else if stroke.key.eq("space") {
+                                    Some(KeyboardButton::Space)
+                                } else {
+                                    None
+                                };
+
+                                if let Some(button) = keyboard_button
+                                    && !stroke.modifiers.modified()
                                 {
-                                    let click_event = ClickEvent::default();
+                                    let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
+                                        button,
+                                        hitbox: hitbox.clone(),
+                                    });
+
                                     for listener in &click_listeners {
                                         listener(&click_event, window, cx);
                                     }
@@ -2163,10 +2176,10 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let mouse_click = ClickEvent {
+                                let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
-                                };
+                                });
                                 for listener in &click_listeners {
                                     listener(&mouse_click, window, cx);
                                 }
