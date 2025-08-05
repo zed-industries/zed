@@ -169,12 +169,13 @@ impl AcpThreadView {
 
         let mention_set = mention_set.clone();
 
-        let list_state = ListState::new(
-            0,
-            gpui::ListAlignment::Bottom,
-            px(2048.0),
-            cx.processor({
-                move |this: &mut Self, index: usize, window, cx| {
+        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0), {
+            let this = cx.entity().downgrade();
+            move |index: usize, window, cx| {
+                let Some(this) = this.upgrade() else {
+                    return Empty.into_any();
+                };
+                this.update(cx, |this, cx| {
                     let Some((entry, len)) = this.thread().and_then(|thread| {
                         let entries = &thread.read(cx).entries();
                         Some((entries.get(index)?, entries.len()))
@@ -182,9 +183,9 @@ impl AcpThreadView {
                         return Empty.into_any();
                     };
                     this.render_entry(index, len, entry, window, cx)
-                }
-            }),
-        );
+                })
+            }
+        });
 
         Self {
             agent: agent.clone(),
@@ -2712,6 +2713,16 @@ mod tests {
     use settings::SettingsStore;
 
     use super::*;
+
+    #[gpui::test]
+    async fn test_drop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default(), cx).await;
+        let weak_view = thread_view.downgrade();
+        drop(thread_view);
+        assert!(!weak_view.is_upgradable());
+    }
 
     #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
