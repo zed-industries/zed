@@ -121,13 +121,13 @@ impl LanguageSelectorDelegate {
             .into_iter()
             .filter_map(|name| {
                 language_registry
-                    .available_language_for_name(&name)?
+                    .available_language_for_name(name.as_ref())?
                     .hidden()
                     .not()
                     .then_some(name)
             })
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
         Self {
