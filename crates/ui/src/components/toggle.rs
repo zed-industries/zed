@@ -504,15 +504,12 @@ impl RenderOnce for Switch {
 
         let group_id = format!("switch_group_{:?}", self.id);
 
-        let switch = h_flex()
-            .w(DynamicSpacing::Base32.rems(cx))
-            .h(DynamicSpacing::Base20.rems(cx))
-            .group(group_id.clone())
-            .border_1()
+        let switch = div()
+            .id((self.id.clone(), "switch"))
             .p(px(1.0))
+            .border_2()
             .border_color(cx.theme().colors().border_transparent)
             .rounded_full()
-            .id((self.id.clone(), "switch"))
             .when_some(
                 self.tab_index.filter(|_| !self.disabled),
                 |this, tab_index| {
@@ -524,23 +521,29 @@ impl RenderOnce for Switch {
             )
             .child(
                 h_flex()
-                    .when(is_on, |on| on.justify_end())
-                    .when(!is_on, |off| off.justify_start())
-                    .size_full()
-                    .rounded_full()
-                    .px(DynamicSpacing::Base02.px(cx))
-                    .bg(bg_color)
-                    .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
-                    })
-                    .border_1()
-                    .border_color(border_color)
+                    .w(DynamicSpacing::Base32.rems(cx))
+                    .h(DynamicSpacing::Base20.rems(cx))
+                    .group(group_id.clone())
                     .child(
-                        div()
-                            .size(DynamicSpacing::Base12.rems(cx))
+                        h_flex()
+                            .when(is_on, |on| on.justify_end())
+                            .when(!is_on, |off| off.justify_start())
+                            .size_full()
                             .rounded_full()
-                            .bg(thumb_color)
-                            .opacity(thumb_opacity),
+                            .px(DynamicSpacing::Base02.px(cx))
+                            .bg(bg_color)
+                            .when(!self.disabled, |this| {
+                                this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
+                            })
+                            .border_1()
+                            .border_color(border_color)
+                            .child(
+                                div()
+                                    .size(DynamicSpacing::Base12.rems(cx))
+                                    .rounded_full()
+                                    .bg(thumb_color)
+                                    .opacity(thumb_opacity),
+                            ),
                     ),
             );
 
