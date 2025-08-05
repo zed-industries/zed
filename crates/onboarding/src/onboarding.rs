@@ -6,9 +6,10 @@ use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, KeyContext, Render, SharedString, Subscription, Task,
-    WeakEntity, Window, actions,
+    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
+    Task, WeakEntity, Window, actions,
 };
+use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{SettingsStore, VsCodeSettingsSource};
@@ -137,9 +138,12 @@ pub fn init(cx: &mut App) {
             let fs = <dyn Fs>::global(cx);
             let action = *action;
 
+            let workspace = cx.weak_entity();
+
             window
                 .spawn(cx, async move |cx: &mut AsyncWindowContext| {
                     handle_import_vscode_settings(
+                        workspace,
                         VsCodeSettingsSource::VsCode,
                         action.skip_prompt,
                         fs,
@@ -154,9 +158,12 @@ pub fn init(cx: &mut App) {
             let fs = <dyn Fs>::global(cx);
             let action = *action;
 
+            let workspace = cx.weak_entity();
+
             window
                 .spawn(cx, async move |cx: &mut AsyncWindowContext| {
                     handle_import_vscode_settings(
+                        workspace,
                         VsCodeSettingsSource::Cursor,
                         action.skip_prompt,
                         fs,
@@ -555,6 +562,7 @@ impl Item for Onboarding {
 }
 
 pub async fn handle_import_vscode_settings(
+    workspace: WeakEntity<Workspace>,
     source: VsCodeSettingsSource,
     skip_prompt: bool,
     fs: Arc<dyn Fs>,
@@ -595,14 +603,73 @@ pub async fn handle_import_vscode_settings(
         }
     };
 
-    cx.update(|_, cx| {
+    let Ok(result_channel) = cx.update(|_, cx| {
         let source = vscode_settings.source;
         let path = vscode_settings.path.clone();
-        cx.global::<SettingsStore>()
+        let result_channel = cx
+            .global::<SettingsStore>()
             .import_vscode_settings(fs, vscode_settings);
         zlog::info!("Imported {source} settings from {}", path.display());
-    })
-    .ok();
+        result_channel
+    }) else {
+        return;
+    };
+
+    let result = result_channel.await;
+    workspace
+        .update_in(cx, |workspace, _, cx| match result {
+            Ok(_) => {
+                let confirmation_toast = StatusToast::new(
+                    format!("Your {} settings were successfully imported.", source),
+                    cx,
+                    |this, _| {
+                        this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                            .dismiss_button(true)
+                    },
+                );
+                SettingsImportState::update(cx, |state, _| match source {
+                    VsCodeSettingsSource::VsCode => {
+                        state.vscode = true;
+                    }
+                    VsCodeSettingsSource::Cursor => {
+                        state.cursor = true;
+                    }
+                });
+                workspace.toggle_status_toast(confirmation_toast, cx);
+            }
+            Err(_) => {
+                let error_toast = StatusToast::new(
+                    "Failed to import settings. See log for details",
+                    cx,
+                    |this, _| {
+                        this.icon(ToastIcon::new(IconName::X).color(Color::Error))
+                            .action("Open Log", |window, cx| {
+                                window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
+                            })
+                            .dismiss_button(true)
+                    },
+                );
+                workspace.toggle_status_toast(error_toast, cx);
+            }
+        })
+        .ok();
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct SettingsImportState {
+    pub cursor: bool,
+    pub vscode: bool,
+}
+
+impl Global for SettingsImportState {}
+
+impl SettingsImportState {
+    pub fn global(cx: &App) -> Self {
+        cx.try_global().cloned().unwrap_or_default()
+    }
+    pub fn update<R>(cx: &mut App, f: impl FnOnce(&mut Self, &mut App) -> R) -> R {
+        cx.update_default_global(f)
+    }
 }
 
 impl workspace::SerializableItem for Onboarding {
