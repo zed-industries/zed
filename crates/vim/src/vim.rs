@@ -220,7 +220,7 @@ actions!(
         PushReplayRegister,
         /// Replaces with register contents.
         PushReplaceWithRegister,
-        /// Mark mode for Helix
+        /// Match mode for Helix
         PushHelixMatchMode,
         /// Toggles comments.
         PushToggleComments,

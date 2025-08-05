@@ -40,22 +40,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    // pub fn helix_normal_after(
-    //     &mut self,
-    //     action: &HelixNormalAfter,
-    //     window: &mut Window,
-    //     cx: &mut Context<Self>,
-    // ) {
-    //     if self.active_operator().is_some() {
-    //         self.operator_stack.clear();
-    //         self.sync_vim_settings(window, cx);
-    //         return;
-    //     }
-    //     self.stop_recording_immediately(action.boxed_clone(), cx);
-    //     self.switch_mode(Mode::HelixNormal, false, window, cx);
-    //     return;
-    // }
-
     // Helix motion which creates a selection
     fn helix_move_and_select(
         &mut self,
