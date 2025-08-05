@@ -9,9 +9,9 @@ use assistant_slash_command::{
     SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
-use client::{self, Client, proto, telemetry::Telemetry};
+use client::{self, Client, ModelRequestUsage, RequestUsage, proto, telemetry::Telemetry};
 use clock::ReplicaId;
-use cloud_llm_client::CompletionIntent;
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet};
 use fs::{Fs, RenameOptions};
 use futures::{FutureExt, StreamExt, future::Shared};
@@ -2080,7 +2080,18 @@ impl AssistantContext {
                                     });
 
                                 match event {
-                                    LanguageModelCompletionEvent::StatusUpdate { .. } => {}
+                                    LanguageModelCompletionEvent::StatusUpdate(status_update) => {
+                                        match status_update {
+                                            CompletionRequestStatus::UsageUpdated { amount, limit } => {
+                                                this.update_model_request_usage(
+                                                    amount as u32,
+                                                    limit,
+                                                    cx,
+                                                );
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                     LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
@@ -2955,6 +2966,21 @@ impl AssistantContext {
         summary.done = true;
         summary.text = custom_summary;
         cx.emit(ContextEvent::SummaryChanged);
+    }
+
+    fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut App) {
+        let Some(project) = &self.project else {
+            return;
+        };
+        project.read(cx).user_store().update(cx, |user_store, cx| {
+            user_store.update_model_request_usage(
+                ModelRequestUsage(RequestUsage {
+                    amount: amount as i32,
+                    limit,
+                }),
+                cx,
+            )
+        });
     }
 }
 
