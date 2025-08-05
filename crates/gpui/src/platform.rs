@@ -234,6 +234,9 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn set_default_layout_direction(&self, direction: LayoutDirection);
+    fn get_default_layout_direction(&self) -> LayoutDirection;
+
     fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap);
     fn perform_dock_menu_action(&self, _action: usize) {}
     fn add_recent_document(&self, _path: &Path) {}

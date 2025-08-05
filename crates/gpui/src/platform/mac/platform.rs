@@ -6,8 +6,8 @@ use super::{
 };
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
-    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, LayoutDirection,
+    MacDispatcher, MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
     PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result,
     SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
@@ -171,6 +171,7 @@ pub(crate) struct MacPlatformState {
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
     menus: Option<Vec<OwnedMenu>>,
+    default_layout_direction: LayoutDirection,
 }
 
 impl Default for MacPlatform {
@@ -209,6 +210,7 @@ impl MacPlatform {
             dock_menu: None,
             on_keyboard_layout_change: None,
             menus: None,
+            default_layout_direction: LayoutDirection::LeftToRight,
         }))
     }
 
@@ -232,16 +234,21 @@ impl MacPlatform {
         delegate: id,
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
+        layout_direction: LayoutDirection,
     ) -> id {
+        let layout_direction = Self::ns_user_interface_layout_direction(layout_direction);
         unsafe {
             let application_menu = NSMenu::new(nil).autorelease();
             application_menu.setDelegate_(delegate);
+            let _: () =
+                msg_send![application_menu, setUserInterfaceLayoutDirection: layout_direction];
 
             for menu_config in menus {
                 let menu = NSMenu::new(nil).autorelease();
                 let menu_title = ns_string(&menu_config.name);
                 menu.setTitle_(menu_title);
                 menu.setDelegate_(delegate);
+                let _: () = msg_send![menu, setUserInterfaceLayoutDirection: layout_direction];
 
                 for item_config in &menu_config.items {
                     menu.addItem_(Self::create_menu_item(
@@ -445,6 +452,13 @@ impl MacPlatform {
             version.minorVersion as usize,
             version.patchVersion as usize,
         )
+    }
+
+    fn ns_user_interface_layout_direction(layout_direction: LayoutDirection) -> usize {
+        match layout_direction {
+            LayoutDirection::LeftToRight => 0,
+            LayoutDirection::RightToLeft => 1,
+        }
     }
 }
 
@@ -877,8 +891,15 @@ impl Platform for MacPlatform {
         unsafe {
             let app: id = msg_send![APP_CLASS, sharedApplication];
             let mut state = self.0.lock();
+            let layout_direction = state.default_layout_direction;
             let actions = &mut state.menu_actions;
-            let menu = self.create_menu_bar(&menus, NSWindow::delegate(app), actions, keymap);
+            let menu = self.create_menu_bar(
+                &menus,
+                NSWindow::delegate(app),
+                actions,
+                keymap,
+                layout_direction,
+            );
             drop(state);
             app.setMainMenu_(menu);
         }
@@ -1201,6 +1222,16 @@ impl Platform for MacPlatform {
             }
             Ok(())
         })
+    }
+
+    fn set_default_layout_direction(&self, direction: LayoutDirection) {
+        let mut state = self.0.lock();
+        state.default_layout_direction = direction;
+    }
+
+    fn get_default_layout_direction(&self) -> LayoutDirection {
+        let state = self.0.lock();
+        state.default_layout_direction
     }
 }
 

@@ -32,18 +32,7 @@ use util::{ResultExt, debug_panic};
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
-use crate::{
-    Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset,
-    AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId,
-    EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
-    PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
-    WindowHandle, WindowId, WindowInvalidator,
-    colors::{Colors, GlobalColors},
-    current_platform, hash, init_app_menus,
-};
+use crate::{Action, ActionBuildError, ActionRegistry, Any, AnyView, AnyWindowHandle, AppContext, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, CursorStyle, DispatchPhase, DisplayId, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, KeyContext, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId, WindowInvalidator, colors::{Colors, GlobalColors}, current_platform, hash, init_app_menus, LayoutDirection};
 
 mod async_context;
 mod context;
@@ -1537,6 +1526,17 @@ impl App {
     /// Gets the menu bar for this application.
     pub fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
         self.platform.get_menus()
+    }
+
+    /// Sets the default layout direction for elements that are not tied to a window,
+    /// for example, menus on macOS
+    pub fn set_default_layout_direction(&self, direction: LayoutDirection) {
+        self.platform.set_default_layout_direction(direction)
+    }
+
+    /// Gets the default layout direction for elements taht are not tied to a window
+    pub fn get_default_layout_direction(&self) -> LayoutDirection {
+        self.platform.get_default_layout_direction()
     }
 
     /// Sets the right click menu for the app icon in the dock

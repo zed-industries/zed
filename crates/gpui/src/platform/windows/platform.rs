@@ -53,6 +53,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
+    default_layout_direction: LayoutDirection,
 }
 
 #[derive(Default)]
@@ -706,6 +707,14 @@ impl Platform for WindowsPlatform {
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Vec<SmallVec<[PathBuf; 2]>> {
         self.update_jump_list(menus, entries)
+    }
+
+    fn set_default_layout_direction(&self, direction: LayoutDirection) {
+        self.state.borrow_mut().default_layout_direction = direction;
+    }
+
+    fn get_default_layout_direction(&self) -> LayoutDirection {
+        self.state.borrow().default_layout_direction
     }
 }
 
