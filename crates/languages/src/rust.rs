@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{AsyncRead, AsyncSeek, AsyncWrite};
+use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use futures::{StreamExt, io::BufReader};
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
@@ -17,6 +17,7 @@ use serde_json::json;
 use settings::Settings as _;
 use sha2::{Digest, Sha256};
 use smol::fs::{self};
+use smol::io::AsyncSeekExt;
 use std::fmt::Display;
 use std::pin::Pin;
 use std::task::Poll;
@@ -279,77 +280,65 @@ impl LspAdapter for RustLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let GitHubLspBinaryVersion { name, url, digest } =
+            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let digest = digest
+            .as_ref()
+            .and_then(|digest| digest.strip_prefix("sha256:"));
+        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
+        let digest_path = destination_path.with_extension("digest");
 
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
-
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .with_context(|| format!("downloading release from {}", version.url))?;
-
-            match version
-                .digest
-                .as_deref()
-                .and_then(|digest| digest.strip_prefix("sha256:"))
-            {
-                Some(expected_sha_256) => {
-                    let temp_asset_file = tempfile::NamedTempFile::new().with_context(|| {
-                        format!("creating a temporary file for {}", version.url)
+        remove_matching(&container_dir, |entry| {
+            entry != destination_path && entry != digest_path
+        })
+        .await;
+        let mut digest_file = async_fs::OpenOptions::new()
+            .read(true)
+            .open(&digest_path)
+            .await;
+        if let Some(expected_sha_256) = digest {
+            if let Ok(file) = &mut digest_file {
+                let mut asset_sha_256 = String::with_capacity(64);
+                file.read_to_string(&mut asset_sha_256)
+                    .await
+                    .with_context(|| {
+                        format!("validating server binary digest at {destination_path:?}")
                     })?;
-                    let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
-                    let mut writer = HashingWriter {
-                        writer: async_fs::File::from(temp_asset_file),
-                        hasher: Sha256::new(),
-                    };
-                    futures::io::copy(&mut BufReader::new(response.body_mut()), &mut writer)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "saving archive contents into the temporary file for {}",
-                                version.url
-                            )
-                        })?;
-                    let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-                    anyhow::ensure!(
-                        asset_sha_256 == expected_sha_256,
-                        "{} asset got SHA-256 mismatch. Expected: {}, Got: {}",
-                        version.url,
-                        expected_sha_256,
-                        asset_sha_256
+                if asset_sha_256 != *expected_sha_256 {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_sha_256}, Got: {asset_sha_256}"
                     );
-                    Self::stream_file_archive(&mut writer.writer, &version.url, &destination_path)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "extracting downloaded asset for {} into {:?}",
-                                version.url, destination_path
-                            )
-                        })?;
-                }
-                None => Self::stream_response_archive(
-                    response.body_mut(),
-                    &version.url,
-                    &destination_path,
-                )
-                .await
-                .with_context(|| {
-                    format!(
-                        "extracting response for asset {} into {:?}",
-                        version.url, destination_path
+                    download_server_binary(
+                        delegate,
+                        url,
+                        digest,
+                        &digest_path,
+                        &destination_path,
+                        &server_path,
                     )
-                })?,
+                    .await?;
+                }
+                return Ok(LanguageServerBinary {
+                    path: server_path,
+                    env: None,
+                    arguments: Default::default(),
+                });
             }
-
-            // todo("windows")
-            make_file_executable(&server_path).await?;
+        }
+        if digest_file.is_err() {
+            download_server_binary(
+                delegate,
+                url,
+                digest,
+                &digest_path,
+                &destination_path,
+                &server_path,
+            )
+            .await?;
         }
 
         Ok(LanguageServerBinary {
@@ -658,6 +647,70 @@ impl LspAdapter for RustLspAdapter {
 
         Ok(original)
     }
+}
+
+async fn download_server_binary(
+    delegate: &dyn LspAdapterDelegate,
+    url: &str,
+    digest: Option<&str>,
+    digest_path: &Path,
+    destination_path: &Path,
+    server_path: &Path,
+) -> Result<(), anyhow::Error> {
+    log::info!("downloading github artifact from {url}");
+    let mut response = delegate
+        .http_client()
+        .get(url, Default::default(), true)
+        .await
+        .with_context(|| format!("downloading release from {url}"))?;
+    let body = response.body_mut();
+    match digest {
+        Some(expected_sha_256) => {
+            let temp_asset_file = tempfile::NamedTempFile::new()
+                .with_context(|| format!("creating a temporary file for {url}"))?;
+            let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
+            let mut writer = HashingWriter {
+                writer: async_fs::File::from(temp_asset_file),
+                hasher: Sha256::new(),
+            };
+            futures::io::copy(&mut BufReader::new(body), &mut writer)
+                .await
+                .with_context(|| {
+                    format!("saving archive contents into the temporary file for {url}",)
+                })?;
+            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+            anyhow::ensure!(
+                asset_sha_256 == expected_sha_256,
+                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
+            );
+            writer
+                .writer
+                .seek(std::io::SeekFrom::Start(0))
+                .await
+                .with_context(|| format!("seeking temporary file {destination_path:?}",))?;
+            RustLspAdapter::stream_file_archive(&mut writer.writer, url, destination_path)
+                .await
+                .with_context(|| {
+                    format!("extracting downloaded asset for {url} into {destination_path:?}",)
+                })?;
+            async_fs::File::create(&digest_path)
+                .await
+                .with_context(|| format!("creating digest file at {digest_path:?}",))?
+                .write_all(asset_sha_256.as_bytes())
+                .await
+                .with_context(|| format!("writing digest file at {digest_path:?}",))?;
+        }
+        None => {
+            _ = async_fs::remove_file(digest_path).await;
+            RustLspAdapter::stream_response_archive(body, url, destination_path)
+                .await
+                .with_context(|| {
+                    format!("extracting response for asset {url} into {destination_path:?}",)
+                })?
+        }
+    }
+    make_file_executable(server_path).await?;
+    Ok(())
 }
 
 pub(crate) struct RustContextProvider;
