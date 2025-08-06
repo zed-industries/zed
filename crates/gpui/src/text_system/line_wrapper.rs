@@ -183,7 +183,7 @@ impl LineWrapper {
         matches!(c, '\u{0400}'..='\u{04FF}') ||
         // Some other known special characters that should be treated as word characters,
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, `a=1`, etc.
-        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=') ||
+        matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
@@ -649,6 +649,7 @@ mod tests {
         assert_word("#hashtag");
         assert_word("$variable");
         assert_word("a=1");
+        assert_word("Self::is_word_char");
         assert_word("more⋯");
 
         // Space
