@@ -1,8 +1,8 @@
 use std::sync::Arc;
-use stripe::{CancellationDetailsReason, SubscriptionStatus};
+use stripe::SubscriptionStatus;
 
 use crate::AppState;
-use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
+use crate::db::billing_subscription::StripeSubscriptionStatus;
 use crate::db::{CreateBillingCustomerParams, billing_customer};
 use crate::stripe_client::{StripeClient, StripeCustomerId};
 
@@ -17,16 +17,6 @@ impl From<SubscriptionStatus> for StripeSubscriptionStatus {
             SubscriptionStatus::Canceled => Self::Canceled,
             SubscriptionStatus::Unpaid => Self::Unpaid,
             SubscriptionStatus::Paused => Self::Paused,
-        }
-    }
-}
-
-impl From<CancellationDetailsReason> for StripeCancellationReason {
-    fn from(value: CancellationDetailsReason) -> Self {
-        match value {
-            CancellationDetailsReason::CancellationRequested => Self::CancellationRequested,
-            CancellationDetailsReason::PaymentDisputed => Self::PaymentDisputed,
-            CancellationDetailsReason::PaymentFailed => Self::PaymentFailed,
         }
     }
 }
