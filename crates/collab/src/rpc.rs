@@ -746,6 +746,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        release_channel: Option<String>,
         user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
@@ -765,6 +766,9 @@ impl Server {
         principal.update_span(&span);
         if let Some(user_agent) = user_agent {
             span.record("user_agent", user_agent);
+        }
+        if let Some(release_channel) = release_channel {
+            span.record("release_channel", release_channel);
         }
 
         if let Some(country_code) = geoip_country_code.as_ref() {
@@ -1181,10 +1185,38 @@ impl Header for AppVersionHeader {
     }
 }
 
+#[derive(Debug)]
+pub struct ReleaseChannelHeader(String);
+
+impl Header for ReleaseChannelHeader {
+    fn name() -> &'static HeaderName {
+        static ZED_RELEASE_CHANNEL: OnceLock<HeaderName> = OnceLock::new();
+        ZED_RELEASE_CHANNEL.get_or_init(|| HeaderName::from_static("x-zed-release-channel"))
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        Ok(Self(
+            values
+                .next()
+                .ok_or_else(axum::headers::Error::invalid)?
+                .to_str()
+                .map_err(|_| axum::headers::Error::invalid())?
+                .to_owned(),
+        ))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        values.extend([self.0.parse().unwrap()]);
+    }
+}
+
 pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
-        .route("/rpc", get(handle_tungstenite_request))
-        .route("/cloud", get(handle_yawc_request))
+        .route("/rpc", get(handle_websocket_request))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(server.app_state.clone()))
@@ -1194,10 +1226,10 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
-// Original tungstenite handler for /rpc endpoint
-pub async fn handle_tungstenite_request(
+pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    release_channel_header: Option<TypedHeader<ReleaseChannelHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
@@ -1221,6 +1253,8 @@ pub async fn handle_tungstenite_request(
         )
             .into_response();
     };
+
+    let release_channel = release_channel_header.map(|header| header.0.0);
 
     if !version.can_collaborate() {
         return (
@@ -1257,93 +1291,7 @@ pub async fn handle_tungstenite_request(
                     socket_address,
                     principal,
                     version,
-                    user_agent.map(|header| header.to_string()),
-                    country_code_header.map(|header| header.to_string()),
-                    system_id_header.map(|header| header.to_string()),
-                    None,
-                    Executor::Production,
-                    Some(connection_guard),
-                )
-                .await;
-        }
-    })
-}
-
-// New yawc handler for /cloud endpoint
-pub async fn handle_yawc_request(
-    TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
-    app_version_header: Option<TypedHeader<AppVersionHeader>>,
-    ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
-    Extension(server): Extension<Arc<Server>>,
-    Extension(principal): Extension<Principal>,
-    user_agent: Option<TypedHeader<UserAgent>>,
-    country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
-    system_id_header: Option<TypedHeader<SystemIdHeader>>,
-    ws: WebSocketUpgrade,
-) -> axum::response::Response {
-    if protocol_version != rpc::PROTOCOL_VERSION {
-        return (
-            StatusCode::UPGRADE_REQUIRED,
-            "client must be upgraded".to_string(),
-        )
-            .into_response();
-    }
-
-    let Some(version) = app_version_header.map(|header| ZedVersion(header.0.0)) else {
-        return (
-            StatusCode::UPGRADE_REQUIRED,
-            "no version header found".to_string(),
-        )
-            .into_response();
-    };
-
-    if !version.can_collaborate() {
-        return (
-            StatusCode::UPGRADE_REQUIRED,
-            "client must be upgraded".to_string(),
-        )
-            .into_response();
-    }
-
-    let socket_address = socket_address.to_string();
-
-    // Acquire connection guard before WebSocket upgrade
-    let connection_guard = match ConnectionGuard::try_acquire() {
-        Ok(guard) => guard,
-        Err(()) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Too many concurrent connections",
-            )
-                .into_response();
-        }
-    };
-
-    ws.on_upgrade(move |socket| {
-        // For now, we're using the same approach as tungstenite to keep compatibility
-        // with the existing Connection type. In the future, we could create a
-        // YawcConnection that works directly with yawc messages.
-        let socket = socket
-            .map_ok(to_tungstenite_message)
-            .err_into()
-            .with(|message| async move { to_axum_message(message) });
-        let connection = Connection::new(Box::pin(socket));
-
-        async move {
-            log::info!(
-                "yawc /cloud endpoint connection established from {}",
-                socket_address
-            );
-
-            // Use the same handle_connection as the /rpc endpoint
-            // This lets us test the yawc infrastructure while keeping
-            // the same connection handling logic.
-            server
-                .handle_connection(
-                    connection,
-                    socket_address,
-                    principal,
-                    version,
+                    release_channel,
                     user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
@@ -4407,7 +4355,6 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
         TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
         TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
             code: frame.code.into(),
-
             reason: frame.reason.as_str().to_owned().into(),
         })),
         // We should never receive a frame while reading the message, according
