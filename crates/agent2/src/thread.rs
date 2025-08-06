@@ -297,20 +297,20 @@ impl Thread {
         events_rx
     }
 
-    pub fn build_system_message(&self) -> Option<AgentMessage> {
+    pub fn build_system_message(&self) -> AgentMessage {
         log::debug!("Building system message");
         let prompt = SystemPromptTemplate {
             project: &self.project_context.borrow(),
-            available_tools: Vec::new(),
+            available_tools: self.tools.keys().cloned().collect(),
         }
         .render(&self.templates)
         .context("failed to build system prompt")
-        .log_err()?;
+        .expect("Invalid template");
         log::debug!("System message built");
-        Some(AgentMessage {
+        AgentMessage {
             role: Role::System,
             content: vec![prompt.into()],
-        })
+        }
     }
 
     /// A helper method that's called on every streamed completion event.
@@ -613,8 +613,7 @@ impl Thread {
             self.messages.len()
         );
 
-        let messages = self
-            .build_system_message()
+        let messages = Some(self.build_system_message())
             .iter()
             .chain(self.messages.iter())
             .map(|message| {

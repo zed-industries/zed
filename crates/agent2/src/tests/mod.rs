@@ -86,6 +86,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     project_context.borrow_mut().shell = "test-shell".into();
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread.update(cx, |thread, cx| thread.send(model.clone(), "abc", cx));
     cx.run_until_parked();
     let mut pending_completions = fake_model.pending_completions();
@@ -100,11 +101,14 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     assert_eq!(pending_completion.messages[0].role, Role::System);
 
     let system_message = &pending_completion.messages[0];
+    let system_prompt = system_message.content[0].to_str().unwrap();
     assert!(
-        system_message.content[0]
-            .to_str()
-            .unwrap()
-            .contains("test-shell"),
+        system_prompt.contains("test-shell"),
+        "unexpected system message: {:?}",
+        system_message
+    );
+    assert!(
+        system_prompt.contains("## Fixing Diagnostics"),
         "unexpected system message: {:?}",
         system_message
     );
