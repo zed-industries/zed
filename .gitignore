@@ -1,6 +1,7 @@
 **/*.db
 **/cargo-target
 **/target
+**/.crush
 **/venv
 **/.direnv
 *.wasm
