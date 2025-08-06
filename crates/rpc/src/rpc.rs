@@ -13,16 +13,6 @@ pub use peer::*;
 pub use proto;
 pub use proto::{Receipt, TypedEnvelope, error::*};
 
-// Export tungstenite types for existing /rpc endpoint
-pub use async_tungstenite::tungstenite::Message as WebSocketMessage;
-
-// Export yawc types for new /cloud endpoint
-pub use websocket_yawc::{
-    CloseFrame, Message as YawcMessage, WebSocketAdapter as YawcWebSocketAdapter,
-    build_websocket_request as build_yawc_websocket_request,
-};
-pub use yawc::close::CloseCode;
-
 mod macros;
 
 #[cfg(feature = "gpui")]
