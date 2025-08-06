@@ -48,7 +48,7 @@ impl AgentServer for Gemini {
             })?;
 
             let Some(command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
             else {
                 anyhow::bail!("Failed to find gemini binary");
             };
