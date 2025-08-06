@@ -30,7 +30,7 @@ pub struct NativeAgent {
 }
 
 impl NativeAgent {
-    pub fn new(project: Entity<Project>, root_dir: PathBuf, templates: Arc<Templates>) -> Self {
+    pub fn new(project: Entity<Project>, templates: Arc<Templates>) -> Self {
         log::info!("Creating new NativeAgent");
         Self {
             sessions: HashMap::new(),
