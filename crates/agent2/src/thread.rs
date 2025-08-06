@@ -3,7 +3,10 @@ use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
-use futures::{channel::mpsc, stream::FuturesUnordered};
+use futures::{
+    channel::{mpsc, oneshot},
+    stream::FuturesUnordered,
+};
 use gpui::{App, Context, Entity, ImageFormat, SharedString, Task};
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
@@ -98,7 +101,15 @@ pub enum AgentResponseEvent {
     Thinking(String),
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp::ToolCallUpdate),
+    ToolCallAuthorization(ToolCallAuthorization),
     Stop(acp::StopReason),
+}
+
+#[derive(Debug)]
+pub struct ToolCallAuthorization {
+    pub tool_call: acp::ToolCall,
+    pub options: Vec<acp::PermissionOption>,
+    pub response: oneshot::Sender<acp::PermissionOptionId>,
 }
 
 pub struct Thread {
@@ -473,6 +484,43 @@ impl Thread {
         }
 
         if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
+            let (send, recv) = oneshot::channel();
+
+            self.run_tool(tool)
+            if tool.needs_authorization(tool_use.input.clone(), cx) {
+                events_tx.unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCall {
+                            id: acp::ToolCallId(tool_use.id.to_string().into()),
+                            title: tool_use.name.to_string(),
+                            kind: acp::ToolKind::Other,
+                            status: acp::ToolCallStatus::Pending,
+                            content: vec![],
+                            locations: vec![],
+                            raw_input: Some(tool_use.input.clone()),
+                        },
+                        options: vec![
+                            acp::PermissionOption {
+                                id: acp::PermissionOptionId("allow_always".into()),
+                                name: "Always Allow".into(),
+                                kind: acp::PermissionOptionKind::AllowAlways,
+                            },
+                            acp::PermissionOption {
+                                id: acp::PermissionOptionId("allow".into()),
+                                name: "Allow".into(),
+                                kind: acp::PermissionOptionKind::AllowOnce,
+                            },
+                            acp::PermissionOption {
+                                id: acp::PermissionOptionId("deny".into()),
+                                name: "Deny".into(),
+                                kind: acp::PermissionOptionKind::RejectOnce,
+                            },
+                        ],
+                        response: send,
+                    },
+                )));
+            }
+
             events_tx
                 .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
                     acp::ToolCallUpdate {
@@ -514,6 +562,54 @@ impl Thread {
                 is_error: true,
                 output: None,
             }))
+        }
+    }
+
+    fn run_tool(&self, tool: &Arc<dyn AnyAgentTool>, tool_use: LanguageModelToolUse, events_tx: &mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>) -> Task<LanguageModelToolResult> {
+        let needs_authorization = match tool.needs_authorization(tool_use.input.clone(), cx) {
+            Ok(needs_authorization) => needs_authorization,
+            Err(error) => return Task::ready(LanguageModelToolResult {
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error: true,
+                content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
+                output: None,
+            }),
+        };
+
+        if needs_authorization {
+            let (send, recv) = oneshot::channel();
+            events_tx.unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
+                ToolCallAuthorization {
+                    tool_call: acp::ToolCall {
+                        id: acp::ToolCallId(tool_use.id.to_string().into()),
+                        title: tool_use.name.to_string(),
+                        kind: acp::ToolKind::Other,
+                        status: acp::ToolCallStatus::Pending,
+                        content: vec![],
+                        locations: vec![],
+                        raw_input: Some(tool_use.input.clone()),
+                    },
+                    options: vec![
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("allow_always".into()),
+                            name: "Always Allow".into(),
+                            kind: acp::PermissionOptionKind::AllowAlways,
+                        },
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("allow".into()),
+                            name: "Allow".into(),
+                            kind: acp::PermissionOptionKind::AllowOnce,
+                        },
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("deny".into()),
+                            name: "Deny".into(),
+                            kind: acp::PermissionOptionKind::RejectOnce,
+                        },
+                    ],
+                    response: send,
+                },
+            )));
         }
     }
 
@@ -667,6 +763,10 @@ where
         schemars::schema_for!(Self::Input)
     }
 
+    /// Returns true if the tool needs the users's authorization
+    /// before running.
+    fn needs_authorization(&self, input: Self::Input, cx: &App) -> bool;
+
     /// Runs the tool with the provided input.
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
 
@@ -681,6 +781,7 @@ pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self, cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
+    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool>;
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
 }
 
@@ -698,6 +799,14 @@ where
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
         Ok(serde_json::to_value(self.0.input_schema(format))?)
+    }
+
+    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool> {
+        let parsed_input: Result<T::Input> = serde_json::from_value(input).map_err(Into::into);
+        match parsed_input {
+            Ok(input) => Ok(self.0.needs_authorization(input, cx)),
+            Err(error) => Err(anyhow!(error)),
+        }
     }
 
     fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>> {

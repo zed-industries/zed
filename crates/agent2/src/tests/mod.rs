@@ -1,15 +1,17 @@
 use super::*;
 use crate::templates::Templates;
 use acp_thread::AgentConnection;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp};
+use anyhow::Result;
 use client::{Client, UserStore};
 use fs::FakeFs;
+use futures::{channel::mpsc::UnboundedReceiver, Stream};
 use gpui::{http_client::FakeHttpClient, AppContext, Entity, Task, TestAppContext};
 use indoc::indoc;
 use language_model::{
     fake_provider::FakeLanguageModel, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, MessageContent, Role,
-    StopReason,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelToolResult,
+    LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -208,6 +210,102 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         saw_partial_tool_use,
         "should see at least one partially streamed tool use in the history"
     );
+}
+
+#[gpui::test]
+async fn test_tool_permissions(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| {
+        thread.add_tool(ToolRequiringPermission);
+        thread.send(model.clone(), "abc", cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_2".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    let tool_call_auth_1 = expect_tool_call_authorization(&mut events).await;
+    let tool_call_auth_2 = expect_tool_call_authorization(&mut events).await;
+
+    // Approve the first
+    tool_call_auth_1
+        .response
+        .send(tool_call_auth_1.options[1].id.clone())
+        .unwrap();
+    // Reject the second
+    tool_call_auth_2
+        .response
+        .send(tool_call_auth_1.options[2].id.clone())
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
+                tool_name: tool_call_auth_1.tool_call.title.into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: None
+            }),
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
+                tool_name: tool_call_auth_2.tool_call.title.into(),
+                is_error: true,
+                content: "Rejected".into(),
+                output: None
+            })
+        ]
+    );
+}
+
+async fn expect_tool_call_authorization(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> ToolCallAuthorization {
+    let event = events.next().await.unwrap().unwrap();
+    let tool_call_authorization = match event {
+        AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) => {
+            tool_call_authorization
+        }
+        _ => {
+            panic!("incorrect event {:?}", event)
+        }
+    };
+    let permission_kinds = tool_call_authorization
+        .options
+        .iter()
+        .map(|o| o.kind)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        permission_kinds,
+        vec![
+            acp::PermissionOptionKind::AllowAlways,
+            acp::PermissionOptionKind::AllowOnce,
+            acp::PermissionOptionKind::RejectOnce,
+        ]
+    );
+    tool_call_authorization
 }
 
 #[gpui::test]

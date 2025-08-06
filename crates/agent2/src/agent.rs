@@ -1,3 +1,4 @@
+use crate::ToolCallAuthorization;
 use crate::{templates::Templates, AgentResponseEvent, Thread};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
@@ -16,6 +17,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use util::ResultExt;
 
 const RULES_FILE_NAMES: [&'static str; 9] = [
     ".rules",
@@ -514,6 +516,28 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                         cx,
                                     )
                                 })??;
+                            }
+                            AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
+                                tool_call,
+                                options,
+                                response,
+                            }) => {
+                                let recv = acp_thread.update(cx, |thread, cx| {
+                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                })?;
+                                cx.background_spawn(async move {
+                                    if let Some(option) = recv
+                                        .await
+                                        .context("authorization sender was dropped")
+                                        .log_err()
+                                    {
+                                        response
+                                            .send(option)
+                                            .map(|_| anyhow!("authorization receiver was dropped"))
+                                            .log_err();
+                                    }
+                                })
+                                .detach();
                             }
                             AgentResponseEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {

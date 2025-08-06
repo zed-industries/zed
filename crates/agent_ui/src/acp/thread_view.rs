@@ -3027,7 +3027,7 @@ mod tests {
                 let task = cx.spawn(async move |cx| {
                     if let Some((tool_call, options)) = permission_request {
                         let permission = thread.update(cx, |thread, cx| {
-                            thread.request_tool_call_permission(
+                            thread.request_tool_call_authorization(
                                 tool_call.clone(),
                                 options.clone(),
                                 cx,
