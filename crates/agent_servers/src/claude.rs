@@ -200,7 +200,11 @@ impl AgentConnection for ClaudeAgentConnection {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -244,10 +248,7 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        cx.foreground_executor().spawn(async move {
-            rx.await??;
-            Ok(())
-        })
+        cx.foreground_executor().spawn(async move { rx.await? })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
@@ -261,6 +262,14 @@ impl AgentConnection for ClaudeAgentConnection {
             .outgoing_tx
             .unbounded_send(SdkMessage::new_interrupt_message())
             .log_err();
+
+        if let Some(end_turn_tx) = session.end_turn_tx.borrow_mut().take() {
+            end_turn_tx
+                .send(Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::Cancelled,
+                }))
+                .ok();
+        }
     }
 }
 
@@ -322,7 +331,7 @@ fn spawn_claude(
 
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
 }
@@ -331,7 +340,7 @@ impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
         cx: &mut AsyncApp,
     ) {
         match message {
@@ -436,7 +445,7 @@ impl ClaudeAgentSession {
                 ..
             } => {
                 if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error {
+                    if is_error || subtype == ResultErrorType::ErrorDuringExecution {
                         end_turn_tx
                             .send(Err(anyhow!(
                                 "Error: {}",
@@ -444,7 +453,14 @@ impl ClaudeAgentSession {
                             )))
                             .ok();
                     } else {
-                        end_turn_tx.send(Ok(())).ok();
+                        let stop_reason = match subtype {
+                            ResultErrorType::Success => acp::StopReason::EndTurn,
+                            ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                            ResultErrorType::ErrorDuringExecution => unreachable!(),
+                        };
+                        end_turn_tx
+                            .send(Ok(acp::PromptResponse { stop_reason }))
+                            .ok();
                     }
                 }
             }
@@ -669,7 +685,7 @@ struct ControlResponse {
     subtype: ResultErrorType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ResultErrorType {
     Success,

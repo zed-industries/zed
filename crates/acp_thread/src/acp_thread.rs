@@ -656,6 +656,10 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn session_id(&self) -> &acp::SessionId {
+        &self.session_id
+    }
+
     pub fn status(&self) -> ThreadStatus {
         if self.send_task.is_some() {
             if self.waiting_for_tool_confirmation() {
@@ -1377,6 +1381,9 @@ mod tests {
                                 cx,
                             )
                             .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
                     })
                 }
                 .boxed_local()
@@ -1449,7 +1456,9 @@ mod tests {
                         .unwrap()
                         .await
                         .unwrap();
-                    Ok(())
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
                 }
                 .boxed_local()
             },
@@ -1522,7 +1531,9 @@ mod tests {
                         })
                         .unwrap()
                         .unwrap();
-                    Ok(())
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
                 }
                 .boxed_local()
             }
@@ -1632,7 +1643,9 @@ mod tests {
                         })
                         .unwrap()
                         .unwrap();
-                    Ok(())
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
                 }
                 .boxed_local()
             }
@@ -1686,7 +1699,7 @@ mod tests {
                         acp::PromptRequest,
                         WeakEntity<AcpThread>,
                         AsyncApp,
-                    ) -> LocalBoxFuture<'static, Result<()>>
+                    ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>>
                     + 'static,
             >,
         >,
@@ -1713,7 +1726,7 @@ mod tests {
                 acp::PromptRequest,
                 WeakEntity<AcpThread>,
                 AsyncApp,
-            ) -> LocalBoxFuture<'static, Result<()>>
+            ) -> LocalBoxFuture<'static, Result<acp::PromptResponse>>
             + 'static,
         ) -> Self {
             self.on_user_message.replace(Rc::new(handler));
@@ -1755,7 +1768,11 @@ mod tests {
             }
         }
 
-        fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             if let Some(handler) = &self.on_user_message {
@@ -1763,7 +1780,9 @@ mod tests {
                 let thread = thread.clone();
                 cx.spawn(async move |cx| handler(params, thread, cx.clone()).await)
             } else {
-                Task::ready(Ok(()))
+                Task::ready(Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::EndTurn,
+                }))
             }
         }
 
