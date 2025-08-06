@@ -52,4 +52,8 @@
 
 ---
 
+## Repository Information
+- **Original Repository (GitHub):** https://github.com/Askath/zed
+- **Mirror (SourceHut):** https://git.sr.ht/~tarac/Zed
+
 This file supersedes and summarises `.cursorrules`, `.clinerules`, and `CLAUDE.md`. Review them for detailed context and always follow the most restrictive/best-practice version of any rule.
