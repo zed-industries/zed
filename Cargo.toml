@@ -187,6 +187,7 @@ members = [
     "crates/workspace",
     "crates/worktree",
     "crates/x_ai",
+    "crates/z_ai",
     "crates/zed",
     "crates/zed_actions",
     "crates/zeta",
@@ -412,6 +413,7 @@ welcome = { path = "crates/welcome" }
 workspace = { path = "crates/workspace" }
 worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
+z_ai = { path = "crates/z_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
 zeta = { path = "crates/zeta" }

@@ -9152,6 +9152,7 @@ dependencies = [
  "vercel",
  "workspace-hack",
  "x_ai",
+ "z_ai",
 ]
 
 [[package]]
@@ -20308,6 +20309,17 @@ dependencies = [
  "quote",
  "syn 2.0.101",
  "synstructure",
+]
+
+[[package]]
+name = "z_ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "strum 0.27.1",
+ "workspace-hack",
 ]
 
 [[package]]
