@@ -53,6 +53,7 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
+    subscriptions: Vec<Subscription>,
 }
 
 impl NativeAgent {
@@ -86,6 +87,7 @@ impl NativeAgent {
                 templates,
                 project,
                 prompt_store,
+                subscriptions,
             }
         })
     }
@@ -591,4 +593,78 @@ fn convert_prompt_to_message(blocks: Vec<acp::ContentBlock>) -> String {
     }
 
     message
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_maintaining_project_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/",
+            json!({
+                "a": {}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        let agent = NativeAgent::new(project.clone(), Templates::new(), None, &mut cx.to_async())
+            .await
+            .unwrap();
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(agent.project_context.borrow().worktrees, vec![])
+        });
+
+        let worktree = project
+            .update(cx, |project, cx| project.create_worktree("/a", true, cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, _| {
+            assert_eq!(
+                agent.project_context.borrow().worktrees,
+                vec![WorktreeContext {
+                    root_name: "a".into(),
+                    abs_path: Path::new("/a").into(),
+                    rules_file: None
+                }]
+            )
+        });
+
+        // Creating `/a/.rules` updates the project context.
+        fs.insert_file("/a/.rules", Vec::new()).await;
+        cx.run_until_parked();
+        agent.read_with(cx, |agent, cx| {
+            let rules_entry = worktree.read(cx).entry_for_path(".rules").unwrap();
+            assert_eq!(
+                agent.project_context.borrow().worktrees,
+                vec![WorktreeContext {
+                    root_name: "a".into(),
+                    abs_path: Path::new("/a").into(),
+                    rules_file: Some(RulesFileContext {
+                        path_in_worktree: Path::new(".rules").into(),
+                        text: "".into(),
+                        project_entry_id: rules_entry.id.to_usize()
+                    })
+                }]
+            )
+        });
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        env_logger::try_init().ok();
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            Project::init_settings(cx);
+            language::init(cx);
+        });
+    }
 }

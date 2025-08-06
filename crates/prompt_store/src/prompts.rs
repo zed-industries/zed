@@ -71,14 +71,14 @@ pub struct UserRulesContext {
     pub contents: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct WorktreeContext {
     pub root_name: String,
     pub abs_path: Arc<Path>,
     pub rules_file: Option<RulesFileContext>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct RulesFileContext {
     pub path_in_worktree: Arc<Path>,
     pub text: String,

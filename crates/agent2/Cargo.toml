@@ -49,6 +49,7 @@ env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
 gpui_tokio.workspace = true
+language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 project = { workspace = true, "features" = ["test-support"] }
 reqwest_client.workspace = true
