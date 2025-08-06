@@ -756,8 +756,15 @@ impl ProjectSearchView {
 
         // Read in settings if available
         let (mut options, filters_enabled, saved_patterns) = if let Some(settings) = settings {
-            let patterns = (settings.last_included_files.clone(), settings.last_excluded_files.clone());
-            (settings.search_options, settings.filters_enabled, Some(patterns))
+            let patterns = (
+                settings.last_included_files.clone(),
+                settings.last_excluded_files.clone(),
+            );
+            (
+                settings.search_options,
+                settings.filters_enabled,
+                Some(patterns),
+            )
         } else {
             let search_options =
                 SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
@@ -1198,7 +1205,7 @@ impl ProjectSearchView {
     fn search(&mut self, cx: &mut Context<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
-            
+
             // Save the current pattern state to ActiveSettings
             ActiveSettings::update_global(cx, |settings, cx| {
                 settings.0.insert(
@@ -4346,7 +4353,6 @@ pub mod tests {
         });
     }
 
-    // Helper to set up a basic test project with search
     async fn setup_search_test(
         cx: &mut TestAppContext,
     ) -> (
@@ -4374,7 +4380,6 @@ pub mod tests {
         (project, window, search)
     }
 
-    // Helper to create a search view
     fn create_search_view(
         cx: &mut TestAppContext,
         workspace: &WindowHandle<Workspace>,
@@ -4386,7 +4391,6 @@ pub mod tests {
         })
     }
 
-    // Helper to set persistent_patterns setting
     fn set_persistent_patterns(cx: &mut TestAppContext, enabled: bool) {
         cx.update(|cx| {
             let mut editor_settings = EditorSettings::get_global(cx).clone();
@@ -4395,7 +4399,6 @@ pub mod tests {
         });
     }
 
-    // Helper to add patterns to search history
     fn add_to_search_history(
         cx: &mut TestAppContext,
         project: &Entity<Project>,
@@ -4416,7 +4419,6 @@ pub mod tests {
         });
     }
 
-    // Helper to verify search view patterns
     fn assert_search_patterns(
         cx: &mut TestAppContext,
         search_view: &WindowHandle<ProjectSearchView>,
@@ -4440,10 +4442,8 @@ pub mod tests {
         init_test(cx);
         let (project, workspace, search) = setup_search_test(cx).await;
 
-        // Add filter patterns to the project's search history
         add_to_search_history(cx, &project, "*.rs", "test.rs");
 
-        // Test with persistent_patterns disabled (default behavior)
         let search_view1 = create_search_view(cx, &workspace, &search);
         assert_search_patterns(
             cx,
@@ -4453,7 +4453,6 @@ pub mod tests {
             "Patterns should be empty when persistent_patterns is false (default)",
         );
 
-        // Test with persistent_patterns explicitly enabled
         set_persistent_patterns(cx, true);
         let search_view2 = create_search_view(cx, &workspace, &search);
         assert_search_patterns(
@@ -4472,7 +4471,6 @@ pub mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
 
-        // Create two projects with different settings
         fs.insert_tree(
             path!("/project1"),
             json!({
@@ -4506,17 +4504,17 @@ pub mod tests {
         let project1 = Project::test(fs.clone(), [path!("/project1").as_ref()], cx).await;
         let project2 = Project::test(fs.clone(), [path!("/project2").as_ref()], cx).await;
 
-        let workspace1 = cx.add_window(|window, cx| Workspace::test_new(project1.clone(), window, cx));
-        let workspace2 = cx.add_window(|window, cx| Workspace::test_new(project2.clone(), window, cx));
+        let workspace1 =
+            cx.add_window(|window, cx| Workspace::test_new(project1.clone(), window, cx));
+        let workspace2 =
+            cx.add_window(|window, cx| Workspace::test_new(project2.clone(), window, cx));
 
         let search1 = cx.new(|cx| ProjectSearch::new(project1.clone(), cx));
         let search2 = cx.new(|cx| ProjectSearch::new(project2.clone(), cx));
 
-        // Add different search history to both projects
         add_to_search_history(cx, &project1, "project1-*.rs", "project1-test.rs");
         add_to_search_history(cx, &project2, "project2-*.rs", "project2-test.rs");
 
-        // Create search views and verify behavior
         let search_view1 = create_search_view(cx, &workspace1, &search1);
         assert_search_patterns(
             cx,
@@ -4541,10 +4539,8 @@ pub mod tests {
         init_test(cx);
         let (_project, workspace, search) = setup_search_test(cx).await;
 
-        // Enable persistent_patterns
         set_persistent_patterns(cx, true);
 
-        // Create a search view with empty history - should handle gracefully
         let search_view = create_search_view(cx, &workspace, &search);
         assert_search_patterns(
             cx,
@@ -4560,10 +4556,8 @@ pub mod tests {
         init_test(cx);
         let (_project, workspace, search) = setup_search_test(cx).await;
 
-        // Enable persistent_patterns
         set_persistent_patterns(cx, true);
 
-        // Create first search view and set initial patterns
         let search_view1 = create_search_view(cx, &workspace, &search);
         search_view1
             .update(cx, |search_view, window, cx| {
@@ -4573,12 +4567,11 @@ pub mod tests {
                 search_view.excluded_files_editor.update(cx, |editor, cx| {
                     editor.set_text("test.rs", window, cx);
                 });
-                // Perform a search to save the patterns
+
                 search_view.search(cx);
             })
             .unwrap();
-        
-        // Clear the patterns and search again
+
         search_view1
             .update(cx, |search_view, window, cx| {
                 search_view.included_files_editor.update(cx, |editor, cx| {
@@ -4587,12 +4580,11 @@ pub mod tests {
                 search_view.excluded_files_editor.update(cx, |editor, cx| {
                     editor.set_text("", window, cx);
                 });
-                // Perform another search to save the cleared state
+
                 search_view.search(cx);
             })
             .unwrap();
 
-        // Create a new search view - it should restore the cleared (empty) patterns
         let search_view2 = create_search_view(cx, &workspace, &search);
         assert_search_patterns(
             cx,
