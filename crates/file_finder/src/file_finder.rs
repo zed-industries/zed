@@ -423,7 +423,7 @@ pub struct FileFinderDelegate {
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
-    history_items: Vec<FoundPath>, //TODO: Not saving folder history items for now
+    history_items: Vec<FoundPath>,
     separate_history: bool,
     first_update: bool,
     filter_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -431,8 +431,6 @@ pub struct FileFinderDelegate {
     focus_handle: FocusHandle,
     include_ignored: Option<bool>,
     include_ignored_refresh: Task<()>,
-    /// Optional override for including folders in search; None uses globing
-    /// include_ignored_refresh: Task<()>,
     include_folders: Option<bool>,
     include_folders_refresh: Task<()>,
 }
@@ -737,7 +735,7 @@ fn matching_history_items<'a>(
         .chain(currently_opened)
         .filter_map(|found_path| {
             let candidate = PathMatchCandidate {
-                is_dir: false, // You can't open directories as project items
+                is_dir: found_path.project.path.is_dir(), // You can't open directories as project items
                 path: &found_path.project.path,
                 // Only match history items names, otherwise their paths may match too many queries, producing false positives.
                 // E.g. `foo` would match both `something/foo/bar.rs` and `something/foo/foo.rs` and if the former is a history item,
@@ -917,10 +915,9 @@ impl FileFinderDelegate {
                             .map_or(false, |entry| entry.is_ignored)
                     }),
                     include_root_name,
-                    candidates: if self.include_folders.unwrap_or(false) {
-                        project::Candidates::Entries
-                    } else {
-                        project::Candidates::Files
+                    candidates: match self.include_folders {
+                        Some(true) => project::Candidates::Entries,
+                        _ => project::Candidates::Files,
                     },
                 }
             })
@@ -1523,7 +1520,6 @@ impl PickerDelegate for FileFinderDelegate {
                     }
                 }
 
-                // TODO: Remove it from nested if; should be inside if let Some(workspace)
                 let open_task = workspace.update(cx, |workspace, cx| {
                     let allow_preview =
                         PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
@@ -1652,21 +1648,16 @@ impl PickerDelegate for FileFinderDelegate {
                 return None;
             }
 
-            // Determine if this path is a directory via workspace entries
-            let is_dir = path_match
-                .panel_match()
-                .and_then(|pm| {
-                    let project_path = ProjectPath {
-                        worktree_id: WorktreeId::from_usize(pm.0.worktree_id),
-                        path: Arc::clone(&pm.0.path),
-                    };
-                    self.workspace.upgrade().and_then(|ws| {
-                        let project_entity = ws.read(cx).project().clone();
-                        project_entity
-                            .read(cx)
-                            .entry_for_path(&project_path, cx)
-                            .map(|e| e.is_dir())
-                    })
+            let project_path = path_match.project_path();
+            let is_dir = self
+                .workspace
+                .upgrade()
+                .and_then(|ws| {
+                    ws.read(cx)
+                        .project()
+                        .read(cx)
+                        .entry_for_path(&project_path, cx)
+                        .map(|e| e.is_dir())
                 })
                 .unwrap_or(false);
 
@@ -1674,10 +1665,9 @@ impl PickerDelegate for FileFinderDelegate {
             let abs_path = path_match.abs_path(&self.project, cx)?;
             let file_name = abs_path.file_name()?;
 
-            let icon_path = if is_dir {
-                FileIcons::get_folder_icon(false, cx)?
-            } else {
-                FileIcons::get_icon(file_name.as_ref(), cx)?
+            let icon_path = match is_dir {
+                true => FileIcons::get_folder_icon(false, cx)?,
+                false => FileIcons::get_icon(file_name.as_ref(), cx)?,
             };
 
             Some(Icon::from_path(icon_path).color(Color::Muted))
@@ -1706,7 +1696,7 @@ impl PickerDelegate for FileFinderDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
         let focus_handle = self.focus_handle.clone();
-
+        let has_filters = self.include_ignored.is_some() || self.include_folders.is_some();
         Some(
             h_flex()
                 .w_full()
@@ -1727,9 +1717,8 @@ impl PickerDelegate for FileFinderDelegate {
                             IconButton::new("filter-trigger", IconName::Sliders)
                                 .icon_size(IconSize::Small)
                                 .icon_size(IconSize::Small)
-                                .toggle_state(self.include_ignored.unwrap_or(false))
-                                .when(self.include_ignored.is_some(), |this| {
-                                    //TODO: Should light up with folders
+                                .toggle_state(has_filters)
+                                .when(has_filters, |this| {
                                     this.indicator(Indicator::dot().color(Color::Info))
                                 }),
                             {
@@ -1754,7 +1743,6 @@ impl PickerDelegate for FileFinderDelegate {
                                 Some(ContextMenu::build(window, cx, {
                                     let focus_handle = focus_handle.clone();
                                     move |menu, _, _| {
-                                        // clone separate handles to avoid move conflicts
                                         let fh_menu = focus_handle.clone();
                                         let fh_ignored = fh_menu.clone();
                                         let fh_folders = fh_menu.clone();
