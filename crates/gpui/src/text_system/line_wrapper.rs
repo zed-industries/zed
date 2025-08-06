@@ -182,7 +182,8 @@ impl LineWrapper {
         // https://en.wikipedia.org/wiki/Cyrillic_script_in_Unicode
         matches!(c, '\u{0400}'..='\u{04FF}') ||
         // Some other known special characters that should be treated as word characters,
-        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, `a=1`, etc.
+        // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`,
+        // `2^3`, `a~b`, `a=1`, `Self::new`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',' | '=' | ':') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
