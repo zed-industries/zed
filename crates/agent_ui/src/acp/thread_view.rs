@@ -3006,7 +3006,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             let mut tasks = vec![];
@@ -3040,7 +3044,9 @@ mod tests {
             }
             cx.spawn(async move |_| {
                 try_join_all(tasks).await?;
-                Ok(())
+                Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::EndTurn,
+                })
             })
         }
 
@@ -3084,7 +3090,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptRequest, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 

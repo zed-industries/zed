@@ -464,7 +464,11 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let chunks = params
             .prompt
             .into_iter()
@@ -484,7 +488,9 @@ impl AgentConnection for AcpConnection {
             .request_any(acp_old::SendUserMessageParams { chunks }.into_any());
         cx.foreground_executor().spawn(async move {
             task.await?;
-            anyhow::Ok(())
+            anyhow::Ok(acp::PromptResponse {
+                stop_reason: acp::StopReason::EndTurn,
+            })
         })
     }
 
