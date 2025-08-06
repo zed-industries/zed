@@ -186,7 +186,7 @@ Note that this requires `node.exe` to be in your `PATH`.
 ## Running a local collab server
 
 > [!NOTE]
-> Because of recent changes to our authentication system, Zed will no longer be able to authenticate itself, and therefore use, a local collab server.
+> Because of recent changes to our authentication system, Zed will not be able to authenticate itself with, and therefore use, a local collab server.
 
 If you want to run your own version of the zed collaboration service, you can, but note that this is still under development, and there is no support for authentication nor extensions.
 
