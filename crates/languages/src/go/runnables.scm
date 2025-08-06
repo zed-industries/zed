@@ -91,3 +91,73 @@
   ) @_
   (#set! tag go-main)
 )
+
+; Table test case - slice
+; Captures only the first string field as subtest name
+(
+  (function_declaration
+    name: (identifier) @_containing_function
+    (#match? @_containing_function "^Test.*")
+    body: (block
+      (short_var_declaration
+        right: (expression_list
+          (composite_literal
+            type: (slice_type
+              element: (struct_type)
+            )
+            body: (literal_value
+              (literal_element
+                (literal_value
+                  .
+                  (keyed_element
+                    (literal_element
+                      (identifier)
+                    )
+                    (literal_element
+                      [
+                        (interpreted_string_literal) @run @_table_test_case_name
+                        (raw_string_literal) @run @_table_test_case_name
+                      ]
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  ) @_
+  (#set! tag go-table-test-case)
+)
+
+; Table test cases - map
+(
+  (function_declaration
+    name: (identifier) @_containing_function
+    (#match? @_containing_function "^Test.*")
+    body: (block
+      (short_var_declaration
+        right: (expression_list
+          (composite_literal
+            type: (map_type
+              key: (type_identifier) @_key_type
+              (#eq? @_key_type "string")
+            )
+            body: (literal_value
+              (keyed_element
+                (literal_element
+                  [
+                    (interpreted_string_literal) @run @_table_test_case_name
+                    (raw_string_literal) @run @_table_test_case_name
+                  ]
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  ) @_
+  (#set! tag go-table-test-case)
+)
