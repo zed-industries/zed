@@ -695,7 +695,7 @@ impl Serialize for Peer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::WebSocketMessage;
+    use async_tungstenite::tungstenite::Message as WebSocketMessage;
     use gpui::TestAppContext;
 
     fn init_logger() {
