@@ -9,7 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use settings::{Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
-use theme::{Appearance, Theme, ThemeMeta, ThemeMode, ThemeRegistry, ThemeSelection, ThemeSettings};
+use theme::{
+    Appearance, Theme, ThemeMeta, ThemeMode, ThemeRegistry, ThemeSelection, ThemeSettings,
+};
 use ui::{ListItem, ListItemSpacing, prelude::*, v_flex};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_workspace};
@@ -81,32 +83,26 @@ fn toggle_icon_theme_selector(
     });
 }
 
-fn toggle_theme_mode(
-    workspace: &mut Workspace,
-    _window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+fn toggle_theme_mode(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
     let current_settings = ThemeSettings::get_global(cx);
     let current_selection = current_settings.theme_selection.as_ref();
-    
+
     let new_mode = match current_selection {
-        Some(ThemeSelection::Dynamic { mode, .. }) => {
-            match mode {
-                ThemeMode::Light => ThemeMode::Dark,
-                ThemeMode::Dark => ThemeMode::System,
-                ThemeMode::System => ThemeMode::Light,
-            }
-        }
+        Some(ThemeSelection::Dynamic { mode, .. }) => match mode {
+            ThemeMode::Light => ThemeMode::Dark,
+            ThemeMode::Dark => ThemeMode::System,
+            ThemeMode::System => ThemeMode::Light,
+        },
         Some(ThemeSelection::Static(_)) => ThemeMode::Light,
-        None => ThemeMode::Light
+        None => ThemeMode::Light,
     };
-    
+
     let fs = workspace.app_state().fs.clone();
-    
+
     update_settings_file::<ThemeSettings>(fs, cx, move |settings, _| {
         settings.set_mode(new_mode);
     });
-    
+
     ThemeSettings::reload_current_theme(cx);
 }
 
