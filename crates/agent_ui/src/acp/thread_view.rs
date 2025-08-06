@@ -21,10 +21,10 @@ use editor::{
 use file_icons::FileIcons;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, PlatformDisplay, SharedString,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop, linear_gradient,
-    list, percentage, point, prelude::*, pulsating_between,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
+    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
+    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
@@ -34,7 +34,9 @@ use project::Project;
 use settings::Settings as _;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
-use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
+use ui::{
+    Disclosure, Divider, DividerColor, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
@@ -69,6 +71,7 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
+    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -187,7 +190,8 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
-            list_state: list_state,
+            list_state: list_state.clone(),
+            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -2479,6 +2483,39 @@ impl AcpThreadView {
             .child(open_as_markdown)
             .child(scroll_to_top)
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("acp-thread-scrollbar")
+            .occlude()
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -2553,6 +2590,7 @@ impl Render for AcpThreadView {
                                 .flex_grow()
                                 .into_any(),
                             )
+                            .child(self.render_vertical_scrollbar(cx))
                             .children(match thread_clone.read(cx).status() {
                                 ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
                                     None
