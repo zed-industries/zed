@@ -243,6 +243,12 @@ pub mod theme_selector {
         /// A list of theme names to filter the theme selector down to.
         pub themes_filter: Option<Vec<String>>,
     }
+
+    /// Toggles between light, dark, and system theme modes.
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = theme_selector)]
+    #[serde(deny_unknown_fields)]
+    pub struct ToggleMode;
 }
 
 pub mod icon_theme_selector {
