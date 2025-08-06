@@ -970,13 +970,7 @@ impl AgentPanel {
                     )
                 });
 
-                this.set_active_view(
-                    ActiveView::ExternalAgentThread {
-                        thread_view: thread_view.clone(),
-                    },
-                    window,
-                    cx,
-                );
+                this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
             })
         })
         .detach_and_log_err(cx);
@@ -1987,6 +1981,22 @@ impl AgentPanel {
                                                 );
                                             }),
                                     )
+                                    .item(
+                                        ContextMenuEntry::new("New Native Agent Thread")
+                                            .icon(IconName::ZedAssistant)
+                                            .icon_color(Color::Muted)
+                                            .handler(move |window, cx| {
+                                                window.dispatch_action(
+                                                    NewExternalAgentThread {
+                                                        agent: Some(
+                                                            crate::ExternalAgent::NativeAgent,
+                                                        ),
+                                                    }
+                                                    .boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
                             });
                         menu
                     }))
@@ -2643,6 +2653,31 @@ impl AgentPanel {
                                                         Box::new(NewExternalAgentThread {
                                                             agent: Some(
                                                                 crate::ExternalAgent::ClaudeCode,
+                                                            ),
+                                                        }),
+                                                        cx,
+                                                    )
+                                                },
+                                            ),
+                                        )
+                                        .child(
+                                            NewThreadButton::new(
+                                                "new-native-agent-thread-btn",
+                                                "New Native Agent Thread",
+                                                IconName::ZedAssistant,
+                                            )
+                                            // .keybinding(KeyBinding::for_action_in(
+                                            //     &OpenHistory,
+                                            //     &self.focus_handle(cx),
+                                            //     window,
+                                            //     cx,
+                                            // ))
+                                            .on_click(
+                                                |window, cx| {
+                                                    window.dispatch_action(
+                                                        Box::new(NewExternalAgentThread {
+                                                            agent: Some(
+                                                                crate::ExternalAgent::NativeAgent,
                                                             ),
                                                         }),
                                                         cx,

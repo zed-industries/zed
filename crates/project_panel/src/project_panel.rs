@@ -4157,13 +4157,12 @@ impl ProjectPanel {
             )
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right
-                        || event.down.first_mouse
+                    if event.is_right_click() || event.first_focus()
                         || show_editor
                     {
                         return;
                     }
-                    if event.down.button == MouseButton::Left {
+                    if event.standard_click() {
                         this.mouse_down = false;
                     }
                     cx.stop_propagation();
@@ -4203,7 +4202,7 @@ impl ProjectPanel {
                             this.marked_entries.insert(clicked_entry);
                         }
                     } else if event.modifiers().secondary() {
-                        if event.down.click_count > 1 {
+                        if event.click_count() > 1 {
                             this.split_entry(entry_id, cx);
                         } else {
                             this.selection = Some(selection);
@@ -4237,7 +4236,7 @@ impl ProjectPanel {
                         }
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
+                        let click_count = event.click_count();
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
@@ -5138,7 +5137,10 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(window, cx);
                     }
                 }))
-                .on_click(cx.listener(|this, _event, _, cx| {
+                .on_click(cx.listener(|this, event, _, cx| {
+                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        return;
+                    }
                     cx.stop_propagation();
                     this.selection = None;
                     this.marked_entries.clear();
@@ -5179,7 +5181,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.up.click_count > 1 {
+                            if event.click_count() > 1 {
                                 if let Some(entry_id) = this.last_worktree_root_id {
                                     let project = this.project.read(cx);
 

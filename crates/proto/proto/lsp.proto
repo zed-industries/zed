@@ -818,16 +818,6 @@ message LspResponse {
     uint64 server_id = 7;
 }
 
-message LanguageServerIdForName {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    string name = 3;
-}
-
-message LanguageServerIdForNameResponse {
-    optional uint64 server_id = 1;
-}
-
 message LspExtRunnables {
     uint64 project_id = 1;
     uint64 buffer_id = 2;

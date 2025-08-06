@@ -19,7 +19,6 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     _io_task: Task<Result<()>>,
-    _child: smol::process::Child,
 }
 
 pub struct AcpSession {
@@ -47,6 +46,7 @@ impl AcpConnection {
 
         let stdout = child.stdout.take().expect("Failed to take stdout");
         let stdin = child.stdin.take().expect("Failed to take stdin");
+        log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
@@ -62,6 +62,23 @@ impl AcpConnection {
         });
 
         let io_task = cx.background_spawn(io_task);
+
+        cx.spawn({
+            let sessions = sessions.clone();
+            async move |cx| {
+                let status = child.status().await?;
+
+                for session in sessions.borrow().values() {
+                    session
+                        .thread
+                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .ok();
+                }
+
+                anyhow::Ok(())
+            }
+        })
+        .detach();
 
         let response = connection
             .initialize(acp::InitializeRequest {
@@ -84,7 +101,6 @@ impl AcpConnection {
             connection: connection.into(),
             server_name,
             sessions,
-            _child: child,
             _io_task: io_task,
         })
     }
@@ -153,10 +169,16 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let conn = self.connection.clone();
-        cx.foreground_executor()
-            .spawn(async move { Ok(conn.prompt(params).await?) })
+        cx.foreground_executor().spawn(async move {
+            let response = conn.prompt(params).await?;
+            Ok(response)
+        })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {

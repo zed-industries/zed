@@ -3284,6 +3284,16 @@ impl InlayHints {
             })
             .unwrap_or(false)
     }
+
+    pub fn check_capabilities(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .is_some_and(|inlay_hint_provider| match inlay_hint_provider {
+                lsp::OneOf::Left(enabled) => *enabled,
+                lsp::OneOf::Right(_) => true,
+            })
+    }
 }
 
 #[async_trait(?Send)]
@@ -3297,17 +3307,7 @@ impl LspCommand for InlayHints {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
-        else {
-            return false;
-        };
-        match inlay_hint_provider {
-            lsp::OneOf::Left(enabled) => *enabled,
-            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
-                lsp::InlayHintServerCapabilities::Options(_) => true,
-                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
-            },
-        }
+        Self::check_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(

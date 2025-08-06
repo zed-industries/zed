@@ -5,6 +5,7 @@ use audio::{Audio, Sound};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::ExitStatus;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -93,6 +94,9 @@ enum ThreadState {
     Unauthenticated {
         connection: Rc<dyn AgentConnection>,
     },
+    ServerExited {
+        status: ExitStatus,
+    },
 }
 
 impl AcpThreadView {
@@ -172,22 +176,7 @@ impl AcpThreadView {
 
         let mention_set = mention_set.clone();
 
-        let list_state = ListState::new(
-            0,
-            gpui::ListAlignment::Bottom,
-            px(2048.0),
-            cx.processor({
-                move |this: &mut Self, index: usize, window, cx| {
-                    let Some((entry, len)) = this.thread().and_then(|thread| {
-                        let entries = &thread.read(cx).entries();
-                        Some((entries.get(index)?, entries.len()))
-                    }) else {
-                        return Empty.into_any();
-                    };
-                    this.render_entry(index, len, entry, window, cx)
-                }
-            }),
-        );
+        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
         Self {
             agent: agent.clone(),
@@ -232,7 +221,7 @@ impl AcpThreadView {
         let connect_task = agent.connect(&root_dir, &project, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok(thread) => thread,
+                Ok(connection) => connection,
                 Err(err) => {
                     this.update(cx, |this, cx| {
                         this.handle_load_error(err, cx);
@@ -242,6 +231,20 @@ impl AcpThreadView {
                     return;
                 }
             };
+
+            // this.update_in(cx, |_this, _window, cx| {
+            //     let status = connection.exit_status(cx);
+            //     cx.spawn(async move |this, cx| {
+            //         let status = status.await.ok();
+            //         this.update(cx, |this, cx| {
+            //             this.thread_state = ThreadState::ServerExited { status };
+            //             cx.notify();
+            //         })
+            //         .ok();
+            //     })
+            //     .detach();
+            // })
+            // .ok();
 
             let result = match connection
                 .clone()
@@ -311,7 +314,8 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => Some(thread),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
-            | ThreadState::LoadError(..) => None,
+            | ThreadState::LoadError(..)
+            | ThreadState::ServerExited { .. } => None,
         }
     }
 
@@ -321,6 +325,7 @@ impl AcpThreadView {
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
             ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
+            ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
 
@@ -650,6 +655,9 @@ impl AcpThreadView {
                     cx,
                 );
             }
+            AcpThreadEvent::ServerExited(status) => {
+                self.thread_state = ThreadState::ServerExited { status: *status };
+            }
         }
         cx.notify();
     }
@@ -862,6 +870,7 @@ impl AcpThreadView {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if index == total_entries - 1 && !is_generating {
             v_flex()
+                .w_full()
                 .child(primary)
                 .child(self.render_thread_controls(cx))
                 .into_any_element()
@@ -1386,7 +1395,29 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_error_state(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
+    fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .items_center()
+            .justify_center()
+            .child(self.render_error_agent_logo())
+            .child(
+                v_flex()
+                    .mt_4()
+                    .mb_2()
+                    .gap_0p5()
+                    .text_center()
+                    .items_center()
+                    .child(Headline::new("Server exited unexpectedly").size(HeadlineSize::Medium))
+                    .child(
+                        Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
         let mut container = v_flex()
             .items_center()
             .justify_center()
@@ -2530,17 +2561,34 @@ impl Render for AcpThreadView {
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .child(self.render_error_state(e, cx)),
+                    .child(self.render_load_error(e, cx)),
+                ThreadState::ServerExited { status } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_server_exited(*status, cx)),
                 ThreadState::Ready { thread, .. } => {
                     let thread_clone = thread.clone();
 
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
                             this.child(
-                                list(self.list_state.clone())
-                                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                    .flex_grow()
-                                    .into_any(),
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(|this, index: usize, window, cx| {
+                                        let Some((entry, len)) = this.thread().and_then(|thread| {
+                                            let entries = &thread.read(cx).entries();
+                                            Some((entries.get(index)?, entries.len()))
+                                        }) else {
+                                            return Empty.into_any();
+                                        };
+                                        this.render_entry(index, len, entry, window, cx)
+                                    }),
+                                )
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .flex_grow()
+                                .into_any(),
                             )
                             .child(self.render_vertical_scrollbar(cx))
                             .children(match thread_clone.read(cx).status() {
@@ -2756,6 +2804,16 @@ mod tests {
     use settings::SettingsStore;
 
     use super::*;
+
+    #[gpui::test]
+    async fn test_drop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default(), cx).await;
+        let weak_view = thread_view.downgrade();
+        drop(thread_view);
+        assert!(!weak_view.is_upgradable());
+    }
 
     #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
@@ -2987,7 +3045,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             let mut tasks = vec![];
@@ -3021,7 +3083,9 @@ mod tests {
             }
             cx.spawn(async move |_| {
                 try_join_all(tasks).await?;
-                Ok(())
+                Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::EndTurn,
+                })
             })
         }
 
@@ -3065,7 +3129,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptRequest, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 

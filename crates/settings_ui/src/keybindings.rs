@@ -1855,7 +1855,7 @@ impl Render for KeymapEditor {
                                         .on_click(cx.listener(
                                             move |this, event: &ClickEvent, window, cx| {
                                                 this.select_index(row_index, None, window, cx);
-                                                if event.up.click_count == 2 {
+                                                if event.click_count() == 2 {
                                                     this.open_edit_keybinding_modal(
                                                         false, window, cx,
                                                     );
