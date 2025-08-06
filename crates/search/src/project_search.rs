@@ -4346,12 +4346,15 @@ pub mod tests {
         });
     }
 
-    #[gpui::test]
-    async fn test_pattern_persistence_from_history(cx: &mut TestAppContext) {
-        init_test(cx);
-
+    // Helper to set up a basic test project with search
+    async fn setup_search_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Project>,
+        WindowHandle<Workspace>,
+        Entity<ProjectSearch>,
+    ) {
         let fs = FakeFs::new(cx.background_executor.clone());
-        // Set the fs as global
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
 
         fs.insert_tree(
@@ -4368,67 +4371,98 @@ pub mod tests {
         let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
 
-        // Add filter patterns to the project's search history
-        project.update(cx, |project, _cx| {
-            project
-                .search_history_mut(SearchInputKind::Include)
-                .add(&mut SearchHistoryCursor::default(), "*.rs".to_string());
-            project
-                .search_history_mut(SearchInputKind::Exclude)
-                .add(&mut SearchHistoryCursor::default(), "test.rs".to_string());
-        });
+        (project, window, search)
+    }
 
-        // Test with persistent_patterns disabled (default behavior)
-        // Create a search view - it should start empty despite history existing
-        let search_view1 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
-        });
+    // Helper to create a search view
+    fn create_search_view(
+        cx: &mut TestAppContext,
+        workspace: &WindowHandle<Workspace>,
+        search: &Entity<ProjectSearch>,
+    ) -> WindowHandle<ProjectSearchView> {
+        let workspace_downgrade = workspace.root(cx).unwrap().downgrade();
+        cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace_downgrade, search.clone(), window, cx, None)
+        })
+    }
 
-        // Verify that the patterns are empty when persistence is disabled (default)
-        search_view1
-            .update(cx, |search_view, _window, cx| {
-                let included_text = search_view.included_files_editor.read(cx).text(cx);
-                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
-
-                assert_eq!(
-                    included_text, "",
-                    "Included files should be empty when persistent_patterns is false (default)"
-                );
-                assert_eq!(
-                    excluded_text, "",
-                    "Excluded files should be empty when persistent_patterns is false (default)"
-                );
-            })
-            .unwrap();
-
-        // Test with persistent_patterns explicitly enabled
+    // Helper to set persistent_patterns setting
+    fn set_persistent_patterns(cx: &mut TestAppContext, enabled: bool) {
         cx.update(|cx| {
             let mut editor_settings = EditorSettings::get_global(cx).clone();
-            editor_settings.search.persistent_patterns = true;
+            editor_settings.search.persistent_patterns = enabled;
             EditorSettings::override_global(editor_settings, cx);
         });
+    }
 
-        // Create another search view - it should automatically restore pattern values from history
-        let search_view2 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+    // Helper to add patterns to search history
+    fn add_to_search_history(
+        cx: &mut TestAppContext,
+        project: &Entity<Project>,
+        include: &str,
+        exclude: &str,
+    ) {
+        project.update(cx, |project, _cx| {
+            if !include.is_empty() {
+                project
+                    .search_history_mut(SearchInputKind::Include)
+                    .add(&mut SearchHistoryCursor::default(), include.to_string());
+            }
+            if !exclude.is_empty() {
+                project
+                    .search_history_mut(SearchInputKind::Exclude)
+                    .add(&mut SearchHistoryCursor::default(), exclude.to_string());
+            }
         });
+    }
 
-        // Verify that the patterns were restored from history when enabled
-        search_view2
+    // Helper to verify search view patterns
+    fn assert_search_patterns(
+        cx: &mut TestAppContext,
+        search_view: &WindowHandle<ProjectSearchView>,
+        expected_include: &str,
+        expected_exclude: &str,
+        message: &str,
+    ) {
+        search_view
             .update(cx, |search_view, _window, cx| {
                 let included_text = search_view.included_files_editor.read(cx).text(cx);
                 let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
 
-                assert_eq!(
-                    included_text, "*.rs",
-                    "Included files should be restored from history when enabled"
-                );
-                assert_eq!(
-                    excluded_text, "test.rs",
-                    "Excluded files should be restored from history when enabled"
-                );
+                assert_eq!(included_text, expected_include, "{} (include)", message);
+                assert_eq!(excluded_text, expected_exclude, "{} (exclude)", message);
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_pattern_persistence_from_history(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (project, workspace, search) = setup_search_test(cx).await;
+
+        // Add filter patterns to the project's search history
+        add_to_search_history(cx, &project, "*.rs", "test.rs");
+
+        // Test with persistent_patterns disabled (default behavior)
+        let search_view1 = create_search_view(cx, &workspace, &search);
+        assert_search_patterns(
+            cx,
+            &search_view1,
+            "",
+            "",
+            "Patterns should be empty when persistent_patterns is false (default)",
+        );
+
+        // Test with persistent_patterns explicitly enabled
+        set_persistent_patterns(cx, true);
+        let search_view2 = create_search_view(cx, &workspace, &search);
+        assert_search_patterns(
+            cx,
+            &search_view2,
+            "*.rs",
+            "test.rs",
+            "Patterns should be restored from history when enabled",
+        );
     }
 
     #[gpui::test]
@@ -4438,7 +4472,7 @@ pub mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
         cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
 
-        // Create two different projects
+        // Create two projects with different settings
         fs.insert_tree(
             path!("/project1"),
             json!({
@@ -4469,170 +4503,68 @@ pub mod tests {
         )
         .await;
 
-        // Create projects with different settings
         let project1 = Project::test(fs.clone(), [path!("/project1").as_ref()], cx).await;
         let project2 = Project::test(fs.clone(), [path!("/project2").as_ref()], cx).await;
 
-        let window1 = cx.add_window(|window, cx| Workspace::test_new(project1.clone(), window, cx));
-        let window2 = cx.add_window(|window, cx| Workspace::test_new(project2.clone(), window, cx));
-
-        let workspace1 = window1.root(cx).unwrap();
-        let workspace2 = window2.root(cx).unwrap();
+        let workspace1 = cx.add_window(|window, cx| Workspace::test_new(project1.clone(), window, cx));
+        let workspace2 = cx.add_window(|window, cx| Workspace::test_new(project2.clone(), window, cx));
 
         let search1 = cx.new(|cx| ProjectSearch::new(project1.clone(), cx));
         let search2 = cx.new(|cx| ProjectSearch::new(project2.clone(), cx));
 
-        // Add search history to both projects
-        project1.update(cx, |project, _cx| {
-            project.search_history_mut(SearchInputKind::Include).add(
-                &mut SearchHistoryCursor::default(),
-                "project1-*.rs".to_string(),
-            );
-            project.search_history_mut(SearchInputKind::Exclude).add(
-                &mut SearchHistoryCursor::default(),
-                "project1-test.rs".to_string(),
-            );
-        });
+        // Add different search history to both projects
+        add_to_search_history(cx, &project1, "project1-*.rs", "project1-test.rs");
+        add_to_search_history(cx, &project2, "project2-*.rs", "project2-test.rs");
 
-        project2.update(cx, |project, _cx| {
-            project.search_history_mut(SearchInputKind::Include).add(
-                &mut SearchHistoryCursor::default(),
-                "project2-*.rs".to_string(),
-            );
-            project.search_history_mut(SearchInputKind::Exclude).add(
-                &mut SearchHistoryCursor::default(),
-                "project2-test.rs".to_string(),
-            );
-        });
+        // Create search views and verify behavior
+        let search_view1 = create_search_view(cx, &workspace1, &search1);
+        assert_search_patterns(
+            cx,
+            &search_view1,
+            "project1-*.rs",
+            "project1-test.rs",
+            "Project1 should restore patterns when persistent_patterns is true",
+        );
 
-        // Create search views for both projects
-        let search_view1 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace1.downgrade(), search1.clone(), window, cx, None)
-        });
-
-        let search_view2 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace2.downgrade(), search2.clone(), window, cx, None)
-        });
-
-        // Verify project1 (persistent_patterns: true) restores patterns from history
-        search_view1
-            .update(cx, |search_view, _window, cx| {
-                let included_text = search_view.included_files_editor.read(cx).text(cx);
-                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
-
-                assert_eq!(
-                    included_text, "project1-*.rs",
-                    "Project1 should restore patterns when persistent_patterns is true"
-                );
-                assert_eq!(
-                    excluded_text, "project1-test.rs",
-                    "Project1 should restore patterns when persistent_patterns is true"
-                );
-            })
-            .unwrap();
-
-        // Verify project2 (persistent_patterns: false) does NOT restore patterns
-        search_view2
-            .update(cx, |search_view, _window, cx| {
-                let included_text = search_view.included_files_editor.read(cx).text(cx);
-                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
-
-                assert_eq!(
-                    included_text, "",
-                    "Project2 should NOT restore patterns when persistent_patterns is false"
-                );
-                assert_eq!(
-                    excluded_text, "",
-                    "Project2 should NOT restore patterns when persistent_patterns is false"
-                );
-            })
-            .unwrap();
+        let search_view2 = create_search_view(cx, &workspace2, &search2);
+        assert_search_patterns(
+            cx,
+            &search_view2,
+            "",
+            "",
+            "Project2 should NOT restore patterns when persistent_patterns is false",
+        );
     }
 
     #[gpui::test]
     async fn test_pattern_persistence_with_empty_history(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
-
-        fs.insert_tree(
-            path!("/dir"),
-            json!({
-                "file.rs": "const ONE: usize = 1;",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let (_project, workspace, search) = setup_search_test(cx).await;
 
         // Enable persistent_patterns
-        cx.update(|cx| {
-            let mut editor_settings = EditorSettings::get_global(cx).clone();
-            editor_settings.search.persistent_patterns = true;
-            EditorSettings::override_global(editor_settings, cx);
-        });
+        set_persistent_patterns(cx, true);
 
         // Create a search view with empty history - should handle gracefully
-        let search_view = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
-        });
-
-        // Verify that patterns are empty when history is empty (even with persistent_patterns enabled)
-        search_view
-            .update(cx, |search_view, _window, cx| {
-                let included_text = search_view.included_files_editor.read(cx).text(cx);
-                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
-
-                assert_eq!(
-                    included_text, "",
-                    "Included files should be empty when history is empty"
-                );
-                assert_eq!(
-                    excluded_text, "",
-                    "Excluded files should be empty when history is empty"
-                );
-            })
-            .unwrap();
+        let search_view = create_search_view(cx, &workspace, &search);
+        assert_search_patterns(
+            cx,
+            &search_view,
+            "",
+            "",
+            "Patterns should be empty when history is empty",
+        );
     }
 
     #[gpui::test]
     async fn test_persistent_patterns_remembers_cleared_fields(cx: &mut TestAppContext) {
         init_test(cx);
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
-
-        fs.insert_tree(
-            path!("/dir"),
-            json!({
-                "file.rs": "const ONE: usize = 1;",
-                "test.rs": "const TEST: usize = 2;",
-            }),
-        )
-        .await;
-
-        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
-        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let (_project, workspace, search) = setup_search_test(cx).await;
 
         // Enable persistent_patterns
-        cx.update(|cx| {
-            let mut editor_settings = EditorSettings::get_global(cx).clone();
-            editor_settings.search.persistent_patterns = true;
-            EditorSettings::override_global(editor_settings, cx);
-        });
+        set_persistent_patterns(cx, true);
 
-        // Create first search view with patterns
-        let search_view1 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
-        });
-
-        // Set initial patterns
+        // Create first search view and set initial patterns
+        let search_view1 = create_search_view(cx, &workspace, &search);
         search_view1
             .update(cx, |search_view, window, cx| {
                 search_view.included_files_editor.update(cx, |editor, cx| {
@@ -4661,26 +4593,14 @@ pub mod tests {
             .unwrap();
 
         // Create a new search view - it should restore the cleared (empty) patterns
-        let search_view2 = cx.add_window(|window, cx| {
-            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
-        });
-
-        // Verify that the patterns are empty (cleared state was persisted)
-        search_view2
-            .update(cx, |search_view, _window, cx| {
-                let included_text = search_view.included_files_editor.read(cx).text(cx);
-                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
-
-                assert_eq!(
-                    included_text, "",
-                    "Included files should be empty as the cleared state was persisted"
-                );
-                assert_eq!(
-                    excluded_text, "",
-                    "Excluded files should be empty as the cleared state was persisted"
-                );
-            })
-            .unwrap();
+        let search_view2 = create_search_view(cx, &workspace, &search);
+        assert_search_patterns(
+            cx,
+            &search_view2,
+            "",
+            "",
+            "Patterns should be empty as the cleared state was persisted",
+        );
     }
 
     fn perform_search(
