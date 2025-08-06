@@ -42,6 +42,7 @@ workspace-hack.workspace = true
 [dev-dependencies]
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
+clock = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
