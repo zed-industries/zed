@@ -17,7 +17,10 @@ Note that `collab` can be compiled only with MSVC toolchain on Windows
 - [macOS & Linux](#database-unix)
 - [Windows](#database-windows)
 
-5.
+5. Run collab:
+
+- [macOS & Linux](#run-collab-unix)
+- [Windows](#run-collab-windows)
 
 ## Backend Dependencies
 
@@ -118,7 +121,7 @@ To use a different set of admin users, you can create your own version of that j
 
 ## Testing collaborative features locally
 
-### On macOS and Linux
+### On macOS and Linux {#run-collab-unix}
 
 Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
 
@@ -146,7 +149,7 @@ script/zed-local -3
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
 
-### On Windows
+### On Windows {#run-collab-windows}
 
 Since `foreman` is not available on Windows, you can run the following commands in separate terminals:
 
