@@ -353,8 +353,8 @@ impl GitRepository for FakeGitRepository {
     fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
             if let Some(current_branch) = &state.current_branch_name {
-                state.branches.remove(current_branch);
                 state.branches.insert(new_name.clone());
+                state.branches.remove(current_branch);
                 state.current_branch_name = Some(new_name);
             }
             Ok(())
