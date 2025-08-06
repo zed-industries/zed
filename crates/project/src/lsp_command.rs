@@ -53,7 +53,7 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
         Ok(url) => {
-            // Some development environments (Next.js, Deno Fresh, etc.)
+            // Some development environments (Next.js, Deno Fresh, SvelteKit etc.)
             // use open/closing brackets for special use cases. Percent encode
             // these items if they occur in the path provided.
             if url.path().contains("[") || url.path().contains("]") {
