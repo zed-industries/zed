@@ -225,6 +225,8 @@ pub struct ProjectSearchView {
 pub struct ProjectSearchSettings {
     search_options: SearchOptions,
     filters_enabled: bool,
+    last_included_files: Option<String>,
+    last_excluded_files: Option<String>,
 }
 
 pub struct ProjectSearchBar {
@@ -653,15 +655,25 @@ impl ProjectSearchView {
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
                 self.entity.read(cx).project.downgrade(),
-                self.current_settings(),
+                self.current_settings(cx),
             );
         });
     }
 
-    fn current_settings(&self) -> ProjectSearchSettings {
+    fn current_settings(&self, cx: &App) -> ProjectSearchSettings {
         ProjectSearchSettings {
             search_options: self.search_options,
             filters_enabled: self.filters_enabled,
+            last_included_files: if self.filters_enabled {
+                Some(self.included_files_editor.read(cx).text(cx))
+            } else {
+                None
+            },
+            last_excluded_files: if self.filters_enabled {
+                Some(self.excluded_files_editor.read(cx).text(cx))
+            } else {
+                None
+            },
         }
     }
 
@@ -670,7 +682,7 @@ impl ProjectSearchView {
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
                 self.entity.read(cx).project.downgrade(),
-                self.current_settings(),
+                self.current_settings(cx),
             );
         });
         self.adjust_query_regex_language(cx);
@@ -743,12 +755,13 @@ impl ProjectSearchView {
         let mut subscriptions = Vec::new();
 
         // Read in settings if available
-        let (mut options, filters_enabled) = if let Some(settings) = settings {
-            (settings.search_options, settings.filters_enabled)
+        let (mut options, filters_enabled, saved_patterns) = if let Some(settings) = settings {
+            let patterns = (settings.last_included_files.clone(), settings.last_excluded_files.clone());
+            (settings.search_options, settings.filters_enabled, Some(patterns))
         } else {
             let search_options =
                 SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
-            (search_options, false)
+            (search_options, false, None)
         };
 
         {
@@ -836,29 +849,31 @@ impl ProjectSearchView {
 
         let should_use_persistent_patterns = search_settings.persistent_patterns;
 
-        // Get the most recent pattern values from history if persistence is enabled
-        // Use previous() with a reset cursor to get the most recent item
-        let last_included_text = if should_use_persistent_patterns {
-            project.update(cx, |project, _cx| {
-                let mut cursor = SearchHistoryCursor::default();
-                project
-                    .search_history_mut(SearchInputKind::Include)
-                    .previous(&mut cursor)
-                    .map(|s| s.to_string())
-            })
+        // Get the last used patterns from ActiveSettings if persistence is enabled
+        let (last_included_text, last_excluded_text) = if should_use_persistent_patterns {
+            if let Some((included, excluded)) = saved_patterns {
+                // Use the saved patterns from ActiveSettings
+                (included, excluded)
+            } else {
+                // Fallback to history for first-time use
+                let last_included = project.update(cx, |project, _cx| {
+                    let mut cursor = SearchHistoryCursor::default();
+                    project
+                        .search_history_mut(SearchInputKind::Include)
+                        .previous(&mut cursor)
+                        .map(|s| s.to_string())
+                });
+                let last_excluded = project.update(cx, |project, _cx| {
+                    let mut cursor = SearchHistoryCursor::default();
+                    project
+                        .search_history_mut(SearchInputKind::Exclude)
+                        .previous(&mut cursor)
+                        .map(|s| s.to_string())
+                });
+                (last_included, last_excluded)
+            }
         } else {
-            None
-        };
-        let last_excluded_text = if should_use_persistent_patterns {
-            project.update(cx, |project, _cx| {
-                let mut cursor = SearchHistoryCursor::default();
-                project
-                    .search_history_mut(SearchInputKind::Exclude)
-                    .previous(&mut cursor)
-                    .map(|s| s.to_string())
-            })
-        } else {
-            None
+            (None, None)
         };
 
         let included_files_editor = cx.new(|cx| {
@@ -1183,6 +1198,14 @@ impl ProjectSearchView {
     fn search(&mut self, cx: &mut Context<Self>) {
         if let Some(query) = self.build_search_query(cx) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
+            
+            // Save the current pattern state to ActiveSettings
+            ActiveSettings::update_global(cx, |settings, cx| {
+                settings.0.insert(
+                    self.entity.read(cx).project.downgrade(),
+                    self.current_settings(cx),
+                );
+            });
         }
     }
 
@@ -4571,6 +4594,90 @@ pub mod tests {
                 assert_eq!(
                     excluded_text, "",
                     "Excluded files should be empty when history is empty"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_persistent_patterns_remembers_cleared_fields(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file.rs": "const ONE: usize = 1;",
+                "test.rs": "const TEST: usize = 2;",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+
+        // Enable persistent_patterns
+        cx.update(|cx| {
+            let mut editor_settings = EditorSettings::get_global(cx).clone();
+            editor_settings.search.persistent_patterns = true;
+            EditorSettings::override_global(editor_settings, cx);
+        });
+
+        // Create first search view with patterns
+        let search_view1 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Set initial patterns
+        search_view1
+            .update(cx, |search_view, window, cx| {
+                search_view.included_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("*.rs", window, cx);
+                });
+                search_view.excluded_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("test.rs", window, cx);
+                });
+                // Perform a search to save the patterns
+                search_view.search(cx);
+            })
+            .unwrap();
+        
+        // Clear the patterns and search again
+        search_view1
+            .update(cx, |search_view, window, cx| {
+                search_view.included_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("", window, cx);
+                });
+                search_view.excluded_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("", window, cx);
+                });
+                // Perform another search to save the cleared state
+                search_view.search(cx);
+            })
+            .unwrap();
+
+        // Create a new search view - it should restore the cleared (empty) patterns
+        let search_view2 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Verify that the patterns are empty (cleared state was persisted)
+        search_view2
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "",
+                    "Included files should be empty as the cleared state was persisted"
+                );
+                assert_eq!(
+                    excluded_text, "",
+                    "Excluded files should be empty as the cleared state was persisted"
                 );
             })
             .unwrap();
