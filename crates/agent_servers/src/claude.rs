@@ -101,8 +101,15 @@ impl AgentConnection for ClaudeAgentConnection {
                 settings.get::<AllAgentServersSettings>(None).claude.clone()
             })?;
 
-            let Some(command) =
-                AgentServerCommand::resolve("claude", &[], settings, &project, cx).await
+            let Some(command) = AgentServerCommand::resolve(
+                "claude",
+                &[],
+                Some(&util::paths::home_dir().join(".claude/local/claude")),
+                settings,
+                &project,
+                cx,
+            )
+            .await
             else {
                 anyhow::bail!("Failed to find claude binary");
             };
