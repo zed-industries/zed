@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use agent_servers::AgentServer;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Entity, Task};
 use project::Project;
 use prompt_store::PromptStore;
 

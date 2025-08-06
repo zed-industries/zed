@@ -53,7 +53,7 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
-    subscriptions: Vec<Subscription>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl NativeAgent {
@@ -87,7 +87,7 @@ impl NativeAgent {
                 templates,
                 project,
                 prompt_store,
-                subscriptions,
+                _subscriptions: subscriptions,
             }
         })
     }
@@ -134,13 +134,13 @@ impl NativeAgent {
             Task::ready(vec![])
         };
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_cx| {
             let (worktrees, default_user_rules) =
                 future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
 
             let worktrees = worktrees
                 .into_iter()
-                .map(|(worktree, rules_error)| {
+                .map(|(worktree, _rules_error)| {
                     // todo!
                     // if let Some(rules_error) = rules_error {
                     //     this.update(cx, |_, cx| cx.emit(rules_error)).ok();
@@ -160,7 +160,7 @@ impl NativeAgent {
                         title: prompt_metadata.title.map(|title| title.to_string()),
                         contents,
                     }),
-                    Err(err) => {
+                    Err(_err) => {
                         // todo!
                         // this.update(cx, |_, cx| {
                         //     cx.emit(RulesLoadingError {

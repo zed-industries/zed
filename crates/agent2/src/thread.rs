@@ -1,6 +1,6 @@
-use crate::templates::{SystemPromptTemplate, Templates};
+use crate::templates::{SystemPromptTemplate, Template, Templates};
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{channel::mpsc, stream::FuturesUnordered};
@@ -118,7 +118,7 @@ pub struct Thread {
 
 impl Thread {
     pub fn new(
-        project: Entity<Project>,
+        _project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
         templates: Arc<Templates>,
         default_model: Arc<dyn LanguageModel>,
@@ -297,25 +297,20 @@ impl Thread {
         events_rx
     }
 
-    pub fn build_system_message(&self, cx: &App) -> Option<AgentMessage> {
-        todo!()
-        // log::debug!("Building system message");
-        // let mut system_message = AgentMessage {
-        //     role: Role::System,
-        //     content: Vec::new(),
-        // };
-
-        // for prompt in &self.system_prompts {
-        //     if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
-        //         system_message
-        //             .content
-        //             .push(MessageContent::Text(rendered_prompt));
-        //     }
-        // }
-
-        // let result = (!system_message.content.is_empty()).then_some(system_message);
-        // log::debug!("System message built: {}", result.is_some());
-        // result
+    pub fn build_system_message(&self) -> Option<AgentMessage> {
+        log::debug!("Building system message");
+        let prompt = SystemPromptTemplate {
+            project: &self.project_context.borrow(),
+            available_tools: Vec::new(),
+        }
+        .render(&self.templates)
+        .context("failed to build system prompt")
+        .log_err()?;
+        log::debug!("System message built");
+        Some(AgentMessage {
+            role: Role::System,
+            content: vec![prompt.into()],
+        })
     }
 
     /// A helper method that's called on every streamed completion event.
@@ -574,7 +569,7 @@ impl Thread {
         log::debug!("Completion intent: {:?}", completion_intent);
         log::debug!("Completion mode: {:?}", self.completion_mode);
 
-        let messages = self.build_request_messages(cx);
+        let messages = self.build_request_messages();
         log::info!("Request will include {} messages", messages.len());
 
         let tools: Vec<LanguageModelRequestTool> = self
@@ -612,14 +607,14 @@ impl Thread {
         request
     }
 
-    fn build_request_messages(&self, cx: &App) -> Vec<LanguageModelRequestMessage> {
+    fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
         log::trace!(
             "Building request messages from {} thread messages",
             self.messages.len()
         );
 
         let messages = self
-            .build_system_message(cx)
+            .build_system_message()
             .iter()
             .chain(self.messages.iter())
             .map(|message| {
