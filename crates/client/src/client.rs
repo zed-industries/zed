@@ -947,7 +947,11 @@ impl Client {
         let cloud_client = self.cloud_client.clone();
         if let Ok(connect_task) = cx.update(|cx| cloud_client.connect(cx)) {
             match connect_task?.await {
-                Ok(_) => println!("Connected to Cloud WebSocket!"),
+                Ok(connection) => {
+                    println!("Connected to Cloud WebSocket!");
+
+                    cx.update(|cx| connection.spawn(cx))?.detach();
+                }
                 Err(err) => println!("Failed to connect to Cloud WebSocket: {}", err),
             }
         };
