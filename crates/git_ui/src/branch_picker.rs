@@ -239,20 +239,29 @@ impl BranchListDelegate {
         let new_branch_name = new_branch_name.to_string().replace(' ', "-");
         cx.spawn(async move |_, cx| {
             if let Some(based_branch) = from_branch {
-                match repo.update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?.await {
+                match repo
+                    .update(cx, |repo, _| repo.change_branch(based_branch.to_string()))?
+                    .await
+                {
                     Ok(Ok(_)) => {}
                     Ok(Err(error)) => return Err(error),
                     Err(_) => return Err(anyhow::anyhow!("Operation was canceled")),
                 }
             }
-            
-            match repo.update(cx, |repo, _| repo.create_branch(new_branch_name.clone()))?.await {
+
+            match repo
+                .update(cx, |repo, _| repo.create_branch(new_branch_name.clone()))?
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => return Err(error),
                 Err(_) => return Err(anyhow::anyhow!("Operation was canceled")),
             }
-            
-            match repo.update(cx, |repo, _| repo.change_branch(new_branch_name))?.await {
+
+            match repo
+                .update(cx, |repo, _| repo.change_branch(new_branch_name))?
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => return Err(error),
                 Err(_) => return Err(anyhow::anyhow!("Operation was canceled")),

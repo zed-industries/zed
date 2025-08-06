@@ -344,10 +344,8 @@ fn rename_current_branch(
     let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
         return;
     };
-    let current_branch = panel.update(cx, |panel, cx| {
-        let Some(repo) = panel.active_repository.as_ref() else {
-            return None;
-        };
+    let current_branch: Option<String> = panel.update(cx, |panel, cx| {
+        let repo = panel.active_repository.as_ref()?;
         let repo = repo.read(cx);
         repo.branch.as_ref().map(|branch| branch.name().to_string())
     });
