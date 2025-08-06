@@ -720,6 +720,10 @@ impl LanguageServer {
                                     InsertTextMode::ADJUST_INDENTATION,
                                 ],
                             }),
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
                             ..Default::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
