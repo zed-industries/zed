@@ -746,6 +746,7 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        release_channel: Option<String>,
         user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
@@ -765,6 +766,9 @@ impl Server {
         principal.update_span(&span);
         if let Some(user_agent) = user_agent {
             span.record("user_agent", user_agent);
+        }
+        if let Some(release_channel) = release_channel {
+            span.record("release_channel", release_channel);
         }
 
         if let Some(country_code) = geoip_country_code.as_ref() {
@@ -1181,6 +1185,35 @@ impl Header for AppVersionHeader {
     }
 }
 
+#[derive(Debug)]
+pub struct ReleaseChannelHeader(String);
+
+impl Header for ReleaseChannelHeader {
+    fn name() -> &'static HeaderName {
+        static ZED_RELEASE_CHANNEL: OnceLock<HeaderName> = OnceLock::new();
+        ZED_RELEASE_CHANNEL.get_or_init(|| HeaderName::from_static("x-zed-release-channel"))
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        Ok(Self(
+            values
+                .next()
+                .ok_or_else(axum::headers::Error::invalid)?
+                .to_str()
+                .map_err(|_| axum::headers::Error::invalid())?
+                .to_owned(),
+        ))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        values.extend([self.0.parse().unwrap()]);
+    }
+}
+
 pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
@@ -1196,6 +1229,7 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    release_channel_header: Option<TypedHeader<ReleaseChannelHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
@@ -1219,6 +1253,8 @@ pub async fn handle_websocket_request(
         )
             .into_response();
     };
+
+    let release_channel = release_channel_header.map(|header| header.0.0);
 
     if !version.can_collaborate() {
         return (
@@ -1255,6 +1291,7 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    release_channel,
                     user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
