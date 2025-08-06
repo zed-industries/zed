@@ -6,13 +6,27 @@ src = "src"
 title = "Zed"
 site-url = "/docs/"
 
-[output.html]
+[build]
+extra-watch-dirs = ["../crates/docs_preprocessor"]
+
+# zed-html is a "custom" renderer that just wraps the
+# builtin mdbook html renderer, and applies post-processing
+# as post-processing is not possible with mdbook in the same way
+# pre-processing is
+# The config is passed directly to the html renderer, so all config
+# options that apply to html apply to zed-html
+[output.zed-html]
+command = "cargo run -p docs_preprocessor -- postprocess"
+# Set here instead of above as we only use it replace the `#description#` we set in the template
+# when no front-matter is provided value
+default-description = "Learn how to use and customize Zed, the fast, collaborative code editor. Official docs on features, configuration, AI tools, and workflows."
+default-title = "Zed Code Editor Documentation"
 no-section-label = true
 preferred-dark-theme = "dark"
 additional-css = ["theme/page-toc.css", "theme/plugins.css", "theme/highlight.css"]
 additional-js  = ["theme/page-toc.js", "theme/plugins.js"]
 
-[output.html.print]
+[output.zed-html.print]
 enable = false
 
 # Redirects for `/docs` pages.
@@ -24,7 +38,7 @@ enable = false
 # The destination URLs are interpreted relative to `https://zed.dev`.
 # - Redirects to other docs pages should end in `.html`
 # - You can link to pages on the Zed site by omitting the `/docs` in front of it.
-[output.html.redirect]
+[output.zed-html.redirect]
 # AI
 "/ai.html" = "/docs/ai/overview.html"
 "/assistant-panel.html" = "/docs/ai/agent-panel.html"
@@ -40,6 +54,7 @@ enable = false
 "/assistant/prompting.html" = "/docs/ai/rules.html"
 "/language-model-integration.html" = "/docs/assistant/assistant.html"
 "/model-improvement.html" = "/docs/ai/ai-improvement.html"
+"/ai/temperature.html" = "/docs/ai/agent-settings.html#model-temperature"
 
 # Community
 "/community/feedback.html" = "/community-links"

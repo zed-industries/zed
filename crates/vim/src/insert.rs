@@ -21,7 +21,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 }
 
 impl Vim {
-    fn normal_before(
+    pub(crate) fn normal_before(
         &mut self,
         action: &NormalBefore,
         window: &mut Window,

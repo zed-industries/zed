@@ -29,7 +29,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     io::Write,
-    ops::{Deref, DerefMut},
+    ops::DerefMut,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -100,7 +100,7 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
     root_uri: Url,
 }
 
@@ -242,7 +242,7 @@ struct Notification<'a, T> {
 
 /// Language server RPC notification message before it is deserialized into a concrete type.
 #[derive(Debug, Clone, Deserialize)]
-struct AnyNotification {
+struct NotificationOrRequest {
     #[serde(default)]
     id: Option<RequestId>,
     method: String,
@@ -252,7 +252,10 @@ struct AnyNotification {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Error {
+    code: i64,
     message: String,
+    #[serde(default)]
+    data: Option<serde_json::Value>,
 }
 
 pub trait LspRequestFuture<O>: Future<Output = ConnectionResult<O>> {
@@ -307,7 +310,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -364,6 +367,7 @@ impl LanguageServer {
                     notification.method,
                     serde_json::to_string_pretty(&notification.params).unwrap(),
                 );
+                false
             },
         );
 
@@ -381,7 +385,7 @@ impl LanguageServer {
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
         root_uri: Url,
-        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -389,7 +393,7 @@ impl LanguageServer {
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         Stderr: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send + Sync + Clone,
+        F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -400,14 +404,34 @@ impl LanguageServer {
         let io_handlers = Arc::new(Mutex::new(HashMap::default()));
 
         let stdout_input_task = cx.spawn({
-            let on_unhandled_notification = on_unhandled_notification.clone();
+            let unhandled_notification_wrapper = {
+                let response_channel = outbound_tx.clone();
+                async move |msg: NotificationOrRequest| {
+                    let did_handle = on_unhandled_notification(&msg);
+                    if !did_handle && let Some(message_id) = msg.id {
+                        let response = AnyResponse {
+                            jsonrpc: JSON_RPC_VERSION,
+                            id: message_id,
+                            error: Some(Error {
+                                code: -32601,
+                                message: format!("Unrecognized method `{}`", msg.method),
+                                data: None,
+                            }),
+                            result: None,
+                        };
+                        if let Ok(response) = serde_json::to_string(&response) {
+                            response_channel.send(response).await.ok();
+                        }
+                    }
+                }
+            };
             let notification_handlers = notification_handlers.clone();
             let response_handlers = response_handlers.clone();
             let io_handlers = io_handlers.clone();
             async move |cx| {
-                Self::handle_input(
+                Self::handle_incoming_messages(
                     stdout,
-                    on_unhandled_notification,
+                    unhandled_notification_wrapper,
                     notification_handlers,
                     response_handlers,
                     io_handlers,
@@ -421,19 +445,19 @@ impl LanguageServer {
             .map(|stderr| {
                 let io_handlers = io_handlers.clone();
                 let stderr_captures = stderr_capture.clone();
-                cx.spawn(async move |_| {
+                cx.background_spawn(async move {
                     Self::handle_stderr(stderr, io_handlers, stderr_captures)
                         .log_err()
                         .await
                 })
             })
             .unwrap_or_else(|| Task::ready(None));
-        let input_task = cx.spawn(async move |_| {
+        let input_task = cx.background_spawn(async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
         });
         let output_task = cx.background_spawn({
-            Self::handle_output(
+            Self::handle_outgoing_messages(
                 stdin,
                 outbound_rx,
                 output_done_tx,
@@ -479,9 +503,9 @@ impl LanguageServer {
         self.code_action_kinds.clone()
     }
 
-    async fn handle_input<Stdout, F>(
+    async fn handle_incoming_messages<Stdout>(
         stdout: Stdout,
-        mut on_unhandled_notification: F,
+        on_unhandled_notification: impl AsyncFn(NotificationOrRequest) + 'static + Send,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -489,7 +513,6 @@ impl LanguageServer {
     ) -> anyhow::Result<()>
     where
         Stdout: AsyncRead + Unpin + Send + 'static,
-        F: FnMut(AnyNotification) + 'static + Send,
     {
         use smol::stream::StreamExt;
         let stdout = BufReader::new(stdout);
@@ -506,15 +529,19 @@ impl LanguageServer {
             cx.background_executor().clone(),
         );
 
-        while let Some(msg) = input_handler.notifications_channel.next().await {
-            {
+        while let Some(msg) = input_handler.incoming_messages.next().await {
+            let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
+                    None
                 } else {
-                    drop(notification_handlers);
-                    on_unhandled_notification(msg);
+                    Some(msg)
                 }
+            };
+
+            if let Some(msg) = unhandled_message {
+                on_unhandled_notification(msg).await;
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
@@ -558,7 +585,7 @@ impl LanguageServer {
         }
     }
 
-    async fn handle_output<Stdin>(
+    async fn handle_outgoing_messages<Stdin>(
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
@@ -595,16 +622,26 @@ impl LanguageServer {
     }
 
     pub fn default_initialize_params(&self, pull_diagnostics: bool, cx: &App) -> InitializeParams {
-        let workspace_folders = self
-            .workspace_folders
-            .lock()
-            .iter()
-            .cloned()
-            .map(|uri| WorkspaceFolder {
-                name: Default::default(),
-                uri,
-            })
-            .collect::<Vec<_>>();
+        let workspace_folders = self.workspace_folders.as_ref().map_or_else(
+            || {
+                vec![WorkspaceFolder {
+                    name: Default::default(),
+                    uri: self.root_uri.clone(),
+                }]
+            },
+            |folders| {
+                folders
+                    .lock()
+                    .iter()
+                    .cloned()
+                    .map(|uri| WorkspaceFolder {
+                        name: Default::default(),
+                        uri,
+                    })
+                    .collect()
+            },
+        );
+
         #[allow(deprecated)]
         InitializeParams {
             process_id: None,
@@ -710,6 +747,10 @@ impl LanguageServer {
                                     InsertTextMode::ADJUST_INDENTATION,
                                 ],
                             }),
+                            documentation_format: Some(vec![
+                                MarkupKind::Markdown,
+                                MarkupKind::PlainText,
+                            ]),
                             ..Default::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
@@ -836,7 +877,7 @@ impl LanguageServer {
         configuration: Arc<DidChangeConfigurationParams>,
         cx: &App,
     ) -> Task<Result<Arc<Self>>> {
-        cx.spawn(async move |_| {
+        cx.background_spawn(async move {
             let response = self
                 .request::<request::Initialize>(params)
                 .await
@@ -877,39 +918,41 @@ impl LanguageServer {
 
             let server = self.server.clone();
             let name = self.name.clone();
+            let server_id = self.server_id;
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
-            Some(
-                async move {
-                    log::debug!("language server shutdown started");
+            Some(async move {
+                log::debug!("language server shutdown started");
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            match request_result {
-                                ConnectionResult::Timeout => {
-                                    log::warn!("timeout waiting for language server {name} to shutdown");
-                                },
-                                ConnectionResult::ConnectionReset => {},
-                                ConnectionResult::Result(r) => r?,
-                            }
+                select! {
+                    request_result = shutdown_request.fuse() => {
+                        match request_result {
+                            ConnectionResult::Timeout => {
+                                log::warn!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                            },
+                            ConnectionResult::ConnectionReset => {
+                                log::warn!("language server {name} (id {server_id}) closed the shutdown request connection");
+                            },
+                            ConnectionResult::Result(Err(e)) => {
+                                log::error!("Shutdown request failure, server {name} (id {server_id}): {e:#}");
+                            },
+                            ConnectionResult::Result(Ok(())) => {}
                         }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
                     }
 
-                    response_handlers.lock().take();
-                    Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
-                    outbound_tx.close();
-                    output_done.recv().await;
-                    server.lock().take().map(|mut child| child.kill());
-                    log::debug!("language server shutdown finished");
-
-                    drop(tasks);
-                    anyhow::Ok(())
+                    _ = timer => {
+                        log::info!("timeout waiting for language server {name} (id {server_id}) to shutdown");
+                    },
                 }
-                .log_err(),
-            )
+
+                response_handlers.lock().take();
+                Self::notify_internal::<notification::Exit>(&outbound_tx, &()).ok();
+                outbound_tx.close();
+                output_done.recv().await;
+                server.lock().take().map(|mut child| child.kill());
+                drop(tasks);
+                log::debug!("language server shutdown finished");
+                Some(())
+            })
         } else {
             None
         }
@@ -1024,7 +1067,9 @@ impl LanguageServer {
                                                 jsonrpc: JSON_RPC_VERSION,
                                                 id,
                                                 value: LspResult::Error(Some(Error {
+                                                    code: lsp_types::error_codes::REQUEST_FAILED,
                                                     message: error.to_string(),
+                                                    data: None,
                                                 })),
                                             },
                                         };
@@ -1045,7 +1090,9 @@ impl LanguageServer {
                                 id,
                                 result: None,
                                 error: Some(Error {
+                                    code: -32700, // Parse error
                                     message: error.to_string(),
+                                    data: None,
                                 }),
                             };
                             if let Some(response) = serde_json::to_string(&response).log_err() {
@@ -1313,7 +1360,10 @@ impl LanguageServer {
             return;
         }
 
-        let is_new_folder = self.workspace_folders.lock().insert(uri.clone());
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let is_new_folder = workspace_folders.lock().insert(uri.clone());
         if is_new_folder {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1343,7 +1393,10 @@ impl LanguageServer {
         {
             return;
         }
-        let was_removed = self.workspace_folders.lock().remove(&uri);
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let was_removed = workspace_folders.lock().remove(&uri);
         if was_removed {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent {
@@ -1358,7 +1411,10 @@ impl LanguageServer {
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
-        let mut workspace_folders = self.workspace_folders.lock();
+        let Some(workspace_folders) = self.workspace_folders.as_ref() else {
+            return;
+        };
+        let mut workspace_folders = workspace_folders.lock();
 
         let old_workspace_folders = std::mem::take(&mut *workspace_folders);
         let added: Vec<_> = folders
@@ -1387,8 +1443,11 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders(&self) -> impl Deref<Target = BTreeSet<Url>> + '_ {
-        self.workspace_folders.lock()
+    pub fn workspace_folders(&self) -> BTreeSet<Url> {
+        self.workspace_folders.as_ref().map_or_else(
+            || BTreeSet::from_iter([self.root_uri.clone()]),
+            |folders| folders.lock().clone(),
+        )
     }
 
     pub fn register_buffer(
@@ -1533,9 +1592,9 @@ impl FakeLanguageServer {
             None,
             binary.clone(),
             root,
-            workspace_folders.clone(),
+            Some(workspace_folders.clone()),
             cx,
-            |_| {},
+            |_| false,
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
@@ -1552,15 +1611,16 @@ impl FakeLanguageServer {
                     None,
                     binary,
                     Self::root_path(),
-                    workspace_folders,
+                    Some(workspace_folders),
                     cx,
                     move |msg| {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params.unwrap_or(Value::Null).to_string(),
+                                msg.params.as_ref().unwrap_or(&Value::Null).to_string(),
                             ))
                             .ok();
+                        true
                     },
                 );
                 server.process_name = name.as_str().into();
@@ -1838,7 +1898,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_digit_id() {
         let json = r#"{"jsonrpc":"2.0","id":"2","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("2".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1847,7 +1907,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_string_id() {
         let json = r#"{"jsonrpc":"2.0","id":"anythingAtAll","method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Str("anythingAtAll".to_string());
         assert_eq!(notification.id, Some(expected_id));
@@ -1856,7 +1916,7 @@ mod tests {
     #[gpui::test]
     fn test_deserialize_int_id() {
         let json = r#"{"jsonrpc":"2.0","id":2,"method":"workspace/configuration","params":{"items":[{"scopeUri":"file:///Users/mph/Devel/personal/hello-scala/","section":"metals"}]}}"#;
-        let notification = serde_json::from_str::<AnyNotification>(json)
+        let notification = serde_json::from_str::<NotificationOrRequest>(json)
             .expect("message with string id should be parsed");
         let expected_id = RequestId::Int(2);
         assert_eq!(notification.id, Some(expected_id));

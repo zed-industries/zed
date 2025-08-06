@@ -987,7 +987,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             NextWordEnd { ignore_punctuation } => (
-                next_word_end(map, point, *ignore_punctuation, times, true),
+                next_word_end(map, point, *ignore_punctuation, times, true, true),
                 SelectionGoal::None,
             ),
             PreviousWordStart { ignore_punctuation } => (
@@ -1723,14 +1723,19 @@ pub(crate) fn next_word_end(
     ignore_punctuation: bool,
     times: usize,
     allow_cross_newline: bool,
+    always_advance: bool,
 ) -> DisplayPoint {
     let classifier = map
         .buffer_snapshot
         .char_classifier_at(point.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     for _ in 0..times {
-        let new_point = next_char(map, point, allow_cross_newline);
         let mut need_next_char = false;
+        let new_point = if always_advance {
+            next_char(map, point, allow_cross_newline)
+        } else {
+            point
+        };
         let new_point = movement::find_boundary_exclusive(
             map,
             new_point,
@@ -3803,7 +3808,7 @@ mod test {
         cx.update_editor(|editor, _window, cx| {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
-            let inlay = Inlay::inline_completion(1, range.start, inlay_text);
+            let inlay = Inlay::edit_prediction(1, range.start, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
 
@@ -3835,7 +3840,7 @@ mod test {
             let end_of_line =
                 snapshot.anchor_after(Point::new(0, snapshot.line_len(MultiBufferRow(0))));
             let inlay_text = " hint";
-            let inlay = Inlay::inline_completion(1, end_of_line, inlay_text);
+            let inlay = Inlay::edit_prediction(1, end_of_line, inlay_text);
             editor.splice_inlays(&[], vec![inlay], cx);
         });
         cx.simulate_keystrokes("$");

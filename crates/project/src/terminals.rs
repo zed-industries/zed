@@ -213,17 +213,24 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Result<Entity<Terminal>> {
         let this = &mut *self;
+        let ssh_details = this.ssh_details(cx);
         let path: Option<Arc<Path>> = match &kind {
             TerminalKind::Shell(path) => path.as_ref().map(|path| Arc::from(path.as_ref())),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
-                    Some(Arc::from(cwd.as_ref()))
+                    if ssh_details.is_some() {
+                        Some(Arc::from(cwd.as_ref()))
+                    } else {
+                        let cwd = cwd.to_string_lossy();
+                        let tilde_substituted = shellexpand::tilde(&cwd);
+                        Some(Arc::from(Path::new(tilde_substituted.as_ref())))
+                    }
                 } else {
                     this.active_project_directory(cx)
                 }
             }
         };
-        let ssh_details = this.ssh_details(cx);
+
         let is_ssh_terminal = ssh_details.is_some();
 
         let mut settings_location = None;

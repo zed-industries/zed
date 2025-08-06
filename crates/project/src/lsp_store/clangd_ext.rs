@@ -3,12 +3,12 @@ use std::sync::Arc;
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
 use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
-use lsp::LanguageServer;
+use lsp::{LanguageServer, LanguageServerName};
 use util::ResultExt as _;
 
 use crate::LspStore;
 
-pub const CLANGD_SERVER_NAME: &str = "clangd";
+pub const CLANGD_SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 const INACTIVE_REGION_MESSAGE: &str = "inactive region";
 const INACTIVE_DIAGNOSTIC_SEVERITY: lsp::DiagnosticSeverity = lsp::DiagnosticSeverity::INFORMATION;
 
@@ -34,7 +34,7 @@ pub fn is_inactive_region(diag: &Diagnostic) -> bool {
         && diag
             .source
             .as_ref()
-            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+            .is_some_and(|v| v == &CLANGD_SERVER_NAME.0)
 }
 
 pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
@@ -43,7 +43,7 @@ pub fn is_lsp_inactive_region(diag: &lsp::Diagnostic) -> bool {
         && diag
             .source
             .as_ref()
-            .is_some_and(|v| v == CLANGD_SERVER_NAME)
+            .is_some_and(|v| v == &CLANGD_SERVER_NAME.0)
 }
 
 pub fn register_notifications(
@@ -51,7 +51,7 @@ pub fn register_notifications(
     language_server: &LanguageServer,
     adapter: Arc<CachedLspAdapter>,
 ) {
-    if language_server.name().0 != CLANGD_SERVER_NAME {
+    if language_server.name() != CLANGD_SERVER_NAME {
         return;
     }
     let server_id = language_server.server_id();

@@ -10,7 +10,7 @@ use std::{
     ops::{Add, AddAssign, Range, Sub, SubAssign},
     sync::Arc,
 };
-use sum_tree::{Bias, Cursor, SumTree};
+use sum_tree::{Bias, Cursor, Dimensions, SumTree};
 use text::{Patch, Rope};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
@@ -81,9 +81,9 @@ impl Inlay {
         }
     }
 
-    pub fn inline_completion<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
+    pub fn edit_prediction<T: Into<Rope>>(id: usize, position: Anchor, text: T) -> Self {
         Self {
-            id: InlayId::InlineCompletion(id),
+            id: InlayId::EditPrediction(id),
             position,
             text: text.into(),
             color: None,
@@ -235,14 +235,14 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 
 #[derive(Clone)]
 pub struct InlayBufferRows<'a> {
-    transforms: Cursor<'a, Transform, (InlayPoint, Point)>,
+    transforms: Cursor<'a, Transform, Dimensions<InlayPoint, Point>>,
     buffer_rows: MultiBufferRows<'a>,
     inlay_row: u32,
     max_buffer_row: MultiBufferRow,
 }
 
 pub struct InlayChunks<'a> {
-    transforms: Cursor<'a, Transform, (InlayOffset, usize)>,
+    transforms: Cursor<'a, Transform, Dimensions<InlayOffset, usize>>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::Chunks<'a>>,
@@ -340,15 +340,13 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let mut renderer = None;
                 let mut highlight_style = match inlay.id {
-                    InlayId::InlineCompletion(_) => {
-                        self.highlight_styles.inline_completion.map(|s| {
-                            if inlay.text.chars().all(|c| c.is_whitespace()) {
-                                s.whitespace
-                            } else {
-                                s.insertion
-                            }
-                        })
-                    }
+                    InlayId::EditPrediction(_) => self.highlight_styles.edit_prediction.map(|s| {
+                        if inlay.text.chars().all(|c| c.is_whitespace()) {
+                            s.whitespace
+                        } else {
+                            s.insertion
+                        }
+                    }),
                     InlayId::Hint(_) => self.highlight_styles.inlay_hint,
                     InlayId::DebuggerValue(_) => self.highlight_styles.inlay_hint,
                     InlayId::Color(_) => {
@@ -553,7 +551,9 @@ impl InlayMap {
         } else {
             let mut inlay_edits = Patch::default();
             let mut new_transforms = SumTree::default();
-            let mut cursor = snapshot.transforms.cursor::<(usize, InlayOffset)>(&());
+            let mut cursor = snapshot
+                .transforms
+                .cursor::<Dimensions<usize, InlayOffset>>(&());
             let mut buffer_edits_iter = buffer_edits.iter().peekable();
             while let Some(buffer_edit) = buffer_edits_iter.next() {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left), &());
@@ -740,7 +740,7 @@ impl InlayMap {
                         text.clone(),
                     )
                 } else {
-                    Inlay::inline_completion(
+                    Inlay::edit_prediction(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
                         text.clone(),
@@ -772,20 +772,20 @@ impl InlaySnapshot {
     pub fn to_point(&self, offset: InlayOffset) -> InlayPoint {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayOffset, (InlayPoint, usize))>(&());
+            .cursor::<Dimensions<InlayOffset, InlayPoint, usize>>(&());
         cursor.seek(&offset, Bias::Right);
         let overshoot = offset.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_offset_start = cursor.start().1.1;
+                let buffer_offset_start = cursor.start().2;
                 let buffer_offset_end = buffer_offset_start + overshoot;
                 let buffer_start = self.buffer.offset_to_point(buffer_offset_start);
                 let buffer_end = self.buffer.offset_to_point(buffer_offset_end);
-                InlayPoint(cursor.start().1.0.0 + (buffer_end - buffer_start))
+                InlayPoint(cursor.start().1.0 + (buffer_end - buffer_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.offset_to_point(overshoot);
-                InlayPoint(cursor.start().1.0.0 + overshoot)
+                InlayPoint(cursor.start().1.0 + overshoot)
             }
             None => self.max_point(),
         }
@@ -802,26 +802,26 @@ impl InlaySnapshot {
     pub fn to_offset(&self, point: InlayPoint) -> InlayOffset {
         let mut cursor = self
             .transforms
-            .cursor::<(InlayPoint, (InlayOffset, Point))>(&());
+            .cursor::<Dimensions<InlayPoint, InlayOffset, Point>>(&());
         cursor.seek(&point, Bias::Right);
         let overshoot = point.0 - cursor.start().0.0;
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
-                let buffer_point_start = cursor.start().1.1;
+                let buffer_point_start = cursor.start().2;
                 let buffer_point_end = buffer_point_start + overshoot;
                 let buffer_offset_start = self.buffer.point_to_offset(buffer_point_start);
                 let buffer_offset_end = self.buffer.point_to_offset(buffer_point_end);
-                InlayOffset(cursor.start().1.0.0 + (buffer_offset_end - buffer_offset_start))
+                InlayOffset(cursor.start().1.0 + (buffer_offset_end - buffer_offset_start))
             }
             Some(Transform::Inlay(inlay)) => {
                 let overshoot = inlay.text.point_to_offset(overshoot);
-                InlayOffset(cursor.start().1.0.0 + overshoot)
+                InlayOffset(cursor.start().1.0 + overshoot)
             }
             None => self.len(),
         }
     }
     pub fn to_buffer_point(&self, point: InlayPoint) -> Point {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
         cursor.seek(&point, Bias::Right);
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -833,7 +833,9 @@ impl InlaySnapshot {
         }
     }
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, usize>>(&());
         cursor.seek(&offset, Bias::Right);
         match cursor.item() {
             Some(Transform::Isomorphic(_)) => {
@@ -846,7 +848,9 @@ impl InlaySnapshot {
     }
 
     pub fn to_inlay_offset(&self, offset: usize) -> InlayOffset {
-        let mut cursor = self.transforms.cursor::<(usize, InlayOffset)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<usize, InlayOffset>>(&());
         cursor.seek(&offset, Bias::Left);
         loop {
             match cursor.item() {
@@ -879,7 +883,7 @@ impl InlaySnapshot {
         }
     }
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<Point, InlayPoint>>(&());
         cursor.seek(&point, Bias::Left);
         loop {
             match cursor.item() {
@@ -913,7 +917,7 @@ impl InlaySnapshot {
     }
 
     pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
         cursor.seek(&point, Bias::Left);
         loop {
             match cursor.item() {
@@ -1010,7 +1014,9 @@ impl InlaySnapshot {
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {
         let mut summary = TextSummary::default();
 
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, usize>>(&());
         cursor.seek(&range.start, Bias::Right);
 
         let overshoot = range.start.0 - cursor.start().0.0;
@@ -1058,7 +1064,7 @@ impl InlaySnapshot {
     }
 
     pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
-        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<InlayPoint, Point>>(&());
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left);
 
@@ -1100,7 +1106,9 @@ impl InlaySnapshot {
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> InlayChunks<'a> {
-        let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
+        let mut cursor = self
+            .transforms
+            .cursor::<Dimensions<InlayOffset, usize>>(&());
         cursor.seek(&range.start, Bias::Right);
 
         let buffer_range = self.to_buffer_offset(range.start)..self.to_buffer_offset(range.end);
@@ -1389,7 +1397,7 @@ mod tests {
                     buffer.read(cx).snapshot(cx).anchor_before(3),
                     "|123|",
                 ),
-                Inlay::inline_completion(
+                Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_after(3),
                     "|456|",
@@ -1609,7 +1617,7 @@ mod tests {
                     buffer.read(cx).snapshot(cx).anchor_before(4),
                     "|456|",
                 ),
-                Inlay::inline_completion(
+                Inlay::edit_prediction(
                     post_inc(&mut next_inlay_id),
                     buffer.read(cx).snapshot(cx).anchor_before(7),
                     "\n|567|\n",
