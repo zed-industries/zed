@@ -20,6 +20,9 @@ use crate::{
     executor::Executor,
 };
 use anyhow::{Context as _, anyhow, bail};
+use async_tungstenite::tungstenite::{
+    Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
+};
 use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
@@ -39,7 +42,6 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::WebSocketMessage as TungsteniteMessage;
 use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -1322,7 +1324,10 @@ pub async fn handle_yawc_request(
         // The challenge is that yawc and axum use different WebSocket types,
         // and we need to bridge between them properly.
         async move {
-            log::info!("yawc /cloud endpoint connection established from {}", socket_address);
+            log::info!(
+                "yawc /cloud endpoint connection established from {}",
+                socket_address
+            );
             // For now, just log and drop the connection
             // In the future, this would handle the yawc-based WebSocket connection
         }
@@ -4374,18 +4379,25 @@ async fn get_llm_api_token(
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     use async_tungstenite::tungstenite;
-    
+
     let message = match message {
         TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
         TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
         TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
-        TungsteniteMessage::Close(frame) => {
-            AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
-                code: frame.code.into(),
-                reason: frame.reason.as_str().to_owned().into(),
-            }))
-        }
+        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+            code: frame.code.into(),
+
+            reason: frame.reason.as_str().to_owned().into(),
+        })),
+        // We should never receive a frame while reading the message, according
+        // to the `tungstenite` maintainers:
+        //
+        // > It cannot occur when you read messages from the WebSocket, but it
+        // > can be used when you want to send the raw frames (e.g. you want to
+        // > send the frames to the WebSocket without composing the full message first).
+        // >
+        // > — https://github.com/snapview/tungstenite-rs/issues/268
         TungsteniteMessage::Frame(_) => {
             bail!("received an unexpected frame while reading the message")
         }
@@ -4395,8 +4407,6 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 }
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
-    use async_tungstenite::tungstenite::protocol::frame::CloseFrame as TungsteniteCloseFrame;
-    
     match message {
         AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
         AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
