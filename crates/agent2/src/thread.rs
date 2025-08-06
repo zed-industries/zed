@@ -221,31 +221,19 @@ impl Thread {
                     let mut tool_uses = FuturesUnordered::new();
                     while let Some(event) = events.next().await {
                         match event {
-                            Ok(LanguageModelCompletionEvent::Stop(StopReason::Refusal)) => {
-                                events_tx
-                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
-                                        acp::StopReason::Refusal,
-                                    )))
-                                    .ok();
-                                thread.update(cx, |thread, _cx| {
-                                    thread.messages.truncate(user_message_ix);
-                                })?;
-                                break 'outer;
-                            }
-                            Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)) => break,
-                            Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)) => {
-                                events_tx
-                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
-                                        acp::StopReason::EndTurn,
-                                    )))
-                                    .ok();
-                            }
-                            Ok(LanguageModelCompletionEvent::Stop(StopReason::MaxTokens)) => {
-                                events_tx
-                                    .unbounded_send(Ok(AgentResponseEvent::Stop(
-                                        acp::StopReason::MaxTokens,
-                                    )))
-                                    .ok();
+                            Ok(LanguageModelCompletionEvent::Stop(reason)) => {
+                                if let Some(reason) = to_acp_stop_reason(reason) {
+                                    events_tx
+                                        .unbounded_send(Ok(AgentResponseEvent::Stop(reason)))
+                                        .ok();
+                                }
+
+                                if reason == StopReason::Refusal {
+                                    thread.update(cx, |thread, _cx| {
+                                        thread.messages.truncate(user_message_ix);
+                                    })?;
+                                    break 'outer;
+                                }
                             }
                             Ok(event) => {
                                 log::trace!("Received completion event: {:?}", event);
@@ -272,43 +260,17 @@ impl Thread {
                     }
                     log::info!("Found {} tool uses to execute", tool_uses.len());
 
-                    // If there are tool uses, wait for their results to be
-                    // computed, then send them together in a single message on
-                    // the next loop iteration.
+                    // As tool results trickle in, insert them in the last user
+                    // message so that they can be sent on the next tick of the
+                    // agentic loop.
                     while let Some(tool_result) = tool_uses.next().await {
                         log::info!("Tool finished {:?}", tool_result);
 
-                        let status = if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        };
-                        let content = match &tool_result.content {
-                            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
-                            LanguageModelToolResultContent::Image(LanguageModelImage {
-                                source,
-                                ..
-                            }) => acp::ToolCallContent::Content {
-                                content: acp::ContentBlock::Image(acp::ImageContent {
-                                    annotations: None,
-                                    data: source.to_string(),
-                                    mime_type: ImageFormat::Png.mime_type().to_string(),
-                                }),
-                            },
-                        };
                         events_tx
                             .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
-                                acp::ToolCallUpdate {
-                                    id: acp::ToolCallId(tool_result.tool_use_id.to_string().into()),
-                                    fields: acp::ToolCallUpdateFields {
-                                        status: Some(status),
-                                        content: Some(vec![content]),
-                                        ..Default::default()
-                                    },
-                                },
+                                to_acp_tool_call_update(&tool_result),
                             )))
                             .ok();
-
                         thread
                             .update(cx, |thread, _cx| {
                                 thread.pending_tool_uses.remove(&tool_result.tool_use_id);
@@ -751,5 +713,42 @@ where
             Ok(input) => self.0.clone().run(input, cx),
             Err(error) => Task::ready(Err(anyhow!(error))),
         }
+    }
+}
+
+fn to_acp_stop_reason(reason: StopReason) -> Option<acp::StopReason> {
+    match reason {
+        StopReason::EndTurn => Some(acp::StopReason::EndTurn),
+        StopReason::MaxTokens => Some(acp::StopReason::MaxTokens),
+        StopReason::Refusal => Some(acp::StopReason::Refusal),
+        StopReason::ToolUse => None,
+    }
+}
+
+fn to_acp_tool_call_update(tool_result: &LanguageModelToolResult) -> acp::ToolCallUpdate {
+    let status = if tool_result.is_error {
+        acp::ToolCallStatus::Failed
+    } else {
+        acp::ToolCallStatus::Completed
+    };
+    let content = match &tool_result.content {
+        LanguageModelToolResultContent::Text(text) => text.to_string().into(),
+        LanguageModelToolResultContent::Image(LanguageModelImage { source, .. }) => {
+            acp::ToolCallContent::Content {
+                content: acp::ContentBlock::Image(acp::ImageContent {
+                    annotations: None,
+                    data: source.to_string(),
+                    mime_type: ImageFormat::Png.mime_type().to_string(),
+                }),
+            }
+        }
+    };
+    acp::ToolCallUpdate {
+        id: acp::ToolCallId(tool_result.tool_use_id.to_string().into()),
+        fields: acp::ToolCallUpdateFields {
+            status: Some(status),
+            content: Some(vec![content]),
+            ..Default::default()
+        },
     }
 }
