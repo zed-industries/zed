@@ -46,6 +46,7 @@ workspace-hack.workspace = true
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
+fs.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }

@@ -2345,8 +2345,23 @@ If you wish to exclude certain hosts from using the proxy, set the `NO_PROXY` en
   "whole_word": false,
   "case_sensitive": false,
   "include_ignored": false,
-  "regex": false
+  "regex": false,
+  "persistent_patterns": false
 },
+```
+
+## Persistent Search Inclusion and Exclusion Patterns
+
+- Description: Whether to automatically apply the last-used patterns when opening the search panel.
+- Setting: `persistent_patterns`
+- Default: `false`
+
+Enable this feature if you frequently use the same search inclusion and exclusion patterns and want them automatically restored:
+
+```json
+"search": {
+  "persistent_patterns": true
+}
 ```
 
 ## Seed Search Query From Cursor

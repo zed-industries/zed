@@ -341,7 +341,7 @@ pub enum ScrollBeyondLastLine {
 }
 
 /// Default options for buffer and project search items.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettings {
     /// Whether to show the project search button in the status bar.
     #[serde(default = "default_true")]
@@ -354,6 +354,9 @@ pub struct SearchSettings {
     pub include_ignored: bool,
     #[serde(default)]
     pub regex: bool,
+    /// Whether to automatically persist and restore include/exclude patterns when opening a new search.
+    #[serde(default)]
+    pub persistent_patterns: bool,
 }
 
 /// What to do when go to definition yields no results.

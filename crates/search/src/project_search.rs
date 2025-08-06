@@ -23,7 +23,7 @@ use project::{
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
 };
-use settings::Settings;
+use settings::{Settings, SettingsLocation};
 use std::{
     any::{Any, TypeId},
     mem,
@@ -814,31 +814,84 @@ impl ProjectSearchView {
             }),
         );
 
+        // Get project-specific search settings instead of global settings
+        let search_settings = project.read_with(cx, |project, cx| {
+            // Get the root worktree ID for project-level settings
+            if let Some(root_worktree) = project.worktrees(cx).next() {
+                let worktree_id = root_worktree.read(cx).id();
+                EditorSettings::get(
+                    Some(SettingsLocation {
+                        worktree_id,
+                        path: std::path::Path::new(""), // Empty path for project root
+                    }),
+                    cx,
+                )
+                .search
+                .clone()
+            } else {
+                // Fallback to global settings if no worktrees
+                EditorSettings::get_global(cx).search.clone()
+            }
+        });
+
+        let should_use_persistent_patterns = search_settings.persistent_patterns;
+
+        // Get the most recent pattern values from history if persistence is enabled
+        // Use previous() with a reset cursor to get the most recent item
+        let last_included_text = if should_use_persistent_patterns {
+            project.update(cx, |project, _cx| {
+                let mut cursor = SearchHistoryCursor::default();
+                project
+                    .search_history_mut(SearchInputKind::Include)
+                    .previous(&mut cursor)
+                    .map(|s| s.to_string())
+            })
+        } else {
+            None
+        };
+        let last_excluded_text = if should_use_persistent_patterns {
+            project.update(cx, |project, _cx| {
+                let mut cursor = SearchHistoryCursor::default();
+                project
+                    .search_history_mut(SearchInputKind::Exclude)
+                    .previous(&mut cursor)
+                    .map(|s| s.to_string())
+            })
+        } else {
+            None
+        };
+
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Include: crates/**/*.toml", cx);
-
+            if let Some(text) = &last_included_text {
+                if !text.is_empty() {
+                    editor.set_text(text.clone(), window, cx);
+                }
+            }
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
-        subscriptions.push(
-            cx.subscribe(&included_files_editor, |_, _, event: &EditorEvent, cx| {
-                cx.emit(ViewEvent::EditorEvent(event.clone()))
-            }),
-        );
+        subscriptions.push(cx.subscribe(
+            &included_files_editor,
+            |_this, _, event: &EditorEvent, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
+        ));
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
-
+            if let Some(text) = &last_excluded_text {
+                if !text.is_empty() {
+                    editor.set_text(text.clone(), window, cx);
+                }
+            }
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
-        subscriptions.push(
-            cx.subscribe(&excluded_files_editor, |_, _, event: &EditorEvent, cx| {
-                cx.emit(ViewEvent::EditorEvent(event.clone()))
-            }),
-        );
+        subscriptions.push(cx.subscribe(
+            &excluded_files_editor,
+            |_this, _, event: &EditorEvent, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
+        ));
 
         let focus_handle = cx.focus_handle();
         subscriptions.push(cx.on_focus(&focus_handle, window, |_, window, cx| {
@@ -2469,6 +2522,7 @@ pub mod tests {
 
     use super::*;
     use editor::{DisplayPoint, display_map::DisplayRow};
+    use fs::Fs;
     use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
@@ -4267,6 +4321,259 @@ pub mod tests {
             Project::init_settings(cx);
             crate::init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_pattern_persistence_from_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        // Set the fs as global
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file.rs": "const ONE: usize = 1;",
+                "test.rs": "const TEST: usize = 2;",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+
+        // Add filter patterns to the project's search history
+        project.update(cx, |project, _cx| {
+            project
+                .search_history_mut(SearchInputKind::Include)
+                .add(&mut SearchHistoryCursor::default(), "*.rs".to_string());
+            project
+                .search_history_mut(SearchInputKind::Exclude)
+                .add(&mut SearchHistoryCursor::default(), "test.rs".to_string());
+        });
+
+        // Test with persistent_patterns disabled (default behavior)
+        // Create a search view - it should start empty despite history existing
+        let search_view1 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Verify that the patterns are empty when persistence is disabled (default)
+        search_view1
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "",
+                    "Included files should be empty when persistent_patterns is false (default)"
+                );
+                assert_eq!(
+                    excluded_text, "",
+                    "Excluded files should be empty when persistent_patterns is false (default)"
+                );
+            })
+            .unwrap();
+
+        // Test with persistent_patterns explicitly enabled
+        cx.update(|cx| {
+            let mut editor_settings = EditorSettings::get_global(cx).clone();
+            editor_settings.search.persistent_patterns = true;
+            EditorSettings::override_global(editor_settings, cx);
+        });
+
+        // Create another search view - it should automatically restore pattern values from history
+        let search_view2 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Verify that the patterns were restored from history when enabled
+        search_view2
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "*.rs",
+                    "Included files should be restored from history when enabled"
+                );
+                assert_eq!(
+                    excluded_text, "test.rs",
+                    "Excluded files should be restored from history when enabled"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_project_specific_pattern_persistence_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        // Create two different projects
+        fs.insert_tree(
+            path!("/project1"),
+            json!({
+                "file.rs": "const ONE: usize = 1;",
+                ".zed": {
+                    "settings.json": json!({
+                        "search": {
+                            "persistent_patterns": true
+                        }
+                    }).to_string()
+                }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            path!("/project2"),
+            json!({
+                "file.rs": "const TWO: usize = 2;",
+                ".zed": {
+                    "settings.json": json!({
+                        "search": {
+                            "persistent_patterns": false
+                        }
+                    }).to_string()
+                }
+            }),
+        )
+        .await;
+
+        // Create projects with different settings
+        let project1 = Project::test(fs.clone(), [path!("/project1").as_ref()], cx).await;
+        let project2 = Project::test(fs.clone(), [path!("/project2").as_ref()], cx).await;
+
+        let window1 = cx.add_window(|window, cx| Workspace::test_new(project1.clone(), window, cx));
+        let window2 = cx.add_window(|window, cx| Workspace::test_new(project2.clone(), window, cx));
+
+        let workspace1 = window1.root(cx).unwrap();
+        let workspace2 = window2.root(cx).unwrap();
+
+        let search1 = cx.new(|cx| ProjectSearch::new(project1.clone(), cx));
+        let search2 = cx.new(|cx| ProjectSearch::new(project2.clone(), cx));
+
+        // Add search history to both projects
+        project1.update(cx, |project, _cx| {
+            project.search_history_mut(SearchInputKind::Include).add(
+                &mut SearchHistoryCursor::default(),
+                "project1-*.rs".to_string(),
+            );
+            project.search_history_mut(SearchInputKind::Exclude).add(
+                &mut SearchHistoryCursor::default(),
+                "project1-test.rs".to_string(),
+            );
+        });
+
+        project2.update(cx, |project, _cx| {
+            project.search_history_mut(SearchInputKind::Include).add(
+                &mut SearchHistoryCursor::default(),
+                "project2-*.rs".to_string(),
+            );
+            project.search_history_mut(SearchInputKind::Exclude).add(
+                &mut SearchHistoryCursor::default(),
+                "project2-test.rs".to_string(),
+            );
+        });
+
+        // Create search views for both projects
+        let search_view1 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace1.downgrade(), search1.clone(), window, cx, None)
+        });
+
+        let search_view2 = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace2.downgrade(), search2.clone(), window, cx, None)
+        });
+
+        // Verify project1 (persistent_patterns: true) restores patterns from history
+        search_view1
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "project1-*.rs",
+                    "Project1 should restore patterns when persistent_patterns is true"
+                );
+                assert_eq!(
+                    excluded_text, "project1-test.rs",
+                    "Project1 should restore patterns when persistent_patterns is true"
+                );
+            })
+            .unwrap();
+
+        // Verify project2 (persistent_patterns: false) does NOT restore patterns
+        search_view2
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "",
+                    "Project2 should NOT restore patterns when persistent_patterns is false"
+                );
+                assert_eq!(
+                    excluded_text, "",
+                    "Project2 should NOT restore patterns when persistent_patterns is false"
+                );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_pattern_persistence_with_empty_history(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "file.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace = window.root(cx).unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+
+        // Enable persistent_patterns
+        cx.update(|cx| {
+            let mut editor_settings = EditorSettings::get_global(cx).clone();
+            editor_settings.search.persistent_patterns = true;
+            EditorSettings::override_global(editor_settings, cx);
+        });
+
+        // Create a search view with empty history - should handle gracefully
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        // Verify that patterns are empty when history is empty (even with persistent_patterns enabled)
+        search_view
+            .update(cx, |search_view, _window, cx| {
+                let included_text = search_view.included_files_editor.read(cx).text(cx);
+                let excluded_text = search_view.excluded_files_editor.read(cx).text(cx);
+
+                assert_eq!(
+                    included_text, "",
+                    "Included files should be empty when history is empty"
+                );
+                assert_eq!(
+                    excluded_text, "",
+                    "Excluded files should be empty when history is empty"
+                );
+            })
+            .unwrap();
     }
 
     fn perform_search(

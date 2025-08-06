@@ -14551,6 +14551,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",

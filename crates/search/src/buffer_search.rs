@@ -2842,6 +2842,7 @@ mod tests {
                 case_sensitive: false,
                 include_ignored: false,
                 regex: false,
+                persistent_patterns: true,
             },
             cx,
         );
@@ -2908,6 +2909,7 @@ mod tests {
                 case_sensitive: true,
                 include_ignored: false,
                 regex: false,
+                persistent_patterns: true,
             },
             cx,
         );
