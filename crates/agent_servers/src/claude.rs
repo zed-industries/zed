@@ -754,6 +754,7 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
     async fn test_todo_plan(cx: &mut TestAppContext) {
         let fs = e2e_tests::init_test(cx).await;
         let project = Project::test(fs, [], cx).await;
