@@ -765,6 +765,10 @@ impl Server {
         principal.update_span(&span);
         if let Some(user_agent) = user_agent {
             span.record("user_agent", user_agent);
+            span.record(
+                "release_channel",
+                release_channel::RELEASE_CHANNEL_NAME.to_string(),
+            );
         }
 
         if let Some(country_code) = geoip_country_code.as_ref() {

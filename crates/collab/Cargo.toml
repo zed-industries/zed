@@ -47,6 +47,7 @@ parking_lot.workspace = true
 prometheus = "0.14"
 prost.workspace = true
 rand.workspace = true
+release_channel.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
 reqwest_client.workspace = true
 rpc.workspace = true
@@ -119,7 +120,6 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 prompt_store.workspace = true
 recent_projects.workspace = true
-release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }
 remote_server.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
