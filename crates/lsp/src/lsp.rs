@@ -367,6 +367,7 @@ impl LanguageServer {
                     notification.method,
                     serde_json::to_string_pretty(&notification.params).unwrap(),
                 );
+                false
             },
         );
 
@@ -392,7 +393,7 @@ impl LanguageServer {
         Stdin: AsyncWrite + Unpin + Send + 'static,
         Stdout: AsyncRead + Unpin + Send + 'static,
         Stderr: AsyncRead + Unpin + Send + 'static,
-        F: Fn(NotificationOrRequest) + 'static + Send + Sync + Clone,
+        F: Fn(&NotificationOrRequest) -> bool + 'static + Send + Sync + Clone,
     {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
         let (output_done_tx, output_done_rx) = barrier::channel();
@@ -406,10 +407,11 @@ impl LanguageServer {
             let unhandled_notification_wrapper = {
                 let response_channel = outbound_tx.clone();
                 async move |msg: NotificationOrRequest| {
-                    if let Some(message_id) = &msg.id {
+                    let did_handle = on_unhandled_notification(&msg);
+                    if !did_handle && let Some(message_id) = msg.id {
                         let response = AnyResponse {
                             jsonrpc: JSON_RPC_VERSION,
-                            id: message_id.clone(),
+                            id: message_id,
                             error: Some(Error {
                                 code: -32601,
                                 message: format!("Unrecognized method `{}`", msg.method),
@@ -421,7 +423,6 @@ impl LanguageServer {
                             response_channel.send(response).await.ok();
                         }
                     }
-                    on_unhandled_notification(msg);
                 }
             };
             let notification_handlers = notification_handlers.clone();
@@ -1589,7 +1590,7 @@ impl FakeLanguageServer {
             root,
             Some(workspace_folders.clone()),
             cx,
-            |_| {},
+            |_| false,
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
@@ -1612,9 +1613,10 @@ impl FakeLanguageServer {
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
-                                msg.params.unwrap_or(Value::Null).to_string(),
+                                msg.params.as_ref().unwrap_or(&Value::Null).to_string(),
                             ))
                             .ok();
+                        true
                     },
                 );
                 server.process_name = name.as_str().into();
