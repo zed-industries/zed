@@ -380,6 +380,24 @@ impl ClaudeAgentSession {
                                 })
                                 .log_err();
                         }
+                        ContentChunk::Thinking { thinking } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(thinking.into(), true, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::RedactedThinking => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        "[REDACTED]".into(),
+                                        true,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
                         ContentChunk::ToolUse { id, name, input } => {
                             let claude_tool = ClaudeTool::infer(&name, input);
 
@@ -429,8 +447,6 @@ impl ClaudeAgentSession {
                         }
                         ContentChunk::Image
                         | ContentChunk::Document
-                        | ContentChunk::Thinking
-                        | ContentChunk::RedactedThinking
                         | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
@@ -580,11 +596,13 @@ enum ContentChunk {
         content: Content,
         tool_use_id: String,
     },
+    Thinking {
+        thinking: String,
+    },
+    RedactedThinking,
     // TODO
     Image,
     Document,
-    Thinking,
-    RedactedThinking,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
@@ -594,12 +612,12 @@ impl Display for ContentChunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentChunk::Text { text } => write!(f, "{}", text),
+            ContentChunk::Thinking { thinking } => write!(f, "Thinking: {}", thinking),
+            ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
             ContentChunk::Image
             | ContentChunk::Document
-            | ContentChunk::Thinking
-            | ContentChunk::RedactedThinking
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
                 write!(f, "\n{:?}\n", &self)
@@ -746,6 +764,8 @@ enum PermissionMode {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::e2e_tests;
+    use gpui::TestAppContext;
     use serde_json::json;
 
     crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
@@ -756,6 +776,68 @@ pub(crate) mod tests {
             args: vec![],
             env: None,
         }
+    }
+
+    #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
+    async fn test_todo_plan(cx: &mut TestAppContext) {
+        let fs = e2e_tests::init_test(cx).await;
+        let project = Project::test(fs, [], cx).await;
+        let thread =
+            e2e_tests::new_test_thread(ClaudeCode, project.clone(), "/private/tmp", cx).await;
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Create a todo plan for initializing a new React app. I'll follow it myself, do not execute on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let mut entries_len = 0;
+
+        thread.read_with(cx, |thread, _| {
+            entries_len = thread.plan().entries.len();
+            assert!(thread.plan().entries.len() > 0, "Empty plan");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Mark the first entry status as in progress without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::InProgress
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Now mark the first entry as completed without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::Completed
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
     }
 
     #[test]

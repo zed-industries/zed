@@ -69,8 +69,6 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
-    show_scrollbar: bool,
-    hide_scrollbar_task: Option<Task<()>>,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditingMessageState)>,
@@ -805,9 +803,7 @@ impl ActiveThread {
             expanded_thinking_segments: HashMap::default(),
             expanded_code_blocks: HashMap::default(),
             list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state),
-            show_scrollbar: false,
-            hide_scrollbar_task: None,
+            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             editing_message: None,
             last_error: None,
             copied_code_block_ids: HashSet::default(),
@@ -3502,60 +3498,37 @@ impl ActiveThread {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !self.show_scrollbar && !self.scrollbar_state.is_dragging() {
-            return None;
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("active-thread-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("active-thread-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
-    fn hide_scrollbar_later(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(async move |thread, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            thread
-                .update(cx, |thread, cx| {
-                    if !thread.scrollbar_state.is_dragging() {
-                        thread.show_scrollbar = false;
-                        cx.notify();
-                    }
-                })
-                .log_err();
-        }))
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
@@ -3596,26 +3569,8 @@ impl Render for ActiveThread {
             .size_full()
             .relative()
             .bg(cx.theme().colors().panel_background)
-            .on_mouse_move(cx.listener(|this, _, _, cx| {
-                this.show_scrollbar = true;
-                this.hide_scrollbar_later(cx);
-                cx.notify();
-            }))
-            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
-                this.show_scrollbar = true;
-                this.hide_scrollbar_later(cx);
-                cx.notify();
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.hide_scrollbar_later(cx);
-                }),
-            )
             .child(list(self.list_state.clone(), cx.processor(Self::render_message)).flex_grow())
-            .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
-                this.child(scrollbar)
-            })
+            .child(self.render_vertical_scrollbar(cx))
     }
 }
 
