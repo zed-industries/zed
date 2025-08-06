@@ -17,6 +17,7 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 
 [dependencies]
 anyhow.workspace = true
+async-tungstenite.workspace = true
 yawc.workspace = true
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }

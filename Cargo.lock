@@ -3004,6 +3004,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "clock",
@@ -3214,6 +3215,7 @@ dependencies = [
  "assistant_slash_command",
  "async-stripe",
  "async-trait",
+ "async-tungstenite",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -13922,6 +13924,7 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "collections",

@@ -39,7 +39,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::WebSocketMessage;
+use rpc::WebSocketMessage as TungsteniteMessage;
 use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -1181,7 +1181,8 @@ impl Header for AppVersionHeader {
 
 pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
-        .route("/rpc", get(handle_websocket_request))
+        .route("/rpc", get(handle_tungstenite_request))
+        .route("/cloud", get(handle_yawc_request))
         .layer(
             ServiceBuilder::new()
                 .layer(Extension(server.app_state.clone()))
@@ -1191,7 +1192,8 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
         .layer(Extension(server))
 }
 
-pub async fn handle_websocket_request(
+// Original tungstenite handler for /rpc endpoint
+pub async fn handle_tungstenite_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
@@ -1242,7 +1244,7 @@ pub async fn handle_websocket_request(
 
     ws.on_upgrade(move |socket| {
         let socket = socket
-            .map_ok(to_ws_message)
+            .map_ok(to_tungstenite_message)
             .err_into()
             .with(|message| async move { to_axum_message(message) });
         let connection = Connection::new(Box::pin(socket));
@@ -1261,6 +1263,68 @@ pub async fn handle_websocket_request(
                     Some(connection_guard),
                 )
                 .await;
+        }
+    })
+}
+
+// New yawc handler for /cloud endpoint
+pub async fn handle_yawc_request(
+    TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
+    app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
+    Extension(server): Extension<Arc<Server>>,
+    Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
+    country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
+    system_id_header: Option<TypedHeader<SystemIdHeader>>,
+    ws: WebSocketUpgrade,
+) -> axum::response::Response {
+    if protocol_version != rpc::PROTOCOL_VERSION {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "client must be upgraded".to_string(),
+        )
+            .into_response();
+    }
+
+    let Some(version) = app_version_header.map(|header| ZedVersion(header.0.0)) else {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "no version header found".to_string(),
+        )
+            .into_response();
+    };
+
+    if !version.can_collaborate() {
+        return (
+            StatusCode::UPGRADE_REQUIRED,
+            "client must be upgraded".to_string(),
+        )
+            .into_response();
+    }
+
+    let socket_address = socket_address.to_string();
+
+    // Acquire connection guard before WebSocket upgrade
+    let connection_guard = match ConnectionGuard::try_acquire() {
+        Ok(guard) => guard,
+        Err(()) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent connections",
+            )
+                .into_response();
+        }
+    };
+
+    ws.on_upgrade(move |socket| {
+        // TODO: Properly implement yawc WebSocket handling. This is a placeholder.
+        // The challenge is that yawc and axum use different WebSocket types,
+        // and we need to bridge between them properly.
+        async move {
+            log::info!("yawc /cloud endpoint connection established from {}", socket_address);
+            // For now, just log and drop the connection
+            // In the future, this would handle the yawc-based WebSocket connection
         }
     })
 }
@@ -4308,31 +4372,72 @@ async fn get_llm_api_token(
     Ok(())
 }
 
-fn to_axum_message(message: WebSocketMessage) -> anyhow::Result<AxumMessage> {
+fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
+    use async_tungstenite::tungstenite;
+    
     let message = match message {
-        WebSocketMessage::Text(payload) => AxumMessage::Text(payload),
-        WebSocketMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
-        WebSocketMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
-        WebSocketMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
-        WebSocketMessage::Close(frame) => {
-            AxumMessage::Close(frame.map(|(code, reason)| AxumCloseFrame {
-                code,
-                reason: reason.into(),
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
+        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
+        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
+        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
+        TungsteniteMessage::Close(frame) => {
+            AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason.as_str().to_owned().into(),
             }))
+        }
+        TungsteniteMessage::Frame(_) => {
+            bail!("received an unexpected frame while reading the message")
         }
     };
 
     Ok(message)
 }
 
-fn to_ws_message(message: AxumMessage) -> WebSocketMessage {
+fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
+    use async_tungstenite::tungstenite::protocol::frame::CloseFrame as TungsteniteCloseFrame;
+    
     match message {
-        AxumMessage::Text(payload) => WebSocketMessage::Text(payload),
-        AxumMessage::Binary(payload) => WebSocketMessage::Binary(payload),
-        AxumMessage::Ping(payload) => WebSocketMessage::Ping(payload),
-        AxumMessage::Pong(payload) => WebSocketMessage::Pong(payload),
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
         AxumMessage::Close(frame) => {
-            WebSocketMessage::Close(frame.map(|frame| (frame.code, frame.reason.to_string())))
+            TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
+                code: frame.code.into(),
+                reason: frame.reason.as_ref().into(),
+            }))
+        }
+    }
+}
+
+// Conversion functions for yawc messages
+fn to_yawc_message(message: AxumMessage) -> rpc::YawcMessage {
+    match message {
+        AxumMessage::Text(payload) => rpc::YawcMessage::Text(payload.into()),
+        AxumMessage::Binary(payload) => rpc::YawcMessage::Binary(payload.into()),
+        AxumMessage::Ping(_) => rpc::YawcMessage::Ping,
+        AxumMessage::Pong(_) => rpc::YawcMessage::Pong,
+        AxumMessage::Close(frame) => {
+            rpc::YawcMessage::Close(frame.map(|frame| rpc::CloseFrame {
+                code: rpc::CloseCode::Normal, // TODO: Map close codes properly
+                reason: frame.reason.to_string(),
+            }))
+        }
+    }
+}
+
+fn from_yawc_message(message: rpc::YawcMessage) -> AxumMessage {
+    match message {
+        rpc::YawcMessage::Text(payload) => AxumMessage::Text(payload),
+        rpc::YawcMessage::Binary(payload) => AxumMessage::Binary(payload),
+        rpc::YawcMessage::Ping => AxumMessage::Ping(Vec::new()),
+        rpc::YawcMessage::Pong => AxumMessage::Pong(Vec::new()),
+        rpc::YawcMessage::Close(frame) => {
+            AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
+                code: 1000, // Normal closure
+                reason: frame.reason.into(),
+            }))
         }
     }
 }

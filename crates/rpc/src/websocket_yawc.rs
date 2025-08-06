@@ -1,20 +1,26 @@
-use base64::Engine as _;
 use futures::{Sink, Stream};
 use http::Request;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use yawc::{
     WebSocket,
+    close::CloseCode,
     frame::{FrameView, OpCode},
 };
+
+#[derive(Debug, Clone)]
+pub struct CloseFrame {
+    pub code: CloseCode,
+    pub reason: String,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Text(String),
     Binary(Vec<u8>),
-    Ping(Vec<u8>),
-    Pong(Vec<u8>),
-    Close(Option<(u16, String)>),
+    Ping,
+    Pong,
+    Close(Option<CloseFrame>),
 }
 
 impl Message {
@@ -22,13 +28,13 @@ impl Message {
         match self {
             Message::Text(text) => FrameView::text(text),
             Message::Binary(data) => FrameView::binary(data),
-            Message::Ping(data) => FrameView::ping(data),
-            Message::Pong(data) => FrameView::pong(data),
-            Message::Close(reason) => {
-                if let Some((code, reason)) = reason {
-                    FrameView::close(code.into(), reason)
+            Message::Ping => FrameView::ping(Vec::new()),
+            Message::Pong => FrameView::pong(Vec::new()),
+            Message::Close(frame) => {
+                if let Some(frame) = frame {
+                    FrameView::close(frame.code, frame.reason)
                 } else {
-                    FrameView::close(1000u16.into(), "")
+                    FrameView::close(CloseCode::Normal, "")
                 }
             }
         }
@@ -40,13 +46,16 @@ impl Message {
                 .ok()
                 .map(Message::Text),
             OpCode::Binary => Some(Message::Binary(frame.payload.to_vec())),
-            OpCode::Ping => Some(Message::Ping(frame.payload.to_vec())),
-            OpCode::Pong => Some(Message::Pong(frame.payload.to_vec())),
+            OpCode::Ping => Some(Message::Ping),
+            OpCode::Pong => Some(Message::Pong),
             OpCode::Close => {
                 if frame.payload.len() >= 2 {
                     let code = u16::from_be_bytes([frame.payload[0], frame.payload[1]]);
                     let reason = String::from_utf8_lossy(&frame.payload[2..]).into_owned();
-                    Some(Message::Close(Some((code, reason))))
+                    Some(Message::Close(Some(CloseFrame {
+                        code: CloseCode::from(code),
+                        reason,
+                    })))
                 } else {
                     Some(Message::Close(None))
                 }
@@ -63,6 +72,16 @@ pub struct WebSocketAdapter {
 impl WebSocketAdapter {
     pub fn new(ws: WebSocket) -> Self {
         Self { inner: ws }
+    }
+    
+    pub fn new_from_stream<S>(_stream: S) -> Self 
+    where
+        S: Stream + Sink<Message> + Send + 'static
+    {
+        // TODO: This is a placeholder. In production, you would need to properly
+        // integrate the stream with yawc's WebSocket implementation.
+        // For now, this panics to prevent runtime errors.
+        unimplemented!("WebSocketAdapter::new_from_stream is not yet implemented")
     }
 }
 
@@ -115,6 +134,7 @@ impl Sink<Message> for WebSocketAdapter {
 /// Generate a random WebSocket key for the Sec-WebSocket-Key header.
 /// This follows RFC 6455: a base64-encoded 16-byte random value.
 fn generate_websocket_key() -> String {
+    use base64::Engine as _;
     use rand::RngCore;
     let mut key = [0u8; 16];
     rand::thread_rng().fill_bytes(&mut key);
@@ -254,21 +274,20 @@ mod tests {
         assert_eq!(frame.payload.as_ref(), &data);
 
         // Test Ping message
-        let ping_data = vec![42];
-        let msg = Message::Ping(ping_data.clone());
+        let msg = Message::Ping;
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Ping);
-        assert_eq!(frame.payload.as_ref(), &ping_data);
 
         // Test Pong message
-        let pong_data = vec![99];
-        let msg = Message::Pong(pong_data.clone());
+        let msg = Message::Pong;
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Pong);
-        assert_eq!(frame.payload.as_ref(), &pong_data);
 
         // Test Close message with reason
-        let msg = Message::Close(Some((1000, "Normal closure".to_string())));
+        let msg = Message::Close(Some(CloseFrame {
+            code: CloseCode::Normal,
+            reason: "Normal closure".to_string(),
+        }));
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Close);
         // Close frames encode the status code in the first 2 bytes

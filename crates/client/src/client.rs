@@ -7,12 +7,17 @@ pub mod user;
 pub mod zed_urls;
 
 use anyhow::{Context as _, Result, anyhow};
+use async_tungstenite::tungstenite::{
+    client::IntoClientRequest,
+    error::Error as WebsocketError,
+    http::{HeaderValue, Request, StatusCode},
+};
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use credentials_provider::CredentialsProvider;
 use futures::{
-    AsyncReadExt, FutureExt, Stream, StreamExt, TryFutureExt as _, channel::oneshot,
-    future::BoxFuture,
+    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
+    channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http};
@@ -41,11 +46,9 @@ use std::{
 use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
-use yawc::{Options, WebSocket};
 
 pub use rpc::*;
 pub use telemetry_events::Event;
@@ -54,6 +57,7 @@ pub use user::*;
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
 static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
+static ZED_CLOUD_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_CLOUD_URL").ok());
 
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_IMPERSONATE")
@@ -236,11 +240,24 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
+    InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
-    Websocket(#[from] yawc::WebSocketError),
+    Websocket(#[from] async_tungstenite::tungstenite::http::Error),
+}
+
+impl From<WebsocketError> for EstablishConnectionError {
+    fn from(error: WebsocketError) -> Self {
+        if let WebsocketError::Http(response) = &error {
+            match response.status() {
+                StatusCode::UNAUTHORIZED => return EstablishConnectionError::Unauthorized,
+                StatusCode::UPGRADE_REQUIRED => return EstablishConnectionError::UpgradeRequired,
+                _ => {}
+            }
+        }
+        EstablishConnectionError::Other(error.into())
+    }
 }
 
 impl EstablishConnectionError {
@@ -1231,43 +1248,50 @@ impl Client {
                 })
                 .unwrap();
 
-            // Zed-specific custom headers for the WebSocket connection
-            let mut custom_headers = vec![
-                (
-                    http::header::AUTHORIZATION.as_str(),
-                    credentials.authorization_header(),
-                ),
-                ("x-zed-protocol-version", rpc::PROTOCOL_VERSION.to_string()),
-                ("x-zed-app-version", app_version.into()),
-                (
-                    "x-zed-release-channel",
-                    release_channel
-                        .map(|r| r.dev_name())
-                        .unwrap_or("unknown")
-                        .into(),
-                ),
-            ];
+            // We call `into_client_request` to let `tungstenite` construct the WebSocket request
+            // for us from the RPC URL.
+            //
+            // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
+            // We then modify the request to add our desired headers.
+            let request_headers = request.headers_mut();
+            request_headers.insert(
+                http::header::AUTHORIZATION,
+                HeaderValue::from_str(&credentials.authorization_header())?,
+            );
+            request_headers.insert(
+                "x-zed-protocol-version",
+                HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
+            );
+            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
+            request_headers.insert(
+                "x-zed-release-channel",
+                HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
+            );
+            if let Some(user_agent) = user_agent {
+                request_headers.insert(http::header::USER_AGENT, user_agent);
+            }
             if let Some(system_id) = system_id {
-                custom_headers.push(("x-zed-system-id", system_id));
+                request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
             }
             if let Some(metrics_id) = metrics_id {
-                custom_headers.push(("x-zed-metrics-id", metrics_id));
-            }
-            if let Some(user_agent) = user_agent {
-                custom_headers.push((
-                    http::header::USER_AGENT.as_str(),
-                    user_agent.to_str().context("invalid user agent")?.into(),
-                ));
+                request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
             }
 
-            let request = rpc::build_websocket_request(&rpc_url, custom_headers)?;
-            let ws =
-                WebSocket::handshake_with_request(rpc_url, stream, Options::default(), request)
-                    .await?;
-            let adapter = rpc::WebSocketAdapter::new(ws);
+            let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
+                request,
+                stream,
+                Some(Arc::new(http_client_tls::tls_config()).into()),
+                None,
+            )
+            .await?;
 
-            Ok(Connection::new(adapter))
+            Ok(Connection::new(
+                stream
+                    .map_err(|error| anyhow!(error))
+                    .sink_map_err(|error| anyhow!(error)),
+            ))
         })
     }
 

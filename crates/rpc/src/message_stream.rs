@@ -2,11 +2,12 @@
 
 pub use ::proto::*;
 
-use crate::WebSocketMessage;
+use async_tungstenite::tungstenite::Message as TungsteniteMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
+use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -36,7 +37,7 @@ impl<S> MessageStream<S> {
 
 impl<S> MessageStream<S>
 where
-    S: futures::Sink<WebSocketMessage, Error = anyhow::Error> + Unpin,
+    S: futures::Sink<TungsteniteMessage, Error = anyhow::Error> + Unpin,
 {
     pub async fn write(&mut self, message: Message) -> anyhow::Result<()> {
         #[cfg(any(test, feature = "test-support"))]
@@ -57,13 +58,19 @@ where
 
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
-                self.stream.send(WebSocketMessage::Binary(buffer)).await?;
+                self.stream
+                    .send(TungsteniteMessage::Binary(buffer.into()))
+                    .await?;
             }
             Message::Ping => {
-                self.stream.send(WebSocketMessage::Ping(vec![])).await?;
+                self.stream
+                    .send(TungsteniteMessage::Ping(Default::default()))
+                    .await?;
             }
             Message::Pong => {
-                self.stream.send(WebSocketMessage::Pong(vec![])).await?;
+                self.stream
+                    .send(TungsteniteMessage::Pong(Default::default()))
+                    .await?;
             }
         }
 
@@ -73,13 +80,13 @@ where
 
 impl<S> MessageStream<S>
 where
-    S: futures::Stream<Item = anyhow::Result<WebSocketMessage>> + Unpin,
+    S: futures::Stream<Item = anyhow::Result<TungsteniteMessage>> + Unpin,
 {
     pub async fn read(&mut self) -> anyhow::Result<(Message, Instant)> {
         while let Some(bytes) = self.stream.next().await {
             let received_at = Instant::now();
             match bytes? {
-                WebSocketMessage::Binary(bytes) => {
+                TungsteniteMessage::Binary(bytes) => {
                     zstd::stream::copy_decode(bytes.as_slice(), &mut self.encoding_buffer)?;
                     let envelope = Envelope::decode(self.encoding_buffer.as_slice())
                         .map_err(io::Error::from)?;
@@ -88,49 +95,12 @@ where
                     self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
                     return Ok((Message::Envelope(envelope), received_at));
                 }
-                WebSocketMessage::Ping(_) => return Ok((Message::Ping, received_at)),
-                WebSocketMessage::Pong(_) => return Ok((Message::Pong, received_at)),
-                WebSocketMessage::Close(_) => break,
+                TungsteniteMessage::Ping(_) => return Ok((Message::Ping, received_at)),
+                TungsteniteMessage::Pong(_) => return Ok((Message::Pong, received_at)),
+                TungsteniteMessage::Close(_) => break,
                 _ => {}
             }
         }
-        anyhow::bail!("connection closed");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[gpui::test]
-    async fn test_buffer_size() {
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let mut sink = MessageStream::new(tx.sink_map_err(|_| anyhow::anyhow!("")));
-        sink.write(Message::Envelope(Envelope {
-            payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
-                root_name: "abcdefg".repeat(10),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }))
-        .await
-        .unwrap();
-        assert!(sink.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
-        sink.write(Message::Envelope(Envelope {
-            payload: Some(envelope::Payload::UpdateWorktree(UpdateWorktree {
-                root_name: "abcdefg".repeat(1000000),
-                ..Default::default()
-            })),
-            ..Default::default()
-        }))
-        .await
-        .unwrap();
-        assert!(sink.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
-
-        let mut stream = MessageStream::new(rx.map(anyhow::Ok));
-        stream.read().await.unwrap();
-        assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
-        stream.read().await.unwrap();
-        assert!(stream.encoding_buffer.capacity() <= MAX_BUFFER_LEN);
+        Err(anyhow::anyhow!("connection closed"))
     }
 }

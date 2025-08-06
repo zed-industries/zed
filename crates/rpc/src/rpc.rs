@@ -4,15 +4,27 @@ mod extension;
 mod message_stream;
 mod notification;
 mod peer;
-mod websocket;
+mod websocket_yawc;
 
-pub use conn::Connection;
+pub use conn::{Connection, YawcConnection};
 pub use extension::*;
 pub use notification::*;
 pub use peer::*;
 pub use proto;
 pub use proto::{Receipt, TypedEnvelope, error::*};
-pub use websocket::{Message as WebSocketMessage, WebSocketAdapter, build_websocket_request};
+
+// Export tungstenite types for existing /rpc endpoint
+pub use async_tungstenite::tungstenite::Message as WebSocketMessage;
+
+// Export yawc types for new /cloud endpoint  
+pub use websocket_yawc::{
+    Message as YawcMessage, 
+    WebSocketAdapter as YawcWebSocketAdapter,
+    build_websocket_request as build_yawc_websocket_request,
+    CloseFrame,
+};
+pub use yawc::close::CloseCode;
+
 mod macros;
 
 #[cfg(feature = "gpui")]
