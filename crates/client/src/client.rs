@@ -1231,7 +1231,7 @@ impl Client {
                 })
                 .unwrap();
 
-            // Build custom headers for the WebSocket connection
+            // Zed-specific custom headers for the WebSocket connection
             let mut custom_headers = vec![
                 (
                     http::header::AUTHORIZATION.as_str(),
