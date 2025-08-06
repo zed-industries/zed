@@ -1261,7 +1261,6 @@ impl Client {
                 ));
             }
 
-            // Connect with proper WebSocket headers
             let request = rpc::build_websocket_request(&rpc_url, custom_headers)?;
             let ws =
                 WebSocket::handshake_with_request(rpc_url, stream, Options::default(), request)
