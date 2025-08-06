@@ -42,7 +42,7 @@ impl LspInstaller for YamlLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<String> {
         self.node
             .npm_package_latest_version("yaml-language-server")

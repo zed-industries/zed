@@ -12601,7 +12601,7 @@ impl LspInstaller for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<()> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }

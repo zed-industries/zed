@@ -298,7 +298,7 @@ impl LspInstaller for JsonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<String> {
         self.node
             .npm_package_latest_version(Self::PACKAGE_NAME)
@@ -488,7 +488,7 @@ impl LspInstaller for NodeVersionAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release = latest_github_release(
             "zed-industries/package-version-server",

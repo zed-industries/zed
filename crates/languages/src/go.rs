@@ -56,8 +56,25 @@ impl LspInstaller for GoLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<Option<String>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str =
+            "Could not install the Go language server `gopls`, because `go` was not found.";
+
+        if delegate.which("go".as_ref()).await.is_none() {
+            if DID_SHOW_NOTIFICATION
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_ok()
+            {
+                cx.update(|cx| {
+                    delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                })?
+            }
+            anyhow::bail!("cannot install gopls");
+        }
+
         let release =
             latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
         let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
@@ -82,30 +99,6 @@ impl LspInstaller for GoLspAdapter {
             arguments: server_binary_arguments(),
             env: None,
         })
-    }
-
-    async fn will_fetch_server(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncApp,
-    ) -> Result<()> {
-        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
-
-        const NOTIFICATION_MESSAGE: &str =
-            "Could not install the Go language server `gopls`, because `go` was not found.";
-
-        if delegate.which("go".as_ref()).await.is_none() {
-            if DID_SHOW_NOTIFICATION
-                .compare_exchange(false, true, SeqCst, SeqCst)
-                .is_ok()
-            {
-                cx.update(|cx| {
-                    delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                })?
-            }
-            anyhow::bail!("cannot install gopls");
-        }
-        Ok(())
     }
 
     async fn fetch_server_binary(

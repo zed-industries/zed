@@ -71,7 +71,7 @@ impl LspInstaller for VtslsLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<TypeScriptVersions> {
         Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,

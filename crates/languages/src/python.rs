@@ -512,6 +512,17 @@ impl LspAdapter for PyrightLspAdapter {
 
 impl LspInstaller for PyrightLspAdapter {
     type BinaryVersion = String;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &mut AsyncApp,
+    ) -> Result<String> {
+        self.node
+            .npm_package_latest_version(Self::SERVER_NAME.as_ref())
+            .await
+    }
+
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -541,16 +552,6 @@ impl LspInstaller for PyrightLspAdapter {
                 arguments: server_binary_arguments(&path),
             })
         }
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Self::BinaryVersion> {
-        self.node
-            .npm_package_latest_version(Self::SERVER_NAME.as_ref())
-            .await
     }
 
     async fn fetch_server_binary(
@@ -1810,6 +1811,15 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
 impl LspInstaller for BasedPyrightLspAdapter {
     type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
@@ -1970,7 +1980,7 @@ impl LspInstaller for RuffLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release =
             latest_github_release("astral-sh/ruff", true, false, delegate.http_client()).await?;

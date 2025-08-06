@@ -486,16 +486,8 @@ pub trait LspInstaller {
     fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
+        cx: &mut AsyncApp,
     ) -> impl Future<Output = Result<Self::BinaryVersion>>;
-
-    fn will_fetch_server(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncApp,
-    ) -> impl Future<Output = Result<()>> {
-        async { Ok(()) }
-    }
 
     fn check_if_version_installed(
         &self,
@@ -519,6 +511,7 @@ pub trait LspInstaller {
         delegate: &dyn LspAdapterDelegate,
     ) -> impl Future<Output = Option<LanguageServerBinary>>;
 }
+
 #[async_trait(?Send)]
 pub trait DynLspInstaller {
     async fn try_fetch_server_binary(
@@ -548,8 +541,6 @@ where
         container_dir: PathBuf,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        self.will_fetch_server(delegate, cx).await?;
-
         let name = self.name();
 
         log::debug!("fetching latest version of language server {:?}", name.0);
@@ -619,7 +610,7 @@ where
                 anyhow::bail!("no language server download dir defined")
             };
 
-            let mut binary = self.try_fetch_server_binary( &delegate, container_dir.to_path_buf(), cx).await;
+            let mut binary = self.try_fetch_server_binary(&delegate, container_dir.to_path_buf(), cx).await;
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
@@ -2225,7 +2216,7 @@ impl LspInstaller for FakeLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
+        _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         unreachable!()
     }

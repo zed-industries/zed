@@ -206,7 +206,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
         _: PathBuf,
         _: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        unreachable!("get_language_server_command is overriden")
+        unreachable!("get_language_server_command is overridden")
     }
 }
 

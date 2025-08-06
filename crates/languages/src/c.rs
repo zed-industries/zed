@@ -26,7 +26,7 @@ impl LspInstaller for CLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release = latest_github_release(
             "clangd/clangd",
