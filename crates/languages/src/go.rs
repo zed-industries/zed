@@ -84,31 +84,28 @@ impl LspInstaller for GoLspAdapter {
         })
     }
 
-    fn will_fetch_server(
+    async fn will_fetch_server(
         &self,
         delegate: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncApp,
-    ) -> Option<Task<Result<()>>> {
+    ) -> Result<()> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
 
         const NOTIFICATION_MESSAGE: &str =
             "Could not install the Go language server `gopls`, because `go` was not found.";
 
-        let delegate = delegate.clone();
-        Some(cx.spawn(async move |cx| {
-            if delegate.which("go".as_ref()).await.is_none() {
-                if DID_SHOW_NOTIFICATION
-                    .compare_exchange(false, true, SeqCst, SeqCst)
-                    .is_ok()
-                {
-                    cx.update(|cx| {
-                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                    })?
-                }
-                anyhow::bail!("cannot install gopls");
+        if delegate.which("go".as_ref()).await.is_none() {
+            if DID_SHOW_NOTIFICATION
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_ok()
+            {
+                cx.update(|cx| {
+                    delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                })?
             }
-            Ok(())
-        }))
+            anyhow::bail!("cannot install gopls");
+        }
+        Ok(())
     }
 
     async fn fetch_server_binary(

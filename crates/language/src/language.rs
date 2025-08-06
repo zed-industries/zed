@@ -28,7 +28,7 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
 use futures::Future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{
@@ -493,8 +493,8 @@ pub trait LspInstaller {
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: &mut AsyncApp,
-    ) -> Option<Task<Result<()>>> {
-        None
+    ) -> impl Future<Output = Result<()>> {
+        async { Ok(()) }
     }
 
     fn check_if_version_installed(
@@ -548,9 +548,7 @@ where
         container_dir: PathBuf,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        if let Some(task) = self.will_fetch_server(delegate, cx) {
-            task.await?;
-        }
+        self.will_fetch_server(delegate, cx).await?;
 
         let name = self.name();
 
