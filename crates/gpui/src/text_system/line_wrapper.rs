@@ -648,15 +648,18 @@ mod tests {
         assert_word("@mention");
         assert_word("#hashtag");
         assert_word("$variable");
+        assert_word("a=1");
         assert_word("more⋯");
 
         // Space
         assert_not_word("foo bar");
 
         // URL case
-        assert_word("https://github.com/zed-industries/zed/");
         assert_word("github.com");
-        assert_word("a=1&b=2");
+        assert_not_word("zed-industries/zed");
+        assert_not_word("zed-industries\\zed");
+        assert_not_word("a=1&b=2");
+        assert_not_word("foo?b=2");
 
         // Latin-1 Supplement
         assert_word("ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏ");
