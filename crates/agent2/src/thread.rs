@@ -1,4 +1,4 @@
-use crate::{prompts::BasePrompt, templates::Templates};
+use crate::templates::{SystemPromptTemplate, Templates};
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
@@ -16,7 +16,7 @@ use project::Project;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
-use std::{collections::BTreeMap, fmt::Write, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, fmt::Write, rc::Rc, sync::Arc};
 use util::{markdown::MarkdownCodeBlock, ResultExt};
 
 #[derive(Debug, Clone)]
@@ -100,10 +100,6 @@ pub enum AgentResponseEvent {
     Stop(acp::StopReason),
 }
 
-pub trait Prompt {
-    fn render(&self, prompts: &Templates, cx: &App) -> Result<String>;
-}
-
 pub struct Thread {
     messages: Vec<AgentMessage>,
     completion_mode: CompletionMode,
@@ -112,7 +108,6 @@ pub struct Thread {
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
     pending_tool_uses: HashMap<LanguageModelToolUseId, LanguageModelToolUse>,
-    system_prompts: Vec<Arc<dyn Prompt>>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
@@ -128,7 +123,6 @@ impl Thread {
         Self {
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
-            system_prompts: vec![Arc::new(BasePrompt::new(project))],
             running_turn: None,
             pending_tool_uses: HashMap::default(),
             tools: BTreeMap::default(),
@@ -299,24 +293,27 @@ impl Thread {
         events_rx
     }
 
+    pub fn set_system_prompt_template(&mut self, template: Rc<RefCell<SystemPromptTemplate>>) {}
+
     pub fn build_system_message(&self, cx: &App) -> Option<AgentMessage> {
-        log::debug!("Building system message");
-        let mut system_message = AgentMessage {
-            role: Role::System,
-            content: Vec::new(),
-        };
+        todo!()
+        // log::debug!("Building system message");
+        // let mut system_message = AgentMessage {
+        //     role: Role::System,
+        //     content: Vec::new(),
+        // };
 
-        for prompt in &self.system_prompts {
-            if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
-                system_message
-                    .content
-                    .push(MessageContent::Text(rendered_prompt));
-            }
-        }
+        // for prompt in &self.system_prompts {
+        //     if let Some(rendered_prompt) = prompt.render(&self.templates, cx).log_err() {
+        //         system_message
+        //             .content
+        //             .push(MessageContent::Text(rendered_prompt));
+        //     }
+        // }
 
-        let result = (!system_message.content.is_empty()).then_some(system_message);
-        log::debug!("System message built: {}", result.is_some());
-        result
+        // let result = (!system_message.content.is_empty()).then_some(system_message);
+        // log::debug!("System message built: {}", result.is_some());
+        // result
     }
 
     /// A helper method that's called on every streamed completion event.

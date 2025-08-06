@@ -27,6 +27,7 @@ language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
 project.workspace = true
+prompt_store.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true

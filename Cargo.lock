@@ -175,6 +175,7 @@ dependencies = [
  "language_models",
  "log",
  "project",
+ "prompt_store",
  "reqwest_client",
  "rust-embed",
  "schemars",

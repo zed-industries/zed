@@ -5,11 +5,12 @@ use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, Entity, Subscription, Task, WeakEntity};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use project::Project;
-use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::{cell::RefCell, collections::HashMap};
 
+use crate::templates::SystemPromptTemplate;
 use crate::{templates::Templates, AgentResponseEvent, Thread};
 
 /// Holds both the internal Thread and the AcpThread for a session
@@ -34,7 +35,12 @@ impl NativeAgent {
         Self {
             sessions: HashMap::new(),
             templates,
+            // todo!("when stuff changes that causes the template to change, update it and set it on all the active sessions")
         }
+    }
+
+    pub fn system_prompt_template(&self) -> &Rc<RefCell<SystemPromptTemplate>> {
+        todo!()
     }
 }
 
