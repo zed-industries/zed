@@ -118,16 +118,7 @@ impl NotificationPanel {
             })
             .detach();
 
-            let entity = cx.entity().downgrade();
-            let notification_list =
-                ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
-                    entity
-                        .upgrade()
-                        .and_then(|entity| {
-                            entity.update(cx, |this, cx| this.render_notification(ix, window, cx))
-                        })
-                        .unwrap_or_else(|| div().into_any())
-                });
+            let notification_list = ListState::new(0, ListAlignment::Top, px(1000.));
             notification_list.set_scroll_handler(cx.listener(
                 |this, event: &ListScrollEvent, _, cx| {
                     if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
@@ -687,7 +678,16 @@ impl Render for NotificationPanel {
                         ),
                     )
                 } else {
-                    this.child(list(self.notification_list.clone()).size_full())
+                    this.child(
+                        list(
+                            self.notification_list.clone(),
+                            cx.processor(|this, ix, window, cx| {
+                                this.render_notification(ix, window, cx)
+                                    .unwrap_or_else(|| div().into_any())
+                            }),
+                        )
+                        .size_full(),
+                    )
                 }
             })
     }

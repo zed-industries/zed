@@ -1471,7 +1471,6 @@ impl AgentPanel {
 
         let current_is_special = current_is_history || current_is_config;
         let new_is_special = new_is_history || new_is_config;
-        let mut old_acp_thread = None;
 
         match &self.active_view {
             ActiveView::Thread { thread, .. } => {
@@ -1482,9 +1481,6 @@ impl AgentPanel {
                         store.remove_recently_opened_thread(id, cx);
                     });
                 }
-            }
-            ActiveView::ExternalAgentThread { thread_view } => {
-                old_acp_thread.replace(thread_view.downgrade());
             }
             _ => {}
         }
@@ -1515,11 +1511,6 @@ impl AgentPanel {
             }
             self.active_view = new_view;
         }
-
-        debug_assert!(
-            old_acp_thread.map_or(true, |thread| !thread.is_upgradable()),
-            "AcpThreadView leaked"
-        );
 
         self.acp_message_history.borrow_mut().reset_position();
 
