@@ -24,7 +24,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::fs::make_file_executable;
 use util::merge_json_value_into;
-use util::{ResultExt, fs::remove_matching, maybe};
+use util::{ResultExt, maybe};
 
 use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 use crate::language_settings::language_settings;
@@ -187,48 +187,48 @@ impl LspAdapter for RustLspAdapter {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
+
         let metadata_path = destination_path.with_extension("metadata");
-
-        remove_matching(&container_dir, |entry| {
-            entry != destination_path && entry != metadata_path
-        })
-        .await;
-
         let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
             .await
             .ok();
         if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
             if let (Some(actual_digest), Some(expected_digest)) =
                 (&metadata.digest, expected_digest)
             {
                 if actual_digest == expected_digest {
-                    let result = delegate
-                        .try_exec(LanguageServerBinary {
-                            path: server_path.clone(),
-                            arguments: vec!["--version".into()],
-                            env: None,
-                        })
-                        .await;
-                    match result {
-                        // Binary is up to date and executable, skip downloading.
-                        Ok(()) => {
-                            return Ok(LanguageServerBinary {
-                                path: server_path,
-                                env: None,
-                                arguments: Default::default(),
-                            });
-                        }
-                        Err(err) => {
-                            log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",);
-                        }
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
                     }
                 } else {
                     log::info!(
                         "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
                     );
                 }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
             }
         }
+
+        _ = fs::remove_dir_all(&destination_path).await;
         download_server_binary(
             delegate,
             url,
