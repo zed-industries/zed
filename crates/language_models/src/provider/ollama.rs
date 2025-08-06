@@ -23,7 +23,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
+use ui::{ButtonLike, ElevationIndex, Indicator, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
@@ -817,19 +817,14 @@ impl Render for ConfigurationView {
                 .into_any()
         } else {
             v_flex()
-              .gap_4()
               .child(
-                  v_flex()
-                      .gap_2()
-                      .child(
+                  if !is_authenticated {
+                      v_flex().child(
                           Label::new("Run powerful language models locally on your machine with Ollama. Get started with Llama 3.3, Mistral, Gemma 2, and hundreds of other models.")
                               .size(LabelSize::Small)
                               .color(Color::Muted)
-                      )
-              )
-              .child(
-                  if !is_authenticated {
-                      v_flex()
+                          )
+                      .v_flex()
                           .gap_2()
                           .child(
                               Label::new("Getting Started")
@@ -839,8 +834,12 @@ impl Render for ConfigurationView {
                           .child(
                               List::new()
                                   .child(InstructionListItem::text_only("1. Download and install Ollama from ollama.com"))
-                                  .child(InstructionListItem::text_only("2. Start Ollama and download a model: `ollama run llama3.2`"))
+                                  .child(InstructionListItem::text_only("2. Start Ollama and download a model: `ollama run gpt-oss:20b`"))
                                   .child(InstructionListItem::text_only("3. Click 'Connect' below to start using Ollama in Zed"))
+                          ).child(
+                              Label::new("API Keys and API URLs are optional, Zed will default to local ollama usage.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
                           )
                           .into_any()
                   } else {
@@ -849,39 +848,18 @@ impl Render for ConfigurationView {
               )
               .child(
                   if self.should_render_api_key_editor(cx) {
-                      v_flex()
-                          .gap_2()
-                          .child(
-                              Label::new("API Key (Optional)")
-                                  .size(LabelSize::Small)
-                                  .color(Color::Default)
-                          )
-                          .child(
-                              Label::new("Only required for remote Ollama instances or servers with authentication enabled")
-                                  .size(LabelSize::XSmall)
-                                  .color(Color::Muted)
-                          )
-                          .child(
-                              v_flex()
-                                  .on_action(cx.listener(Self::save_api_key))
-                                  .child(self.api_key_editor.clone())
-                                  .child(
-                                      Label::new(
-                                          format!("You can also assign the {OLLAMA_API_KEY_VAR} environment variable and restart Zed.")
-                                      )
-                                      .size(LabelSize::XSmall)
-                                      .color(Color::Muted),
-                                  )
-                          )
-                          .into_any()
+                    v_flex()
+                        .on_action(cx.listener(Self::save_api_key))
+                        .child(self.api_key_editor.clone())
+                        .child(
+                            Label::new(
+                                format!("You can also assign the {OLLAMA_API_KEY_VAR} environment variable and restart Zed.")
+                            )
+                            .size(LabelSize::XSmall)
+                            .color(Color::Muted),
+                        ).into_any()
                   } else {
                       v_flex()
-                          .gap_2()
-                          .child(
-                              Label::new("API Key")
-                                  .size(LabelSize::Small)
-                                  .color(Color::Default)
-                          )
                           .child(
                               h_flex()
                                   .p_3()
@@ -906,12 +884,15 @@ impl Render for ConfigurationView {
                                   )
                                   .child(
                                       Button::new("reset-api-key", "Reset API Key")
-                                          .style(ButtonStyle::Subtle)
+                                          .label_size(LabelSize::Small)
                                           .icon(IconName::Undo)
-                                          .icon_size(IconSize::XSmall)
-                                          .on_click(cx.listener(|this, _, window, cx| {
-                                              this.reset_api_key(window, cx)
-                                          }))
+                                          .icon_size(IconSize::Small)
+                                          .icon_position(IconPosition::Start)
+                                          .layer(ElevationIndex::ModalSurface)
+                                          .when(env_var_set, |this| {
+                                              this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OLLAMA_API_KEY_VAR} environment variable.")))
+                                          })
+                                          .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                                   )
                           )
                           .into_any()
@@ -924,66 +905,42 @@ impl Render for ConfigurationView {
                       v_flex()
                           .gap_2()
                           .child(
-                              Label::new("API URL (Optional)")
-                                  .size(LabelSize::Small)
-                                  .color(Color::Default)
-                          )
-                          .child(
-                              Label::new("Only required for remote Ollama instances or custom ports")
-                                  .size(LabelSize::XSmall)
-                                  .color(Color::Muted)
-                          )
-                          .child(
-                              v_flex()
-                                  .gap_2()
-                                  .child(
-                                      h_flex()
-                                          .p_3()
-                                          .justify_between()
-                                          .rounded_md()
-                                          .border_1()
-                                          .border_color(cx.theme().colors().border)
-                                          .bg(cx.theme().colors().elevated_surface_background)
-                                          .child(
-                                              h_flex()
-                                                  .gap_2()
-                                                  .child(Indicator::dot().color(Color::Success))
-                                                  .child(
-                                                      v_flex()
-                                                          .gap_1()
-                                                          .child(Label::new("Custom server configured"))
-                                                          .child(
-                                                              Label::new(&AllLanguageModelSettings::get_global(cx).ollama.api_url)
-                                                                  .size(LabelSize::XSmall)
-                                                                  .color(Color::Muted)
-                                                          )
-                                                  )
-                                          )
-                                          .child(
-                                              Button::new("reset-api-url", "Reset")
-                                                  .style(ButtonStyle::Subtle)
-                                                  .icon(IconName::Undo)
-                                                  .icon_size(IconSize::XSmall)
-                                                  .on_click(cx.listener(|this, _, window, cx| {
-                                                      this.reset_api_url(window, cx)
-                                                  }))
-                                          )
-                                  )
+                                h_flex()
+                                    .p_3()
+                                    .justify_between()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .bg(cx.theme().colors().elevated_surface_background)
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Indicator::dot().color(Color::Success))
+                                            .child(
+                                                v_flex()
+                                                    .gap_1()
+                                                    .child(
+                                                        Label::new(
+                                                            format!("API URL configured. {}", &AllLanguageModelSettings::get_global(cx).ollama.api_url)
+                                                        )
+                                                    )
+                                            )
+                                    )
+                                    .child(
+                                        Button::new("reset-api-url", "Reset API URL")
+                                            .label_size(LabelSize::Small)
+                                            .icon(IconName::Undo)
+                                            .icon_size(IconSize::Small)
+                                            .icon_position(IconPosition::Start)
+                                            .layer(ElevationIndex::ModalSurface)
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.reset_api_url(window, cx)
+                                            }))
+                                    )
                           )
                           .into_any()
                   } else {
                       v_flex()
-                          .gap_2()
-                          .child(
-                              Label::new("API URL (Optional)")
-                                  .size(LabelSize::Small)
-                                  .color(Color::Default)
-                          )
-                          .child(
-                              Label::new("Only required for remote Ollama instances or custom ports")
-                                  .size(LabelSize::XSmall)
-                                  .color(Color::Muted)
-                          )
                           .child(
                               v_flex()
                                   .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
