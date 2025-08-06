@@ -24,6 +24,7 @@ mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -43,6 +44,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
 
@@ -75,6 +77,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -124,6 +127,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -171,6 +175,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -209,6 +214,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "temporarily disabled until it can be run on CI"]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -316,6 +322,7 @@ async fn test_refusal(cx: &mut TestAppContext) {
     });
 }
 
+#[ignore = "temporarily disabled until it can be run on CI"]
 #[gpui::test]
 async fn test_agent_connection(cx: &mut TestAppContext) {
     cx.executor().allow_parking();
