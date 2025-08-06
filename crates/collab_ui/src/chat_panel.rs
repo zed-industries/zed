@@ -103,28 +103,16 @@ impl ChatPanel {
         });
 
         cx.new(|cx| {
-            let entity = cx.entity().downgrade();
-            let message_list = ListState::new(
-                0,
-                gpui::ListAlignment::Bottom,
-                px(1000.),
-                move |ix, window, cx| {
-                    if let Some(entity) = entity.upgrade() {
-                        entity.update(cx, |this: &mut Self, cx| {
-                            this.render_message(ix, window, cx).into_any_element()
-                        })
-                    } else {
-                        div().into_any()
-                    }
-                },
-            );
+            let message_list = ListState::new(0, gpui::ListAlignment::Bottom, px(1000.));
 
-            message_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, _, cx| {
-                if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
-                    this.load_more_messages(cx);
-                }
-                this.is_scrolled_to_bottom = !event.is_scrolled;
-            }));
+            message_list.set_scroll_handler(cx.listener(
+                |this: &mut Self, event: &ListScrollEvent, _, cx| {
+                    if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
+                        this.load_more_messages(cx);
+                    }
+                    this.is_scrolled_to_bottom = !event.is_scrolled;
+                },
+            ));
 
             let local_offset = chrono::Local::now().offset().local_minus_utc();
             let mut this = Self {
@@ -399,7 +387,7 @@ impl ChatPanel {
         ix: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let active_chat = &self.active_chat.as_ref().unwrap().0;
         let (message, is_continuation_from_previous, is_admin) =
             active_chat.update(cx, |active_chat, cx| {
@@ -582,6 +570,7 @@ impl ChatPanel {
                 self.render_popover_buttons(message_id, can_delete_message, can_edit_message, cx)
                     .mt_neg_2p5(),
             )
+            .into_any_element()
     }
 
     fn has_open_menu(&self, message_id: Option<u64>) -> bool {
@@ -979,7 +968,13 @@ impl Render for ChatPanel {
             )
             .child(div().flex_grow().px_2().map(|this| {
                 if self.active_chat.is_some() {
-                    this.child(list(self.message_list.clone()).size_full())
+                    this.child(
+                        list(
+                            self.message_list.clone(),
+                            cx.processor(Self::render_message),
+                        )
+                        .size_full(),
+                    )
                 } else {
                     this.child(
                         div()
