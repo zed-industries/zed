@@ -374,6 +374,14 @@ impl Focusable for KeymapEditor {
         }
     }
 }
+/// Helper function to check if two keystroke sequences match exactly
+fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+    keystrokes1.len() == keystrokes2.len()
+        && keystrokes1
+            .iter()
+            .zip(keystrokes2)
+            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+}
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -549,13 +557,7 @@ impl KeymapEditor {
                             .keystrokes()
                             .is_some_and(|keystrokes| {
                                 if exact_match {
-                                    keystroke_query.len() == keystrokes.len()
-                                        && keystroke_query.iter().zip(keystrokes).all(
-                                            |(query, keystroke)| {
-                                                query.key == keystroke.key
-                                                    && query.modifiers == keystroke.modifiers
-                                            },
-                                        )
+                                    keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
                                     return false;
                                 } else {
@@ -2364,13 +2366,7 @@ impl KeybindingEditorModal {
 
                 binding
                     .keystrokes()
-                    .map(|keystrokes| {
-                        keystrokes.len() == current_keystrokes.len()
-                            && keystrokes
-                                .iter()
-                                .zip(&current_keystrokes)
-                                .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
-                    })
+                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
                     .unwrap_or(false)
             })
             .count()
