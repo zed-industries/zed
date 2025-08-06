@@ -1039,7 +1039,11 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
-            last = Some(entry?.path());
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "metadata") {
+                continue;
+            }
+            last = Some(path);
         }
 
         anyhow::Ok(LanguageServerBinary {
