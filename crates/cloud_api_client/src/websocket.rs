@@ -1,3 +1,4 @@
+use futures::stream::{SplitSink, SplitStream};
 use futures::{Sink, Stream, StreamExt};
 use http::Request;
 use std::pin::Pin;
@@ -62,6 +63,19 @@ impl Message {
             }
             _ => None,
         }
+    }
+}
+
+pub struct Connection {
+    rx: SplitSink<WebSocket, FrameView>,
+    tx: SplitStream<WebSocket>,
+}
+
+impl Connection {
+    pub fn new(ws: WebSocket) -> Self {
+        let (rx, tx) = ws.split();
+
+        Self { rx, tx }
     }
 }
 
@@ -188,6 +202,14 @@ pub fn build_websocket_request(
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")
         .header("Sec-WebSocket-Key", generate_websocket_key());
+
+    // TODO: Configure WebSocket compression.
+    // if let Some(compression) = options.compression.as_ref() {
+    //     let extensions = WebSocketExtensions::from(compression);
+    //     let header_value = extensions.to_string().parse().unwrap();
+    //     req.headers_mut()
+    //         .insert(header::SEC_WEBSOCKET_EXTENSIONS, header_value);
+    // }
 
     // Add custom headers
     for (name, value) in custom_headers {

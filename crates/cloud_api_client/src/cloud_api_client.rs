@@ -1,11 +1,18 @@
+mod websocket;
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 pub use cloud_api_types::*;
-use futures::AsyncReadExt as _;
+use futures::{AsyncReadExt as _, StreamExt as _};
+use gpui::{App, Task};
+use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
 use parking_lot::RwLock;
+use yawc::WebSocket;
+
+use crate::websocket::{Connection, build_websocket_request};
 
 struct Credentials {
     user_id: u32,
@@ -76,6 +83,33 @@ impl CloudApiClient {
         response.body_mut().read_to_string(&mut body).await?;
 
         Ok(serde_json::from_str(&body)?)
+    }
+
+    pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
+        let mut connect_url = self
+            .http_client
+            .build_zed_cloud_url("/client/users/connect", &[])?;
+        connect_url.set_scheme("wss").unwrap();
+
+        let credentials = self.credentials.read();
+        let credentials = credentials.as_ref().context("no credentials provided")?;
+
+        let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
+
+        Ok(cx.spawn(async move |cx| {
+            let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
+            let _guard = handle.enter();
+
+            let ws = WebSocket::connect(connect_url)
+                .with_request(
+                    request::Builder::new()
+                        .header("Authorization", authorization_header)
+                        .header("x-zed-protocol-version", "0"),
+                )
+                .await?;
+
+            Ok(Connection::new(ws))
+        }))
     }
 
     pub async fn accept_terms_of_service(&self) -> Result<AcceptTermsOfServiceResponse> {

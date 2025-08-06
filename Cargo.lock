@@ -3070,12 +3070,19 @@ name = "cloud_api_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cloud_api_types",
  "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "http 1.3.1",
  "http_client",
  "parking_lot",
+ "rand 0.8.5",
  "serde_json",
+ "url",
  "workspace-hack",
+ "yawc",
 ]
 
 [[package]]

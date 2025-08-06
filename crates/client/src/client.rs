@@ -946,6 +946,14 @@ impl Client {
     ) -> Result<()> {
         let credentials = self.sign_in(try_provider, cx).await?;
 
+        let cloud_client = self.cloud_client.clone();
+        if let Ok(connect_task) = cx.update(|cx| cloud_client.connect(cx)) {
+            match connect_task?.await {
+                Ok(_) => println!("Connected to Cloud WebSocket!"),
+                Err(err) => println!("Failed to connect to Cloud WebSocket: {}", err),
+            }
+        };
+
         let connect_result = match self.connect_with_credentials(credentials, cx).await {
             ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
             ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),

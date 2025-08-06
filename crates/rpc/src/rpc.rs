@@ -4,9 +4,8 @@ mod extension;
 mod message_stream;
 mod notification;
 mod peer;
-pub mod websocket_yawc;
 
-pub use conn::{Connection, YawcConnection};
+pub use conn::Connection;
 pub use extension::*;
 pub use notification::*;
 pub use peer::*;

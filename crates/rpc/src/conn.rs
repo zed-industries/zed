@@ -101,13 +101,3 @@ impl Connection {
         }
     }
 }
-
-pub struct YawcConnection {
-    pub(crate) _adapter: crate::websocket_yawc::WebSocketAdapter,
-}
-
-impl YawcConnection {
-    pub fn new(adapter: crate::websocket_yawc::WebSocketAdapter) -> Self {
-        Self { _adapter: adapter }
-    }
-}
