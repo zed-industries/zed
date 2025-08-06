@@ -4419,7 +4419,6 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     }
 }
 
-
 fn notify_membership_updated(
     connection_pool: &mut ConnectionPool,
     result: MembershipUpdated,
