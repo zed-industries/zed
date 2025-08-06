@@ -105,7 +105,7 @@ impl CloudApiClient {
             let handle = cx
                 .update(|cx| Tokio::handle(cx))
                 .ok()
-                .ok_or_else(|| anyhow!("failed to get Tokio handle"))?;
+                .context("failed to get Tokio handle")?;
             let _guard = handle.enter();
 
             let ws = WebSocket::connect(connect_url)
