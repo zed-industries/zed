@@ -1,4 +1,4 @@
-use futures::{Sink, Stream};
+use futures::{Sink, Stream, StreamExt};
 use http::Request;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -65,23 +65,32 @@ impl Message {
     }
 }
 
-pub struct WebSocketAdapter {
-    inner: WebSocket,
+pub enum WebSocketAdapter {
+    Yawc(WebSocket),
+    Stream {
+        rx: Box<dyn Stream<Item = anyhow::Result<Message>> + Send + Unpin>,
+        tx: Box<dyn Sink<Message, Error = anyhow::Error> + Send + Unpin>,
+    },
 }
 
 impl WebSocketAdapter {
     pub fn new(ws: WebSocket) -> Self {
-        Self { inner: ws }
+        Self::Yawc(ws)
     }
 
-    pub fn new_from_stream<S>(_stream: S) -> Self
+    pub fn new_from_stream<S>(stream: S) -> Self
     where
-        S: Stream + Sink<Message> + Send + 'static,
+        S: Stream<Item = anyhow::Result<Message>>
+            + Sink<Message, Error = anyhow::Error>
+            + Send
+            + Unpin
+            + 'static,
     {
-        // TODO: This is a placeholder. In production, you would need to properly
-        // integrate the stream with yawc's WebSocket implementation.
-        // For now, this panics to prevent runtime errors.
-        unimplemented!("WebSocketAdapter::new_from_stream is not yet implemented")
+        let (tx, rx) = stream.split();
+        Self::Stream {
+            rx: Box::new(rx),
+            tx: Box::new(tx),
+        }
     }
 }
 
@@ -89,16 +98,19 @@ impl Stream for WebSocketAdapter {
     type Item = anyhow::Result<Message>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match Pin::new(&mut self.inner).poll_next(cx) {
-            Poll::Ready(Some(frame)) => {
-                if let Some(msg) = Message::from_frame_view(frame) {
-                    Poll::Ready(Some(Ok(msg)))
-                } else {
-                    self.poll_next(cx)
+        match &mut *self {
+            WebSocketAdapter::Yawc(ws) => match Pin::new(ws).poll_next(cx) {
+                Poll::Ready(Some(frame)) => {
+                    if let Some(msg) = Message::from_frame_view(frame) {
+                        Poll::Ready(Some(Ok(msg)))
+                    } else {
+                        self.poll_next(cx)
+                    }
                 }
-            }
-            Poll::Ready(None) => Poll::Ready(None),
-            Poll::Pending => Poll::Pending,
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Pending => Poll::Pending,
+            },
+            WebSocketAdapter::Stream { rx, .. } => Pin::new(rx).poll_next(cx),
         }
     }
 }
@@ -107,27 +119,39 @@ impl Sink<Message> for WebSocketAdapter {
     type Error = anyhow::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_ready(cx)
-            .map_err(|e| anyhow::anyhow!(e))
+        match &mut *self {
+            WebSocketAdapter::Yawc(ws) => {
+                Pin::new(ws).poll_ready(cx).map_err(|e| anyhow::anyhow!(e))
+            }
+            WebSocketAdapter::Stream { tx, .. } => Pin::new(tx).poll_ready(cx),
+        }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-        Pin::new(&mut self.inner)
-            .start_send(item.into_frame_view())
-            .map_err(|e| anyhow::anyhow!(e))
+        match &mut *self {
+            WebSocketAdapter::Yawc(ws) => Pin::new(ws)
+                .start_send(item.into_frame_view())
+                .map_err(|e| anyhow::anyhow!(e)),
+            WebSocketAdapter::Stream { tx, .. } => Pin::new(tx).start_send(item),
+        }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_flush(cx)
-            .map_err(|e| anyhow::anyhow!(e))
+        match &mut *self {
+            WebSocketAdapter::Yawc(ws) => {
+                Pin::new(ws).poll_flush(cx).map_err(|e| anyhow::anyhow!(e))
+            }
+            WebSocketAdapter::Stream { tx, .. } => Pin::new(tx).poll_flush(cx),
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner)
-            .poll_close(cx)
-            .map_err(|e| anyhow::anyhow!(e))
+        match &mut *self {
+            WebSocketAdapter::Yawc(ws) => {
+                Pin::new(ws).poll_close(cx).map_err(|e| anyhow::anyhow!(e))
+            }
+            WebSocketAdapter::Stream { tx, .. } => Pin::new(tx).poll_close(cx),
+        }
     }
 }
 

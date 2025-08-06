@@ -1320,16 +1320,38 @@ pub async fn handle_yawc_request(
     };
 
     ws.on_upgrade(move |socket| {
-        // TODO: Properly implement yawc WebSocket handling. This is a placeholder.
-        // The challenge is that yawc and axum use different WebSocket types,
-        // and we need to bridge between them properly.
+        // For now, we're using the same approach as tungstenite to keep compatibility
+        // with the existing Connection type. In the future, we could create a
+        // YawcConnection that works directly with yawc messages.
+        let socket = socket
+            .map_ok(to_tungstenite_message)
+            .err_into()
+            .with(|message| async move { to_axum_message(message) });
+        let connection = Connection::new(Box::pin(socket));
+
         async move {
             log::info!(
                 "yawc /cloud endpoint connection established from {}",
                 socket_address
             );
-            // For now, just log and drop the connection
-            // In the future, this would handle the yawc-based WebSocket connection
+
+            // Use the same handle_connection as the /rpc endpoint
+            // This lets us test the yawc infrastructure while keeping
+            // the same connection handling logic.
+            server
+                .handle_connection(
+                    connection,
+                    socket_address,
+                    principal,
+                    version,
+                    user_agent.map(|header| header.to_string()),
+                    country_code_header.map(|header| header.to_string()),
+                    system_id_header.map(|header| header.to_string()),
+                    None,
+                    Executor::Production,
+                    Some(connection_guard),
+                )
+                .await;
         }
     })
 }
