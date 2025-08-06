@@ -20,7 +20,6 @@ use crate::{
     executor::Executor,
 };
 use anyhow::{Context as _, anyhow, bail};
-use rpc::WebSocketMessage as TungsteniteMessage;
 use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
@@ -40,6 +39,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
+use rpc::WebSocketMessage;
 use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -1242,7 +1242,7 @@ pub async fn handle_websocket_request(
 
     ws.on_upgrade(move |socket| {
         let socket = socket
-            .map_ok(to_tungstenite_message)
+            .map_ok(to_ws_message)
             .err_into()
             .with(|message| async move { to_axum_message(message) });
         let connection = Connection::new(Box::pin(socket));
@@ -4308,32 +4308,31 @@ async fn get_llm_api_token(
     Ok(())
 }
 
-fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
+fn to_axum_message(message: WebSocketMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
-        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
-        TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
-        TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
-        TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
-        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|(code, reason)| AxumCloseFrame {
-            code,
-            reason: reason.into(),
-        }))
+        WebSocketMessage::Text(payload) => AxumMessage::Text(payload),
+        WebSocketMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
+        WebSocketMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
+        WebSocketMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
+        WebSocketMessage::Close(frame) => {
+            AxumMessage::Close(frame.map(|(code, reason)| AxumCloseFrame {
+                code,
+                reason: reason.into(),
+            }))
+        }
     };
 
     Ok(message)
 }
 
-fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
+fn to_ws_message(message: AxumMessage) -> WebSocketMessage {
     match message {
-        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload),
-        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
-        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
-        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
+        AxumMessage::Text(payload) => WebSocketMessage::Text(payload),
+        AxumMessage::Binary(payload) => WebSocketMessage::Binary(payload),
+        AxumMessage::Ping(payload) => WebSocketMessage::Ping(payload),
+        AxumMessage::Pong(payload) => WebSocketMessage::Pong(payload),
         AxumMessage::Close(frame) => {
-            TungsteniteMessage::Close(frame.map(|frame| (
-                frame.code,
-                frame.reason.to_string(),
-            )))
+            WebSocketMessage::Close(frame.map(|frame| (frame.code, frame.reason.to_string())))
         }
     }
 }
