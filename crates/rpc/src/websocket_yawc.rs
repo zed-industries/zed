@@ -73,10 +73,10 @@ impl WebSocketAdapter {
     pub fn new(ws: WebSocket) -> Self {
         Self { inner: ws }
     }
-    
-    pub fn new_from_stream<S>(_stream: S) -> Self 
+
+    pub fn new_from_stream<S>(_stream: S) -> Self
     where
-        S: Stream + Sink<Message> + Send + 'static
+        S: Stream + Sink<Message> + Send + 'static,
     {
         // TODO: This is a placeholder. In production, you would need to properly
         // integrate the stream with yawc's WebSocket implementation.

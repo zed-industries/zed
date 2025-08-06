@@ -1,12 +1,12 @@
-use futures::{SinkExt as _, StreamExt as _};
 use async_tungstenite::tungstenite::Message as TungsteniteMessage;
+use futures::{SinkExt as _, StreamExt as _};
 
-// Original connection type for tungstenite (used by /rpc endpoint)
 pub struct Connection {
     pub(crate) tx:
         Box<dyn 'static + Send + Unpin + futures::Sink<TungsteniteMessage, Error = anyhow::Error>>,
-    pub(crate) rx:
-        Box<dyn 'static + Send + Unpin + futures::Stream<Item = anyhow::Result<TungsteniteMessage>>>,
+    pub(crate) rx: Box<
+        dyn 'static + Send + Unpin + futures::Stream<Item = anyhow::Result<TungsteniteMessage>>,
+    >,
 }
 
 impl Connection {
@@ -52,7 +52,12 @@ impl Connection {
             killed: Arc<AtomicBool>,
             executor: gpui::BackgroundExecutor,
         ) -> (
-            Box<dyn 'static + Send + Unpin + futures::Sink<TungsteniteMessage, Error = anyhow::Error>>,
+            Box<
+                dyn 'static
+                    + Send
+                    + Unpin
+                    + futures::Sink<TungsteniteMessage, Error = anyhow::Error>,
+            >,
             Box<
                 dyn 'static
                     + Send
@@ -97,7 +102,6 @@ impl Connection {
     }
 }
 
-// New connection type for yawc (used by /cloud endpoint)
 pub struct YawcConnection {
     pub(crate) _adapter: crate::websocket_yawc::WebSocketAdapter,
 }

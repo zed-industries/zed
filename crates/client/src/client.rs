@@ -57,7 +57,8 @@ pub use user::*;
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
 static ZED_RPC_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_RPC_URL").ok());
-static ZED_CLOUD_URL: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("ZED_CLOUD_URL").ok());
+static ZED_CLOUD_URL: LazyLock<Option<String>> =
+    LazyLock::new(|| std::env::var("ZED_CLOUD_URL").ok());
 
 pub static IMPERSONATE_LOGIN: LazyLock<Option<String>> = LazyLock::new(|| {
     std::env::var("ZED_IMPERSONATE")
