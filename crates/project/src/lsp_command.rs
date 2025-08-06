@@ -52,7 +52,18 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
 
 pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
     match lsp::Url::from_file_path(path) {
-        Ok(url) => Ok(url),
+        Ok(url) => {
+            // Some development environments (Next.js, Deno Fresh, etc.)
+            // use open/closing brackets for special use cases. Percent encode
+            // these items if they occur in the path provided.
+            if url.path().contains("[") || url.path().contains("]") {
+                let url_string = url.as_str().replace("[", "%5B").replace("]", "%5D");
+                lsp::Url::parse(&url_string)
+                    .map_err(|e| anyhow::anyhow!("Failed to parse encoded URL: {}", e))
+            } else {
+                Ok(url)
+            }
+        }
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
 }
@@ -4489,8 +4500,9 @@ fn process_full_diagnostics_report(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lsp::{DiagnosticSeverity, DiagnosticTag};
+    use lsp::{DiagnosticSeverity, DiagnosticTag, Url};
     use serde_json::json;
+    use std::path::Path;
 
     #[test]
     fn test_serialize_lsp_diagnostic() {
@@ -4613,5 +4625,16 @@ mod tests {
 
         let result = GetDocumentDiagnostics::deserialize_lsp_diagnostic(proto_diagnostic);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_path_with_brackets() {
+        let path = Path::new("/test/[square]/brackets");
+        let expected =
+            Url::parse("file:///test/%5Bsquare%5D/brackets").expect("Could not parse file path");
+
+        let result = file_path_to_lsp_url(path).expect("Could not run `file_path_to_lsp_url`");
+
+        assert!(result == expected)
     }
 }
