@@ -4246,21 +4246,21 @@ impl GitPanel {
                 h_flex()
                     .items_center()
                     .flex_1()
-                    // .overflow_hidden()
+                    .child(
+                        self.entry_label(display_name.clone(), label_color)
+                            .when(status.is_deleted(), |this| this.strikethrough()),
+                    )
                     .when_some(entry.parent_dir(), |this, parent| {
                         if !parent.is_empty() {
                             this.child(
-                                self.entry_label(format!("{}/", parent), path_color)
+                                self.entry_label(format!(" {}", parent), path_color)
+                                    .size(LabelSize::Small)
                                     .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
                             this
                         }
-                    })
-                    .child(
-                        self.entry_label(display_name.clone(), label_color)
-                            .when(status.is_deleted(), |this| this.strikethrough()),
-                    ),
+                    }),
             )
             .into_any_element()
     }
