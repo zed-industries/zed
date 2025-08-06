@@ -858,6 +858,7 @@ impl AcpThreadView {
                     .into_any()
             }
             AgentThreadEntry::ToolCall(tool_call) => div()
+                .w_full()
                 .py_1p5()
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
@@ -1328,8 +1329,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
-            .py_1p5()
-            .px_1p5()
+            .p_1p5()
             .gap_1()
             .justify_end()
             .when(!empty_content, |this| {
@@ -1355,6 +1355,7 @@ impl AcpThreadView {
                     })
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.id.clone();
@@ -1604,7 +1605,7 @@ impl AcpThreadView {
                     })
             })
             .when(!changed_buffers.is_empty(), |this| {
-                this.child(Divider::horizontal())
+                this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_edits_summary(
                         action_log,
                         &changed_buffers,
@@ -1634,6 +1635,7 @@ impl AcpThreadView {
         {
             h_flex()
                 .w_full()
+                .cursor_default()
                 .gap_1()
                 .text_xs()
                 .text_color(cx.theme().colors().text_muted)
@@ -1663,7 +1665,7 @@ impl AcpThreadView {
             let status_label = if stats.pending == 0 {
                 "All Done".to_string()
             } else if stats.completed == 0 {
-                format!("{}", plan.entries.len())
+                format!("{} Tasks", plan.entries.len())
             } else {
                 format!("{}/{}", stats.completed, plan.entries.len())
             };
@@ -1777,7 +1779,6 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id("edits-container")
-                    .cursor_pointer()
                     .w_full()
                     .gap_1()
                     .child(Disclosure::new("edits-disclosure", expanded))
@@ -2552,6 +2553,7 @@ impl AcpThreadView {
             }));
 
         h_flex()
+            .w_full()
             .mr_1()
             .pb_2()
             .px(RESPONSE_PADDING_X)
