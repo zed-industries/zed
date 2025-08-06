@@ -95,7 +95,7 @@ pub enum SubscriptionKind {
     ZedFree,
 }
 
-impl From<SubscriptionKind> for zed_llm_client::Plan {
+impl From<SubscriptionKind> for cloud_llm_client::Plan {
     fn from(value: SubscriptionKind) -> Self {
         match value {
             SubscriptionKind::ZedPro => Self::ZedPro,

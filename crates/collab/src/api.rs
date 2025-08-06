@@ -100,13 +100,11 @@ impl std::fmt::Display for SystemIdHeader {
 
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
-        .route("/user", get(update_or_create_authenticated_user))
         .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
         .route("/users/:id/refresh_llm_tokens", post(refresh_llm_tokens))
         .route("/users/:id/update_plan", post(update_plan))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
-        .merge(billing::router())
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
@@ -144,48 +142,6 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     }
 
     Ok::<_, Error>(next.run(req).await)
-}
-
-#[derive(Debug, Deserialize)]
-struct AuthenticatedUserParams {
-    github_user_id: i32,
-    github_login: String,
-    github_email: Option<String>,
-    github_name: Option<String>,
-    github_user_created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-struct AuthenticatedUserResponse {
-    user: User,
-    metrics_id: String,
-    feature_flags: Vec<String>,
-}
-
-async fn update_or_create_authenticated_user(
-    Query(params): Query<AuthenticatedUserParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<AuthenticatedUserResponse>> {
-    let initial_channel_id = app.config.auto_join_channel_id;
-
-    let user = app
-        .db
-        .update_or_create_user_by_github_account(
-            &params.github_login,
-            params.github_user_id,
-            params.github_email.as_deref(),
-            params.github_name.as_deref(),
-            params.github_user_created_at,
-            initial_channel_id,
-        )
-        .await?;
-    let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    Ok(Json(AuthenticatedUserResponse {
-        user,
-        metrics_id,
-        feature_flags,
-    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -354,9 +310,9 @@ async fn refresh_llm_tokens(
 
 #[derive(Debug, Serialize, Deserialize)]
 struct UpdatePlanBody {
-    pub plan: zed_llm_client::Plan,
+    pub plan: cloud_llm_client::Plan,
     pub subscription_period: SubscriptionPeriod,
-    pub usage: zed_llm_client::CurrentUsage,
+    pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<DateTime<Utc>>,
     pub is_usage_based_billing_enabled: bool,
     pub is_account_too_young: bool,
@@ -378,9 +334,9 @@ async fn update_plan(
     extract::Json(body): extract::Json<UpdatePlanBody>,
 ) -> Result<Json<UpdatePlanResponse>> {
     let plan = match body.plan {
-        zed_llm_client::Plan::ZedFree => proto::Plan::Free,
-        zed_llm_client::Plan::ZedPro => proto::Plan::ZedPro,
-        zed_llm_client::Plan::ZedProTrial => proto::Plan::ZedProTrial,
+        cloud_llm_client::Plan::ZedFree => proto::Plan::Free,
+        cloud_llm_client::Plan::ZedPro => proto::Plan::ZedPro,
+        cloud_llm_client::Plan::ZedProTrial => proto::Plan::ZedProTrial,
     };
 
     let update_user_plan = proto::UpdateUserPlan {
@@ -412,15 +368,15 @@ async fn update_plan(
     Ok(Json(UpdatePlanResponse {}))
 }
 
-fn usage_limit_to_proto(limit: zed_llm_client::UsageLimit) -> proto::UsageLimit {
+fn usage_limit_to_proto(limit: cloud_llm_client::UsageLimit) -> proto::UsageLimit {
     proto::UsageLimit {
         variant: Some(match limit {
-            zed_llm_client::UsageLimit::Limited(limit) => {
+            cloud_llm_client::UsageLimit::Limited(limit) => {
                 proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
                     limit: limit as u32,
                 })
             }
-            zed_llm_client::UsageLimit::Unlimited => {
+            cloud_llm_client::UsageLimit::Unlimited => {
                 proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
             }
         }),

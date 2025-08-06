@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use client::Client;
+use cloud_llm_client::Plan;
 use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
 };
-use proto::{Plan, TypedEnvelope};
+use proto::TypedEnvelope;
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
@@ -30,7 +31,7 @@ pub struct ModelRequestLimitReachedError {
 impl fmt::Display for ModelRequestLimitReachedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let message = match self.plan {
-            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedFree => "Model request limit reached. Upgrade to Zed Pro for more requests.",
             Plan::ZedPro => {
                 "Model request limit reached. Upgrade to usage-based billing for more requests."
             }
@@ -64,9 +65,14 @@ impl LlmApiToken {
         mut lock: RwLockWriteGuard<'_, Option<String>>,
         client: &Arc<Client>,
     ) -> Result<String> {
-        let response = client.request(proto::GetLlmToken {}).await?;
-        *lock = Some(response.token.clone());
-        Ok(response.token.clone())
+        let system_id = client
+            .telemetry()
+            .system_id()
+            .map(|system_id| system_id.to_string());
+
+        let response = client.cloud_client().create_llm_token(system_id).await?;
+        *lock = Some(response.token.0.clone());
+        Ok(response.token.0.clone())
     }
 }
 

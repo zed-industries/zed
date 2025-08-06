@@ -940,6 +940,26 @@ impl WorkspaceDb {
     }
 
     query! {
+        pub async fn update_ssh_project_paths_query(ssh_project_id: u64, paths: String) -> Result<Option<SerializedSshProject>> {
+            UPDATE ssh_projects
+            SET paths = ?2
+            WHERE id = ?1
+            RETURNING id, host, port, paths, user
+        }
+    }
+
+    pub(crate) async fn update_ssh_project_paths(
+        &self,
+        ssh_project_id: SshProjectId,
+        new_paths: Vec<String>,
+    ) -> Result<SerializedSshProject> {
+        let paths = serde_json::to_string(&new_paths)?;
+        self.update_ssh_project_paths_query(ssh_project_id.0, paths)
+            .await?
+            .context("failed to update ssh project paths")
+    }
+
+    query! {
         pub async fn next_id() -> Result<WorkspaceId> {
             INSERT INTO workspaces DEFAULT VALUES RETURNING workspace_id
         }
@@ -2623,5 +2643,57 @@ mod tests {
         let new_workspace = db.workspace_for_roots(id).unwrap();
 
         assert_eq!(workspace.center_group, new_workspace.center_group);
+    }
+
+    #[gpui::test]
+    async fn test_update_ssh_project_paths() {
+        zlog::init_test();
+
+        let db = WorkspaceDb::open_test_db("test_update_ssh_project_paths").await;
+
+        let (host, port, initial_paths, user) = (
+            "example.com".to_string(),
+            Some(22_u16),
+            vec!["/home/user".to_string(), "/etc/nginx".to_string()],
+            Some("user".to_string()),
+        );
+
+        let project = db
+            .get_or_create_ssh_project(host.clone(), port, initial_paths.clone(), user.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(project.host, host);
+        assert_eq!(project.paths, initial_paths);
+        assert_eq!(project.user, user);
+
+        let new_paths = vec![
+            "/home/user".to_string(),
+            "/etc/nginx".to_string(),
+            "/var/log".to_string(),
+            "/opt/app".to_string(),
+        ];
+
+        let updated_project = db
+            .update_ssh_project_paths(project.id, new_paths.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(updated_project.id, project.id);
+        assert_eq!(updated_project.paths, new_paths);
+
+        let retrieved_project = db
+            .get_ssh_project(
+                host.clone(),
+                port,
+                serde_json::to_string(&new_paths).unwrap(),
+                user.clone(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(retrieved_project.id, project.id);
+        assert_eq!(retrieved_project.paths, new_paths);
     }
 }

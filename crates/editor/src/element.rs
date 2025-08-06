@@ -3,11 +3,11 @@ use crate::{
     CodeActionSource, ColumnarMode, ConflictsOurs, ConflictsOursMarker, ConflictsOuter,
     ConflictsTheirs, ConflictsTheirsMarker, ContextMenuPlacement, CursorShape, CustomBlockId,
     DisplayDiffHunk, DisplayPoint, DisplayRow, DocumentHighlightRead, DocumentHighlightWrite,
-    EditDisplayMode, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, InlayHintRefreshReason, InlineCompletion, JumpData, LineDown, LineHighlight,
-    LineUp, MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts,
-    PageDown, PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
+    EditDisplayMode, EditPrediction, Editor, EditorMode, EditorSettings, EditorSnapshot,
+    EditorStyle, FILE_HEADER_HEIGHT, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp,
+    HandleInput, HoveredCursor, InlayHintRefreshReason, JumpData, LineDown, LineHighlight, LineUp,
+    MAX_LINE_LEN, MINIMAP_FONT_SIZE, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT, OpenExcerpts, PageDown,
+    PageUp, PhantomBreakpointIndicator, Point, RowExt, RowRangeExt, SelectPhase,
     SelectedTextHighlight, Selection, SelectionDragState, SoftWrap, StickyHeaderExcerpt, ToPoint,
     ToggleFold, ToggleFoldAll,
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
@@ -43,11 +43,11 @@ use gpui::{
     Bounds, ClickEvent, ContentMask, Context, Corner, Corners, CursorStyle, DispatchPhase, Edges,
     Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, Keystroke, Length,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent, ShapedLine, SharedString,
-    Size, StatefulInteractiveElement, Style, Styled, TextRun, TextStyleRefinement, WeakEntity,
-    Window, anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px,
-    quad, relative, size, solid_background, transparent_black,
+    ModifiersChangedEvent, MouseButton, MouseClickEvent, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, PaintQuad, ParentElement, Pixels, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    ShapedLine, SharedString, Size, StatefulInteractiveElement, Style, Styled, TextRun,
+    TextStyleRefinement, WeakEntity, Window, anchored, deferred, div, fill, linear_color_stop,
+    linear_gradient, outline, point, px, quad, relative, size, solid_background, transparent_black,
 };
 use itertools::Itertools;
 use language::language_settings::{
@@ -230,7 +230,6 @@ impl EditorElement {
         register_action(editor, window, Editor::sort_lines_case_insensitive);
         register_action(editor, window, Editor::reverse_lines);
         register_action(editor, window, Editor::shuffle_lines);
-        register_action(editor, window, Editor::toggle_case);
         register_action(editor, window, Editor::convert_indentation_to_spaces);
         register_action(editor, window, Editor::convert_indentation_to_tabs);
         register_action(editor, window, Editor::convert_to_upper_case);
@@ -241,6 +240,8 @@ impl EditorElement {
         register_action(editor, window, Editor::convert_to_upper_camel_case);
         register_action(editor, window, Editor::convert_to_lower_camel_case);
         register_action(editor, window, Editor::convert_to_opposite_case);
+        register_action(editor, window, Editor::convert_to_sentence_case);
+        register_action(editor, window, Editor::toggle_case);
         register_action(editor, window, Editor::convert_to_rot13);
         register_action(editor, window, Editor::convert_to_rot47);
         register_action(editor, window, Editor::delete_to_previous_word_start);
@@ -554,7 +555,7 @@ impl EditorElement {
         register_action(editor, window, Editor::signature_help_next);
         register_action(editor, window, Editor::next_edit_prediction);
         register_action(editor, window, Editor::previous_edit_prediction);
-        register_action(editor, window, Editor::show_inline_completion);
+        register_action(editor, window, Editor::show_edit_prediction);
         register_action(editor, window, Editor::context_menu_first);
         register_action(editor, window, Editor::context_menu_prev);
         register_action(editor, window, Editor::context_menu_next);
@@ -562,7 +563,7 @@ impl EditorElement {
         register_action(editor, window, Editor::display_cursor_names);
         register_action(editor, window, Editor::unique_lines_case_insensitive);
         register_action(editor, window, Editor::unique_lines_case_sensitive);
-        register_action(editor, window, Editor::accept_partial_inline_completion);
+        register_action(editor, window, Editor::accept_partial_edit_prediction);
         register_action(editor, window, Editor::accept_edit_prediction);
         register_action(editor, window, Editor::restore_file);
         register_action(editor, window, Editor::git_restore);
@@ -949,8 +950,12 @@ impl EditorElement {
 
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &event.modifiers(), cx);
 
-        if !pending_nonempty_selections && hovered_link_modifier && text_hitbox.is_hovered(window) {
-            let point = position_map.point_for_position(event.up.position);
+        if let Some(mouse_position) = event.mouse_position()
+            && !pending_nonempty_selections
+            && hovered_link_modifier
+            && text_hitbox.is_hovered(window)
+        {
+            let point = position_map.point_for_position(mouse_position);
             editor.handle_click_hovered_link(point, event.modifiers(), window, cx);
             editor.selection_drag_state = SelectionDragState::None;
 
@@ -2093,7 +2098,7 @@ impl EditorElement {
         row_block_types: &HashMap<DisplayRow, bool>,
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
-        inline_completion_popover_origin: Option<gpui::Point<Pixels>>,
+        edit_prediction_popover_origin: Option<gpui::Point<Pixels>>,
         start_row: DisplayRow,
         end_row: DisplayRow,
         line_height: Pixels,
@@ -2210,12 +2215,13 @@ impl EditorElement {
                 cmp::max(padded_line, min_start)
             };
 
-            let behind_inline_completion_popover = inline_completion_popover_origin
-                .as_ref()
-                .map_or(false, |inline_completion_popover_origin| {
-                    (pos_y..pos_y + line_height).contains(&inline_completion_popover_origin.y)
-                });
-            let opacity = if behind_inline_completion_popover {
+            let behind_edit_prediction_popover = edit_prediction_popover_origin.as_ref().map_or(
+                false,
+                |edit_prediction_popover_origin| {
+                    (pos_y..pos_y + line_height).contains(&edit_prediction_popover_origin.y)
+                },
+            );
+            let opacity = if behind_edit_prediction_popover {
                 0.5
             } else {
                 1.0
@@ -2427,9 +2433,9 @@ impl EditorElement {
 
             let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
 
-            if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
-                match &inline_completion.completion {
-                    InlineCompletion::Edit {
+            if let Some(edit_prediction) = editor.active_edit_prediction.as_ref() {
+                match &edit_prediction.completion {
+                    EditPrediction::Edit {
                         display_mode: EditDisplayMode::TabAccept,
                         ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
@@ -3734,7 +3740,7 @@ impl EditorElement {
                                 move |editor, e: &ClickEvent, window, cx| {
                                     editor.open_excerpts_common(
                                         Some(jump_data.clone()),
-                                        e.down.modifiers.secondary(),
+                                        e.modifiers().secondary(),
                                         window,
                                         cx,
                                     );
@@ -4086,8 +4092,7 @@ impl EditorElement {
 
         {
             let editor = self.editor.read(cx);
-            if editor
-                .edit_prediction_visible_in_cursor_popover(editor.has_active_inline_completion())
+            if editor.edit_prediction_visible_in_cursor_popover(editor.has_active_edit_prediction())
             {
                 height_above_menu +=
                     editor.edit_prediction_cursor_popover_height() + POPOVER_Y_PADDING;
@@ -6676,14 +6681,14 @@ impl EditorElement {
         }
     }
 
-    fn paint_inline_completion_popover(
+    fn paint_edit_prediction_popover(
         &mut self,
         layout: &mut EditorLayout,
         window: &mut Window,
         cx: &mut App,
     ) {
-        if let Some(inline_completion_popover) = layout.inline_completion_popover.as_mut() {
-            inline_completion_popover.paint(window, cx);
+        if let Some(edit_prediction_popover) = layout.edit_prediction_popover.as_mut() {
+            edit_prediction_popover.paint(window, cx);
         }
     }
 
@@ -6882,10 +6887,10 @@ impl EditorElement {
                 // Fire click handlers during the bubble phase.
                 DispatchPhase::Bubble => editor.update(cx, |editor, cx| {
                     if let Some(mouse_down) = captured_mouse_down.take() {
-                        let event = ClickEvent {
+                        let event = ClickEvent::Mouse(MouseClickEvent {
                             down: mouse_down,
                             up: event.clone(),
-                        };
+                        });
                         Self::click(editor, &event, &position_map, window, cx);
                     }
                 }),
@@ -7944,17 +7949,11 @@ impl Element for EditorElement {
                         right: right_margin,
                     };
 
-                    // Offset the content_bounds from the text_bounds by the gutter margin (which
-                    // is roughly half a character wide) to make hit testing work more like how we want.
-                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
-
-                    let editor_content_width = editor_width - content_offset.x;
-
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
                         editor.gutter_dimensions = gutter_dimensions;
                         editor.set_visible_line_count(bounds.size.height / line_height, window, cx);
-                        editor.set_visible_column_count(editor_content_width / em_advance);
+                        editor.set_visible_column_count(editor_width / em_advance);
 
                         if matches!(
                             editor.mode,
@@ -7966,10 +7965,10 @@ impl Element for EditorElement {
                             let wrap_width = match editor.soft_wrap_mode(cx) {
                                 SoftWrap::GitDiff => None,
                                 SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
-                                SoftWrap::EditorWidth => Some(editor_content_width),
+                                SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(wrap_width_for(column)),
                                 SoftWrap::Bounded(column) => {
-                                    Some(editor_content_width.min(wrap_width_for(column)))
+                                    Some(editor_width.min(wrap_width_for(column)))
                                 }
                             };
 
@@ -7994,13 +7993,12 @@ impl Element for EditorElement {
                         HitboxBehavior::Normal,
                     );
 
+                    // Offset the content_bounds from the text_bounds by the gutter margin (which
+                    // is roughly half a character wide) to make hit testing work more like how we want.
+                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
-                    let editor_text_bounds =
-                        Bounds::from_corners(content_origin, bounds.bottom_right());
-
-                    let height_in_lines = editor_text_bounds.size.height / line_height;
-
+                    let height_in_lines = bounds.size.height / line_height;
                     let max_row = snapshot.max_point().row().as_f32();
 
                     // The max scroll position for the top of the window
@@ -8384,7 +8382,6 @@ impl Element for EditorElement {
                         glyph_grid_cell,
                         size(longest_line_width, max_row.as_f32() * line_height),
                         longest_line_blame_width,
-                        editor_width,
                         EditorSettings::get_global(cx),
                     );
 
@@ -8456,7 +8453,7 @@ impl Element for EditorElement {
                         MultiBufferRow(end_anchor.to_point(&snapshot.buffer_snapshot).row);
 
                     let scroll_max = point(
-                        ((scroll_width - editor_content_width) / em_advance).max(0.0),
+                        ((scroll_width - editor_width) / em_advance).max(0.0),
                         max_scroll_top,
                     );
 
@@ -8468,7 +8465,7 @@ impl Element for EditorElement {
                         if needs_horizontal_autoscroll.0
                             && let Some(new_scroll_position) = editor.autoscroll_horizontally(
                                 start_row,
-                                editor_content_width,
+                                editor_width,
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
@@ -8509,7 +8506,7 @@ impl Element for EditorElement {
                             )
                         });
 
-                    let (inline_completion_popover, inline_completion_popover_origin) = self
+                    let (edit_prediction_popover, edit_prediction_popover_origin) = self
                         .editor
                         .update(cx, |editor, cx| {
                             editor.render_edit_prediction_popover(
@@ -8538,7 +8535,7 @@ impl Element for EditorElement {
                         &row_block_types,
                         content_origin,
                         scroll_pixel_position,
-                        inline_completion_popover_origin,
+                        edit_prediction_popover_origin,
                         start_row,
                         end_row,
                         line_height,
@@ -8927,7 +8924,7 @@ impl Element for EditorElement {
                         cursors,
                         visible_cursors,
                         selections,
-                        inline_completion_popover,
+                        edit_prediction_popover,
                         diff_hunk_controls,
                         mouse_context_menu,
                         test_indicators,
@@ -9009,7 +9006,7 @@ impl Element for EditorElement {
 
                     self.paint_minimap(layout, window, cx);
                     self.paint_scrollbars(layout, window, cx);
-                    self.paint_inline_completion_popover(layout, window, cx);
+                    self.paint_edit_prediction_popover(layout, window, cx);
                     self.paint_mouse_context_menu(layout, window, cx);
                 });
             })
@@ -9049,7 +9046,6 @@ impl ScrollbarLayoutInformation {
         glyph_grid_cell: Size<Pixels>,
         document_size: Size<Pixels>,
         longest_line_blame_width: Pixels,
-        editor_width: Pixels,
         settings: &EditorSettings,
     ) -> Self {
         let vertical_overscroll = match settings.scroll_beyond_last_line {
@@ -9060,19 +9056,11 @@ impl ScrollbarLayoutInformation {
             }
         };
 
-        let right_margin = if document_size.width + longest_line_blame_width >= editor_width {
-            glyph_grid_cell.width
-        } else {
-            px(0.0)
-        };
-
-        let overscroll = size(right_margin + longest_line_blame_width, vertical_overscroll);
-
-        let scroll_range = document_size + overscroll;
+        let overscroll = size(longest_line_blame_width, vertical_overscroll);
 
         ScrollbarLayoutInformation {
             editor_bounds,
-            scroll_range,
+            scroll_range: document_size + overscroll,
             glyph_grid_cell,
         }
     }
@@ -9119,7 +9107,7 @@ pub struct EditorLayout {
     expand_toggles: Vec<Option<(AnyElement, gpui::Point<Pixels>)>>,
     diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
-    inline_completion_popover: Option<AnyElement>,
+    edit_prediction_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
     tab_invisible: ShapedLine,
     space_invisible: ShapedLine,
@@ -9177,7 +9165,7 @@ struct EditorScrollbars {
 
 impl EditorScrollbars {
     pub fn from_scrollbar_axes(
-        settings_visibility: ScrollbarAxes,
+        show_scrollbar: ScrollbarAxes,
         layout_information: &ScrollbarLayoutInformation,
         content_offset: gpui::Point<Pixels>,
         scroll_position: gpui::Point<f32>,
@@ -9215,22 +9203,13 @@ impl EditorScrollbars {
         };
 
         let mut create_scrollbar_layout = |axis| {
-            settings_visibility
-                .along(axis)
+            let viewport_size = viewport_size.along(axis);
+            let scroll_range = scroll_range.along(axis);
+
+            // We always want a vertical scrollbar track for scrollbar diagnostic visibility.
+            (show_scrollbar.along(axis)
+                && (axis == ScrollbarAxis::Vertical || scroll_range > viewport_size))
                 .then(|| {
-                    (
-                        viewport_size.along(axis) - content_offset.along(axis),
-                        scroll_range.along(axis),
-                    )
-                })
-                .filter(|(viewport_size, scroll_range)| {
-                    // The scrollbar should only be rendered if the content does
-                    // not entirely fit into the editor
-                    // However, this only applies to the horizontal scrollbar, as information about the
-                    // vertical scrollbar layout is always needed for scrollbar diagnostics.
-                    axis != ScrollbarAxis::Horizontal || viewport_size < scroll_range
-                })
-                .map(|(viewport_size, scroll_range)| {
                     ScrollbarLayout::new(
                         window.insert_hitbox(scrollbar_bounds_for(axis), HitboxBehavior::Normal),
                         viewport_size,

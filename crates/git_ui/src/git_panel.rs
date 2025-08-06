@@ -12,7 +12,6 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use client::DisableAiSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -27,7 +26,10 @@ use git::repository::{
 };
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
-use git::{ExpandCommitEditor, RestoreTrackedFiles, StageAll, TrashUntrackedFiles, UnstageAll};
+use git::{
+    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashPop, TrashUntrackedFiles,
+    UnstageAll,
+};
 use gpui::{
     Action, Animation, AnimationExt as _, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner,
     DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
@@ -48,10 +50,9 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
-use project::git_store::{RepositoryEvent, RepositoryId};
 use project::{
-    Fs, Project, ProjectPath,
-    git_store::{GitStoreEvent, Repository},
+    DisableAiSettings, Fs, Project, ProjectPath,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -68,12 +69,12 @@ use ui::{
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
+use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
-use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -139,6 +140,13 @@ fn git_panel_context_menu(
                 "Unstage All",
                 UnstageAll.boxed_clone(),
             )
+            .separator()
+            .action_disabled_when(
+                !(state.has_new_changes || state.has_tracked_changes),
+                "Stash All",
+                StashAll.boxed_clone(),
+            )
+            .action("Stash Pop", StashPop.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
@@ -380,6 +388,9 @@ pub(crate) fn commit_message_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
+    project.update(cx, |this, cx| {
+        this.mark_buffer_as_non_searchable(commit_message_buffer.read(cx).remote_id(), cx);
+    });
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
@@ -1412,6 +1423,52 @@ impl GitPanel {
         self.tracked_staged_count + self.new_staged_count + self.conflicted_staged_count
     }
 
+    pub fn stash_pop(&mut self, _: &StashPop, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_pop(cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash pop", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_all(&mut self, _: &StashAll, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_all(cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
     pub fn commit_message_buffer(&self, cx: &App) -> Entity<Buffer> {
         self.commit_editor
             .read(cx)
@@ -2357,7 +2414,7 @@ impl GitPanel {
                     .committer_name
                     .clone()
                     .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.github_login.clone());
+                    .unwrap_or_else(|| participant.user.github_login.clone().to_string());
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
@@ -2377,7 +2434,7 @@ impl GitPanel {
             .name
             .clone()
             .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.github_login.clone());
+            .unwrap_or_else(|| user.github_login.clone().to_string());
         Some((name, email))
     }
 
@@ -2842,7 +2899,9 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast { .. } => this,
+                    Toast { .. } => {
+                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                    }
                     ToastWithLog { output } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
                         .action("View Log", move |window, cx| {
@@ -2855,9 +2914,9 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { link } => this
+                    PushPrLink { text, link } => this
                         .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("Open Pull Request", move |_, cx| cx.open_url(&link)),
+                        .action(text, move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
@@ -3054,6 +3113,7 @@ impl GitPanel {
                     ),
             )
             .menu({
+                let git_panel = cx.entity();
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
@@ -3070,7 +3130,16 @@ impl GitPanel {
                                     amend,
                                     IconPosition::Start,
                                     Some(Box::new(Amend)),
-                                    move |window, cx| window.dispatch_action(Box::new(Amend), cx),
+                                    {
+                                        let git_panel = git_panel.downgrade();
+                                        move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.toggle_amend_pending(cx);
+                                                })
+                                                .ok();
+                                        }
+                                    },
                                 )
                             })
                             .toggleable_entry(
@@ -3441,9 +3510,11 @@ impl GitPanel {
                             .truncate(),
                     ),
             )
-            .child(panel_button("Cancel").size(ButtonSize::Default).on_click(
-                cx.listener(|this, _, window, cx| this.toggle_amend_pending(&Amend, window, cx)),
-            ))
+            .child(
+                panel_button("Cancel")
+                    .size(ButtonSize::Default)
+                    .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
+            )
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -4204,17 +4275,8 @@ impl GitPanel {
 
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         self.amend_pending = value;
-        cx.notify();
-    }
-
-    pub fn toggle_amend_pending(
-        &mut self,
-        _: &Amend,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_amend_pending(!self.amend_pending, cx);
         self.serialize(cx);
+        cx.notify();
     }
 
     pub fn signoff_enabled(&self) -> bool {
@@ -4308,6 +4370,13 @@ impl GitPanel {
             anchor: path,
         });
     }
+
+    pub(crate) fn toggle_amend_pending(&mut self, cx: &mut Context<Self>) {
+        self.set_amend_pending(!self.amend_pending, cx);
+        if self.amend_pending {
+            self.load_last_commit_message_if_empty(cx);
+        }
+    }
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
@@ -4352,7 +4421,6 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::commit))
                     .on_action(cx.listener(GitPanel::amend))
-                    .on_action(cx.listener(GitPanel::toggle_amend_pending))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
@@ -4362,6 +4430,8 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::revert_selected))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
+                    .on_action(cx.listener(Self::stash_all))
+                    .on_action(cx.listener(Self::stash_pop))
             })
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
@@ -5045,7 +5115,6 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             Project::init_settings(cx);
-            client::DisableAiSettings::register(cx);
             crate::init(cx);
         });
     }
