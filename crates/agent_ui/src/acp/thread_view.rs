@@ -866,6 +866,7 @@ impl AcpThreadView {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
         if index == total_entries - 1 && !is_generating {
             v_flex()
+                .w_full()
                 .child(primary)
                 .child(self.render_thread_controls(cx))
                 .into_any_element()
