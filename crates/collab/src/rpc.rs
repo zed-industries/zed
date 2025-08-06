@@ -4378,8 +4378,6 @@ async fn get_llm_api_token(
 }
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
-    use async_tungstenite::tungstenite;
-
     let message = match message {
         TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
