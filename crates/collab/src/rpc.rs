@@ -4419,35 +4419,6 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     }
 }
 
-fn to_yawc_message(message: AxumMessage) -> rpc::YawcMessage {
-    match message {
-        AxumMessage::Text(payload) => rpc::YawcMessage::Text(payload.into()),
-        AxumMessage::Binary(payload) => rpc::YawcMessage::Binary(payload.into()),
-        AxumMessage::Ping(_) => rpc::YawcMessage::Ping,
-        AxumMessage::Pong(_) => rpc::YawcMessage::Pong,
-        AxumMessage::Close(frame) => {
-            rpc::YawcMessage::Close(frame.map(|frame| rpc::CloseFrame {
-                code: rpc::CloseCode::Normal, // TODO: Map close codes properly
-                reason: frame.reason.to_string(),
-            }))
-        }
-    }
-}
-
-fn from_yawc_message(message: rpc::YawcMessage) -> AxumMessage {
-    match message {
-        rpc::YawcMessage::Text(payload) => AxumMessage::Text(payload),
-        rpc::YawcMessage::Binary(payload) => AxumMessage::Binary(payload),
-        rpc::YawcMessage::Ping => AxumMessage::Ping(Vec::new()),
-        rpc::YawcMessage::Pong => AxumMessage::Pong(Vec::new()),
-        rpc::YawcMessage::Close(frame) => {
-            AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
-                code: 1000, // Normal closure
-                reason: frame.reason.into(),
-            }))
-        }
-    }
-}
 
 fn notify_membership_updated(
     connection_pool: &mut ConnectionPool,
