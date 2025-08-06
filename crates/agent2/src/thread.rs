@@ -484,59 +484,9 @@ impl Thread {
         }
 
         if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
-            let (send, recv) = oneshot::channel();
-
-            self.run_tool(tool)
-            if tool.needs_authorization(tool_use.input.clone(), cx) {
-                events_tx.unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
-                    ToolCallAuthorization {
-                        tool_call: acp::ToolCall {
-                            id: acp::ToolCallId(tool_use.id.to_string().into()),
-                            title: tool_use.name.to_string(),
-                            kind: acp::ToolKind::Other,
-                            status: acp::ToolCallStatus::Pending,
-                            content: vec![],
-                            locations: vec![],
-                            raw_input: Some(tool_use.input.clone()),
-                        },
-                        options: vec![
-                            acp::PermissionOption {
-                                id: acp::PermissionOptionId("allow_always".into()),
-                                name: "Always Allow".into(),
-                                kind: acp::PermissionOptionKind::AllowAlways,
-                            },
-                            acp::PermissionOption {
-                                id: acp::PermissionOptionId("allow".into()),
-                                name: "Allow".into(),
-                                kind: acp::PermissionOptionKind::AllowOnce,
-                            },
-                            acp::PermissionOption {
-                                id: acp::PermissionOptionId("deny".into()),
-                                name: "Deny".into(),
-                                kind: acp::PermissionOptionKind::RejectOnce,
-                            },
-                        ],
-                        response: send,
-                    },
-                )));
-            }
-
-            events_tx
-                .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
-                    acp::ToolCallUpdate {
-                        id: acp::ToolCallId(tool_use.id.to_string().into()),
-                        fields: acp::ToolCallUpdateFields {
-                            status: Some(acp::ToolCallStatus::InProgress),
-                            ..Default::default()
-                        },
-                    },
-                )))
-                .ok();
-
-            let pending_tool_result = tool.clone().run(tool_use.input, cx);
-
+            let tool_result = self.run_tool(tool.clone(), tool_use.clone(), events_tx.clone(), cx);
             Some(cx.foreground_executor().spawn(async move {
-                match pending_tool_result.await {
+                match tool_result.await {
                     Ok(tool_output) => LanguageModelToolResult {
                         tool_use_id: tool_use.id,
                         tool_name: tool_use.name,
@@ -565,52 +515,75 @@ impl Thread {
         }
     }
 
-    fn run_tool(&self, tool: &Arc<dyn AnyAgentTool>, tool_use: LanguageModelToolUse, events_tx: &mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>) -> Task<LanguageModelToolResult> {
-        let needs_authorization = match tool.needs_authorization(tool_use.input.clone(), cx) {
-            Ok(needs_authorization) => needs_authorization,
-            Err(error) => return Task::ready(LanguageModelToolResult {
-                tool_use_id: tool_use.id,
-                tool_name: tool_use.name,
-                is_error: true,
-                content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                output: None,
-            }),
-        };
+    fn run_tool(
+        &self,
+        tool: Arc<dyn AnyAgentTool>,
+        tool_use: LanguageModelToolUse,
+        events_tx: mpsc::UnboundedSender<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<String>> {
+        let needs_authorization = tool.needs_authorization(tool_use.input.clone(), cx);
+        cx.spawn(async move |_this, cx| {
+            if needs_authorization? {
+                let (response_tx, response_rx) = oneshot::channel();
+                events_tx
+                    .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
+                        ToolCallAuthorization {
+                            tool_call: acp::ToolCall {
+                                id: acp::ToolCallId(tool_use.id.to_string().into()),
+                                title: tool_use.name.to_string(),
+                                kind: acp::ToolKind::Other,
+                                status: acp::ToolCallStatus::Pending,
+                                content: vec![],
+                                locations: vec![],
+                                raw_input: Some(tool_use.input.clone()),
+                            },
+                            options: vec![
+                                acp::PermissionOption {
+                                    id: acp::PermissionOptionId("always_allow".into()),
+                                    name: "Always Allow".into(),
+                                    kind: acp::PermissionOptionKind::AllowAlways,
+                                },
+                                acp::PermissionOption {
+                                    id: acp::PermissionOptionId("allow".into()),
+                                    name: "Allow".into(),
+                                    kind: acp::PermissionOptionKind::AllowOnce,
+                                },
+                                acp::PermissionOption {
+                                    id: acp::PermissionOptionId("deny".into()),
+                                    name: "Deny".into(),
+                                    kind: acp::PermissionOptionKind::RejectOnce,
+                                },
+                            ],
+                            response: response_tx,
+                        },
+                    )))
+                    .ok();
+                let permission_option_id = response_rx.await?;
+                match permission_option_id.0.as_ref() {
+                    "allow" | "always_allow" => {
+                        // todo!("if always allow, store permission somewhere")
+                    }
+                    _ => {
+                        return Err(anyhow!("Permission to run tool denied by user"));
+                    }
+                }
+            }
 
-        if needs_authorization {
-            let (send, recv) = oneshot::channel();
-            events_tx.unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
-                ToolCallAuthorization {
-                    tool_call: acp::ToolCall {
+            events_tx
+                .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                    acp::ToolCallUpdate {
                         id: acp::ToolCallId(tool_use.id.to_string().into()),
-                        title: tool_use.name.to_string(),
-                        kind: acp::ToolKind::Other,
-                        status: acp::ToolCallStatus::Pending,
-                        content: vec![],
-                        locations: vec![],
-                        raw_input: Some(tool_use.input.clone()),
+                        fields: acp::ToolCallUpdateFields {
+                            status: Some(acp::ToolCallStatus::InProgress),
+                            ..Default::default()
+                        },
                     },
-                    options: vec![
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow_always".into()),
-                            name: "Always Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowAlways,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow".into()),
-                            name: "Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowOnce,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("deny".into()),
-                            name: "Deny".into(),
-                            kind: acp::PermissionOptionKind::RejectOnce,
-                        },
-                    ],
-                    response: send,
-                },
-            )));
-        }
+                )))
+                .ok();
+
+            cx.update(|cx| tool.run(tool_use.input, cx))?.await
+        })
     }
 
     fn handle_tool_use_json_parse_error_event(

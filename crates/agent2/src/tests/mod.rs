@@ -5,7 +5,7 @@ use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use client::{Client, UserStore};
 use fs::FakeFs;
-use futures::{channel::mpsc::UnboundedReceiver, Stream};
+use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{http_client::FakeHttpClient, AppContext, Entity, Task, TestAppContext};
 use indoc::indoc;
 use language_model::{
@@ -213,7 +213,7 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_tool_permissions(cx: &mut TestAppContext) {
+async fn test_tool_authorization(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
 
@@ -241,20 +241,21 @@ async fn test_tool_permissions(cx: &mut TestAppContext) {
         },
     ));
     fake_model.end_last_completion_stream();
-    let tool_call_auth_1 = expect_tool_call_authorization(&mut events).await;
-    let tool_call_auth_2 = expect_tool_call_authorization(&mut events).await;
+    let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
+    let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
 
     // Approve the first
     tool_call_auth_1
         .response
         .send(tool_call_auth_1.options[1].id.clone())
         .unwrap();
+    cx.run_until_parked();
+
     // Reject the second
     tool_call_auth_2
         .response
         .send(tool_call_auth_1.options[2].id.clone())
         .unwrap();
-
     cx.run_until_parked();
 
     let completion = fake_model.pending_completions().pop().unwrap();
@@ -273,39 +274,39 @@ async fn test_tool_permissions(cx: &mut TestAppContext) {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
                 tool_name: tool_call_auth_2.tool_call.title.into(),
                 is_error: true,
-                content: "Rejected".into(),
+                content: "Permission to run tool denied by user".into(),
                 output: None
             })
         ]
     );
 }
 
-async fn expect_tool_call_authorization(
+async fn next_tool_call_authorization(
     events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
 ) -> ToolCallAuthorization {
-    let event = events.next().await.unwrap().unwrap();
-    let tool_call_authorization = match event {
-        AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) => {
-            tool_call_authorization
+    loop {
+        let event = events
+            .next()
+            .await
+            .expect("no tool call authorization event received")
+            .unwrap();
+        if let AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) = event {
+            let permission_kinds = tool_call_authorization
+                .options
+                .iter()
+                .map(|o| o.kind)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                permission_kinds,
+                vec![
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::AllowOnce,
+                    acp::PermissionOptionKind::RejectOnce,
+                ]
+            );
+            return tool_call_authorization;
         }
-        _ => {
-            panic!("incorrect event {:?}", event)
-        }
-    };
-    let permission_kinds = tool_call_authorization
-        .options
-        .iter()
-        .map(|o| o.kind)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        permission_kinds,
-        vec![
-            acp::PermissionOptionKind::AllowAlways,
-            acp::PermissionOptionKind::AllowOnce,
-            acp::PermissionOptionKind::RejectOnce,
-        ]
-    );
-    tool_call_authorization
+    }
 }
 
 #[gpui::test]
