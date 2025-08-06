@@ -2,7 +2,7 @@ use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use gpui::{App, AppContext, AsyncApp, Entity, Task};
+use gpui::{App, AppContext, AsyncApp, Entity, Subscription, Task, WeakEntity};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use project::Project;
 use std::collections::HashMap;
@@ -17,7 +17,8 @@ struct Session {
     /// The internal thread that processes messages
     thread: Entity<Thread>,
     /// The ACP thread that handles protocol communication
-    acp_thread: Entity<acp_thread::AcpThread>,
+    acp_thread: WeakEntity<acp_thread::AcpThread>,
+    _subscription: Subscription,
 }
 
 pub struct NativeAgent {
@@ -162,12 +163,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             })?;
 
             // Store the session
-            agent.update(cx, |agent, _cx| {
+            agent.update(cx, |agent, cx| {
                 agent.sessions.insert(
                     session_id,
                     Session {
                         thread,
-                        acp_thread: acp_thread.clone(),
+                        acp_thread: acp_thread.downgrade(),
+                        _subscription: cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
+                            this.sessions.remove(acp_thread.session_id());
+                        })
                     },
                 );
             })?;
