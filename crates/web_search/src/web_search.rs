@@ -1,8 +1,9 @@
+use std::sync::Arc;
+
 use anyhow::Result;
+use cloud_llm_client::WebSearchResponse;
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Global, SharedString, Task};
-use std::sync::Arc;
-use zed_llm_client::WebSearchResponse;
 
 pub fn init(cx: &mut App) {
     let registry = cx.new(|_cx| WebSearchRegistry::default());

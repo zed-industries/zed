@@ -131,7 +131,7 @@ impl RenderOnce for Banner {
 
 impl Component for Banner {
     fn scope() -> ComponentScope {
-        ComponentScope::Notification
+        ComponentScope::DataDisplay
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {

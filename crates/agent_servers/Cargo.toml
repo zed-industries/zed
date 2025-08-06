@@ -18,16 +18,19 @@ doctest = false
 
 [dependencies]
 acp_thread.workspace = true
+agent-client-protocol.workspace = true
 agentic-coding-protocol.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 context_server.workspace = true
 futures.workspace = true
 gpui.workspace = true
+indoc.workspace = true
 itertools.workspace = true
 log.workspace = true
 paths.workspace = true
 project.workspace = true
+rand.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -35,6 +38,7 @@ settings.workspace = true
 smol.workspace = true
 strum.workspace = true
 tempfile.workspace = true
+thiserror.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true

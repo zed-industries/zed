@@ -744,7 +744,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_lmstudio_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::Play)
+                                        .icon(IconName::PlayOutlined)
                                         .on_click(cx.listener(move |this, _, _window, cx| {
                                             this.retry_connection(cx)
                                         })),

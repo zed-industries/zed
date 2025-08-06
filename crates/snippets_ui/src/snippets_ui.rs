@@ -149,13 +149,12 @@ impl ScopeSelectorDelegate {
         scope_selector: WeakEntity<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        let candidates = Vec::from([GLOBAL_SCOPE_NAME.to_string()]).into_iter();
         let languages = language_registry.language_names().into_iter();
 
-        let candidates = candidates
+        let candidates = std::iter::once(LanguageName::new(GLOBAL_SCOPE_NAME))
             .chain(languages)
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
         let mut existing_scopes = HashSet::new();

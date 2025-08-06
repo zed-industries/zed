@@ -1,7 +1,7 @@
+mod acp;
 mod claude;
 mod gemini;
 mod settings;
-mod stdio_agent_server;
 
 #[cfg(test)]
 mod e2e_tests;
@@ -9,9 +9,8 @@ mod e2e_tests;
 pub use claude::*;
 pub use gemini::*;
 pub use settings::*;
-pub use stdio_agent_server::*;
 
-use acp_thread::AcpThread;
+use acp_thread::AgentConnection;
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
@@ -20,6 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use util::ResultExt as _;
@@ -33,14 +33,13 @@ pub trait AgentServer: Send {
     fn name(&self) -> &'static str;
     fn empty_state_headline(&self) -> &'static str;
     fn empty_state_message(&self) -> &'static str;
-    fn supports_always_allow(&self) -> bool;
 
-    fn new_thread(
+    fn connect(
         &self,
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
-    ) -> Task<Result<Entity<AcpThread>>>;
+    ) -> Task<Result<Rc<dyn AgentConnection>>>;
 }
 
 impl std::fmt::Debug for AgentServerCommand {
@@ -90,6 +89,7 @@ impl AgentServerCommand {
     pub(crate) async fn resolve(
         path_bin_name: &'static str,
         extra_args: &[&'static str],
+        fallback_path: Option<&Path>,
         settings: Option<AgentServerSettings>,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
@@ -106,13 +106,24 @@ impl AgentServerCommand {
                 env: agent_settings.command.env,
             });
         } else {
-            find_bin_in_path(path_bin_name, project, cx)
-                .await
-                .map(|path| Self {
+            match find_bin_in_path(path_bin_name, project, cx).await {
+                Some(path) => Some(Self {
                     path,
                     args: extra_args.iter().map(|arg| arg.to_string()).collect(),
                     env: None,
-                })
+                }),
+                None => fallback_path.and_then(|path| {
+                    if path.exists() {
+                        Some(Self {
+                            path: path.to_path_buf(),
+                            args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                            env: None,
+                        })
+                    } else {
+                        None
+                    }
+                }),
+            }
         }
     }
 }

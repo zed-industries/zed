@@ -315,9 +315,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
-        /// Accepts a partial Copilot suggestion.
-        AcceptPartialCopilotSuggestion,
         /// Accepts a partial edit prediction.
+        #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
         /// Adds a cursor above the current selection.
         AddSelectionAbove,
@@ -365,6 +364,8 @@ actions!(
         ConvertToLowerCase,
         /// Toggles the case of selected text.
         ConvertToOppositeCase,
+        /// Converts selected text to sentence case.
+        ConvertToSentenceCase,
         /// Converts selected text to snake_case.
         ConvertToSnakeCase,
         /// Converts selected text to Title Case.

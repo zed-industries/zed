@@ -8,6 +8,7 @@ use url::Url;
 pub struct GitHubLspBinaryVersion {
     pub name: String,
     pub url: String,
+    pub digest: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -24,6 +25,7 @@ pub struct GithubRelease {
 pub struct GithubReleaseAsset {
     pub name: String,
     pub browser_download_url: String,
+    pub digest: Option<String>,
 }
 
 pub async fn latest_github_release(

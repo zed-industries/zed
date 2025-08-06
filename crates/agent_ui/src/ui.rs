@@ -5,7 +5,6 @@ mod end_trial_upsell;
 mod new_thread_button;
 mod onboarding_modal;
 pub mod preview;
-mod upsell;
 
 pub use agent_notification::*;
 pub use burn_mode_tooltip::*;

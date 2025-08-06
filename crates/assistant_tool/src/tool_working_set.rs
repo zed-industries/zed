@@ -375,7 +375,12 @@ mod tests {
             false
         }
 
-        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        fn needs_confirmation(
+            &self,
+            _input: &serde_json::Value,
+            _project: &Entity<Project>,
+            _cx: &App,
+        ) -> bool {
             true
         }
 
