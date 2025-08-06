@@ -95,9 +95,9 @@ pub async fn move_folder_files_to_folder<P: AsRef<Path>>(
 #[cfg(unix)]
 /// Set the permissions for the given path so that the file becomes executable.
 /// This is a noop for non-unix platforms.
-pub async fn make_file_executable(path: &PathBuf) -> std::io::Result<()> {
+pub async fn make_file_executable(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(
-        &path,
+        path,
         <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
     )
     .await
@@ -107,6 +107,6 @@ pub async fn make_file_executable(path: &PathBuf) -> std::io::Result<()> {
 #[allow(clippy::unused_async)]
 /// Set the permissions for the given path so that the file becomes executable.
 /// This is a noop for non-unix platforms.
-pub async fn make_file_executable(_path: &PathBuf) -> std::io::Result<()> {
+pub async fn make_file_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }

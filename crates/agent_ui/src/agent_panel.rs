@@ -970,13 +970,7 @@ impl AgentPanel {
                     )
                 });
 
-                this.set_active_view(
-                    ActiveView::ExternalAgentThread {
-                        thread_view: thread_view.clone(),
-                    },
-                    window,
-                    cx,
-                );
+                this.set_active_view(ActiveView::ExternalAgentThread { thread_view }, window, cx);
             })
         })
         .detach_and_log_err(cx);

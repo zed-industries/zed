@@ -134,7 +134,7 @@ use language::{
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
-    LanguageServerId, LanguageServerName,
+    LanguageServerId,
 };
 use lsp_colors::LspColorData;
 use markdown::Markdown;
@@ -1864,7 +1864,6 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1884,6 +1883,11 @@ impl Editor {
                                             .ok();
                                     }
                                 }
+                            }
+                        }
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                            if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
+                                editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                             }
                         }
                         _ => {}
@@ -8179,7 +8183,7 @@ impl Editor {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    event.down.position,
+                    event.position(),
                     window,
                     cx,
                 );
@@ -8346,7 +8350,11 @@ impl Editor {
         .icon_color(color)
         .toggle_state(is_active)
         .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = e.down.button == MouseButton::Left;
+            let quick_launch = match e {
+                ClickEvent::Keyboard(_) => true,
+                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+            };
+
             window.focus(&editor.focus_handle(cx));
             editor.toggle_code_actions(
                 &ToggleCodeActions {
@@ -8358,7 +8366,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
         }))
     }
 
@@ -15846,7 +15854,7 @@ impl Editor {
                     let language_server_name = project
                         .language_server_statuses(cx)
                         .find(|(id, _)| server_id == *id)
-                        .map(|(_, status)| LanguageServerName::from(status.name.as_str()));
+                        .map(|(_, status)| status.name.clone());
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
                             lsp_location.uri.clone(),
@@ -22184,7 +22192,6 @@ impl SemanticsProvider for Entity<Project> {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        // TODO: make this work for remote projects
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)

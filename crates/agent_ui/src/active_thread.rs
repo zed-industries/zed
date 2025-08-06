@@ -780,13 +780,7 @@ impl ActiveThread {
             cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
         ];
 
-        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
-            let this = cx.entity().downgrade();
-            move |ix, window: &mut Window, cx: &mut App| {
-                this.update(cx, |this, cx| this.render_message(ix, window, cx))
-                    .unwrap()
-            }
-        });
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
         let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
             Some(cx.observe_release(&workspace, |this, _, cx| {
@@ -1846,7 +1840,12 @@ impl ActiveThread {
             )))
     }
 
-    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_message(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let message_id = self.messages[ix];
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
@@ -3613,7 +3612,7 @@ impl Render for ActiveThread {
                     this.hide_scrollbar_later(cx);
                 }),
             )
-            .child(list(self.list_state.clone()).flex_grow())
+            .child(list(self.list_state.clone(), cx.processor(Self::render_message)).flex_grow())
             .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
                 this.child(scrollbar)
             })

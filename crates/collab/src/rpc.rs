@@ -315,7 +315,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
-            .add_request_handler(forward_find_search_candidates_request)
+            .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
@@ -340,9 +340,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(
-                forward_read_only_project_request::<proto::LanguageServerIdForName>,
-            )
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
@@ -666,7 +663,6 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
-                    let payload_type = M::NAME;
 
                     match result {
                         Err(error) => {
@@ -675,7 +671,6 @@ impl Server {
                                 total_duration_ms,
                                 processing_duration_ms,
                                 queue_duration_ms,
-                                payload_type,
                                 "error handling message"
                             )
                         }
@@ -780,12 +775,11 @@ impl Server {
         async move {
             if *teardown.borrow() {
                 tracing::error!("server is tearing down");
-                return
+                return;
             }
 
-            let (connection_id, handle_io, mut incoming_rx) = this
-                .peer
-                .add_connection(connection, {
+            let (connection_id, handle_io, mut incoming_rx) =
+                this.peer.add_connection(connection, {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
@@ -802,10 +796,14 @@ impl Server {
                 }
             };
 
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
-                    supermaven_admin_api_key.to_string(),
-                    http_client.clone(),
-                )));
+            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(
+                |supermaven_admin_api_key| {
+                    Arc::new(SupermavenAdminApi::new(
+                        supermaven_admin_api_key.to_string(),
+                        http_client.clone(),
+                    ))
+                },
+            );
 
             let session = Session {
                 principal: principal.clone(),
@@ -820,7 +818,15 @@ impl Server {
                 supermaven_client,
             };
 
-            if let Err(error) = this.send_initial_client_update(connection_id, zed_version, send_connection_id, &session).await {
+            if let Err(error) = this
+                .send_initial_client_update(
+                    connection_id,
+                    zed_version,
+                    send_connection_id,
+                    &session,
+                )
+                .await
+            {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
@@ -837,14 +843,22 @@ impl Server {
             //
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
+            const MAX_CONCURRENT_HANDLERS: usize = 256;
             let mut foreground_message_handlers = FuturesUnordered::new();
-            let concurrent_handlers = Arc::new(Semaphore::new(256));
+            let concurrent_handlers = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
+            let get_concurrent_handlers = {
+                let concurrent_handlers = concurrent_handlers.clone();
+                move || MAX_CONCURRENT_HANDLERS - concurrent_handlers.available_permits()
+            };
             loop {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
                     let message = incoming_rx.next().await;
-                    (permit, message)
-                }.fuse();
+                    // Cache the concurrent_handlers here, so that we know what the
+                    // queue looks like as each handler starts
+                    (permit, message, get_concurrent_handlers())
+                }
+                .fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     _ = teardown.changed().fuse() => return,
@@ -856,12 +870,16 @@ impl Server {
                     }
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
-                        let (permit, message) = next_message;
+                        let (permit, message, concurrent_handlers) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                            let span = tracing::info_span!("receive message",
+                                %connection_id,
+                                %address,
+                                type_name,
+                                concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
@@ -895,12 +913,13 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!("signing out");
+            let concurrent_handlers = get_concurrent_handlers();
+            tracing::info!(concurrent_handlers, "signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(?error, "error signing out");
             }
-
-        }.instrument(span)
+        }
+        .instrument(span)
     }
 
     async fn send_initial_client_update(
@@ -1968,12 +1987,19 @@ async fn join_project(
     }
 
     // First, we send the metadata associated with each worktree.
+    let (language_servers, language_server_capabilities) = project
+        .language_servers
+        .clone()
+        .into_iter()
+        .map(|server| (server.server, server.capabilities))
+        .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
-        language_servers: project.language_servers.clone(),
+        language_servers,
+        language_server_capabilities,
         role: project.role.into(),
     })?;
 
@@ -2032,8 +2058,8 @@ async fn join_project(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
-                server_name: Some(language_server.name.clone()),
-                language_server_id: language_server.id,
+                server_name: Some(language_server.server.name.clone()),
+                language_server_id: language_server.server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                         proto::LspDiskBasedDiagnosticsUpdated {},
@@ -2245,9 +2271,17 @@ async fn update_language_server(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
+    let db = session.db().await;
+
+    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+    {
+        if let Some(capabilities) = update.capabilities.clone() {
+            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+                .await?;
+        }
+    }
+
+    let project_connection_ids = db
         .project_connection_ids(project_id, session.connection_id, true)
         .await?;
     broadcast(
@@ -2272,25 +2306,6 @@ async fn forward_read_only_project_request<T>(
 where
     T: EntityMessage + RequestMessage,
 {
-    let project_id = ProjectId::from_proto(request.remote_entity_id());
-    let host_connection_id = session
-        .db()
-        .await
-        .host_for_read_only_project_request(project_id, session.connection_id)
-        .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
-}
-
-async fn forward_find_search_candidates_request(
-    request: proto::FindSearchCandidates,
-    response: Response<proto::FindSearchCandidates>,
-    session: Session,
-) -> Result<()> {
     let project_id = ProjectId::from_proto(request.remote_entity_id());
     let host_connection_id = session
         .db()
@@ -2336,6 +2351,7 @@ async fn multi_lsp_query(
     session: Session,
 ) -> Result<()> {
     tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    tracing::info!("multi_lsp_query message received");
     forward_mutating_project_request(request, response, session).await
 }
 

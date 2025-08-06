@@ -1277,7 +1277,8 @@
     "bindings": {
       "cmd-1": "onboarding::ActivateBasicsPage",
       "cmd-2": "onboarding::ActivateEditingPage",
-      "cmd-3": "onboarding::ActivateAISetupPage"
+      "cmd-3": "onboarding::ActivateAISetupPage",
+      "cmd-escape": "onboarding::Finish"
     }
   }
 ]

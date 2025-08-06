@@ -1523,7 +1523,8 @@ impl AgentDiff {
             }
             AcpThreadEvent::Stopped
             | AcpThreadEvent::ToolAuthorizationRequired
-            | AcpThreadEvent::Error => {}
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::ServerExited(_) => {}
         }
     }
 
