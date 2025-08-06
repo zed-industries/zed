@@ -58,7 +58,7 @@ fn get_max_tokens(name: &str) -> u64 {
         "magistral" => 40000,
         "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
         | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder"
-        | "devstral" => 128000,
+        | "devstral" | "gpt-oss" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)

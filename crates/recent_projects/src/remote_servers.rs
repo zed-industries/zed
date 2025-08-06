@@ -953,7 +953,7 @@ impl RemoteServerProjects {
                     )
                     .child(Label::new(project.paths.join(", ")))
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                        let secondary_confirm = e.down.modifiers.platform;
+                        let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
                     }))
                     .when(is_from_zed, |server_list_item| {

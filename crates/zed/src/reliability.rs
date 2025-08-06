@@ -149,6 +149,7 @@ pub fn init_panic_hook(
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
                 let panic_file = fs::OpenOptions::new()
+                    .write(true)
                     .create_new(true)
                     .open(&panic_file_path)
                     .log_err();
@@ -553,6 +554,10 @@ async fn upload_previous_panics(
             .log_err();
     }
 
+    if MINIDUMP_ENDPOINT.is_none() {
+        return Ok(most_recent_panic);
+    }
+
     // loop back over the directory again to upload any minidumps that are missing panics
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
     while let Some(child) = children.next().await {
@@ -597,11 +602,12 @@ async fn upload_minidump(
         )
         .text("platform", "rust");
     if let Some(panic) = panic {
-        form = form.text(
-            "release",
-            format!("{}-{}", panic.release_channel, panic.app_version),
-        );
-        // TODO: tack on more fields
+        form = form
+            .text(
+                "sentry[release]",
+                format!("{}-{}", panic.release_channel, panic.app_version),
+            )
+            .text("sentry[logentry][formatted]", panic.payload.clone());
     }
 
     let mut response_text = String::new();

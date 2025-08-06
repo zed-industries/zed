@@ -1,8 +1,7 @@
 use anyhow::{Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{StreamExt, io::BufReader};
+use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -23,14 +22,11 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::archive::extract_zip;
+use util::fs::make_file_executable;
 use util::merge_json_value_into;
-use util::{
-    ResultExt,
-    fs::{make_file_executable, remove_matching},
-    maybe,
-};
+use util::{ResultExt, maybe};
 
+use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
@@ -163,7 +159,6 @@ impl LspAdapter for RustLspAdapter {
         )
         .await?;
         let asset_name = Self::build_asset_name();
-
         let asset = release
             .assets
             .iter()
@@ -172,6 +167,7 @@ impl LspAdapter for RustLspAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 
@@ -181,57 +177,75 @@ impl LspAdapter for RustLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let GitHubLspBinaryVersion { name, url, digest } =
+            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let expected_digest = digest
+            .as_ref()
+            .and_then(|digest| digest.strip_prefix("sha256:"));
+        let destination_path = container_dir.join(format!("rust-analyzer-{name}"));
         let server_path = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
             AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
 
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .with_context(|| format!("downloading release from {}", version.url))?;
-            match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let archive = async_tar::Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await.with_context(|| {
-                        format!("extracting {} to {:?}", version.url, destination_path)
-                    })?;
-                }
-                AssetKind::Gz => {
-                    let mut decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let mut file =
-                        fs::File::create(&destination_path).await.with_context(|| {
-                            format!(
-                                "creating a file {:?} for a download from {}",
-                                destination_path, version.url,
-                            )
-                        })?;
-                    futures::io::copy(&mut decompressed_bytes, &mut file)
-                        .await
-                        .with_context(|| {
-                            format!("extracting {} to {:?}", version.url, destination_path)
-                        })?;
-                }
-                AssetKind::Zip => {
-                    extract_zip(&destination_path, response.body_mut())
-                        .await
-                        .with_context(|| {
-                            format!("unzipping {} to {:?}", version.url, destination_path)
-                        })?;
-                }
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
             };
-
-            // todo("windows")
-            make_file_executable(&server_path).await?;
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
         }
+
+        _ = fs::remove_dir_all(&destination_path).await;
+        download_server_binary(
+            delegate,
+            url,
+            expected_digest,
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest.map(ToString::to_string),
+            },
+            &metadata_path,
+        )
+        .await?;
 
         Ok(LanguageServerBinary {
             path: server_path,
@@ -1025,7 +1039,11 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
         let mut last = None;
         let mut entries = fs::read_dir(&container_dir).await?;
         while let Some(entry) = entries.next().await {
-            last = Some(entry?.path());
+            let path = entry?.path();
+            if path.extension().is_some_and(|ext| ext == "metadata") {
+                continue;
+            }
+            last = Some(path);
         }
 
         anyhow::Ok(LanguageServerBinary {

@@ -79,11 +79,13 @@ pub enum DispatchPhase {
 
 impl DispatchPhase {
     /// Returns true if this represents the "bubble" phase.
+    #[inline]
     pub fn bubble(self) -> bool {
         self == DispatchPhase::Bubble
     }
 
     /// Returns true if this represents the "capture" phase.
+    #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
     }

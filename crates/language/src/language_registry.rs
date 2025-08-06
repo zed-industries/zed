@@ -547,15 +547,15 @@ impl LanguageRegistry {
         self.state.read().language_settings.clone()
     }
 
-    pub fn language_names(&self) -> Vec<String> {
+    pub fn language_names(&self) -> Vec<LanguageName> {
         let state = self.state.read();
         let mut result = state
             .available_languages
             .iter()
-            .filter_map(|l| l.loaded.not().then_some(l.name.to_string()))
-            .chain(state.languages.iter().map(|l| l.config.name.to_string()))
+            .filter_map(|l| l.loaded.not().then_some(l.name.clone()))
+            .chain(state.languages.iter().map(|l| l.config.name.clone()))
             .collect::<Vec<_>>();
-        result.sort_unstable_by_key(|language_name| language_name.to_lowercase());
+        result.sort_unstable_by_key(|language_name| language_name.as_ref().to_lowercase());
         result
     }
 
