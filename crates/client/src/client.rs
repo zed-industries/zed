@@ -7,16 +7,13 @@ pub mod user;
 pub mod zed_urls;
 
 use anyhow::{Context as _, Result, anyhow};
-use async_tungstenite::tungstenite::{
-    client::IntoClientRequest,
-    error::Error as WebsocketError,
-    http::{HeaderValue, Request, StatusCode},
-};
+use yawc::{WebSocket, Options};
+use tokio::io::{AsyncRead, AsyncWrite};
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use credentials_provider::CredentialsProvider;
 use futures::{
-    AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
+    AsyncReadExt, FutureExt, Stream, StreamExt, TryFutureExt as _,
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
@@ -239,25 +236,13 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
+    InvalidHeaderValue(#[from] http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
     #[error("{0}")]
-    Websocket(#[from] async_tungstenite::tungstenite::http::Error),
+    Websocket(#[from] yawc::WebSocketError),
 }
 
-impl From<WebsocketError> for EstablishConnectionError {
-    fn from(error: WebsocketError) -> Self {
-        if let WebsocketError::Http(response) = &error {
-            match response.status() {
-                StatusCode::UNAUTHORIZED => return EstablishConnectionError::Unauthorized,
-                StatusCode::UPGRADE_REQUIRED => return EstablishConnectionError::UpgradeRequired,
-                _ => {}
-            }
-        }
-        EstablishConnectionError::Other(error.into())
-    }
-}
 
 impl EstablishConnectionError {
     pub fn other(error: impl Into<anyhow::Error> + Send + Sync) -> Self {
@@ -1247,50 +1232,36 @@ impl Client {
                 })
                 .unwrap();
 
-            // We call `into_client_request` to let `tungstenite` construct the WebSocket request
-            // for us from the RPC URL.
-            //
-            // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
-
-            // We then modify the request to add our desired headers.
-            let request_headers = request.headers_mut();
-            request_headers.insert(
-                http::header::AUTHORIZATION,
-                HeaderValue::from_str(&credentials.authorization_header())?,
-            );
-            request_headers.insert(
-                "x-zed-protocol-version",
-                HeaderValue::from_str(&rpc::PROTOCOL_VERSION.to_string())?,
-            );
-            request_headers.insert("x-zed-app-version", HeaderValue::from_str(&app_version)?);
-            request_headers.insert(
-                "x-zed-release-channel",
-                HeaderValue::from_str(release_channel.map(|r| r.dev_name()).unwrap_or("unknown"))?,
-            );
-            if let Some(user_agent) = user_agent {
-                request_headers.insert(http::header::USER_AGENT, user_agent);
-            }
+            // Build custom headers for the WebSocket connection
+            let mut custom_headers = vec![
+                (http::header::AUTHORIZATION.as_str(), credentials.authorization_header()),
+                ("x-zed-protocol-version", rpc::PROTOCOL_VERSION.to_string()),
+                ("x-zed-app-version", app_version.into()),
+                ("x-zed-release-channel", release_channel.map(|r| r.dev_name()).unwrap_or("unknown").into()),
+            ];
+            
             if let Some(system_id) = system_id {
-                request_headers.insert("x-zed-system-id", HeaderValue::from_str(&system_id)?);
+                custom_headers.push(("x-zed-system-id", system_id));
             }
             if let Some(metrics_id) = metrics_id {
-                request_headers.insert("x-zed-metrics-id", HeaderValue::from_str(&metrics_id)?);
+                custom_headers.push(("x-zed-metrics-id", metrics_id));
+            }
+            if let Some(user_agent) = user_agent {
+                custom_headers.push((http::header::USER_AGENT.as_str(), user_agent.to_str().context("invalid user agent")?.into()));
             }
 
-            let (stream, _) = async_tungstenite::tokio::client_async_tls_with_connector_and_config(
-                request,
+            // Connect with proper WebSocket headers
+            let request = rpc::build_websocket_request(&rpc_url, custom_headers)?;
+            let ws = WebSocket::handshake_with_request(
+                rpc_url,
                 stream,
-                Some(Arc::new(http_client_tls::tls_config()).into()),
-                None,
+                Options::default(),
+                request,
             )
             .await?;
+            let adapter = rpc::WebSocketAdapter::new(ws);
 
-            Ok(Connection::new(
-                stream
-                    .map_err(|error| anyhow!(error))
-                    .sink_map_err(|error| anyhow!(error)),
-            ))
+            Ok(Connection::new(adapter))
         })
     }
 

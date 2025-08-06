@@ -7,7 +7,7 @@ mod peer;
 mod websocket;
 
 pub use conn::Connection;
-pub use websocket::{Message as WebSocketMessage, WebSocketAdapter};
+pub use websocket::{Message as WebSocketMessage, WebSocketAdapter, build_websocket_request};
 pub use extension::*;
 pub use notification::*;
 pub use peer::*;

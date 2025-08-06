@@ -21,13 +21,15 @@ test-support = ["collections/test-support", "gpui/test-support", "proto/test-sup
 anyhow.workspace = true
 yawc.workspace = true
 base64.workspace = true
+http.workspace = true
+rand.workspace = true
+url.workspace = true
 chrono.workspace = true
 collections.workspace = true
 futures.workspace = true
 gpui = { workspace = true, optional = true }
 parking_lot.workspace = true
 proto.workspace = true
-rand.workspace = true
 rsa.workspace = true
 serde.workspace = true
 serde_json.workspace = true
