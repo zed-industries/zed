@@ -324,20 +324,6 @@ impl CollabPanel {
             )
             .detach();
 
-            let entity = cx.entity().downgrade();
-            let list_state = ListState::new(
-                0,
-                gpui::ListAlignment::Top,
-                px(1000.),
-                move |ix, window, cx| {
-                    if let Some(entity) = entity.upgrade() {
-                        entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
-                    } else {
-                        div().into_any()
-                    }
-                },
-            );
-
             let mut this = Self {
                 width: None,
                 focus_handle: cx.focus_handle(),
@@ -345,7 +331,7 @@ impl CollabPanel {
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: None,
-                list_state,
+                list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
                 channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
@@ -2431,7 +2417,13 @@ impl CollabPanel {
         });
         v_flex()
             .size_full()
-            .child(list(self.list_state.clone()).size_full())
+            .child(
+                list(
+                    self.list_state.clone(),
+                    cx.processor(Self::render_list_entry),
+                )
+                .size_full(),
+            )
             .child(
                 v_flex()
                     .child(div().mx_2().border_primary(cx).border_t_1())
@@ -2605,7 +2597,7 @@ impl CollabPanel {
                                     let contact = contact.clone();
                                     move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
-                                            event.down.position,
+                                            event.position(),
                                             contact.clone(),
                                             window,
                                             cx,

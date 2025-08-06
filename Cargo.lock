@@ -17,6 +17,7 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_model",
  "markdown",
  "parking_lot",
  "project",
@@ -137,9 +138,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.18"
+version = "0.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e4c1dccb35e69d32566f0d11948d902f9942fc3f038821816c1150cf5925f4"
+checksum = "12dbfec3d27680337ed9d3064eecafe97acf0b0f190148bb4e29d96707c9e403"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -148,6 +149,44 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "agent2"
+version = "0.1.0"
+dependencies = [
+ "acp_thread",
+ "agent-client-protocol",
+ "agent_servers",
+ "anyhow",
+ "client",
+ "clock",
+ "cloud_llm_client",
+ "collections",
+ "ctor",
+ "env_logger 0.11.8",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
+ "handlebars 4.5.0",
+ "indoc",
+ "language_model",
+ "language_models",
+ "log",
+ "project",
+ "reqwest_client",
+ "rust-embed",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "ui",
+ "util",
+ "uuid",
+ "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
@@ -214,6 +253,7 @@ dependencies = [
  "acp_thread",
  "agent",
  "agent-client-protocol",
+ "agent2",
  "agent_servers",
  "agent_settings",
  "ai_onboarding",
@@ -9210,6 +9250,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-compression",
+ "async-fs",
  "async-tar",
  "async-trait",
  "chrono",
@@ -9241,9 +9282,11 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "sha2",
  "smol",
  "snippet_provider",
  "task",
+ "tempfile",
  "text",
  "theme",
  "toml 0.8.20",

@@ -24,7 +24,7 @@ env:
   DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
   DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
-  ZED_SENTRY_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
+  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
 
 jobs:
   job_spec:
@@ -650,7 +650,7 @@ jobs:
     timeout-minutes: 60
     name: Linux arm64 release bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204-arm
+      - buildjet-32vcpu-ubuntu-2204-arm
     if: |
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')

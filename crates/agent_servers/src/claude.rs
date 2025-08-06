@@ -101,8 +101,15 @@ impl AgentConnection for ClaudeAgentConnection {
                 settings.get::<AllAgentServersSettings>(None).claude.clone()
             })?;
 
-            let Some(command) =
-                AgentServerCommand::resolve("claude", &[], settings, &project, cx).await
+            let Some(command) = AgentServerCommand::resolve(
+                "claude",
+                &[],
+                Some(&util::paths::home_dir().join(".claude/local/claude")),
+                settings,
+                &project,
+                cx,
+            )
+            .await
             else {
                 anyhow::bail!("Failed to find claude binary");
             };
@@ -114,43 +121,42 @@ impl AgentConnection for ClaudeAgentConnection {
 
             log::trace!("Starting session with id: {}", session_id);
 
-            cx.background_spawn({
-                let session_id = session_id.clone();
-                async move {
-                    let mut outgoing_rx = Some(outgoing_rx);
+            let mut child = spawn_claude(
+                &command,
+                ClaudeSessionMode::Start,
+                session_id.clone(),
+                &mcp_config_path,
+                &cwd,
+            )?;
 
-                    let mut child = spawn_claude(
-                        &command,
-                        ClaudeSessionMode::Start,
-                        session_id.clone(),
-                        &mcp_config_path,
-                        &cwd,
-                    )
-                    .await?;
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
 
-                    let pid = child.id();
-                    log::trace!("Spawned (pid: {})", pid);
+            let pid = child.id();
+            log::trace!("Spawned (pid: {})", pid);
 
-                    ClaudeAgentSession::handle_io(
-                        outgoing_rx.take().unwrap(),
-                        incoming_message_tx.clone(),
-                        child.stdin.take().unwrap(),
-                        child.stdout.take().unwrap(),
-                    )
-                    .await?;
+            cx.background_spawn(async move {
+                let mut outgoing_rx = Some(outgoing_rx);
 
-                    log::trace!("Stopped (pid: {})", pid);
+                ClaudeAgentSession::handle_io(
+                    outgoing_rx.take().unwrap(),
+                    incoming_message_tx.clone(),
+                    stdin,
+                    stdout,
+                )
+                .await?;
 
-                    drop(mcp_config_path);
-                    anyhow::Ok(())
-                }
+                log::trace!("Stopped (pid: {})", pid);
+
+                drop(mcp_config_path);
+                anyhow::Ok(())
             })
             .detach();
 
             let end_turn_tx = Rc::new(RefCell::new(None));
             let handler_task = cx.spawn({
                 let end_turn_tx = end_turn_tx.clone();
-                let thread_rx = thread_rx.clone();
+                let mut thread_rx = thread_rx.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentSession::handle_message(
@@ -160,6 +166,16 @@ impl AgentConnection for ClaudeAgentConnection {
                             cx,
                         )
                         .await
+                    }
+
+                    if let Some(status) = child.status().await.log_err() {
+                        if let Some(thread) = thread_rx.recv().await.ok() {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.emit_server_exited(status, cx);
+                                })
+                                .ok();
+                        }
                     }
                 }
             });
@@ -191,7 +207,11 @@ impl AgentConnection for ClaudeAgentConnection {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -235,10 +255,7 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        cx.foreground_executor().spawn(async move {
-            rx.await??;
-            Ok(())
-        })
+        cx.foreground_executor().spawn(async move { rx.await? })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
@@ -252,6 +269,14 @@ impl AgentConnection for ClaudeAgentConnection {
             .outgoing_tx
             .unbounded_send(SdkMessage::new_interrupt_message())
             .log_err();
+
+        if let Some(end_turn_tx) = session.end_turn_tx.borrow_mut().take() {
+            end_turn_tx
+                .send(Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::Cancelled,
+                }))
+                .ok();
+        }
     }
 }
 
@@ -262,7 +287,7 @@ enum ClaudeSessionMode {
     Resume,
 }
 
-async fn spawn_claude(
+fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
@@ -313,7 +338,7 @@ async fn spawn_claude(
 
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
 }
@@ -322,7 +347,7 @@ impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
         cx: &mut AsyncApp,
     ) {
         match message {
@@ -427,7 +452,7 @@ impl ClaudeAgentSession {
                 ..
             } => {
                 if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error {
+                    if is_error || subtype == ResultErrorType::ErrorDuringExecution {
                         end_turn_tx
                             .send(Err(anyhow!(
                                 "Error: {}",
@@ -435,7 +460,14 @@ impl ClaudeAgentSession {
                             )))
                             .ok();
                     } else {
-                        end_turn_tx.send(Ok(())).ok();
+                        let stop_reason = match subtype {
+                            ResultErrorType::Success => acp::StopReason::EndTurn,
+                            ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                            ResultErrorType::ErrorDuringExecution => unreachable!(),
+                        };
+                        end_turn_tx
+                            .send(Ok(acp::PromptResponse { stop_reason }))
+                            .ok();
                     }
                 }
             }
@@ -660,7 +692,7 @@ struct ControlResponse {
     subtype: ResultErrorType,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ResultErrorType {
     Success,

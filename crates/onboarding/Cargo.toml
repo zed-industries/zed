@@ -15,13 +15,13 @@ path = "src/onboarding.rs"
 default = []
 
 [dependencies]
-anyhow.workspace = true
 ai_onboarding.workspace = true
+anyhow.workspace = true
 client.workspace = true
 command_palette_hooks.workspace = true
 component.workspace = true
-documented.workspace = true
 db.workspace = true
+documented.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true

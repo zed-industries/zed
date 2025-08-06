@@ -1,7 +1,8 @@
 use documented::Documented;
 use gpui::{
     AnyElement, AnyView, ClickEvent, CursorStyle, DefiniteLength, Hsla, MouseButton,
-    MouseDownEvent, MouseUpEvent, Rems, relative, transparent_black,
+    MouseClickEvent, MouseDownEvent, MouseUpEvent, Rems, StyleRefinement, relative,
+    transparent_black,
 };
 use smallvec::SmallVec;
 
@@ -36,6 +37,8 @@ pub trait ButtonCommon: Clickable + Disableable {
     /// Nearly all interactable elements should have a tooltip. Some example
     /// exceptions might a scroll bar, or a slider.
     fn tooltip(self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self;
+
+    fn tab_index(self, tab_index: impl Into<isize>) -> Self;
 
     fn layer(self, elevation: ElevationIndex) -> Self;
 }
@@ -393,6 +396,7 @@ pub struct ButtonLike {
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
     pub(super) layer: Option<ElevationIndex>,
+    tab_index: Option<isize>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView>>,
@@ -421,6 +425,7 @@ impl ButtonLike {
             on_click: None,
             on_right_click: None,
             layer: None,
+            tab_index: None,
         }
     }
 
@@ -525,6 +530,11 @@ impl ButtonCommon for ButtonLike {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.tab_index = Some(tab_index.into());
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.layer = Some(elevation);
         self
@@ -554,6 +564,7 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))
             .font_ui(cx)
             .group("")
             .flex_none()
@@ -591,8 +602,12 @@ impl RenderOnce for ButtonLike {
                 }
             })
             .when(!self.disabled, |this| {
+                let hovered_style = style.hovered(self.layer, cx);
+                let focus_color =
+                    |refinement: StyleRefinement| refinement.bg(hovered_style.background);
                 this.cursor(self.cursor_style)
-                    .hover(|hover| hover.bg(style.hovered(self.layer, cx).background))
+                    .hover(focus_color)
+                    .focus(focus_color)
                     .active(|active| active.bg(style.active(cx).background))
             })
             .when_some(
@@ -606,7 +621,7 @@ impl RenderOnce for ButtonLike {
                         MouseButton::Right,
                         move |event, window, cx| {
                             cx.stop_propagation();
-                            let click_event = ClickEvent {
+                            let click_event = ClickEvent::Mouse(MouseClickEvent {
                                 down: MouseDownEvent {
                                     button: MouseButton::Right,
                                     position: event.position,
@@ -620,7 +635,7 @@ impl RenderOnce for ButtonLike {
                                     modifiers: event.modifiers,
                                     click_count: 1,
                                 },
-                            };
+                            });
                             (on_right_click)(&click_event, window, cx)
                         },
                     )
