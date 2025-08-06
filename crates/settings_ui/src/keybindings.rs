@@ -374,6 +374,14 @@ impl Focusable for KeymapEditor {
         }
     }
 }
+/// Helper function to check if two keystroke sequences match exactly
+fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+    keystrokes1.len() == keystrokes2.len()
+        && keystrokes1
+            .iter()
+            .zip(keystrokes2)
+            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+}
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -549,13 +557,7 @@ impl KeymapEditor {
                             .keystrokes()
                             .is_some_and(|keystrokes| {
                                 if exact_match {
-                                    keystroke_query.len() == keystrokes.len()
-                                        && keystroke_query.iter().zip(keystrokes).all(
-                                            |(query, keystroke)| {
-                                                query.key == keystroke.key
-                                                    && query.modifiers == keystroke.modifiers
-                                            },
-                                        )
+                                    keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
                                     return false;
                                 } else {
@@ -2340,8 +2342,50 @@ impl KeybindingEditorModal {
         self.save_or_display_error(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent)
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
+        let current_keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        if current_keystrokes.is_empty() {
+            return 0;
+        }
+
+        self.keymap_editor
+            .read(cx)
+            .keybindings
+            .iter()
+            .enumerate()
+            .filter(|(idx, binding)| {
+                // Don't count the binding we're currently editing
+                if !self.creating && *idx == self.editing_keybind_idx {
+                    return false;
+                }
+
+                binding
+                    .keystrokes()
+                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn show_matching_bindings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        // Dismiss the modal
+        cx.emit(DismissEvent);
+
+        // Update the keymap editor to show matching keystrokes
+        self.keymap_editor.update(cx, |editor, cx| {
+            editor.filter_state = FilterState::All;
+            editor.search_mode = SearchMode::KeyStroke { exact_match: true };
+            editor.keystroke_editor.update(cx, |keystroke_editor, cx| {
+                keystroke_editor.set_keystrokes(keystrokes, cx);
+            });
+        });
     }
 }
 
@@ -2356,6 +2400,7 @@ fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let matching_bindings_count = self.get_matching_bindings_count(cx);
 
         v_flex()
             .w(rems(34.))
@@ -2427,19 +2472,37 @@ impl Render for KeybindingEditorModal {
                         ),
                     )
                     .footer(
-                        ModalFooter::new().end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("cancel", "Cancel")
-                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                                )
-                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                    |this, _event, _window, cx| {
-                                        this.save_or_display_error(cx);
-                                    },
-                                ))),
-                        ),
+                        ModalFooter::new()
+                            .start_slot(
+                                div().when(matching_bindings_count > 0, |this| {
+                                    this.child(
+                                        Button::new("show_matching", format!(
+                                            "There {} {} {} with the same keystrokes. Click to view",
+                                            if matching_bindings_count == 1 { "is" } else { "are" },
+                                            matching_bindings_count,
+                                            if matching_bindings_count == 1 { "binding" } else { "bindings" }
+                                        ))
+                                        .style(ButtonStyle::Transparent)
+                                        .color(Color::Accent)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.show_matching_bindings(window, cx);
+                                        }))
+                                    )
+                                })
+                            )
+                            .end_slot(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Button::new("cancel", "Cancel")
+                                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                                    )
+                                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                        |this, _event, _window, cx| {
+                                            this.save_or_display_error(cx);
+                                        },
+                                    ))),
+                            ),
                     ),
             )
     }

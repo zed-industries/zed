@@ -411,8 +411,6 @@ impl ToolCallContent {
 pub struct Diff {
     pub multibuffer: Entity<MultiBuffer>,
     pub path: PathBuf,
-    pub new_buffer: Entity<Buffer>,
-    pub old_buffer: Entity<Buffer>,
     _task: Task<Result<()>>,
 }
 
@@ -433,23 +431,34 @@ impl Diff {
         let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
         let old_buffer = cx.new(|cx| Buffer::local(old_text.unwrap_or("".into()), cx));
         let new_buffer_snapshot = new_buffer.read(cx).text_snapshot();
-        let old_buffer_snapshot = old_buffer.read(cx).snapshot();
         let buffer_diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
-        let diff_task = buffer_diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                old_buffer_snapshot,
-                Some(language_registry.clone()),
-                new_buffer_snapshot,
-                cx,
-            )
-        });
 
         let task = cx.spawn({
             let multibuffer = multibuffer.clone();
             let path = path.clone();
-            let new_buffer = new_buffer.clone();
             async move |cx| {
-                diff_task.await?;
+                let language = language_registry
+                    .language_for_file_path(&path)
+                    .await
+                    .log_err();
+
+                new_buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
+
+                let old_buffer_snapshot = old_buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(language, cx);
+                    buffer.snapshot()
+                })?;
+
+                buffer_diff
+                    .update(cx, |diff, cx| {
+                        diff.set_base_text(
+                            old_buffer_snapshot,
+                            Some(language_registry),
+                            new_buffer_snapshot,
+                            cx,
+                        )
+                    })?
+                    .await?;
 
                 multibuffer
                     .update(cx, |multibuffer, cx| {
@@ -468,17 +477,9 @@ impl Diff {
                             editor::DEFAULT_MULTIBUFFER_CONTEXT,
                             cx,
                         );
-                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                        multibuffer.add_diff(buffer_diff, cx);
                     })
                     .log_err();
-
-                if let Some(language) = language_registry
-                    .language_for_file_path(&path)
-                    .await
-                    .log_err()
-                {
-                    new_buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
-                }
 
                 anyhow::Ok(())
             }
@@ -487,8 +488,6 @@ impl Diff {
         Self {
             multibuffer,
             path,
-            new_buffer,
-            old_buffer,
             _task: task,
         }
     }
