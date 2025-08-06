@@ -149,6 +149,7 @@ pub fn init_panic_hook(
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
                 let panic_file = fs::OpenOptions::new()
+                    .write(true)
                     .create_new(true)
                     .open(&panic_file_path)
                     .log_err();
