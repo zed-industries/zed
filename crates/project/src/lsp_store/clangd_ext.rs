@@ -6,7 +6,7 @@ use language::{CachedLspAdapter, Diagnostic, DiagnosticSourceKind};
 use lsp::{LanguageServer, LanguageServerName};
 use util::ResultExt as _;
 
-use crate::LspStore;
+use crate::{LspStore, lsp_store::DocumentDiagnosticsUpdate};
 
 pub const CLANGD_SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 const INACTIVE_REGION_MESSAGE: &str = "inactive region";
@@ -82,11 +82,13 @@ pub fn register_notifications(
                         diagnostics,
                     };
                     this.merge_diagnostics(
-                        server_id,
-                        mapped_diagnostics,
-                        None,
                         DiagnosticSourceKind::Pushed,
-                        &adapter.disk_based_diagnostic_sources,
+                        vec![DocumentDiagnosticsUpdate {
+                            server_id,
+                            diagnostics: mapped_diagnostics,
+                            result_id: None,
+                            disk_based_sources: adapter.disk_based_diagnostic_sources.clone(),
+                        }],
                         |_, diag, _| !is_inactive_region(diag),
                         cx,
                     )

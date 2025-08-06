@@ -140,6 +140,15 @@ impl FormatTrigger {
     }
 }
 
+#[derive(Debug)]
+pub struct DocumentDiagnosticsUpdate {
+    pub diagnostics: lsp::PublishDiagnosticsParams,
+    pub result_id: Option<String>,
+    pub server_id: LanguageServerId,
+    // TODO kb was not owned, make a ref type?
+    pub disk_based_sources: Vec<String>,
+}
+
 pub struct LocalLspStore {
     weak: WeakEntity<LspStore>,
     worktree_store: Entity<WorktreeStore>,
@@ -504,11 +513,15 @@ impl LocalLspStore {
                             }
 
                             this.merge_diagnostics(
-                                server_id,
-                                params,
-                                None,
                                 DiagnosticSourceKind::Pushed,
-                                &adapter.disk_based_diagnostic_sources,
+                                vec![DocumentDiagnosticsUpdate {
+                                    server_id,
+                                    diagnostics: params,
+                                    result_id: None,
+                                    disk_based_sources: adapter
+                                        .disk_based_diagnostic_sources
+                                        .clone(),
+                                }],
                                 |_, diagnostic, cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
                                         adapter.retain_old_diagnostic(diagnostic, cx)
@@ -6701,7 +6714,6 @@ impl LspStore {
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let buffer_id = buffer.read(cx).remote_id();
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
             let diagnostics = diagnostics.await.context("pulling diagnostics")?;
@@ -6710,66 +6722,81 @@ impl LspStore {
                     return;
                 }
 
-                for diagnostics_set in diagnostics {
-                    let LspPullDiagnostics::Response {
-                        server_id,
-                        uri,
-                        diagnostics,
-                    } = diagnostics_set
-                    else {
-                        continue;
-                    };
-
-                    let adapter = lsp_store.language_server_adapter_for_id(server_id);
-                    let disk_based_sources = adapter
-                        .as_ref()
-                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                        .unwrap_or(&[]);
-                    match diagnostics {
-                        PulledDiagnostics::Unchanged { result_id } => {
-                            lsp_store
-                                .merge_diagnostics(
-                                    server_id,
-                                    lsp::PublishDiagnosticsParams {
-                                        uri: uri.clone(),
-                                        diagnostics: Vec::new(),
-                                        version: None,
-                                    },
-                                    Some(result_id),
-                                    DiagnosticSourceKind::Pulled,
-                                    disk_based_sources,
-                                    |_, _, _| true,
-                                    cx,
-                                )
-                                .log_err();
-                        }
-                        PulledDiagnostics::Changed {
+                let mut unchanged_buffers = HashSet::default();
+                let mut changed_buffers = HashSet::default();
+                let server_diagnostics_updates = diagnostics
+                    .into_iter()
+                    .filter_map(|diagnostics_set| match diagnostics_set {
+                        LspPullDiagnostics::Response {
+                            server_id,
+                            uri,
                             diagnostics,
-                            result_id,
-                        } => {
-                            lsp_store
-                                .merge_diagnostics(
+                        } => Some((server_id, uri, diagnostics)),
+                        LspPullDiagnostics::Default => None,
+                    })
+                    .fold(
+                        HashMap::default(),
+                        |mut acc, (server_id, uri, diagnostics)| {
+                            let (result_id, diagnostics) = match diagnostics {
+                                PulledDiagnostics::Unchanged { result_id } => {
+                                    unchanged_buffers.insert(uri.clone());
+                                    (Some(result_id), Vec::new())
+                                }
+                                PulledDiagnostics::Changed {
+                                    result_id,
+                                    diagnostics,
+                                } => {
+                                    changed_buffers.insert(uri.clone());
+                                    (result_id, diagnostics)
+                                }
+                            };
+                            let disk_based_sources = lsp_store
+                                .language_server_adapter_for_id(server_id)
+                                .as_ref()
+                                .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                                .unwrap_or(&[])
+                                .to_vec();
+                            acc.entry(server_id).or_insert_with(Vec::new).push(
+                                DocumentDiagnosticsUpdate {
                                     server_id,
-                                    lsp::PublishDiagnosticsParams {
-                                        uri: uri.clone(),
+                                    diagnostics: lsp::PublishDiagnosticsParams {
+                                        uri,
                                         diagnostics,
                                         version: None,
                                     },
                                     result_id,
-                                    DiagnosticSourceKind::Pulled,
                                     disk_based_sources,
-                                    |buffer, old_diagnostic, _| match old_diagnostic.source_kind {
-                                        DiagnosticSourceKind::Pulled => {
-                                            buffer.remote_id() != buffer_id
-                                        }
-                                        DiagnosticSourceKind::Other
-                                        | DiagnosticSourceKind::Pushed => true,
-                                    },
-                                    cx,
-                                )
-                                .log_err();
-                        }
-                    }
+                                },
+                            );
+                            acc
+                        },
+                    );
+
+                for diagnostic_updates in server_diagnostics_updates.into_values() {
+                    lsp_store
+                        .merge_diagnostics(
+                            DiagnosticSourceKind::Pulled,
+                            diagnostic_updates,
+                            |buffer, old_diagnostic, cx| {
+                                File::from_dyn(buffer.file())
+                                    .and_then(|file| {
+                                        let abs_path = file.as_local()?.abs_path(cx);
+                                        lsp::Url::from_file_path(abs_path).ok()
+                                    })
+                                    .is_none_or(|buffer_uri| {
+                                        unchanged_buffers.contains(&buffer_uri)
+                                            || match old_diagnostic.source_kind {
+                                                DiagnosticSourceKind::Pulled => {
+                                                    !changed_buffers.contains(&buffer_uri)
+                                                }
+                                                DiagnosticSourceKind::Other
+                                                | DiagnosticSourceKind::Pushed => true,
+                                            }
+                                    })
+                            },
+                            cx,
+                        )
+                        .log_err();
                 }
             })
         })
@@ -7860,6 +7887,7 @@ impl LspStore {
         }
 
         let updated = worktree.update(cx, |worktree, cx| {
+            // TODO kb the event is sent here!
             self.update_worktree_diagnostics(
                 worktree.id(),
                 server_id,
@@ -10649,21 +10677,24 @@ impl LspStore {
         )
     }
 
+    #[cfg(test)]
     pub fn update_diagnostics(
         &mut self,
-        language_server_id: LanguageServerId,
-        params: lsp::PublishDiagnosticsParams,
+        server_id: LanguageServerId,
+        diagnostics: lsp::PublishDiagnosticsParams,
         result_id: Option<String>,
         source_kind: DiagnosticSourceKind,
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
         self.merge_diagnostics(
-            language_server_id,
-            params,
-            result_id,
             source_kind,
-            disk_based_sources,
+            vec![DocumentDiagnosticsUpdate {
+                diagnostics,
+                result_id,
+                server_id,
+                disk_based_sources: disk_based_sources.to_vec(),
+            }],
             |_, _, _| false,
             cx,
         )
@@ -10671,11 +10702,8 @@ impl LspStore {
 
     pub fn merge_diagnostics(
         &mut self,
-        language_server_id: LanguageServerId,
-        mut params: lsp::PublishDiagnosticsParams,
-        result_id: Option<String>,
         source_kind: DiagnosticSourceKind,
-        disk_based_sources: &[String],
+        updates: Vec<DocumentDiagnosticsUpdate>,
         filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
@@ -11571,67 +11599,83 @@ impl LspStore {
     ) {
         let workspace_diagnostics =
             GetDocumentDiagnostics::deserialize_workspace_diagnostics_report(report, server_id);
-        for workspace_diagnostics in workspace_diagnostics {
-            let LspPullDiagnostics::Response {
-                server_id,
-                uri,
-                diagnostics,
-            } = workspace_diagnostics.diagnostics
-            else {
-                continue;
-            };
-
-            let adapter = self.language_server_adapter_for_id(server_id);
-            let disk_based_sources = adapter
-                .as_ref()
-                .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                .unwrap_or(&[]);
-
-            match diagnostics {
-                PulledDiagnostics::Unchanged { result_id } => {
-                    self.merge_diagnostics(
+        let mut unchanged_buffers = HashSet::default();
+        let mut changed_buffers = HashSet::default();
+        let workspace_diagnostics_updates = workspace_diagnostics
+            .into_iter()
+            .filter_map(
+                |workspace_diagnostics| match workspace_diagnostics.diagnostics {
+                    LspPullDiagnostics::Response {
                         server_id,
-                        lsp::PublishDiagnosticsParams {
-                            uri: uri.clone(),
-                            diagnostics: Vec::new(),
-                            version: None,
-                        },
-                        Some(result_id),
-                        DiagnosticSourceKind::Pulled,
-                        disk_based_sources,
-                        |_, _, _| true,
-                        cx,
-                    )
-                    .log_err();
-                }
-                PulledDiagnostics::Changed {
-                    diagnostics,
-                    result_id,
-                } => {
-                    self.merge_diagnostics(
-                        server_id,
-                        lsp::PublishDiagnosticsParams {
-                            uri: uri.clone(),
+                        uri,
+                        diagnostics,
+                    } => Some((server_id, uri, diagnostics, workspace_diagnostics.version)),
+                    LspPullDiagnostics::Default => None,
+                },
+            )
+            .fold(
+                HashMap::default(),
+                |mut acc, (server_id, uri, diagnostics, version)| {
+                    let (result_id, diagnostics) = match diagnostics {
+                        PulledDiagnostics::Unchanged { result_id } => {
+                            unchanged_buffers.insert(uri.clone());
+                            (Some(result_id), Vec::new())
+                        }
+                        PulledDiagnostics::Changed {
+                            result_id,
                             diagnostics,
-                            version: workspace_diagnostics.version,
-                        },
-                        result_id,
-                        DiagnosticSourceKind::Pulled,
-                        disk_based_sources,
-                        |buffer, old_diagnostic, cx| match old_diagnostic.source_kind {
-                            DiagnosticSourceKind::Pulled => {
-                                let buffer_url = File::from_dyn(buffer.file())
-                                    .map(|f| f.abs_path(cx))
-                                    .and_then(|abs_path| file_path_to_lsp_url(&abs_path).ok());
-                                buffer_url.is_none_or(|buffer_url| buffer_url != uri)
-                            }
-                            DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => true,
-                        },
-                        cx,
-                    )
-                    .log_err();
-                }
-            }
+                        } => {
+                            changed_buffers.insert(uri.clone());
+                            (result_id, diagnostics)
+                        }
+                    };
+                    let disk_based_sources = self
+                        .language_server_adapter_for_id(server_id)
+                        .as_ref()
+                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                        .unwrap_or(&[])
+                        .to_vec();
+                    acc.entry(server_id)
+                        .or_insert_with(Vec::new)
+                        .push(DocumentDiagnosticsUpdate {
+                            server_id,
+                            diagnostics: lsp::PublishDiagnosticsParams {
+                                uri,
+                                diagnostics,
+                                version,
+                            },
+                            result_id,
+                            disk_based_sources,
+                        });
+                    acc
+                },
+            );
+
+        for diagnostic_updates in workspace_diagnostics_updates.into_values() {
+            self.merge_diagnostics(
+                DiagnosticSourceKind::Pulled,
+                diagnostic_updates,
+                |buffer, old_diagnostic, cx| {
+                    File::from_dyn(buffer.file())
+                        .and_then(|file| {
+                            let abs_path = file.as_local()?.abs_path(cx);
+                            lsp::Url::from_file_path(abs_path).ok()
+                        })
+                        .is_none_or(|buffer_uri| {
+                            unchanged_buffers.contains(&buffer_uri)
+                                || match old_diagnostic.source_kind {
+                                    DiagnosticSourceKind::Pulled => {
+                                        !changed_buffers.contains(&buffer_uri)
+                                    }
+                                    DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
+                                        true
+                                    }
+                                }
+                        })
+                },
+                cx,
+            )
+            .log_err();
         }
     }
 }
