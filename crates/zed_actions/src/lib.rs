@@ -244,11 +244,11 @@ pub mod theme_selector {
         pub themes_filter: Option<Vec<String>>,
     }
 
-    /// Toggles between light, dark, and system theme modes.
+    /// Cycles between light, dark, and system theme modes.
     #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
     #[action(namespace = theme_selector)]
     #[serde(deny_unknown_fields)]
-    pub struct ToggleMode;
+    pub struct CycleMode;
 }
 
 pub mod icon_theme_selector {
