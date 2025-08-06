@@ -382,7 +382,8 @@ If the model is tagged with `vision` in the Ollama catalog, set this option and 
 
 In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to Ollama API Keys are required for authentication.
 
-One such service is [Ollama Turbo])(https://ollama.com/turbo).  To configure Zed to use Ollama turbo:
+One such service is [Ollama Turbo])(https://ollama.com/turbo). To configure Zed to use Ollama turbo:
+
 1. Sign in to your Ollama account and subscribe to Ollama Turbo
 2. Visit [ollama.com/settings/keys](https://ollama.com/settings/keys) and create an API key
 3. Open the settings view (`agent: open settings`) and go to the Ollama section
