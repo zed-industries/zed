@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 pub use cloud_api_types::*;
-use futures::{AsyncReadExt as _, StreamExt as _};
+use futures::AsyncReadExt as _;
 use gpui::{App, Task};
 use gpui_tokio::Tokio;
 use http_client::http::request;
@@ -12,7 +12,7 @@ use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
 use parking_lot::RwLock;
 use yawc::WebSocket;
 
-use crate::websocket::{Connection, build_websocket_request};
+use crate::websocket::Connection;
 
 struct Credentials {
     user_id: u32,
@@ -99,11 +99,13 @@ impl CloudApiClient {
 
         let credentials = self.credentials.read();
         let credentials = credentials.as_ref().context("no credentials provided")?;
-
         let authorization_header = format!("{} {}", credentials.user_id, credentials.access_token);
 
         Ok(cx.spawn(async move |cx| {
-            let handle = cx.update(|cx| gpui_tokio::Tokio::handle(cx)).ok().unwrap();
+            let handle = cx
+                .update(|cx| Tokio::handle(cx))
+                .ok()
+                .ok_or_else(|| anyhow!("failed to get Tokio handle"))?;
             let _guard = handle.enter();
 
             let ws = WebSocket::connect(connect_url)
