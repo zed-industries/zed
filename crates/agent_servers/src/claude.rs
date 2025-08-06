@@ -380,6 +380,24 @@ impl ClaudeAgentSession {
                                 })
                                 .log_err();
                         }
+                        ContentChunk::Thinking { thinking } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(thinking.into(), true, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::RedactedThinking => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        "[REDACTED]".into(),
+                                        true,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
                         ContentChunk::ToolUse { id, name, input } => {
                             let claude_tool = ClaudeTool::infer(&name, input);
 
@@ -429,8 +447,6 @@ impl ClaudeAgentSession {
                         }
                         ContentChunk::Image
                         | ContentChunk::Document
-                        | ContentChunk::Thinking
-                        | ContentChunk::RedactedThinking
                         | ContentChunk::WebSearchToolResult => {
                             thread
                                 .update(cx, |thread, cx| {
@@ -580,11 +596,13 @@ enum ContentChunk {
         content: Content,
         tool_use_id: String,
     },
+    Thinking {
+        thinking: String,
+    },
+    RedactedThinking,
     // TODO
     Image,
     Document,
-    Thinking,
-    RedactedThinking,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
@@ -594,12 +612,12 @@ impl Display for ContentChunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentChunk::Text { text } => write!(f, "{}", text),
+            ContentChunk::Thinking { thinking } => write!(f, "Thinking: {}", thinking),
+            ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
             ContentChunk::Image
             | ContentChunk::Document
-            | ContentChunk::Thinking
-            | ContentChunk::RedactedThinking
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
                 write!(f, "\n{:?}\n", &self)
