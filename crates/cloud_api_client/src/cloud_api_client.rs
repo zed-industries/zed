@@ -89,7 +89,13 @@ impl CloudApiClient {
         let mut connect_url = self
             .http_client
             .build_zed_cloud_url("/client/users/connect", &[])?;
-        connect_url.set_scheme("wss").unwrap();
+        connect_url
+            .set_scheme(match connect_url.scheme() {
+                "https" => "wss",
+                "http" => "ws",
+                scheme => Err(anyhow!("invalid URL scheme: {scheme}"))?,
+            })
+            .map_err(|_| anyhow!("failed to set URL scheme"))?;
 
         let credentials = self.credentials.read();
         let credentials = credentials.as_ref().context("no credentials provided")?;
