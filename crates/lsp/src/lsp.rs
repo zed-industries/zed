@@ -529,14 +529,18 @@ impl LanguageServer {
         );
 
         while let Some(msg) = input_handler.incoming_messages.next().await {
-            {
+            let unhandled_message = {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx);
+                    None
                 } else {
-                    drop(notification_handlers);
-                    on_unhandled_notification(msg).await;
+                    Some(msg)
                 }
+            };
+
+            if let Some(msg) = unhandled_message {
+                on_unhandled_notification(msg).await;
             }
 
             // Don't starve the main thread when receiving lots of notifications at once.
