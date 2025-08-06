@@ -70,7 +70,6 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
-
 use rpc::{
     AnyProtoClient,
     proto::{FromProto, ToProto},
@@ -7335,6 +7334,24 @@ impl LspStore {
         summary
     }
 
+    /// Returns the diagnostic summary for a specific project path.
+    pub fn diagnostic_summary_for_path(
+        &self,
+        project_path: &ProjectPath,
+        include_ignored: bool,
+        cx: &App,
+    ) -> DiagnosticSummary {
+        match self
+            .diagnostic_summaries(include_ignored, cx)
+            .find(|(path, _, _)| path == project_path)
+        {
+            Some((_, _, diagnostic_summary)) => diagnostic_summary,
+            None => DiagnosticSummary::default(),
+        }
+    }
+
+    /// When `path_matcher` is provided, only diagnostics for matching paths
+    /// will be included.
     pub fn diagnostic_summaries<'a>(
         &'a self,
         include_ignored: bool,
