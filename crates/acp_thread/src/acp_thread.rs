@@ -221,7 +221,9 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.label = cx.new(|cx| Markdown::new_text(title.into(), cx));
+            self.label.update(cx, |label, cx| {
+                label.replace(title, cx);
+            });
         }
 
         if let Some(content) = content {
@@ -556,7 +558,7 @@ pub struct PlanEntry {
 impl PlanEntry {
     pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
         Self {
-            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
             priority: entry.priority,
             status: entry.status,
         }
@@ -970,13 +972,26 @@ impl AcpThread {
     }
 
     pub fn update_plan(&mut self, request: acp::Plan, cx: &mut Context<Self>) {
-        self.plan = Plan {
-            entries: request
-                .entries
-                .into_iter()
-                .map(|entry| PlanEntry::from_acp(entry, cx))
-                .collect(),
-        };
+        let new_entries_len = request.entries.len();
+        let mut new_entries = request.entries.into_iter();
+
+        // Reuse existing markdown to prevent flickering
+        for (old, new) in self.plan.entries.iter_mut().zip(new_entries.by_ref()) {
+            let PlanEntry {
+                content,
+                priority,
+                status,
+            } = old;
+            content.update(cx, |old, cx| {
+                old.replace(new.content, cx);
+            });
+            *priority = new.priority;
+            *status = new.status;
+        }
+        for new in new_entries {
+            self.plan.entries.push(PlanEntry::from_acp(new, cx))
+        }
+        self.plan.entries.truncate(new_entries_len);
 
         cx.notify();
     }
