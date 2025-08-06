@@ -4419,7 +4419,6 @@ fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     }
 }
 
-// Conversion functions for yawc messages
 fn to_yawc_message(message: AxumMessage) -> rpc::YawcMessage {
     match message {
         AxumMessage::Text(payload) => rpc::YawcMessage::Text(payload.into()),
