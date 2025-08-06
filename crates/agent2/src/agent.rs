@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, Entity, Subscription, Task, WeakEntity};
 use language_model::{LanguageModel, LanguageModelRegistry};
 use project::Project;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::{cell::RefCell, collections::HashMap};
@@ -30,7 +30,7 @@ pub struct NativeAgent {
 }
 
 impl NativeAgent {
-    pub fn new(templates: Arc<Templates>) -> Self {
+    pub fn new(project: Entity<Project>, root_dir: PathBuf, templates: Arc<Templates>) -> Self {
         log::info!("Creating new NativeAgent");
         Self {
             sessions: HashMap::new(),

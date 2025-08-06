@@ -343,8 +343,13 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     });
     cx.executor().forbid_parking();
 
+    // Create a project for new_thread
+    let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
+    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
+    let cwd = Path::new("/test");
+
     // Create agent and connection
-    let agent = cx.new(|_| NativeAgent::new(templates.clone()));
+    let agent = cx.new(|_| NativeAgent::new(project.clone(), cwd.into(), templates.clone()));
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
@@ -366,12 +371,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     assert!(!listed_models.is_empty(), "should have at least one model");
     assert_eq!(listed_models[0].id().0, "fake");
 
-    // Create a project for new_thread
-    let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
-    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
-
     // Create a thread using new_thread
-    let cwd = Path::new("/test");
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
         .update(|cx| {
