@@ -10,11 +10,15 @@ pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 
 #[derive(Clone, Debug, Default)]
 pub struct Chunk {
+    /// Bit mask for character boundaries in the chunk. LSB is the first character.
     chars: u128,
+    /// Bit mask for UTF-16 code units in the chunk. LSB is the first character.
     chars_utf16: u128,
+    /// Bit mask for newlines in the chunk. LSB is the first character.
     newlines: u128,
+    /// Bit mask for tabs in the chunk. LSB is the first character.
     tabs: u128,
-    pub text: ArrayString<MAX_BASE>,
+    pub(crate) text: ArrayString<MAX_BASE>,
 }
 
 impl Chunk {
@@ -42,7 +46,7 @@ impl Chunk {
     pub fn append(&mut self, slice: ChunkSlice) {
         if slice.is_empty() {
             return;
-        };
+        }
 
         let base_ix = self.text.len();
         self.chars |= slice.chars << base_ix;
@@ -75,7 +79,7 @@ pub struct ChunkSlice<'a> {
     chars_utf16: u128,
     newlines: u128,
     tabs: u128,
-    text: &'a str,
+    pub(crate) text: &'a str,
 }
 
 impl Into<Chunk> for ChunkSlice<'_> {
@@ -97,8 +101,26 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    pub fn is_char_boundary(self, offset: usize) -> bool {
-        self.text.is_char_boundary(offset)
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        if offset == self.text.len() {
+            return true;
+        }
+        if offset > self.text.len() {
+            return false;
+        }
+
+        (self.chars & (1 << offset)) != 0
+    }
+
+    #[inline(always)]
+    pub fn round_char_boundary(&self, mut ix: usize, bias: Bias) -> usize {
+        while !self.is_char_boundary(ix) {
+            match bias {
+                Bias::Left => ix -= 1,
+                Bias::Right => ix += 1,
+            }
+        }
+        ix
     }
 
     #[inline(always)]
@@ -195,6 +217,25 @@ impl<'a> ChunkSlice<'a> {
         let row = self.newlines.count_ones();
         let column = self.newlines.leading_zeros() - (u128::BITS - self.text.len() as u32);
         Point::new(row, column)
+    }
+
+    pub fn last_newline(&self) -> Option<usize> {
+        if self.newlines == 0 {
+            None
+        } else {
+            Some((u128::BITS - self.newlines.leading_zeros() - 1) as usize)
+        }
+    }
+
+    #[inline(always)]
+    pub fn newline_at(&self, i: usize) -> bool {
+        assert!(
+            i < u128::BITS as usize,
+            "index out of bounds: the len is {} but the index is {}",
+            u128::BITS,
+            i
+        );
+        (self.newlines & (1 << i)) != 0
     }
 
     /// Get number of chars in first line
@@ -383,9 +424,9 @@ impl<'a> ChunkSlice<'a> {
         let mut offset = row_offset_range.start;
         if point.column > 0 {
             offset += line.offset_utf16_to_offset(OffsetUtf16(point.column as usize));
-            if !self.text.is_char_boundary(offset) {
+            if !self.is_char_boundary(offset) {
                 offset -= 1;
-                while !self.text.is_char_boundary(offset) {
+                while !self.is_char_boundary(offset) {
                     offset -= 1;
                 }
                 if !clip {
@@ -415,7 +456,7 @@ impl<'a> ChunkSlice<'a> {
             Point::new(point.0.row, line.len() as u32)
         } else {
             let mut column = line.offset_utf16_to_offset(OffsetUtf16(point.0.column as usize));
-            while !line.text.is_char_boundary(column) {
+            while !line.is_char_boundary(column) {
                 column -= 1;
             }
             Point::new(point.0.row, column as u32)
@@ -479,7 +520,7 @@ impl<'a> ChunkSlice<'a> {
             self.len_utf16()
         } else {
             let mut offset = self.offset_utf16_to_offset(target);
-            while !self.text.is_char_boundary(offset) {
+            while !self.is_char_boundary(offset) {
                 if bias == Bias::Left {
                     offset -= 1;
                 } else {
@@ -629,10 +670,10 @@ mod tests {
         for _ in 0..10 {
             let mut start = rng.gen_range(0..=chunk.text.len());
             let mut end = rng.gen_range(start..=chunk.text.len());
-            while !chunk.text.is_char_boundary(start) {
+            while !chunk.as_slice().is_char_boundary(start) {
                 start -= 1;
             }
-            while !chunk.text.is_char_boundary(end) {
+            while !chunk.as_slice().is_char_boundary(end) {
                 end -= 1;
             }
             let range = start..end;

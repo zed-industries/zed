@@ -180,14 +180,11 @@ impl Rope {
                 let split_ix = if last_chunk.text.len() + chunk.len() <= chunk::MAX_BASE {
                     chunk.len()
                 } else {
-                    let mut split_ix = cmp::min(
+                    let split_ix = cmp::min(
                         chunk::MIN_BASE.saturating_sub(last_chunk.text.len()),
                         chunk.len(),
                     );
-                    while !chunk.is_char_boundary(split_ix) {
-                        split_ix += 1;
-                    }
-                    split_ix
+                    chunk.round_char_boundary(split_ix, Bias::Right)
                 };
 
                 let (suffix, remainder) = chunk.split_at(split_ix);
@@ -390,24 +387,13 @@ impl Rope {
             })
     }
 
-    pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize>(&());
         cursor.seek(&offset, Bias::Left);
         if let Some(chunk) = cursor.item() {
-            let mut ix = offset - cursor.start();
-            while !chunk.text.is_char_boundary(ix) {
-                match bias {
-                    Bias::Left => {
-                        ix -= 1;
-                        offset -= 1;
-                    }
-                    Bias::Right => {
-                        ix += 1;
-                        offset += 1;
-                    }
-                }
-            }
-            offset
+            let ix = offset - cursor.start();
+            let ix = chunk.as_slice().round_char_boundary(ix, bias);
+            cursor.start() + ix
         } else {
             self.summary().len
         }
@@ -711,12 +697,12 @@ impl<'a> Chunks<'a> {
         }
 
         if let Some(chunk) = self.chunks.item() {
-            let mut end_ix = self.offset - *self.chunks.start();
-            if chunk.text.as_bytes()[end_ix - 1] == b'\n' {
-                end_ix -= 1;
+            let end_ix = self.offset - *self.chunks.start();
+            let mut chunk = chunk.slice(0..end_ix);
+            if chunk.newline_at(end_ix - 1) {
+                chunk = chunk.slice(0..end_ix - 1);
             }
-
-            if let Some(newline_ix) = chunk.text[..end_ix].rfind('\n') {
+            if let Some(newline_ix) = chunk.last_newline() {
                 self.offset = *self.chunks.start() + newline_ix + 1;
                 if self.offset_is_valid() {
                     return true;
@@ -728,7 +714,7 @@ impl<'a> Chunks<'a> {
             .search_backward(|summary| summary.text.lines.row > 0);
         self.offset = *self.chunks.start();
         if let Some(chunk) = self.chunks.item() {
-            if let Some(newline_ix) = chunk.text.rfind('\n') {
+            if let Some(newline_ix) = chunk.as_slice().last_newline() {
                 self.offset += newline_ix + 1;
                 if self.offset_is_valid() {
                     if self.offset == self.chunks.end() {
