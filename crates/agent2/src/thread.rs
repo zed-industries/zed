@@ -13,6 +13,7 @@ use language_model::{
 };
 use log;
 use project::Project;
+use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use smol::stream::StreamExt;
@@ -109,6 +110,7 @@ pub struct Thread {
     running_turn: Option<Task<()>>,
     pending_tool_uses: HashMap<LanguageModelToolUseId, LanguageModelToolUse>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
     // action_log: Entity<ActionLog>,
@@ -117,6 +119,7 @@ pub struct Thread {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
+        project_context: Rc<RefCell<ProjectContext>>,
         templates: Arc<Templates>,
         default_model: Arc<dyn LanguageModel>,
     ) -> Self {
@@ -126,6 +129,7 @@ impl Thread {
             running_turn: None,
             pending_tool_uses: HashMap::default(),
             tools: BTreeMap::default(),
+            project_context,
             templates,
             selected_model: default_model,
         }
@@ -292,8 +296,6 @@ impl Thread {
         }));
         events_rx
     }
-
-    pub fn set_system_prompt_template(&mut self, template: Rc<RefCell<SystemPromptTemplate>>) {}
 
     pub fn build_system_message(&self, cx: &App) -> Option<AgentMessage> {
         todo!()

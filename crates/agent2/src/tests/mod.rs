@@ -349,7 +349,9 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let cwd = Path::new("/test");
 
     // Create agent and connection
-    let agent = cx.new(|_| NativeAgent::new(project.clone(), cwd.into(), templates.clone()));
+    let agent = NativeAgent::new(project.clone(), templates.clone(), None, &mut cx.to_async())
+        .await
+        .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
@@ -520,7 +522,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         })
         .await;
 
-    let thread = cx.new(|_| Thread::new(project, templates, model.clone()));
+    let thread = cx.new(|_| Thread::new(project, Rc::default(), templates, model.clone()));
 
     ThreadTest { model, thread }
 }
