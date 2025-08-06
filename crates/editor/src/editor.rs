@@ -14717,7 +14717,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.hide_mouse_cursor(&HideMouseCursorOrigin::MovementAction);
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
@@ -14764,20 +14764,25 @@ impl Editor {
                 editor.replace_text_in_range(Some(parent.clone()), &text, window, cx);
             }
 
-            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                s.select(
-                    edits
-                        .iter()
-                        .map(|(s, old, new)| Selection {
-                            id: s.id,
-                            start: new.start,
-                            end: new.start + old.len(),
-                            goal: SelectionGoal::None,
-                            reversed: s.reversed,
-                        })
-                        .collect(),
-                );
-            });
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| {
+                    s.select(
+                        edits
+                            .iter()
+                            .map(|(s, old, new)| Selection {
+                                id: s.id,
+                                start: new.start,
+                                end: new.start + old.len(),
+                                goal: SelectionGoal::None,
+                                reversed: s.reversed,
+                            })
+                            .collect(),
+                    );
+                },
+            );
         });
     }
 
