@@ -1,12 +1,11 @@
-use async_tungstenite::tungstenite::Message as TungsteniteMessage;
+use async_tungstenite::tungstenite::Message as WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 
 pub struct Connection {
     pub(crate) tx:
-        Box<dyn 'static + Send + Unpin + futures::Sink<TungsteniteMessage, Error = anyhow::Error>>,
-    pub(crate) rx: Box<
-        dyn 'static + Send + Unpin + futures::Stream<Item = anyhow::Result<TungsteniteMessage>>,
-    >,
+        Box<dyn 'static + Send + Unpin + futures::Sink<WebSocketMessage, Error = anyhow::Error>>,
+    pub(crate) rx:
+        Box<dyn 'static + Send + Unpin + futures::Stream<Item = anyhow::Result<WebSocketMessage>>>,
 }
 
 impl Connection {
@@ -15,8 +14,8 @@ impl Connection {
         S: 'static
             + Send
             + Unpin
-            + futures::Sink<TungsteniteMessage, Error = anyhow::Error>
-            + futures::Stream<Item = anyhow::Result<TungsteniteMessage>>,
+            + futures::Sink<WebSocketMessage, Error = anyhow::Error>
+            + futures::Stream<Item = anyhow::Result<WebSocketMessage>>,
     {
         let (tx, rx) = stream.split();
         Self {
@@ -25,7 +24,7 @@ impl Connection {
         }
     }
 
-    pub async fn send(&mut self, message: TungsteniteMessage) -> anyhow::Result<()> {
+    pub async fn send(&mut self, message: WebSocketMessage) -> anyhow::Result<()> {
         self.tx.send(message).await
     }
 
@@ -52,48 +51,49 @@ impl Connection {
             killed: Arc<AtomicBool>,
             executor: gpui::BackgroundExecutor,
         ) -> (
-            Box<
-                dyn 'static
-                    + Send
-                    + Unpin
-                    + futures::Sink<TungsteniteMessage, Error = anyhow::Error>,
-            >,
-            Box<
-                dyn 'static
-                    + Send
-                    + Unpin
-                    + futures::Stream<Item = anyhow::Result<TungsteniteMessage>>,
-            >,
+            Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = anyhow::Error>>,
+            Box<dyn Send + Unpin + futures::Stream<Item = anyhow::Result<WebSocketMessage>>>,
         ) {
             use anyhow::anyhow;
             use futures::channel::mpsc;
             use std::io::{Error, ErrorKind};
 
-            let (tx, rx) = mpsc::unbounded::<TungsteniteMessage>();
+            let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
 
-            let tx = tx.sink_map_err(|err| anyhow!(err)).with({
+            let tx = tx.sink_map_err(|error| anyhow!(error)).with({
                 let killed = killed.clone();
                 let executor = executor.clone();
                 move |msg| {
                     let killed = killed.clone();
                     let executor = executor.clone();
                     Box::pin(async move {
+                        executor.simulate_random_delay().await;
+
+                        // Writes to a half-open TCP connection will error.
                         if killed.load(SeqCst) {
                             std::io::Result::Err(Error::new(ErrorKind::Other, "connection lost"))?;
                         }
 
-                        executor.timer(std::time::Duration::from_millis(2)).await;
                         Ok(msg)
                     })
                 }
             });
 
-            let rx = rx.map({
+            let rx = rx.then({
+                let executor = executor.clone();
                 move |msg| {
-                    if killed.load(SeqCst) {
-                        std::io::Result::Err(Error::new(ErrorKind::Other, "connection lost"))?;
-                    }
-                    Ok(msg)
+                    let killed = killed.clone();
+                    let executor = executor.clone();
+                    Box::pin(async move {
+                        executor.simulate_random_delay().await;
+
+                        // Reads from a half-open TCP connection will hang.
+                        if killed.load(SeqCst) {
+                            futures::future::pending::<()>().await;
+                        }
+
+                        Ok(msg)
+                    })
                 }
             });
 

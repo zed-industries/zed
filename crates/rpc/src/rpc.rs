@@ -11,7 +11,6 @@ pub use notification::*;
 pub use peer::*;
 pub use proto;
 pub use proto::{Receipt, TypedEnvelope, error::*};
-
 mod macros;
 
 #[cfg(feature = "gpui")]

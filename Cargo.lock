@@ -13935,7 +13935,6 @@ dependencies = [
  "collections",
  "futures 0.3.31",
  "gpui",
- "http 1.3.1",
  "parking_lot",
  "proto",
  "rand 0.8.5",
@@ -13945,10 +13944,8 @@ dependencies = [
  "sha2",
  "strum 0.27.1",
  "tracing",
- "url",
  "util",
  "workspace-hack",
- "yawc",
  "zlog",
  "zstd",
 ]
