@@ -764,6 +764,8 @@ enum PermissionMode {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::e2e_tests;
+    use gpui::TestAppContext;
     use serde_json::json;
 
     crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
@@ -774,6 +776,68 @@ pub(crate) mod tests {
             args: vec![],
             env: None,
         }
+    }
+
+    #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
+    async fn test_todo_plan(cx: &mut TestAppContext) {
+        let fs = e2e_tests::init_test(cx).await;
+        let project = Project::test(fs, [], cx).await;
+        let thread =
+            e2e_tests::new_test_thread(ClaudeCode, project.clone(), "/private/tmp", cx).await;
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Create a todo plan for initializing a new React app. I'll follow it myself, do not execute on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let mut entries_len = 0;
+
+        thread.read_with(cx, |thread, _| {
+            entries_len = thread.plan().entries.len();
+            assert!(thread.plan().entries.len() > 0, "Empty plan");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Mark the first entry status as in progress without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::InProgress
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Now mark the first entry as completed without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::Completed
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
     }
 
     #[test]
