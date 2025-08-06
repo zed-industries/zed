@@ -27,6 +27,7 @@ pub struct PathBuilder {
     transform: Option<lyon::math::Transform>,
     /// PathStyle of the PathBuilder
     pub style: PathStyle,
+    dash_array: Option<Vec<Pixels>>,
 }
 
 impl From<lyon::path::Builder> for PathBuilder {
@@ -77,6 +78,7 @@ impl Default for PathBuilder {
             raw: lyon::path::Path::builder().with_svg(),
             style: PathStyle::Fill(FillOptions::default()),
             transform: None,
+            dash_array: None,
         }
     }
 }
@@ -98,6 +100,24 @@ impl PathBuilder {
     /// Sets the style of the [`PathBuilder`].
     pub fn with_style(self, style: PathStyle) -> Self {
         Self { style, ..self }
+    }
+
+    /// Sets the dash array of the [`PathBuilder`].
+    ///
+    /// [MDN](https://developer.mozilla.org/en-US/docs/Web/SVG/Reference/Attribute/stroke-dasharray)
+    pub fn dash_array(mut self, dash_array: &[Pixels]) -> Self {
+        // If an odd number of values is provided, then the list of values is repeated to yield an even number of values.
+        // Thus, 5,3,2 is equivalent to 5,3,2,5,3,2.
+        let array = if dash_array.len() % 2 == 1 {
+            let mut new_dash_array = dash_array.to_vec();
+            new_dash_array.extend_from_slice(dash_array);
+            new_dash_array
+        } else {
+            dash_array.to_vec()
+        };
+
+        self.dash_array = Some(array);
+        self
     }
 
     /// Move the current point to the given point.
@@ -229,7 +249,7 @@ impl PathBuilder {
         };
 
         match self.style {
-            PathStyle::Stroke(options) => Self::tessellate_stroke(&path, &options),
+            PathStyle::Stroke(options) => Self::tessellate_stroke(self.dash_array, &path, &options),
             PathStyle::Fill(options) => Self::tessellate_fill(&path, &options),
         }
     }
@@ -253,9 +273,37 @@ impl PathBuilder {
     }
 
     fn tessellate_stroke(
+        dash_array: Option<Vec<Pixels>>,
         path: &lyon::path::Path,
         options: &StrokeOptions,
     ) -> Result<Path<Pixels>, Error> {
+        let path = if let Some(dash_array) = dash_array {
+            let measurements = lyon::algorithms::measure::PathMeasurements::from_path(&path, 0.01);
+            let mut sampler = measurements
+                .create_sampler(path, lyon::algorithms::measure::SampleType::Normalized);
+            let mut builder = lyon::path::Path::builder();
+
+            let total_length = sampler.length();
+            let dash_array_len = dash_array.len();
+            let mut pos = 0.;
+            let mut dash_index = 0;
+            while pos < total_length {
+                let dash_length = dash_array[dash_index % dash_array_len].0;
+                let next_pos = (pos + dash_length).min(total_length);
+                if dash_index % 2 == 0 {
+                    let start = pos / total_length;
+                    let end = next_pos / total_length;
+                    sampler.split_range(start..end, &mut builder);
+                }
+                pos = next_pos;
+                dash_index += 1;
+            }
+
+            &builder.build()
+        } else {
+            path
+        };
+
         // Will contain the result of the tessellation.
         let mut buf: VertexBuffers<lyon::math::Point, u16> = VertexBuffers::new();
         let mut tessellator = StrokeTessellator::new();

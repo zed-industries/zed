@@ -248,7 +248,7 @@ impl Render for SshPrompt {
         text_style.refine(&refinement);
         let markdown_style = MarkdownStyle {
             base_text_style: text_style,
-            selection_background_color: cx.theme().players().local().selection,
+            selection_background_color: cx.theme().colors().element_selection_background,
             ..Default::default()
         };
 
@@ -289,6 +289,9 @@ impl Render for SshPrompt {
                         .child(MarkdownElement::new(prompt.0.clone(), markdown_style))
                         .child(self.editor.clone()),
                 )
+                .when(window.capslock().on, |el| {
+                    el.child(Label::new("⚠️ ⇪ is on"))
+                })
             })
     }
 }

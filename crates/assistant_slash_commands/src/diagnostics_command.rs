@@ -147,6 +147,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                     &Options::match_candidates_for_args(),
                     &query,
                     false,
+                    true,
                     10,
                     &cancellation_flag,
                     executor,

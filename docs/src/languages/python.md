@@ -2,10 +2,11 @@
 
 Python support is available natively in Zed.
 
-- Tree-sitter: [tree-sitter-python](https://github.com/tree-sitter/tree-sitter-python)
+- Tree-sitter: [tree-sitter-python](https://github.com/zed-industries/tree-sitter-python)
 - Language Servers:
   - [microsoft/pyright](https://github.com/microsoft/pyright)
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
+- Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
 
 ## Language Servers
 
@@ -125,3 +126,67 @@ A common tool for formatting Python code is [Ruff](https://docs.astral.sh/ruff/)
 TBD: Expand Python Ruff docs.
 TBD: Ruff pyproject.toml, ruff.toml docs. `ruff.configuration`.
 -->
+
+## Debugging
+
+Zed supports zero-configuration debugging of Python module entry points and pytest tests.
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list for the current project.
+For greater control, you can add debug configurations to `.zed/debug.json`. See the examples below.
+
+### Debug Active File
+
+```json
+[
+  {
+    "label": "Python Active File",
+    "adapter": "Debugpy",
+    "program": "$ZED_FILE",
+    "request": "launch"
+  }
+]
+```
+
+### Flask App
+
+For a common Flask Application with a file structure similar to the following:
+
+```
+.venv/
+app/
+  init.py
+  main.py
+  routes.py
+templates/
+  index.html
+static/
+  style.css
+requirements.txt
+```
+
+…the following configuration can be used:
+
+```json
+[
+  {
+    "label": "Python: Flask",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "module": "app",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "env": {
+      "FLASK_APP": "app",
+      "FLASK_DEBUG": "1"
+    },
+    "args": [
+      "run",
+      "--reload", // Enables Flask reloader that watches for file changes
+      "--debugger" // Enables Flask debugger
+    ],
+    "autoReload": {
+      "enable": true
+    },
+    "jinja": true,
+    "justMyCode": true
+  }
+]
+```

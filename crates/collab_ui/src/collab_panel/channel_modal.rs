@@ -17,9 +17,13 @@ use workspace::{ModalView, notifications::DetachAndPromptErr};
 actions!(
     channel_modal,
     [
+        /// Selects the next control in the channel modal.
         SelectNextControl,
+        /// Toggles between invite members and manage members mode.
         ToggleMode,
+        /// Toggles admin status for the selected member.
         ToggleMemberAdmin,
+        /// Removes the selected member from the channel.
         RemoveMember
     ]
 );
@@ -294,6 +298,7 @@ impl PickerDelegate for ChannelModalDelegate {
                     let matches = cx.background_executor().block(match_strings(
                         &self.match_candidates,
                         &query,
+                        true,
                         true,
                         usize::MAX,
                         &Default::default(),

@@ -8,7 +8,7 @@ use windows::{
     },
     Wdk::System::SystemServices::RtlGetVersion,
     Win32::{Foundation::*, Graphics::Dwm::*, UI::WindowsAndMessaging::*},
-    core::BOOL,
+    core::{BOOL, HSTRING},
 };
 
 use crate::*;
@@ -144,8 +144,8 @@ pub(crate) fn load_cursor(style: CursorStyle) -> Option<HCURSOR> {
 }
 
 /// This function is used to configure the dark mode for the window built-in title bar.
-pub(crate) fn configure_dwm_dark_mode(hwnd: HWND) {
-    let dark_mode_enabled: BOOL = match system_appearance().log_err().unwrap_or_default() {
+pub(crate) fn configure_dwm_dark_mode(hwnd: HWND, appearance: WindowAppearance) {
+    let dark_mode_enabled: BOOL = match appearance {
         WindowAppearance::Dark | WindowAppearance::VibrantDark => true.into(),
         WindowAppearance::Light | WindowAppearance::VibrantLight => false.into(),
     };
@@ -185,4 +185,15 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
 #[inline(always)]
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
+}
+
+pub(crate) fn show_error(title: &str, content: String) {
+    let _ = unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(content),
+            &HSTRING::from(title),
+            MB_ICONERROR | MB_SYSTEMMODAL,
+        )
+    };
 }

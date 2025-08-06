@@ -9,8 +9,8 @@ use http_client::HttpClient;
 use language::{Buffer, BufferEvent, LanguageRegistry, proto::serialize_operation};
 use node_runtime::NodeRuntime;
 use project::{
-    LspStore, LspStoreEvent, PrettierStore, ProjectEnvironment, ProjectPath, ToolchainStore,
-    WorktreeId,
+    LspStore, LspStoreEvent, ManifestTree, PrettierStore, ProjectEnvironment, ProjectPath,
+    ToolchainStore, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     debugger::{breakpoint_store::BreakpointStore, dap_store::DapStore},
     git_store::GitStore,
@@ -77,7 +77,6 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        language_extension::init(proxy.clone(), languages.clone());
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
@@ -87,12 +86,13 @@ impl HeadlessProject {
         });
 
         let environment = cx.new(|_| ProjectEnvironment::new(None));
-
+        let manifest_tree = ManifestTree::new(worktree_store.clone(), cx);
         let toolchain_store = cx.new(|cx| {
             ToolchainStore::local(
                 languages.clone(),
                 worktree_store.clone(),
                 environment.clone(),
+                manifest_tree.clone(),
                 cx,
             )
         });
@@ -145,6 +145,7 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
+                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -172,6 +173,7 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 toolchain_store.clone(),
                 environment,
+                manifest_tree,
                 languages.clone(),
                 http_client.clone(),
                 fs.clone(),
@@ -182,6 +184,11 @@ impl HeadlessProject {
         });
 
         cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
+        language_extension::init(
+            language_extension::LspAccess::ViaLspStore(lsp_store.clone()),
+            proxy.clone(),
+            languages.clone(),
+        );
 
         cx.subscribe(
             &buffer_store,
@@ -298,11 +305,13 @@ impl HeadlessProject {
         match event {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
+                name,
                 message,
             } => {
                 self.session
                     .send(proto::UpdateLanguageServer {
                         project_id: SSH_PROJECT_ID,
+                        server_name: name.as_ref().map(|name| name.to_string()),
                         language_server_id: language_server_id.to_proto(),
                         variant: Some(message.clone()),
                     })

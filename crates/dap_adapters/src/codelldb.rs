@@ -1,11 +1,8 @@
 use std::{collections::HashMap, path::PathBuf, sync::OnceLock};
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
-use dap::{
-    StartDebuggingRequestArgumentsRequest,
-    adapters::{DebugTaskDefinition, latest_github_release},
-};
+use dap::adapters::{DebugTaskDefinition, latest_github_release};
 use futures::StreamExt;
 use gpui::AsyncApp;
 use serde_json::Value;
@@ -22,22 +19,24 @@ pub(crate) struct CodeLldbDebugAdapter {
 impl CodeLldbDebugAdapter {
     const ADAPTER_NAME: &'static str = "CodeLLDB";
 
-    fn request_args(
+    async fn request_args(
         &self,
-        task_definition: &DebugTaskDefinition,
+        delegate: &Arc<dyn DapDelegate>,
+        mut configuration: Value,
+        label: &str,
     ) -> Result<dap::StartDebuggingRequestArguments> {
-        // CodeLLDB uses `name` for a terminal label.
-        let mut configuration = task_definition.config.clone();
-
-        configuration
+        let obj = configuration
             .as_object_mut()
-            .context("CodeLLDB is not a valid json object")?
-            .insert(
-                "name".into(),
-                Value::String(String::from(task_definition.label.as_ref())),
-            );
+            .context("CodeLLDB is not a valid json object")?;
 
-        let request = self.validate_config(&configuration)?;
+        // CodeLLDB uses `name` for a terminal label.
+        obj.entry("name")
+            .or_insert(Value::String(String::from(label)));
+
+        obj.entry("cwd")
+            .or_insert(delegate.worktree_root_path().to_string_lossy().into());
+
+        let request = self.request_kind(&configuration).await?;
 
         Ok(dap::StartDebuggingRequestArguments {
             request,
@@ -89,49 +88,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    fn validate_config(
-        &self,
-        config: &serde_json::Value,
-    ) -> Result<StartDebuggingRequestArgumentsRequest> {
-        let map = config
-            .as_object()
-            .ok_or_else(|| anyhow!("Config isn't an object"))?;
-
-        let request_variant = map
-            .get("request")
-            .and_then(|r| r.as_str())
-            .ok_or_else(|| anyhow!("request field is required and must be a string"))?;
-
-        match request_variant {
-            "launch" => {
-                // For launch, verify that one of the required configs exists
-                if !(map.contains_key("program")
-                    || map.contains_key("targetCreateCommands")
-                    || map.contains_key("cargo"))
-                {
-                    return Err(anyhow!(
-                        "launch request requires either 'program', 'targetCreateCommands', or 'cargo' field"
-                    ));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Launch)
-            }
-            "attach" => {
-                // For attach, verify that either pid or program exists
-                if !(map.contains_key("pid") || map.contains_key("program")) {
-                    return Err(anyhow!(
-                        "attach request requires either 'pid' or 'program' field"
-                    ));
-                }
-                Ok(StartDebuggingRequestArgumentsRequest::Attach)
-            }
-            _ => Err(anyhow!(
-                "request must be either 'launch' or 'attach', got '{}'",
-                request_variant
-            )),
-        }
-    }
-
-    fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
+    async fn config_from_zed_format(&self, zed_scenario: ZedDebugConfig) -> Result<DebugScenario> {
         let mut configuration = json!({
             "request": match zed_scenario.request {
                 DebugRequest::Launch(_) => "launch",
@@ -175,7 +132,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         })
     }
 
-    async fn dap_schema(&self) -> serde_json::Value {
+    fn dap_schema(&self) -> serde_json::Value {
         json!({
             "properties": {
                 "request": {
@@ -371,6 +328,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         let mut command = user_installed_path
@@ -402,15 +360,31 @@ impl DebugAdapter for CodeLldbDebugAdapter {
             self.path_to_codelldb.set(path.clone()).ok();
             command = Some(path);
         };
-
+        let mut json_config = config.config.clone();
         Ok(DebugAdapterBinary {
-            command: command.unwrap(),
+            command: Some(command.unwrap()),
             cwd: Some(delegate.worktree_root_path().to_path_buf()),
-            arguments: vec![
-                "--settings".into(),
-                json!({"sourceLanguages": ["cpp", "rust"]}).to_string(),
-            ],
-            request_args: self.request_args(&config)?,
+            arguments: user_args.unwrap_or_else(|| {
+                if let Some(config) = json_config.as_object_mut()
+                    && let Some(source_languages) = config.get("sourceLanguages").filter(|value| {
+                        value
+                            .as_array()
+                            .map_or(false, |array| array.iter().all(Value::is_string))
+                    })
+                {
+                    let ret = vec![
+                        "--settings".into(),
+                        json!({"sourceLanguages": source_languages}).to_string(),
+                    ];
+                    config.remove("sourceLanguages");
+                    ret
+                } else {
+                    vec![]
+                }
+            }),
+            request_args: self
+                .request_args(delegate, json_config, &config.label)
+                .await?,
             envs: HashMap::default(),
             connection: None,
         })

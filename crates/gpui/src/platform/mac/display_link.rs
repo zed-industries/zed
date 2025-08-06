@@ -12,7 +12,7 @@ use std::ffi::c_void;
 use util::ResultExt;
 
 pub struct DisplayLink {
-    display_link: sys::DisplayLink,
+    display_link: Option<sys::DisplayLink>,
     frame_requests: dispatch_source_t,
 }
 
@@ -59,7 +59,7 @@ impl DisplayLink {
             )?;
 
             Ok(Self {
-                display_link,
+                display_link: Some(display_link),
                 frame_requests,
             })
         }
@@ -70,7 +70,7 @@ impl DisplayLink {
             dispatch_resume(crate::dispatch_sys::dispatch_object_t {
                 _ds: self.frame_requests,
             });
-            self.display_link.start()?;
+            self.display_link.as_mut().unwrap().start()?;
         }
         Ok(())
     }
@@ -80,7 +80,7 @@ impl DisplayLink {
             dispatch_suspend(crate::dispatch_sys::dispatch_object_t {
                 _ds: self.frame_requests,
             });
-            self.display_link.stop()?;
+            self.display_link.as_mut().unwrap().stop()?;
         }
         Ok(())
     }
@@ -89,6 +89,14 @@ impl DisplayLink {
 impl Drop for DisplayLink {
     fn drop(&mut self) {
         self.stop().log_err();
+        // We see occasional segfaults on the CVDisplayLink thread.
+        //
+        // It seems possible that this happens because CVDisplayLinkRelease releases the CVDisplayLink
+        // on the main thread immediately, but the background thread that CVDisplayLink uses for timers
+        // is still accessing it.
+        //
+        // We might also want to upgrade to CADisplayLink, but that requires dropping old macOS support.
+        std::mem::forget(self.display_link.take());
         unsafe {
             dispatch_source_cancel(self.frame_requests);
         }

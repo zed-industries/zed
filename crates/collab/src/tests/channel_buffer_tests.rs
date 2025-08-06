@@ -178,7 +178,7 @@ async fn test_channel_notes_participant_indices(
     channel_view_a.update_in(cx_a, |notes, window, cx| {
         notes.editor.update(cx, |editor, cx| {
             editor.insert("a", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![0..1]);
             });
         });
@@ -188,7 +188,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), window, cx);
             editor.insert("b", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![1..2]);
             });
         });
@@ -198,7 +198,7 @@ async fn test_channel_notes_participant_indices(
         notes.editor.update(cx, |editor, cx| {
             editor.move_down(&Default::default(), window, cx);
             editor.insert("c", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(Default::default(), window, cx, |selections| {
                 selections.select_ranges(vec![2..3]);
             });
         });
@@ -273,12 +273,12 @@ async fn test_channel_notes_participant_indices(
         .unwrap();
 
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges(vec![0..1]);
         });
     });
     editor_b.update_in(cx_b, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |selections| {
+        editor.change_selections(Default::default(), window, cx, |selections| {
             selections.select_ranges(vec![2..3]);
         });
     });

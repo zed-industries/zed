@@ -4,7 +4,7 @@ use crate::{
     object::Object,
     state::Mode,
 };
-use editor::{Bias, movement, scroll::Autoscroll};
+use editor::{Bias, movement};
 use gpui::{Context, Window};
 use language::BracketPair;
 
@@ -52,7 +52,7 @@ impl Vim {
                 for selection in &display_selections {
                     let range = match &target {
                         SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around)
+                            object.range(&display_map, selection.clone(), *around, None)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
@@ -109,7 +109,7 @@ impl Vim {
 
                 editor.edit(edits, cx);
                 editor.set_clip_at_line_ends(true, cx);
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     if mode == Mode::VisualBlock {
                         s.select_anchor_ranges(anchors.into_iter().take(1))
                     } else {
@@ -150,7 +150,9 @@ impl Vim {
 
                 for selection in &display_selections {
                     let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = pair_object.range(&display_map, selection.clone(), true) {
+                    if let Some(range) =
+                        pair_object.range(&display_map, selection.clone(), true, None)
+                    {
                         // If the current parenthesis object is single-line,
                         // then we need to filter whether it is the current line or not
                         if !pair_object.is_multiline() {
@@ -207,7 +209,7 @@ impl Vim {
                     }
                 }
 
-                editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                editor.change_selections(Default::default(), window, cx, |s| {
                     s.select_ranges(anchors);
                 });
                 edits.sort_by_key(|(range, _)| range.start);
@@ -247,7 +249,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = target.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            target.range(&display_map, selection.clone(), true, None)
+                        {
                             if !target.is_multiline() {
                                 let is_same_row = selection.start.row() == range.start.row()
                                     && selection.end.row() == range.end.row();
@@ -317,7 +321,7 @@ impl Vim {
                     edits.sort_by_key(|(range, _)| range.start);
                     editor.edit(edits, cx);
                     editor.set_clip_at_line_ends(true, cx);
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_anchor_ranges(stable_anchors);
                     });
                 });
@@ -348,7 +352,9 @@ impl Vim {
 
                     for selection in &selections {
                         let start = selection.start.to_offset(&display_map, Bias::Left);
-                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                        if let Some(range) =
+                            object.range(&display_map, selection.clone(), true, None)
+                        {
                             // If the current parenthesis object is single-line,
                             // then we need to filter whether it is the current line or not
                             if object.is_multiline()
@@ -375,7 +381,7 @@ impl Vim {
                             anchors.push(start..start)
                         }
                     }
-                    editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                    editor.change_selections(Default::default(), window, cx, |s| {
                         s.select_ranges(anchors);
                     });
                     editor.set_clip_at_line_ends(true, cx);

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Ok, Result};
+use base64::Engine;
 use dap::{
     Capabilities, ContinueArguments, ExceptionFilterOptions, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, NextArguments, SetVariableResponse, SourceBreakpoint,
@@ -10,6 +11,7 @@ use dap::{
     proto_conversions::ProtoConversion,
     requests::{Continue, Next},
 };
+
 use rpc::proto;
 use serde_json::Value;
 use util::ResultExt;
@@ -17,6 +19,8 @@ use util::ResultExt;
 pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
     type Response: 'static + Send + std::fmt::Debug;
     type DapRequest: 'static + Send + dap::requests::Request;
+    /// Is this request idempotent? Is it safe to cache the response for as long as the execution environment is unchanged?
+    const CACHEABLE: bool = false;
 
     fn is_supported(_capabilities: &Capabilities) -> bool {
         true
@@ -33,7 +37,6 @@ pub trait LocalDapCommand: 'static + Send + Sync + std::fmt::Debug {
 pub trait DapCommand: LocalDapCommand {
     type ProtoRequest: 'static + Send;
     type ProtoResponse: 'static + Send;
-    const CACHEABLE: bool = false;
 
     #[allow(dead_code)]
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId;
@@ -104,7 +107,7 @@ impl<T: DapCommand> DapCommand for Arc<T> {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct StepCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
     pub granularity: Option<SteppingGranularity>,
     pub single_thread: Option<bool>,
 }
@@ -480,7 +483,7 @@ impl DapCommand for ContinueCommand {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct PauseCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
 }
 
 impl LocalDapCommand for PauseCommand {
@@ -609,7 +612,7 @@ impl DapCommand for DisconnectCommand {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub(crate) struct TerminateThreadsCommand {
-    pub thread_ids: Option<Vec<u64>>,
+    pub thread_ids: Option<Vec<i64>>,
 }
 
 impl LocalDapCommand for TerminateThreadsCommand {
@@ -811,7 +814,7 @@ impl DapCommand for RestartCommand {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VariablesCommand {
     pub variables_reference: u64,
     pub filter: Option<VariablesArgumentsFilter>,
@@ -823,6 +826,7 @@ pub struct VariablesCommand {
 impl LocalDapCommand for VariablesCommand {
     type Response = Vec<Variable>;
     type DapRequest = dap::requests::Variables;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::VariablesArguments {
@@ -845,7 +849,6 @@ impl LocalDapCommand for VariablesCommand {
 impl DapCommand for VariablesCommand {
     type ProtoRequest = proto::VariablesRequest;
     type ProtoResponse = proto::DapVariables;
-    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1041,6 +1044,7 @@ pub(crate) struct ModulesCommand;
 impl LocalDapCommand for ModulesCommand {
     type Response = Vec<dap::Module>;
     type DapRequest = dap::requests::Modules;
+    const CACHEABLE: bool = true;
 
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities.supports_modules_request.unwrap_or_default()
@@ -1064,7 +1068,6 @@ impl LocalDapCommand for ModulesCommand {
 impl DapCommand for ModulesCommand {
     type ProtoRequest = proto::DapModulesRequest;
     type ProtoResponse = proto::DapModulesResponse;
-    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1113,6 +1116,7 @@ pub(crate) struct LoadedSourcesCommand;
 impl LocalDapCommand for LoadedSourcesCommand {
     type Response = Vec<dap::Source>;
     type DapRequest = dap::requests::LoadedSources;
+    const CACHEABLE: bool = true;
 
     fn is_supported(capabilities: &Capabilities) -> bool {
         capabilities
@@ -1134,7 +1138,6 @@ impl LocalDapCommand for LoadedSourcesCommand {
 impl DapCommand for LoadedSourcesCommand {
     type ProtoRequest = proto::DapLoadedSourcesRequest;
     type ProtoResponse = proto::DapLoadedSourcesResponse;
-    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(request: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(request.client_id)
@@ -1179,7 +1182,7 @@ impl DapCommand for LoadedSourcesCommand {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub(crate) struct StackTraceCommand {
-    pub thread_id: u64,
+    pub thread_id: i64,
     pub start_frame: Option<u64>,
     pub levels: Option<u64>,
 }
@@ -1187,6 +1190,7 @@ pub(crate) struct StackTraceCommand {
 impl LocalDapCommand for StackTraceCommand {
     type Response = Vec<dap::StackFrame>;
     type DapRequest = dap::requests::StackTrace;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::StackTraceArguments {
@@ -1208,7 +1212,6 @@ impl LocalDapCommand for StackTraceCommand {
 impl DapCommand for StackTraceCommand {
     type ProtoRequest = proto::DapStackTraceRequest;
     type ProtoResponse = proto::DapStackTraceResponse;
-    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapStackTraceRequest {
@@ -1258,6 +1261,7 @@ pub(crate) struct ScopesCommand {
 impl LocalDapCommand for ScopesCommand {
     type Response = Vec<dap::Scope>;
     type DapRequest = dap::requests::Scopes;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ScopesArguments {
@@ -1276,7 +1280,6 @@ impl LocalDapCommand for ScopesCommand {
 impl DapCommand for ScopesCommand {
     type ProtoRequest = proto::DapScopesRequest;
     type ProtoResponse = proto::DapScopesResponse;
-    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapScopesRequest {
@@ -1313,6 +1316,7 @@ impl DapCommand for ScopesCommand {
 impl LocalDapCommand for super::session::CompletionsQuery {
     type Response = dap::CompletionsResponse;
     type DapRequest = dap::requests::Completions;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::CompletionsArguments {
@@ -1340,7 +1344,6 @@ impl LocalDapCommand for super::session::CompletionsQuery {
 impl DapCommand for super::session::CompletionsQuery {
     type ProtoRequest = proto::DapCompletionRequest;
     type ProtoResponse = proto::DapCompletionResponse;
-    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapCompletionRequest {
@@ -1477,6 +1480,7 @@ pub(crate) struct ThreadsCommand;
 impl LocalDapCommand for ThreadsCommand {
     type Response = Vec<dap::Thread>;
     type DapRequest = dap::requests::Threads;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::ThreadsArgument {}
@@ -1493,7 +1497,6 @@ impl LocalDapCommand for ThreadsCommand {
 impl DapCommand for ThreadsCommand {
     type ProtoRequest = proto::DapThreadsRequest;
     type ProtoResponse = proto::DapThreadsResponse;
-    const CACHEABLE: bool = true;
 
     fn to_proto(&self, debug_client_id: SessionId, upstream_project_id: u64) -> Self::ProtoRequest {
         proto::DapThreadsRequest {
@@ -1547,7 +1550,7 @@ fn dap_client_capabilities(adapter_id: String) -> InitializeRequestArguments {
         supports_memory_event: Some(false),
         supports_args_can_be_interpreted_by_shell: Some(false),
         supports_start_debugging_request: Some(true),
-        supports_ansistyling: Some(false),
+        supports_ansistyling: Some(true),
     }
 }
 
@@ -1665,6 +1668,130 @@ impl LocalDapCommand for SetBreakpoints {
         Ok(message.breakpoints)
     }
 }
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum DataBreakpointContext {
+    Variable {
+        variables_reference: u64,
+        name: String,
+        bytes: Option<u64>,
+    },
+    Expression {
+        expression: String,
+        frame_id: Option<u64>,
+    },
+    Address {
+        address: String,
+        bytes: Option<u64>,
+    },
+}
+
+impl DataBreakpointContext {
+    pub fn human_readable_label(&self) -> String {
+        match self {
+            DataBreakpointContext::Variable { name, .. } => format!("Variable: {}", name),
+            DataBreakpointContext::Expression { expression, .. } => {
+                format!("Expression: {}", expression)
+            }
+            DataBreakpointContext::Address { address, bytes } => {
+                let mut label = format!("Address: {}", address);
+                if let Some(bytes) = bytes {
+                    label.push_str(&format!(
+                        " ({} byte{})",
+                        bytes,
+                        if *bytes == 1 { "" } else { "s" }
+                    ));
+                }
+                label
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct DataBreakpointInfoCommand {
+    pub context: Arc<DataBreakpointContext>,
+    pub mode: Option<String>,
+}
+
+impl LocalDapCommand for DataBreakpointInfoCommand {
+    type Response = dap::DataBreakpointInfoResponse;
+    type DapRequest = dap::requests::DataBreakpointInfo;
+    const CACHEABLE: bool = true;
+
+    // todo(debugger): We should expand this trait in the future to take a &self
+    // Depending on this command is_supported could be differentb
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        let (variables_reference, name, frame_id, as_address, bytes) = match &*self.context {
+            DataBreakpointContext::Variable {
+                variables_reference,
+                name,
+                bytes,
+            } => (
+                Some(*variables_reference),
+                name.clone(),
+                None,
+                Some(false),
+                *bytes,
+            ),
+            DataBreakpointContext::Expression {
+                expression,
+                frame_id,
+            } => (None, expression.clone(), *frame_id, Some(false), None),
+            DataBreakpointContext::Address { address, bytes } => {
+                (None, address.clone(), None, Some(true), *bytes)
+            }
+        };
+
+        dap::DataBreakpointInfoArguments {
+            variables_reference,
+            name,
+            frame_id,
+            bytes,
+            as_address,
+            mode: self.mode.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct SetDataBreakpointsCommand {
+    pub breakpoints: Vec<dap::DataBreakpoint>,
+}
+
+impl LocalDapCommand for SetDataBreakpointsCommand {
+    type Response = Vec<dap::Breakpoint>;
+    type DapRequest = dap::requests::SetDataBreakpoints;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities.supports_data_breakpoints.unwrap_or(false)
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::SetDataBreakpointsArguments {
+            breakpoints: self.breakpoints.clone(),
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message.breakpoints)
+    }
+}
+
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub(super) enum SetExceptionBreakpoints {
     Plain {
@@ -1712,6 +1839,7 @@ pub(super) struct LocationsCommand {
 impl LocalDapCommand for LocationsCommand {
     type Response = dap::LocationsResponse;
     type DapRequest = dap::requests::Locations;
+    const CACHEABLE: bool = true;
 
     fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
         dap::LocationsArguments {
@@ -1730,8 +1858,6 @@ impl LocalDapCommand for LocationsCommand {
 impl DapCommand for LocationsCommand {
     type ProtoRequest = proto::DapLocationsRequest;
     type ProtoResponse = proto::DapLocationsResponse;
-
-    const CACHEABLE: bool = true;
 
     fn client_id_from_proto(message: &Self::ProtoRequest) -> SessionId {
         SessionId::from_proto(message.session_id)
@@ -1772,5 +1898,78 @@ impl DapCommand for LocationsCommand {
             end_line: response.end_line,
             end_column: response.end_column,
         })
+    }
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub(crate) struct ReadMemory {
+    pub(crate) memory_reference: String,
+    pub(crate) offset: Option<u64>,
+    pub(crate) count: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReadMemoryResponse {
+    pub(super) address: Arc<str>,
+    pub(super) unreadable_bytes: Option<u64>,
+    pub(super) content: Arc<[u8]>,
+}
+
+impl LocalDapCommand for ReadMemory {
+    type Response = ReadMemoryResponse;
+    type DapRequest = dap::requests::ReadMemory;
+    const CACHEABLE: bool = true;
+
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_read_memory_request
+            .unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::ReadMemoryArguments {
+            memory_reference: self.memory_reference.clone(),
+            offset: self.offset,
+            count: self.count,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        let data = if let Some(data) = message.data {
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .log_err()
+                .context("parsing base64 data from DAP's ReadMemory response")?
+        } else {
+            vec![]
+        };
+
+        Ok(ReadMemoryResponse {
+            address: message.address.into(),
+            content: data.into(),
+            unreadable_bytes: message.unreadable_bytes,
+        })
+    }
+}
+
+impl LocalDapCommand for dap::WriteMemoryArguments {
+    type Response = dap::WriteMemoryResponse;
+    type DapRequest = dap::requests::WriteMemory;
+    fn is_supported(capabilities: &Capabilities) -> bool {
+        capabilities
+            .supports_write_memory_request
+            .unwrap_or_default()
+    }
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        self.clone()
+    }
+
+    fn response_from_dap(
+        &self,
+        message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(message)
     }
 }

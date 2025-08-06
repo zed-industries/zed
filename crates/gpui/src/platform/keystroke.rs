@@ -13,6 +13,9 @@ pub struct Keystroke {
 
     /// key is the character printed on the key that was pressed
     /// e.g. for option-s, key is "s"
+    /// On layouts that do not have ascii keys (e.g. Thai)
+    /// this will be the ASCII-equivalent character (q instead of ๆ),
+    /// and the typed character will be present in key_char.
     pub key: String,
 
     /// key_char is the character that could have been typed when
@@ -55,7 +58,7 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
+    pub fn should_match(&self, target: &Keystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
@@ -531,10 +534,69 @@ impl Modifiers {
 
     /// Checks if this [`Modifiers`] is a subset of another [`Modifiers`].
     pub fn is_subset_of(&self, other: &Modifiers) -> bool {
-        (other.control || !self.control)
-            && (other.alt || !self.alt)
-            && (other.shift || !self.shift)
-            && (other.platform || !self.platform)
-            && (other.function || !self.function)
+        (*other & *self) == *self
     }
+}
+
+impl std::ops::BitOr for Modifiers {
+    type Output = Self;
+
+    fn bitor(mut self, other: Self) -> Self::Output {
+        self |= other;
+        self
+    }
+}
+
+impl std::ops::BitOrAssign for Modifiers {
+    fn bitor_assign(&mut self, other: Self) {
+        self.control |= other.control;
+        self.alt |= other.alt;
+        self.shift |= other.shift;
+        self.platform |= other.platform;
+        self.function |= other.function;
+    }
+}
+
+impl std::ops::BitXor for Modifiers {
+    type Output = Self;
+    fn bitxor(mut self, rhs: Self) -> Self::Output {
+        self ^= rhs;
+        self
+    }
+}
+
+impl std::ops::BitXorAssign for Modifiers {
+    fn bitxor_assign(&mut self, other: Self) {
+        self.control ^= other.control;
+        self.alt ^= other.alt;
+        self.shift ^= other.shift;
+        self.platform ^= other.platform;
+        self.function ^= other.function;
+    }
+}
+
+impl std::ops::BitAnd for Modifiers {
+    type Output = Self;
+    fn bitand(mut self, rhs: Self) -> Self::Output {
+        self &= rhs;
+        self
+    }
+}
+
+impl std::ops::BitAndAssign for Modifiers {
+    fn bitand_assign(&mut self, other: Self) {
+        self.control &= other.control;
+        self.alt &= other.alt;
+        self.shift &= other.shift;
+        self.platform &= other.platform;
+        self.function &= other.function;
+    }
+}
+
+/// The state of the capslock key at some point in time
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Default, Serialize, Deserialize, Hash, JsonSchema)]
+pub struct Capslock {
+    /// The capslock key is on
+    #[serde(default)]
+    pub on: bool,
 }

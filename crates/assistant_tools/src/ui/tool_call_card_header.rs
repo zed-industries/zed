@@ -82,7 +82,7 @@ impl RenderOnce for ToolCallCardHeader {
                     .child(
                         h_flex().h(line_height).justify_center().child(
                             Icon::new(self.icon)
-                                .size(IconSize::XSmall)
+                                .size(IconSize::Small)
                                 .color(Color::Muted),
                         ),
                     )

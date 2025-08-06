@@ -1,5 +1,5 @@
 use crate::{
-    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    Capslock, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
     PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     platform::mac::{
@@ -25,7 +25,7 @@ pub(crate) const ESCAPE_KEY: u16 = 0x1b;
 const TAB_KEY: u16 = 0x09;
 const SHIFT_TAB_KEY: u16 = 0x19;
 
-pub fn key_to_native(key: &str) -> Cow<str> {
+pub fn key_to_native(key: &str) -> Cow<'_, str> {
     use cocoa::appkit::*;
     let code = match key {
         "space" => SPACE_KEY,
@@ -121,6 +121,11 @@ impl PlatformInput {
                 NSEventType::NSFlagsChanged => {
                     Some(Self::ModifiersChanged(ModifiersChangedEvent {
                         modifiers: read_modifiers(native_event),
+                        capslock: Capslock {
+                            on: native_event
+                                .modifierFlags()
+                                .contains(NSEventModifierFlags::NSAlphaShiftKeyMask),
+                        },
                     }))
                 }
                 NSEventType::NSKeyDown => Some(Self::KeyDown(KeyDownEvent {

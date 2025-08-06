@@ -50,7 +50,17 @@ fn main() {
             println!("cargo:rustc-link-arg=/stack:{}", 8 * 1024 * 1024);
         }
 
-        let icon = std::path::Path::new("resources/windows/app-icon.ico");
+        let release_channel = option_env!("RELEASE_CHANNEL").unwrap_or("dev");
+        let icon = match release_channel {
+            "stable" => "resources/windows/app-icon.ico",
+            "preview" => "resources/windows/app-icon-preview.ico",
+            "nightly" => "resources/windows/app-icon-nightly.ico",
+            "dev" => "resources/windows/app-icon-dev.ico",
+            _ => "resources/windows/app-icon-dev.ico",
+        };
+        let icon = std::path::Path::new(icon);
+
+        println!("cargo:rerun-if-env-changed=RELEASE_CHANNEL");
         println!("cargo:rerun-if-changed={}", icon.display());
 
         let mut res = winresource::WindowsResource::new();

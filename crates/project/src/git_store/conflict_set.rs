@@ -171,7 +171,8 @@ impl ConflictSet {
         let mut conflicts = Vec::new();
 
         let mut line_pos = 0;
-        let mut lines = buffer.text_for_range(0..buffer.len()).lines();
+        let buffer_len = buffer.len();
+        let mut lines = buffer.text_for_range(0..buffer_len).lines();
 
         let mut conflict_start: Option<usize> = None;
         let mut ours_start: Option<usize> = None;
@@ -212,7 +213,7 @@ impl ConflictSet {
                 && theirs_start.is_some()
             {
                 let theirs_end = line_pos;
-                let conflict_end = line_end + 1;
+                let conflict_end = (line_end + 1).min(buffer_len);
 
                 let range = buffer.anchor_after(conflict_start.unwrap())
                     ..buffer.anchor_before(conflict_end);
@@ -391,6 +392,22 @@ mod tests {
     }
 
     #[test]
+    fn test_conflict_markers_at_eof() {
+        let test_content = r#"
+            <<<<<<< ours
+            =======
+            This is their version
+            >>>>>>> "#
+            .unindent();
+        let buffer_id = BufferId::new(1).unwrap();
+        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let snapshot = buffer.snapshot();
+
+        let conflict_snapshot = ConflictSet::parse(&snapshot);
+        assert_eq!(conflict_snapshot.conflicts.len(), 1);
+    }
+
+    #[test]
     fn test_conflicts_in_range() {
         // Create a buffer with conflict markers
         let test_content = r#"
@@ -548,7 +565,7 @@ mod tests {
             conflict_set.snapshot().conflicts[0].clone()
         });
         cx.update(|cx| {
-            conflict.resolve(buffer.clone(), &[conflict.theirs.clone()], cx);
+            conflict.resolve(buffer.clone(), std::slice::from_ref(&conflict.theirs), cx);
         });
 
         cx.run_until_parked();

@@ -63,6 +63,8 @@ use std::{
     rc::Rc,
 };
 
+/// ID of a node within `DispatchTree`. Note that these are **not** stable between frames, and so a
+/// `DispatchNodeId` should only be used with the `DispatchTree` that provided it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) struct DispatchNodeId(usize);
 
@@ -392,20 +394,54 @@ impl DispatchTree {
 
     /// Returns key bindings that invoke an action on the currently focused element. Bindings are
     /// returned in the order they were added. For display, the last binding should take precedence.
+    ///
+    /// Bindings are only included if they are the highest precedence match for their keystrokes, so
+    /// shadowed bindings are not included.
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,
         context_stack: &[KeyContext],
     ) -> Vec<KeyBinding> {
+        // Ideally this would return a `DoubleEndedIterator` to avoid `highest_precedence_*`
+        // methods, but this can't be done very cleanly since keymap must be borrowed.
         let keymap = self.keymap.borrow();
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
-                bindings.iter().any(|b| b.action.partial_eq(action))
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
             })
             .cloned()
             .collect()
+    }
+
+    /// Returns the highest precedence binding for the given action and context stack. This is the
+    /// same as the last result of `bindings_for_action`, but more efficient than getting all bindings.
+    pub fn highest_precedence_binding_for_action(
+        &self,
+        action: &dyn Action,
+        context_stack: &[KeyContext],
+    ) -> Option<KeyBinding> {
+        let keymap = self.keymap.borrow();
+        keymap
+            .bindings_for_action(action)
+            .rev()
+            .find(|binding| {
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
+            })
+            .cloned()
+    }
+
+    fn binding_matches_predicate_and_not_shadowed(
+        keymap: &Keymap,
+        binding: &KeyBinding,
+        context_stack: &[KeyContext],
+    ) -> bool {
+        let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
+        if let Some(found) = bindings.iter().next() {
+            found.action.partial_eq(binding.action.as_ref())
+        } else {
+            false
+        }
     }
 
     fn bindings_for_input(
@@ -587,7 +623,7 @@ mod tests {
             "test::TestAction"
         }
 
-        fn debug_name() -> &'static str
+        fn name_for_type() -> &'static str
         where
             Self: ::std::marker::Sized,
         {

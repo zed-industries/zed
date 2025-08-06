@@ -4,14 +4,17 @@ use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
 use crate::db::billing_subscription::SubscriptionKind;
 use crate::llm::db::LlmDatabase;
-use crate::llm::{AGENT_EXTENDED_TRIAL_FEATURE_FLAG, LlmTokenClaims};
+use crate::llm::{
+    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
+    MIN_ACCOUNT_AGE_FOR_LLM_USE,
+};
 use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
         CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, Project, ProjectId, RejoinedProject, RemoveChannelMemberResult, ReplicaId,
+        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
         RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
     },
     executor::Executor,
@@ -20,6 +23,7 @@ use anyhow::{Context as _, anyhow, bail};
 use async_tungstenite::tungstenite::{
     Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
 };
+use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
     body::Body,
@@ -38,7 +42,7 @@ use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
-use rpc::proto::split_repository_update;
+use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
 use futures::{
@@ -65,7 +69,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
     },
     time::{Duration, Instant},
 };
@@ -86,9 +90,35 @@ pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
+const MAX_CONCURRENT_CONNECTIONS: usize = 512;
+
+static CONCURRENT_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
+
+pub struct ConnectionGuard;
+
+impl ConnectionGuard {
+    pub fn try_acquire() -> Result<Self, ()> {
+        let current_connections = CONCURRENT_CONNECTIONS.fetch_add(1, SeqCst);
+        if current_connections >= MAX_CONCURRENT_CONNECTIONS {
+            CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+            tracing::error!(
+                "too many concurrent connections: {}",
+                current_connections + 1
+            );
+            return Err(());
+        }
+        Ok(ConnectionGuard)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        CONCURRENT_CONNECTIONS.fetch_sub(1, SeqCst);
+    }
+}
 
 struct Response<R> {
     peer: Arc<Peer>,
@@ -150,7 +180,7 @@ struct Session {
 }
 
 impl Session {
-    async fn db(&self) -> tokio::sync::MutexGuard<DbHandle> {
+    async fn db(&self) -> tokio::sync::MutexGuard<'_, DbHandle> {
         #[cfg(test)]
         tokio::task::yield_now().await;
         let guard = self.db.lock().await;
@@ -285,7 +315,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
             .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
-            .add_request_handler(forward_find_search_candidates_request)
+            .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
             .add_request_handler(forward_read_only_project_request::<proto::GetProjectSymbols>)
@@ -294,6 +324,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
@@ -309,9 +340,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(
-                forward_read_only_project_request::<proto::LanguageServerIdForName>,
-            )
+            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -342,7 +371,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(forward_mutating_project_request::<proto::MultiLspQuery>)
+            .add_request_handler(multi_lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -354,6 +383,9 @@ impl Server {
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferReloaded>)
             .add_message_handler(broadcast_project_message_from_host::<proto::BufferSaved>)
             .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDiffBases>)
+            .add_message_handler(
+                broadcast_project_message_from_host::<proto::PullWorkspaceDiagnostics>,
+            )
             .add_request_handler(get_users)
             .add_request_handler(fuzzy_search_users)
             .add_request_handler(request_contact)
@@ -384,6 +416,7 @@ impl Server {
             .add_request_handler(get_notifications)
             .add_request_handler(mark_notification_as_read)
             .add_request_handler(move_channel)
+            .add_request_handler(reorder_channel)
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
@@ -398,6 +431,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SynchronizeContexts>)
             .add_request_handler(forward_mutating_project_request::<proto::Stage>)
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
+            .add_request_handler(forward_mutating_project_request::<proto::Stash>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -433,6 +468,16 @@ impl Server {
                 tracing::info!("waiting for cleanup timeout");
                 timeout.await;
                 tracing::info!("cleanup timeout expired, retrieving stale rooms");
+
+                app_state
+                    .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
                 if let Some((room_ids, channel_ids)) = app_state
                     .db
                     .stale_server_resource_ids(&app_state.config.zed_environment, server_id)
@@ -556,6 +601,21 @@ impl Server {
 
                 app_state
                     .db
+                    .delete_stale_channel_chat_participants(
+                        &app_state.config.zed_environment,
+                        server_id,
+                    )
+                    .await
+                    .trace_err();
+
+                app_state
+                    .db
+                    .clear_old_worktree_entries(server_id)
+                    .await
+                    .trace_err();
+
+                app_state
+                    .db
                     .delete_stale_servers(&app_state.config.zed_environment, server_id)
                     .await
                     .trace_err();
@@ -603,7 +663,6 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
-                    let payload_type = M::NAME;
 
                     match result {
                         Err(error) => {
@@ -612,7 +671,6 @@ impl Server {
                                 total_duration_ms,
                                 processing_duration_ms,
                                 queue_duration_ms,
-                                payload_type,
                                 "error handling message"
                             )
                         }
@@ -688,10 +746,13 @@ impl Server {
         address: String,
         principal: Principal,
         zed_version: ZedVersion,
+        release_channel: Option<String>,
+        user_agent: Option<String>,
         geoip_country_code: Option<String>,
         system_id: Option<String>,
         send_connection_id: Option<oneshot::Sender<ConnectionId>>,
         executor: Executor,
+        connection_guard: Option<ConnectionGuard>,
     ) -> impl Future<Output = ()> + use<> {
         let this = self.clone();
         let span = info_span!("handle connection", %address,
@@ -699,9 +760,17 @@ impl Server {
             user_id=field::Empty,
             login=field::Empty,
             impersonator=field::Empty,
+            user_agent=field::Empty,
             geoip_country_code=field::Empty
         );
         principal.update_span(&span);
+        if let Some(user_agent) = user_agent {
+            span.record("user_agent", user_agent);
+        }
+        if let Some(release_channel) = release_channel {
+            span.record("release_channel", release_channel);
+        }
+
         if let Some(country_code) = geoip_country_code.as_ref() {
             span.record("geoip_country_code", country_code);
         }
@@ -710,11 +779,11 @@ impl Server {
         async move {
             if *teardown.borrow() {
                 tracing::error!("server is tearing down");
-                return
+                return;
             }
-            let (connection_id, handle_io, mut incoming_rx) = this
-                .peer
-                .add_connection(connection, {
+
+            let (connection_id, handle_io, mut incoming_rx) =
+                this.peer.add_connection(connection, {
                     let executor = executor.clone();
                     move |duration| executor.sleep(duration)
                 });
@@ -731,10 +800,14 @@ impl Server {
                 }
             };
 
-            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(|supermaven_admin_api_key| Arc::new(SupermavenAdminApi::new(
-                    supermaven_admin_api_key.to_string(),
-                    http_client.clone(),
-                )));
+            let supermaven_client = this.app_state.config.supermaven_admin_api_key.clone().map(
+                |supermaven_admin_api_key| {
+                    Arc::new(SupermavenAdminApi::new(
+                        supermaven_admin_api_key.to_string(),
+                        http_client.clone(),
+                    ))
+                },
+            );
 
             let session = Session {
                 principal: principal.clone(),
@@ -749,10 +822,19 @@ impl Server {
                 supermaven_client,
             };
 
-            if let Err(error) = this.send_initial_client_update(connection_id, zed_version, send_connection_id, &session).await {
+            if let Err(error) = this
+                .send_initial_client_update(
+                    connection_id,
+                    zed_version,
+                    send_connection_id,
+                    &session,
+                )
+                .await
+            {
                 tracing::error!(?error, "failed to send initial client update");
                 return;
             }
+            drop(connection_guard);
 
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
@@ -765,14 +847,22 @@ impl Server {
             //
             // This arrangement ensures we will attempt to process earlier messages first, but fall
             // back to processing messages arrived later in the spirit of making progress.
+            const MAX_CONCURRENT_HANDLERS: usize = 256;
             let mut foreground_message_handlers = FuturesUnordered::new();
-            let concurrent_handlers = Arc::new(Semaphore::new(256));
+            let concurrent_handlers = Arc::new(Semaphore::new(MAX_CONCURRENT_HANDLERS));
+            let get_concurrent_handlers = {
+                let concurrent_handlers = concurrent_handlers.clone();
+                move || MAX_CONCURRENT_HANDLERS - concurrent_handlers.available_permits()
+            };
             loop {
                 let next_message = async {
                     let permit = concurrent_handlers.clone().acquire_owned().await.unwrap();
                     let message = incoming_rx.next().await;
-                    (permit, message)
-                }.fuse();
+                    // Cache the concurrent_handlers here, so that we know what the
+                    // queue looks like as each handler starts
+                    (permit, message, get_concurrent_handlers())
+                }
+                .fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     _ = teardown.changed().fuse() => return,
@@ -784,15 +874,20 @@ impl Server {
                     }
                     _ = foreground_message_handlers.next() => {}
                     next_message = next_message => {
-                        let (permit, message) = next_message;
+                        let (permit, message, concurrent_handlers) = next_message;
                         if let Some(message) = message {
                             let type_name = message.payload_type_name();
                             // note: we copy all the fields from the parent span so we can query them in the logs.
                             // (https://github.com/tokio-rs/tracing/issues/2670).
-                            let span = tracing::info_span!("receive message", %connection_id, %address, type_name,
+                            let span = tracing::info_span!("receive message",
+                                %connection_id,
+                                %address,
+                                type_name,
+                                concurrent_handlers,
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
+                                multi_lsp_query_request=field::Empty,
                             );
                             principal.update_span(&span);
                             let span_enter = span.enter();
@@ -822,12 +917,13 @@ impl Server {
             }
 
             drop(foreground_message_handlers);
-            tracing::info!("signing out");
+            let concurrent_handlers = get_concurrent_handlers();
+            tracing::info!(concurrent_handlers, "signing out");
             if let Err(error) = connection_lost(session, teardown, executor).await {
                 tracing::error!(?error, "error signing out");
             }
-
-        }.instrument(span)
+        }
+        .instrument(span)
     }
 
     async fn send_initial_client_update(
@@ -939,7 +1035,26 @@ impl Server {
         Ok(())
     }
 
-    pub async fn update_plan_for_user(self: &Arc<Self>, user_id: UserId) -> Result<()> {
+    pub async fn update_plan_for_user(
+        self: &Arc<Self>,
+        user_id: UserId,
+        update_user_plan: proto::UpdateUserPlan,
+    ) -> Result<()> {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, update_user_plan.clone())
+                .trace_err();
+        }
+
+        Ok(())
+    }
+
+    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
+    /// message on the Collab server.
+    ///
+    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
+    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
         let user = self
             .app_state
             .db
@@ -955,14 +1070,7 @@ impl Server {
         )
         .await?;
 
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
+        self.update_plan_for_user(user_id, update_user_plan).await
     }
 
     pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
@@ -974,7 +1082,7 @@ impl Server {
         }
     }
 
-    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot {
+    pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
         ServerSnapshot {
             connection_pool: ConnectionPoolGuard {
                 guard: self.connection_pool.lock(),
@@ -1077,6 +1185,35 @@ impl Header for AppVersionHeader {
     }
 }
 
+#[derive(Debug)]
+pub struct ReleaseChannelHeader(String);
+
+impl Header for ReleaseChannelHeader {
+    fn name() -> &'static HeaderName {
+        static ZED_RELEASE_CHANNEL: OnceLock<HeaderName> = OnceLock::new();
+        ZED_RELEASE_CHANNEL.get_or_init(|| HeaderName::from_static("x-zed-release-channel"))
+    }
+
+    fn decode<'i, I>(values: &mut I) -> Result<Self, axum::headers::Error>
+    where
+        Self: Sized,
+        I: Iterator<Item = &'i axum::http::HeaderValue>,
+    {
+        Ok(Self(
+            values
+                .next()
+                .ok_or_else(axum::headers::Error::invalid)?
+                .to_str()
+                .map_err(|_| axum::headers::Error::invalid())?
+                .to_owned(),
+        ))
+    }
+
+    fn encode<E: Extend<axum::http::HeaderValue>>(&self, values: &mut E) {
+        values.extend([self.0.parse().unwrap()]);
+    }
+}
+
 pub fn routes(server: Arc<Server>) -> Router<(), Body> {
     Router::new()
         .route("/rpc", get(handle_websocket_request))
@@ -1092,9 +1229,11 @@ pub fn routes(server: Arc<Server>) -> Router<(), Body> {
 pub async fn handle_websocket_request(
     TypedHeader(ProtocolVersion(protocol_version)): TypedHeader<ProtocolVersion>,
     app_version_header: Option<TypedHeader<AppVersionHeader>>,
+    release_channel_header: Option<TypedHeader<ReleaseChannelHeader>>,
     ConnectInfo(socket_address): ConnectInfo<SocketAddr>,
     Extension(server): Extension<Arc<Server>>,
     Extension(principal): Extension<Principal>,
+    user_agent: Option<TypedHeader<UserAgent>>,
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     system_id_header: Option<TypedHeader<SystemIdHeader>>,
     ws: WebSocketUpgrade,
@@ -1115,6 +1254,8 @@ pub async fn handle_websocket_request(
             .into_response();
     };
 
+    let release_channel = release_channel_header.map(|header| header.0.0);
+
     if !version.can_collaborate() {
         return (
             StatusCode::UPGRADE_REQUIRED,
@@ -1124,6 +1265,19 @@ pub async fn handle_websocket_request(
     }
 
     let socket_address = socket_address.to_string();
+
+    // Acquire connection guard before WebSocket upgrade
+    let connection_guard = match ConnectionGuard::try_acquire() {
+        Ok(guard) => guard,
+        Err(()) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Too many concurrent connections",
+            )
+                .into_response();
+        }
+    };
+
     ws.on_upgrade(move |socket| {
         let socket = socket
             .map_ok(to_tungstenite_message)
@@ -1137,10 +1291,13 @@ pub async fn handle_websocket_request(
                     socket_address,
                     principal,
                     version,
+                    release_channel,
+                    user_agent.map(|header| header.to_string()),
                     country_code_header.map(|header| header.to_string()),
                     system_id_header.map(|header| header.to_string()),
                     None,
                     Executor::Production,
+                    Some(connection_guard),
                 )
                 .await;
         }
@@ -1814,28 +1971,16 @@ async fn join_project(
 
     let db = session.db().await;
     let (project, replica_id) = &mut *db
-        .join_project(project_id, session.connection_id, session.user_id())
+        .join_project(
+            project_id,
+            session.connection_id,
+            session.user_id(),
+            request.committer_name.clone(),
+            request.committer_email.clone(),
+        )
         .await?;
     drop(db);
     tracing::info!(%project_id, "join remote project");
-    join_project_internal(response, session, project, replica_id)
-}
-
-trait JoinProjectInternalResponse {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()>;
-}
-impl JoinProjectInternalResponse for Response<proto::JoinProject> {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
-        Response::<proto::JoinProject>::send(self, result)
-    }
-}
-
-fn join_project_internal(
-    response: impl JoinProjectInternalResponse,
-    session: Session,
-    project: &mut Project,
-    replica_id: &ReplicaId,
-) -> Result<()> {
     let collaborators = project
         .collaborators
         .iter()
@@ -1863,6 +2008,8 @@ fn join_project_internal(
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
             is_host: false,
+            committer_name: request.committer_name.clone(),
+            committer_email: request.committer_email.clone(),
         }),
     };
 
@@ -1877,12 +2024,19 @@ fn join_project_internal(
     }
 
     // First, we send the metadata associated with each worktree.
+    let (language_servers, language_server_capabilities) = project
+        .language_servers
+        .clone()
+        .into_iter()
+        .map(|server| (server.server, server.capabilities))
+        .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
         worktrees: worktrees.clone(),
         replica_id: replica_id.0 as u32,
         collaborators: collaborators.clone(),
-        language_servers: project.language_servers.clone(),
+        language_servers,
+        language_server_capabilities,
         role: project.role.into(),
     })?;
 
@@ -1941,7 +2095,8 @@ fn join_project_internal(
             session.connection_id,
             proto::UpdateLanguageServer {
                 project_id: project_id.to_proto(),
-                language_server_id: language_server.id,
+                server_name: Some(language_server.server.name.clone()),
+                language_server_id: language_server.server.id,
                 variant: Some(
                     proto::update_language_server::Variant::DiskBasedDiagnosticsUpdated(
                         proto::LspDiskBasedDiagnosticsUpdated {},
@@ -2153,9 +2308,17 @@ async fn update_language_server(
     session: Session,
 ) -> Result<()> {
     let project_id = ProjectId::from_proto(request.project_id);
-    let project_connection_ids = session
-        .db()
-        .await
+    let db = session.db().await;
+
+    if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+    {
+        if let Some(capabilities) = update.capabilities.clone() {
+            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+                .await?;
+        }
+    }
+
+    let project_connection_ids = db
         .project_connection_ids(project_id, session.connection_id, true)
         .await?;
     broadcast(
@@ -2194,25 +2357,6 @@ where
     Ok(())
 }
 
-async fn forward_find_search_candidates_request(
-    request: proto::FindSearchCandidates,
-    response: Response<proto::FindSearchCandidates>,
-    session: Session,
-) -> Result<()> {
-    let project_id = ProjectId::from_proto(request.remote_entity_id());
-    let host_connection_id = session
-        .db()
-        .await
-        .host_for_read_only_project_request(project_id, session.connection_id)
-        .await?;
-    let payload = session
-        .peer
-        .forward_request(session.connection_id, host_connection_id, request)
-        .await?;
-    response.send(payload)?;
-    Ok(())
-}
-
 /// forward a project request to the host. These requests are disallowed
 /// for guests.
 async fn forward_mutating_project_request<T>(
@@ -2236,6 +2380,16 @@ where
         .await?;
     response.send(payload)?;
     Ok(())
+}
+
+async fn multi_lsp_query(
+    request: MultiLspQuery,
+    response: Response<MultiLspQuery>,
+    session: Session,
+) -> Result<()> {
+    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
+    tracing::info!("multi_lsp_query message received");
+    forward_mutating_project_request(request, response, session).await
 }
 
 /// Notify other participants that a new buffer has been created
@@ -2491,7 +2645,6 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
-            email: user.email_address,
             name: user.name,
         })
         .collect();
@@ -2525,7 +2678,6 @@ async fn fuzzy_search_users(
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
             name: user.name,
-            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
@@ -2743,8 +2895,12 @@ async fn make_update_user_plan_message(
         (None, None)
     };
 
-    let account_too_young =
-        !matches!(plan, proto::Plan::ZedPro) && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
+    let bypass_account_age_check = feature_flags
+        .iter()
+        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
+    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
+        && !bypass_account_age_check
+        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
 
     Ok(proto::UpdateUserPlan {
         plan: plan.into(),
@@ -2766,60 +2922,115 @@ async fn make_update_user_plan_message(
         account_too_young: Some(account_too_young),
         has_overdue_invoices: billing_customer
             .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: usage.map(|usage| {
-            let plan = match plan {
-                proto::Plan::Free => zed_llm_client::Plan::ZedFree,
-                proto::Plan::ZedPro => zed_llm_client::Plan::ZedPro,
-                proto::Plan::ZedProTrial => zed_llm_client::Plan::ZedProTrial,
-            };
-
-            let model_requests_limit = match plan.model_requests_limit() {
-                zed_llm_client::UsageLimit::Limited(limit) => {
-                    let limit = if plan == zed_llm_client::Plan::ZedProTrial
-                        && feature_flags
-                            .iter()
-                            .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-                    {
-                        1_000
-                    } else {
-                        limit
-                    };
-
-                    zed_llm_client::UsageLimit::Limited(limit)
-                }
-                zed_llm_client::UsageLimit::Unlimited => zed_llm_client::UsageLimit::Unlimited,
-            };
-
-            proto::SubscriptionUsage {
-                model_requests_usage_amount: usage.model_requests as u32,
-                model_requests_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match model_requests_limit {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-                edit_predictions_usage_amount: usage.edit_predictions as u32,
-                edit_predictions_usage_limit: Some(proto::UsageLimit {
-                    variant: Some(match plan.edit_predictions_limit() {
-                        zed_llm_client::UsageLimit::Limited(limit) => {
-                            proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                                limit: limit as u32,
-                            })
-                        }
-                        zed_llm_client::UsageLimit::Unlimited => {
-                            proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                        }
-                    }),
-                }),
-            }
-        }),
+        usage: Some(
+            usage
+                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
+                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
+        ),
     })
+}
+
+fn model_requests_limit(
+    plan: cloud_llm_client::Plan,
+    feature_flags: &Vec<String>,
+) -> cloud_llm_client::UsageLimit {
+    match plan.model_requests_limit() {
+        cloud_llm_client::UsageLimit::Limited(limit) => {
+            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
+                && feature_flags
+                    .iter()
+                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
+            {
+                1_000
+            } else {
+                limit
+            };
+
+            cloud_llm_client::UsageLimit::Limited(limit)
+        }
+        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
+    }
+}
+
+fn subscription_usage_to_proto(
+    plan: proto::Plan,
+    usage: crate::llm::db::subscription_usage::Model,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: usage.model_requests as u32,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: usage.edit_predictions as u32,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
+}
+
+fn make_default_subscription_usage(
+    plan: proto::Plan,
+    feature_flags: &Vec<String>,
+) -> proto::SubscriptionUsage {
+    let plan = match plan {
+        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
+        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
+        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
+    };
+
+    proto::SubscriptionUsage {
+        model_requests_usage_amount: 0,
+        model_requests_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match model_requests_limit(plan, feature_flags) {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+        edit_predictions_usage_amount: 0,
+        edit_predictions_usage_limit: Some(proto::UsageLimit {
+            variant: Some(match plan.edit_predictions_limit() {
+                cloud_llm_client::UsageLimit::Limited(limit) => {
+                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
+                        limit: limit as u32,
+                    })
+                }
+                cloud_llm_client::UsageLimit::Unlimited => {
+                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
+                }
+            }),
+        }),
+    }
 }
 
 async fn update_user_plan(session: &Session) -> Result<()> {
@@ -3189,6 +3400,51 @@ async fn move_channel(
         };
 
         session.peer.send(connection_id, update.clone())?;
+    }
+
+    response.send(Ack {})?;
+    Ok(())
+}
+
+async fn reorder_channel(
+    request: proto::ReorderChannel,
+    response: Response<proto::ReorderChannel>,
+    session: Session,
+) -> Result<()> {
+    let channel_id = ChannelId::from_proto(request.channel_id);
+    let direction = request.direction();
+
+    let updated_channels = session
+        .db()
+        .await
+        .reorder_channel(channel_id, direction, session.user_id())
+        .await?;
+
+    if let Some(root_id) = updated_channels.first().map(|channel| channel.root_id()) {
+        let connection_pool = session.connection_pool().await;
+        for (connection_id, role) in connection_pool.channel_connection_ids(root_id) {
+            let channels = updated_channels
+                .iter()
+                .filter_map(|channel| {
+                    if role.can_see_channel(channel.visibility) {
+                        Some(channel.to_proto())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            if channels.is_empty() {
+                continue;
+            }
+
+            let update = proto::UpdateChannels {
+                channels,
+                ..Default::default()
+            };
+
+            session.peer.send(connection_id, update.clone())?;
+        }
     }
 
     response.send(Ack {})?;
@@ -3997,11 +4253,15 @@ async fn accept_terms_of_service(
     response.send(proto::AcceptTermsOfServiceResponse {
         accepted_tos_at: accepted_tos_at.timestamp() as u64,
     })?;
+
+    // When the user accepts the terms of service, we want to refresh their LLM
+    // token to grant access.
+    session
+        .peer
+        .send(session.connection_id, proto::RefreshLlmToken {})?;
+
     Ok(())
 }
-
-/// The minimum account age an account must have in order to use the LLM service.
-pub const MIN_ACCOUNT_AGE_FOR_LLM_USE: chrono::Duration = chrono::Duration::days(30);
 
 async fn get_llm_api_token(
     _request: proto::GetLlmToken,

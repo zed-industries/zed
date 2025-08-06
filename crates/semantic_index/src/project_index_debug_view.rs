@@ -6,7 +6,7 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::Settings;
-use std::{path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 use theme::ThemeSettings;
 use ui::prelude::*;
 use workspace::item::Item;
@@ -115,21 +115,9 @@ impl ProjectIndexDebugView {
                 .collect::<Vec<_>>();
 
             this.update(cx, |this, cx| {
-                let view = cx.entity().downgrade();
                 this.selected_path = Some(PathState {
                     path: file_path,
-                    list_state: ListState::new(
-                        chunks.len(),
-                        gpui::ListAlignment::Top,
-                        px(100.),
-                        move |ix, _, cx| {
-                            if let Some(view) = view.upgrade() {
-                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
-                            } else {
-                                div().into_any()
-                            }
-                        },
-                    ),
+                    list_state: ListState::new(chunks.len(), gpui::ListAlignment::Top, px(100.)),
                     chunks,
                 });
                 cx.notify();
@@ -219,15 +207,20 @@ impl Render for ProjectIndexDebugView {
                             cx.notify();
                         })),
                 )
-                .child(list(selected_path.list_state.clone()).size_full())
+                .child(
+                    list(
+                        selected_path.list_state.clone(),
+                        cx.processor(|this, ix, _, cx| this.render_chunk(ix, cx)),
+                    )
+                    .size_full(),
+                )
                 .size_full()
                 .into_any_element()
         } else {
             let mut list = uniform_list(
-                cx.entity().clone(),
                 "ProjectIndexDebugView",
                 self.rows.len(),
-                move |this, range, _, cx| {
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     this.rows[range]
                         .iter()
                         .enumerate()
@@ -262,7 +255,7 @@ impl Render for ProjectIndexDebugView {
                                 })),
                         })
                         .collect()
-                },
+                }),
             )
             .track_scroll(self.list_scroll_handle.clone())
             .size_full()

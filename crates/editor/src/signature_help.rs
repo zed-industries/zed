@@ -1,18 +1,22 @@
 use crate::actions::ShowSignatureHelp;
-use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
+use crate::hover_popover::open_markdown_url;
+use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp, hover_markdown_style};
 use gpui::{
-    App, Context, HighlightStyle, MouseButton, Size, StyledText, Task, TextStyle, Window,
-    combine_highlights,
+    App, Context, Div, Entity, HighlightStyle, MouseButton, ScrollHandle, Size, Stateful,
+    StyledText, Task, TextStyle, Window, combine_highlights,
 };
 use language::BufferSnapshot;
+use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
 use text::Rope;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, InteractiveElement, IntoElement, ParentElement, Pixels, SharedString,
-    StatefulInteractiveElement, Styled, StyledExt, div, relative,
+    ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
+    IconButtonShape, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
+    LabelSize, ParentElement, Pixels, Scrollbar, ScrollbarState, SharedString,
+    StatefulInteractiveElement, Styled, StyledExt, div, px, relative,
 };
 
 // Language-specific settings may define quotes as "brackets", so filter them out separately.
@@ -37,15 +41,14 @@ impl Editor {
             .map(|auto_signature_help| !auto_signature_help)
             .or_else(|| Some(!EditorSettings::get_global(cx).auto_signature_help));
         match self.auto_signature_help {
-            Some(auto_signature_help) if auto_signature_help => {
+            Some(true) => {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
-            Some(_) => {
+            Some(false) => {
                 self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
             }
             None => {}
         }
-        cx.notify();
     }
 
     pub(super) fn hide_signature_help(
@@ -54,7 +57,7 @@ impl Editor {
         signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
         if self.signature_help_state.is_shown() {
-            self.signature_help_state.kill_task();
+            self.signature_help_state.task = None;
             self.signature_help_state.hide(signature_help_hidden_by);
             cx.notify();
             true
@@ -187,31 +190,62 @@ impl Editor {
                         };
 
                         if let Some(language) = language {
-                            let text = Rope::from(signature_help.label.clone());
-                            let highlights = language
-                                .highlight_text(&text, 0..signature_help.label.len())
-                                .into_iter()
-                                .flat_map(|(range, highlight_id)| {
-                                    Some((range, highlight_id.style(&cx.theme().syntax())?))
-                                });
-                            signature_help.highlights =
-                                combine_highlights(signature_help.highlights, highlights).collect()
+                            for signature in &mut signature_help.signatures {
+                                let text = Rope::from(signature.label.to_string());
+                                let highlights = language
+                                    .highlight_text(&text, 0..signature.label.len())
+                                    .into_iter()
+                                    .flat_map(|(range, highlight_id)| {
+                                        Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                    });
+                                signature.highlights =
+                                    combine_highlights(signature.highlights.clone(), highlights)
+                                        .collect();
+                            }
                         }
                         let settings = ThemeSettings::get_global(cx);
-                        let text_style = TextStyle {
+                        let style = TextStyle {
                             color: cx.theme().colors().text,
                             font_family: settings.buffer_font.family.clone(),
                             font_fallbacks: settings.buffer_font.fallbacks.clone(),
                             font_size: settings.buffer_font_size(cx).into(),
                             font_weight: settings.buffer_font.weight,
                             line_height: relative(settings.buffer_line_height.value()),
-                            ..Default::default()
+                            ..TextStyle::default()
                         };
+                        let scroll_handle = ScrollHandle::new();
+                        let signatures = signature_help
+                            .signatures
+                            .into_iter()
+                            .map(|s| SignatureHelp {
+                                label: s.label,
+                                documentation: s.documentation,
+                                highlights: s.highlights,
+                                active_parameter: s.active_parameter,
+                                parameter_documentation: s
+                                    .active_parameter
+                                    .and_then(|idx| s.parameters.get(idx))
+                                    .and_then(|param| param.documentation.clone()),
+                            })
+                            .collect::<Vec<_>>();
+
+                        if signatures.is_empty() {
+                            editor
+                                .signature_help_state
+                                .hide(SignatureHelpHiddenBy::AutoClose);
+                            return;
+                        }
+
+                        let current_signature = signature_help
+                            .active_signature
+                            .min(signatures.len().saturating_sub(1));
 
                         let signature_help_popover = SignatureHelpPopover {
-                            label: signature_help.label.into(),
-                            highlights: signature_help.highlights,
-                            style: text_style,
+                            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                            style,
+                            signatures,
+                            current_signature,
+                            scroll_handle,
                         };
                         editor
                             .signature_help_state
@@ -231,13 +265,9 @@ pub struct SignatureHelpState {
 }
 
 impl SignatureHelpState {
-    pub fn set_task(&mut self, task: Task<()>) {
+    fn set_task(&mut self, task: Task<()>) {
         self.task = Some(task);
         self.hidden_by = None;
-    }
-
-    pub fn kill_task(&mut self) {
-        self.task = None;
     }
 
     #[cfg(test)]
@@ -249,24 +279,30 @@ impl SignatureHelpState {
         self.popover.as_mut()
     }
 
-    pub fn set_popover(&mut self, popover: SignatureHelpPopover) {
+    fn set_popover(&mut self, popover: SignatureHelpPopover) {
         self.popover = Some(popover);
         self.hidden_by = None;
     }
 
-    pub fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
+    fn hide(&mut self, hidden_by: SignatureHelpHiddenBy) {
         if self.hidden_by.is_none() {
             self.popover = None;
             self.hidden_by = Some(hidden_by);
         }
     }
 
-    pub fn hidden_by_selection(&self) -> bool {
+    fn hidden_by_selection(&self) -> bool {
         self.hidden_by == Some(SignatureHelpHiddenBy::Selection)
     }
 
     pub fn is_shown(&self) -> bool {
         self.popover.is_some()
+    }
+
+    pub fn has_multiple_signatures(&self) -> bool {
+        self.popover
+            .as_ref()
+            .is_some_and(|popover| popover.signatures.len() > 1)
     }
 }
 
@@ -278,28 +314,170 @@ impl SignatureHelpState {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct SignatureHelp {
+    pub(crate) label: SharedString,
+    documentation: Option<Entity<Markdown>>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    active_parameter: Option<usize>,
+    parameter_documentation: Option<Entity<Markdown>>,
+}
+
+#[derive(Clone, Debug)]
 pub struct SignatureHelpPopover {
-    pub label: SharedString,
     pub style: TextStyle,
-    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+    pub signatures: Vec<SignatureHelp>,
+    pub current_signature: usize,
+    scroll_handle: ScrollHandle,
+    scrollbar_state: ScrollbarState,
 }
 
 impl SignatureHelpPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut Context<Editor>) -> AnyElement {
-        div()
-            .id("signature_help_popover")
-            .elevation_2(cx)
-            .overflow_y_scroll()
-            .max_w(max_size.width)
-            .max_h(max_size.height)
-            .on_mouse_move(|_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    pub fn render(
+        &mut self,
+        max_size: Size<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> AnyElement {
+        let Some(signature) = self.signatures.get(self.current_signature) else {
+            return div().into_any_element();
+        };
+
+        let main_content = div()
+            .occlude()
+            .p_2()
             .child(
-                div().px_2().py_0p5().child(
-                    StyledText::new(self.label.clone())
-                        .with_default_highlights(&self.style, self.highlights.iter().cloned()),
-                ),
+                div()
+                    .id("signature_help_container")
+                    .overflow_y_scroll()
+                    .max_w(max_size.width)
+                    .max_h(max_size.height)
+                    .track_scroll(&self.scroll_handle)
+                    .child(
+                        StyledText::new(signature.label.clone()).with_default_highlights(
+                            &self.style,
+                            signature.highlights.iter().cloned(),
+                        ),
+                    )
+                    .when_some(
+                        signature.parameter_documentation.clone(),
+                        |this, param_doc| {
+                            this.child(div().h_px().bg(cx.theme().colors().border_variant).my_1())
+                                .child(
+                                    MarkdownElement::new(
+                                        param_doc,
+                                        hover_markdown_style(window, cx),
+                                    )
+                                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                        copy_button: false,
+                                        border: false,
+                                        copy_button_on_hover: false,
+                                    })
+                                    .on_url_click(open_markdown_url),
+                                )
+                        },
+                    )
+                    .when_some(signature.documentation.clone(), |this, description| {
+                        this.child(div().h_px().bg(cx.theme().colors().border_variant).my_1())
+                            .child(
+                                MarkdownElement::new(description, hover_markdown_style(window, cx))
+                                    .code_block_renderer(markdown::CodeBlockRenderer::Default {
+                                        copy_button: false,
+                                        border: false,
+                                        copy_button_on_hover: false,
+                                    })
+                                    .on_url_click(open_markdown_url),
+                            )
+                    }),
             )
+            .child(self.render_vertical_scrollbar(cx));
+        let controls = if self.signatures.len() > 1 {
+            let prev_button = IconButton::new("signature_help_prev", IconName::ChevronUp)
+                .shape(IconButtonShape::Square)
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .tooltip(move |window, cx| {
+                    ui::Tooltip::for_action(
+                        "Previous Signature",
+                        &crate::SignatureHelpPrevious,
+                        window,
+                        cx,
+                    )
+                })
+                .on_click(cx.listener(|editor, _, window, cx| {
+                    editor.signature_help_prev(&crate::SignatureHelpPrevious, window, cx);
+                }));
+
+            let next_button = IconButton::new("signature_help_next", IconName::ChevronDown)
+                .shape(IconButtonShape::Square)
+                .style(ButtonStyle::Subtle)
+                .icon_size(IconSize::Small)
+                .tooltip(move |window, cx| {
+                    ui::Tooltip::for_action("Next Signature", &crate::SignatureHelpNext, window, cx)
+                })
+                .on_click(cx.listener(|editor, _, window, cx| {
+                    editor.signature_help_next(&crate::SignatureHelpNext, window, cx);
+                }));
+
+            let page = Label::new(format!(
+                "{}/{}",
+                self.current_signature + 1,
+                self.signatures.len()
+            ))
+            .size(LabelSize::Small);
+
+            Some(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_0p5()
+                    .px_0p5()
+                    .py_0p5()
+                    .children([
+                        prev_button.into_any_element(),
+                        div().child(page).into_any_element(),
+                        next_button.into_any_element(),
+                    ])
+                    .into_any_element(),
+            )
+        } else {
+            None
+        };
+        div()
+            .elevation_2(cx)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .flex()
+            .flex_row()
+            .when_some(controls, |this, controls| {
+                this.children(vec![
+                    div().flex().items_end().child(controls),
+                    div().w_px().bg(cx.theme().colors().border_variant),
+                ])
+            })
+            .child(main_content)
             .into_any_element()
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("signature_help_scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| cx.stop_propagation())
+            .on_any_mouse_down(|_, _, cx| cx.stop_propagation())
+            .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_1()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }

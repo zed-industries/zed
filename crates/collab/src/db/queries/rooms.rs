@@ -553,6 +553,8 @@ impl Database {
                             user_id: collaborator.user_id,
                             replica_id: collaborator.replica_id,
                             is_host: collaborator.is_host,
+                            committer_name: collaborator.committer_name.clone(),
+                            committer_email: collaborator.committer_email.clone(),
                         })
                         .collect(),
                     worktrees: reshared_project.worktrees.clone(),
@@ -802,10 +804,13 @@ impl Database {
             .all(tx)
             .await?
             .into_iter()
-            .map(|language_server| proto::LanguageServer {
-                id: language_server.id as u64,
-                name: language_server.name,
-                worktree_id: None,
+            .map(|language_server| LanguageServer {
+                server: proto::LanguageServer {
+                    id: language_server.id as u64,
+                    name: language_server.name,
+                    worktree_id: None,
+                },
+                capabilities: language_server.capabilities,
             })
             .collect::<Vec<_>>();
 
@@ -857,6 +862,8 @@ impl Database {
                 user_id: collaborator.user_id,
                 replica_id: collaborator.replica_id,
                 is_host: collaborator.is_host,
+                committer_name: collaborator.committer_name,
+                committer_email: collaborator.committer_email,
             })
             .collect::<Vec<_>>();
 

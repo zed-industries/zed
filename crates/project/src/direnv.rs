@@ -9,7 +9,6 @@ pub enum DirenvError {
     NotFound,
     FailedRun,
     NonZeroExit(ExitStatus, Vec<u8>),
-    EmptyOutput,
     InvalidJson,
 }
 
@@ -22,7 +21,6 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
                     "Failed to run direnv. See logs for more info",
                 )))
             }
-            DirenvError::EmptyOutput => None,
             DirenvError::InvalidJson => Some(EnvironmentErrorMessage(String::from(
                 "Direnv returned invalid json. See logs for more info",
             ))),
@@ -34,13 +32,14 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
 pub async fn load_direnv_environment(
     env: &HashMap<String, String>,
     dir: &Path,
-) -> Result<HashMap<String, String>, DirenvError> {
+) -> Result<HashMap<String, Option<String>>, DirenvError> {
     let Ok(direnv_path) = which::which("direnv") else {
         return Err(DirenvError::NotFound);
     };
 
-    let Some(direnv_output) = smol::process::Command::new(direnv_path)
-        .args(["export", "json"])
+    let args = &["export", "json"];
+    let Some(direnv_output) = smol::process::Command::new(&direnv_path)
+        .args(args)
         .envs(env)
         .env("TERM", "dumb")
         .current_dir(dir)
@@ -65,12 +64,21 @@ pub async fn load_direnv_environment(
 
     let output = String::from_utf8_lossy(&direnv_output.stdout);
     if output.is_empty() {
-        return Err(DirenvError::EmptyOutput);
+        // direnv outputs nothing when it has no changes to apply to environment variables
+        return Ok(HashMap::new());
     }
 
-    let Some(env) = serde_json::from_str(&output).log_err() else {
-        return Err(DirenvError::InvalidJson);
-    };
-
-    Ok(env)
+    match serde_json::from_str(&output) {
+        Ok(env) => Ok(env),
+        Err(err) => {
+            log::error!(
+                "json parse error {}, while parsing output of `{} {}`:\n{}",
+                err,
+                direnv_path.display(),
+                args.join(" "),
+                output
+            );
+            Err(DirenvError::InvalidJson)
+        }
+    }
 }

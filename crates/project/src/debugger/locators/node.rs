@@ -1,4 +1,4 @@
-use std::{borrow::Cow, path::Path};
+use std::borrow::Cow;
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -19,42 +19,36 @@ impl DapLocator for NodeLocator {
     }
 
     /// Determines whether this locator can generate debug target for given task.
-    fn create_scenario(
+    async fn create_scenario(
         &self,
         build_config: &TaskTemplate,
         resolved_label: &str,
-        adapter: DebugAdapterName,
+        adapter: &DebugAdapterName,
     ) -> Option<DebugScenario> {
-        // TODO(debugger) fix issues with `await` breakpoint step
-        if cfg!(not(debug_assertions)) {
+        if adapter.0.as_ref() != "JavaScript" {
             return None;
         }
-
-        if adapter.as_ref() != "JavaScript" {
+        if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value()
+            && build_config.command != "npm"
+            && build_config.command != "pnpm"
+            && build_config.command != "yarn"
+        {
             return None;
         }
-        if build_config.command != TYPESCRIPT_RUNNER_VARIABLE.template_value() {
-            return None;
-        }
-        let test_library = build_config.args.first()?;
-        let program_path = Path::new("$ZED_WORKTREE_ROOT")
-            .join("node_modules")
-            .join(".bin")
-            .join(test_library);
-        let args = build_config.args[1..].to_vec();
 
         let config = serde_json::json!({
             "request": "launch",
             "type": "pwa-node",
-            "program": program_path,
-            "args": args,
+            "args": build_config.args.clone(),
             "cwd": build_config.cwd.clone(),
+            "runtimeExecutable": build_config.command.clone(),
+            "env": build_config.env.clone(),
             "runtimeArgs": ["--inspect-brk"],
             "console": "integratedTerminal",
         });
 
         Some(DebugScenario {
-            adapter: adapter.0,
+            adapter: adapter.0.clone(),
             label: resolved_label.to_string().into(),
             build: None,
             config,
@@ -63,6 +57,6 @@ impl DapLocator for NodeLocator {
     }
 
     async fn run(&self, _: SpawnInTerminal) -> Result<DebugRequest> {
-        bail!("Python locator should not require DapLocator::run to be ran");
+        bail!("JavaScript locator should not require DapLocator::run to be ran");
     }
 }

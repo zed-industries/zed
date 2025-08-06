@@ -1,15 +1,15 @@
 use crate::{
     db::{
         Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
-        tests::{channel_tree, new_test_connection, new_test_user},
+        tests::{assert_channel_tree_matches, channel_tree, new_test_connection, new_test_user},
     },
     test_both_dbs,
 };
 use rpc::{
     ConnectionId,
-    proto::{self},
+    proto::{self, reorder_channel},
 };
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 test_both_dbs!(test_channels, test_channels_postgres, test_channels_sqlite);
 
@@ -59,28 +59,28 @@ async fn test_channels(db: &Arc<Database>) {
         .unwrap();
 
     let result = db.get_channels_for_user(a_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
+            (livestreaming_id, &[zed_id], "livestreaming"),
             (replace_id, &[zed_id], "replace"),
             (rust_id, &[], "rust"),
             (cargo_id, &[rust_id], "cargo"),
-            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra",)
-        ],)
+            (cargo_ra_id, &[rust_id, cargo_id], "cargo-ra"),
+        ]),
     );
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
-            (replace_id, &[zed_id], "replace")
-        ],)
+            (livestreaming_id, &[zed_id], "livestreaming"),
+            (replace_id, &[zed_id], "replace"),
+        ]),
     );
 
     // Update member permissions
@@ -94,14 +94,14 @@ async fn test_channels(db: &Arc<Database>) {
     assert!(set_channel_admin.is_ok());
 
     let result = db.get_channels_for_user(b_id).await.unwrap();
-    assert_eq!(
+    assert_channel_tree_matches(
         result.channels,
         channel_tree(&[
             (zed_id, &[], "zed"),
             (crdb_id, &[zed_id], "crdb"),
-            (livestreaming_id, &[zed_id], "livestreaming",),
-            (replace_id, &[zed_id], "replace")
-        ],)
+            (livestreaming_id, &[zed_id], "livestreaming"),
+            (replace_id, &[zed_id], "replace"),
+        ]),
     );
 
     // Remove a single channel
@@ -313,8 +313,8 @@ async fn test_channel_renames(db: &Arc<Database>) {
 
 test_both_dbs!(
     test_db_channel_moving,
-    test_channels_moving_postgres,
-    test_channels_moving_sqlite
+    test_db_channel_moving_postgres,
+    test_db_channel_moving_sqlite
 );
 
 async fn test_db_channel_moving(db: &Arc<Database>) {
@@ -343,16 +343,14 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
         .await
         .unwrap();
 
-    let livestreaming_dag_id = db
-        .create_sub_channel("livestreaming_dag", livestreaming_id, a_id)
+    let livestreaming_sub_id = db
+        .create_sub_channel("livestreaming_sub", livestreaming_id, a_id)
         .await
         .unwrap();
 
-    // ========================================================================
     // sanity check
-    // Initial DAG:
     //     /- gpui2
-    // zed -- crdb - livestreaming - livestreaming_dag
+    // zed -- crdb - livestreaming - livestreaming_sub
     let result = db.get_channels_for_user(a_id).await.unwrap();
     assert_channel_tree(
         result.channels,
@@ -360,8 +358,240 @@ async fn test_db_channel_moving(db: &Arc<Database>) {
             (zed_id, &[]),
             (crdb_id, &[zed_id]),
             (livestreaming_id, &[zed_id, crdb_id]),
-            (livestreaming_dag_id, &[zed_id, crdb_id, livestreaming_id]),
+            (livestreaming_sub_id, &[zed_id, crdb_id, livestreaming_id]),
             (gpui2_id, &[zed_id]),
+        ],
+    );
+
+    // Check that we can do a simple leaf -> leaf move
+    db.move_channel(livestreaming_sub_id, crdb_id, a_id)
+        .await
+        .unwrap();
+
+    //     /- gpui2
+    // zed -- crdb -- livestreaming
+    //             \- livestreaming_sub
+    let result = db.get_channels_for_user(a_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (crdb_id, &[zed_id]),
+            (livestreaming_id, &[zed_id, crdb_id]),
+            (livestreaming_sub_id, &[zed_id, crdb_id]),
+            (gpui2_id, &[zed_id]),
+        ],
+    );
+
+    // Check that we can move a whole subtree at once
+    db.move_channel(crdb_id, gpui2_id, a_id).await.unwrap();
+
+    // zed -- gpui2 -- crdb -- livestreaming
+    //                      \- livestreaming_sub
+    let result = db.get_channels_for_user(a_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (gpui2_id, &[zed_id]),
+            (crdb_id, &[zed_id, gpui2_id]),
+            (livestreaming_id, &[zed_id, gpui2_id, crdb_id]),
+            (livestreaming_sub_id, &[zed_id, gpui2_id, crdb_id]),
+        ],
+    );
+}
+
+test_both_dbs!(
+    test_channel_reordering,
+    test_channel_reordering_postgres,
+    test_channel_reordering_sqlite
+);
+
+async fn test_channel_reordering(db: &Arc<Database>) {
+    let admin_id = db
+        .create_user(
+            "admin@example.com",
+            None,
+            false,
+            NewUserParams {
+                github_login: "admin".into(),
+                github_user_id: 1,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    let user_id = db
+        .create_user(
+            "user@example.com",
+            None,
+            false,
+            NewUserParams {
+                github_login: "user".into(),
+                github_user_id: 2,
+            },
+        )
+        .await
+        .unwrap()
+        .user_id;
+
+    // Create a root channel with some sub-channels
+    let root_id = db.create_root_channel("root", admin_id).await.unwrap();
+
+    // Invite user to root channel so they can see the sub-channels
+    db.invite_channel_member(root_id, user_id, admin_id, ChannelRole::Member)
+        .await
+        .unwrap();
+    db.respond_to_channel_invite(root_id, user_id, true)
+        .await
+        .unwrap();
+
+    let alpha_id = db
+        .create_sub_channel("alpha", root_id, admin_id)
+        .await
+        .unwrap();
+    let beta_id = db
+        .create_sub_channel("beta", root_id, admin_id)
+        .await
+        .unwrap();
+    let gamma_id = db
+        .create_sub_channel("gamma", root_id, admin_id)
+        .await
+        .unwrap();
+
+    // Initial order should be: root, alpha (order=1), beta (order=2), gamma (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (alpha_id, &[root_id], 1),
+            (beta_id, &[root_id], 2),
+            (gamma_id, &[root_id], 3),
+        ],
+    );
+
+    // Test moving beta up (should swap with alpha)
+    let updated_channels = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, admin_id)
+        .await
+        .unwrap();
+
+    // Verify that beta and alpha were returned as updated
+    assert_eq!(updated_channels.len(), 2);
+    let updated_ids: std::collections::HashSet<_> = updated_channels.iter().map(|c| c.id).collect();
+    assert!(updated_ids.contains(&alpha_id));
+    assert!(updated_ids.contains(&beta_id));
+
+    // Now order should be: root, beta (order=1), alpha (order=2), gamma (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (alpha_id, &[root_id], 2),
+            (gamma_id, &[root_id], 3),
+        ],
+    );
+
+    // Test moving gamma down (should be no-op since it's already last)
+    let updated_channels = db
+        .reorder_channel(gamma_id, reorder_channel::Direction::Down, admin_id)
+        .await
+        .unwrap();
+
+    // Should return just nothing
+    assert_eq!(updated_channels.len(), 0);
+
+    // Test moving alpha down (should swap with gamma)
+    let updated_channels = db
+        .reorder_channel(alpha_id, reorder_channel::Direction::Down, admin_id)
+        .await
+        .unwrap();
+
+    // Verify that alpha and gamma were returned as updated
+    assert_eq!(updated_channels.len(), 2);
+    let updated_ids: std::collections::HashSet<_> = updated_channels.iter().map(|c| c.id).collect();
+    assert!(updated_ids.contains(&alpha_id));
+    assert!(updated_ids.contains(&gamma_id));
+
+    // Now order should be: root, beta (order=1), gamma (order=2), alpha (order=3)
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+        ],
+    );
+
+    // Test that non-admin cannot reorder
+    let reorder_result = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, user_id)
+        .await;
+    assert!(reorder_result.is_err());
+
+    // Test moving beta up (should be no-op since it's already first)
+    let updated_channels = db
+        .reorder_channel(beta_id, reorder_channel::Direction::Up, admin_id)
+        .await
+        .unwrap();
+
+    // Should return nothing
+    assert_eq!(updated_channels.len(), 0);
+
+    // Adding a channel to an existing ordering should add it to the end
+    let delta_id = db
+        .create_sub_channel("delta", root_id, admin_id)
+        .await
+        .unwrap();
+
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+        ],
+    );
+
+    // And moving a channel into an existing ordering should add it to the end
+    let eta_id = db
+        .create_sub_channel("eta", delta_id, admin_id)
+        .await
+        .unwrap();
+
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+            (eta_id, &[root_id, delta_id], 1),
+        ],
+    );
+
+    db.move_channel(eta_id, root_id, admin_id).await.unwrap();
+    let result = db.get_channels_for_user(admin_id).await.unwrap();
+    assert_channel_tree_order(
+        result.channels,
+        &[
+            (root_id, &[], 1),
+            (beta_id, &[root_id], 1),
+            (gamma_id, &[root_id], 2),
+            (alpha_id, &[root_id], 3),
+            (delta_id, &[root_id], 4),
+            (eta_id, &[root_id], 5),
         ],
     );
 }
@@ -411,6 +641,20 @@ async fn test_db_channel_moving_bugs(db: &Arc<Database>) {
 
     // Can't move a channel into its ancestor
     db.move_channel(projects_id, livestreaming_id, user_id)
+        .await
+        .unwrap_err();
+    let result = db.get_channels_for_user(user_id).await.unwrap();
+    assert_channel_tree(
+        result.channels,
+        &[
+            (zed_id, &[]),
+            (projects_id, &[zed_id]),
+            (livestreaming_id, &[zed_id, projects_id]),
+        ],
+    );
+
+    // Can't un-root a root channel
+    db.move_channel(zed_id, livestreaming_id, user_id)
         .await
         .unwrap_err();
     let result = db.get_channels_for_user(user_id).await.unwrap();
@@ -745,10 +989,29 @@ fn assert_channel_tree(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId
     let actual = actual
         .iter()
         .map(|channel| (channel.id, channel.parent_path.as_slice()))
-        .collect::<Vec<_>>();
-    pretty_assertions::assert_eq!(
-        actual,
-        expected.to_vec(),
-        "wrong channel ids and parent paths"
-    );
+        .collect::<HashSet<_>>();
+    let expected = expected
+        .iter()
+        .map(|(id, parents)| (*id, *parents))
+        .collect::<HashSet<_>>();
+    pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
+}
+
+#[track_caller]
+fn assert_channel_tree_order(actual: Vec<Channel>, expected: &[(ChannelId, &[ChannelId], i32)]) {
+    let actual = actual
+        .iter()
+        .map(|channel| {
+            (
+                channel.id,
+                channel.parent_path.as_slice(),
+                channel.channel_order,
+            )
+        })
+        .collect::<HashSet<_>>();
+    let expected = expected
+        .iter()
+        .map(|(id, parents, order)| (*id, *parents, *order))
+        .collect::<HashSet<_>>();
+    pretty_assertions::assert_eq!(actual, expected, "wrong channel ids and parent paths");
 }

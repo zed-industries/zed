@@ -1,18 +1,18 @@
 use proc_macro::TokenStream;
-use proc_macro2::Ident;
+use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::parse_macro_input;
 
-pub fn register_action_macro(ident: TokenStream) -> TokenStream {
+pub(crate) fn register_action(ident: TokenStream) -> TokenStream {
     let name = parse_macro_input!(ident as Ident);
-    let registration = register_action(&name);
+    let registration = generate_register_action(&name);
 
     TokenStream::from(quote! {
         #registration
     })
 }
 
-pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
+pub(crate) fn generate_register_action(type_name: &Ident) -> TokenStream2 {
     let action_builder_fn_name = format_ident!(
         "__gpui_actions_builder_{}",
         type_name.to_string().to_lowercase()
@@ -28,11 +28,13 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
                 #[doc(hidden)]
                 fn #action_builder_fn_name() -> gpui::MacroActionData {
                     gpui::MacroActionData {
-                        name: <#type_name as gpui::Action>::debug_name(),
-                        aliases: <#type_name as gpui::Action>::deprecated_aliases(),
+                        name: <#type_name as gpui::Action>::name_for_type(),
                         type_id: ::std::any::TypeId::of::<#type_name>(),
                         build: <#type_name as gpui::Action>::build,
                         json_schema: <#type_name as gpui::Action>::action_json_schema,
+                        deprecated_aliases: <#type_name as gpui::Action>::deprecated_aliases(),
+                        deprecation_message: <#type_name as gpui::Action>::deprecation_message(),
+                        documentation: <#type_name as gpui::Action>::documentation(),
                     }
                 }
 
@@ -41,7 +43,5 @@ pub(crate) fn register_action(type_name: &Ident) -> proc_macro2::TokenStream {
                 }
             }
         }
-
-
     }
 }

@@ -53,7 +53,11 @@
       "cmd-shift-j": "editor::JoinLines",
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
-      "ctrl-delete": "editor::DeleteToNextWordEnd"
+      "ctrl-delete": "editor::DeleteToNextWordEnd",
+      "ctrl-right": "editor::MoveToNextSubwordEnd",
+      "ctrl-left": "editor::MoveToPreviousSubwordStart",
+      "ctrl-shift-right": "editor::SelectToNextSubwordEnd",
+      "ctrl-shift-left": "editor::SelectToPreviousSubwordStart"
     }
   },
   {

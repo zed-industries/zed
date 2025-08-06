@@ -1,10 +1,9 @@
 use std::io::{Cursor, Write};
 use std::sync::Arc;
 
-use crate::role::Role;
-use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 use anyhow::Result;
 use base64::write::EncoderWriter;
+use cloud_llm_client::{CompletionIntent, CompletionMode};
 use gpui::{
     App, AppContext as _, DevicePixels, Image, ImageFormat, ObjectFit, SharedString, Size, Task,
     point, px, size,
@@ -12,7 +11,9 @@ use gpui::{
 use image::codecs::png::PngEncoder;
 use serde::{Deserialize, Serialize};
 use util::ResultExt;
-use zed_llm_client::{CompletionIntent, CompletionMode};
+
+use crate::role::Role;
+use crate::{LanguageModelToolUse, LanguageModelToolUseId};
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct LanguageModelImage {
@@ -303,7 +304,7 @@ pub enum MessageContent {
         text: String,
         signature: Option<String>,
     },
-    RedactedThinking(Vec<u8>),
+    RedactedThinking(String),
     Image(LanguageModelImage),
     ToolUse(LanguageModelToolUse),
     ToolResult(LanguageModelToolResult),
@@ -391,6 +392,7 @@ pub struct LanguageModelRequest {
     pub tool_choice: Option<LanguageModelToolChoice>,
     pub stop: Vec<String>,
     pub temperature: Option<f32>,
+    pub thinking_allowed: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

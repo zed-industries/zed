@@ -956,7 +956,7 @@ fn fetch_and_update_hints(
             .update(cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
-                        .excerpts_for_inlay_hints_query(None, cx)
+                        .visible_excerpts(None, cx)
                         .remove(&query.excerpt_id)
                     {
                         Some((_, _, current_visible_range)) => {
@@ -1302,6 +1302,7 @@ fn apply_hint_update(
 
 #[cfg(test)]
 pub mod tests {
+    use crate::SelectionEffects;
     use crate::editor_tests::update_test_language_settings;
     use crate::scroll::ScrollAmount;
     use crate::{ExcerptRange, scroll::Autoscroll, test::editor_lsp_test_context::rust_lang};
@@ -1384,7 +1385,9 @@ pub mod tests {
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([13..13])
+                });
                 editor.handle_input("some change", window, cx);
             })
             .unwrap();
@@ -1698,7 +1701,9 @@ pub mod tests {
 
         rs_editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([13..13])
+                });
                 editor.handle_input("some rs change", window, cx);
             })
             .unwrap();
@@ -1733,7 +1738,9 @@ pub mod tests {
 
         md_editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges([13..13])
+                });
                 editor.handle_input("some md change", window, cx);
             })
             .unwrap();
@@ -2155,7 +2162,9 @@ pub mod tests {
         ] {
             editor
                 .update(cx, |editor, window, cx| {
-                    editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        s.select_ranges([13..13])
+                    });
                     editor.handle_input(change_after_opening, window, cx);
                 })
                 .unwrap();
@@ -2199,7 +2208,9 @@ pub mod tests {
             edits.push(cx.spawn(|mut cx| async move {
                 task_editor
                     .update(&mut cx, |editor, window, cx| {
-                        editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                            s.select_ranges([13..13])
+                        });
                         editor.handle_input(async_later_change, window, cx);
                     })
                     .unwrap();
@@ -2447,9 +2458,12 @@ pub mod tests {
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                    s.select_ranges([selection_in_cached_range..selection_in_cached_range])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::center()),
+                    window,
+                    cx,
+                    |s| s.select_ranges([selection_in_cached_range..selection_in_cached_range]),
+                );
             })
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(
@@ -2511,9 +2525,7 @@ pub mod tests {
         cx: &mut gpui::TestAppContext,
     ) -> Range<Point> {
         let ranges = editor
-            .update(cx, |editor, _window, cx| {
-                editor.excerpts_for_inlay_hints_query(None, cx)
-            })
+            .update(cx, |editor, _window, cx| editor.visible_excerpts(None, cx))
             .unwrap();
         assert_eq!(
             ranges.len(),
@@ -2712,15 +2724,24 @@ pub mod tests {
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
-                });
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges([Point::new(22, 0)..Point::new(22, 0)])
-                });
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges([Point::new(50, 0)..Point::new(50, 0)])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(4, 0)..Point::new(4, 0)]),
+                );
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(22, 0)..Point::new(22, 0)]),
+                );
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(50, 0)..Point::new(50, 0)]),
+                );
             })
             .unwrap();
         cx.executor().run_until_parked();
@@ -2745,9 +2766,12 @@ pub mod tests {
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges([Point::new(100, 0)..Point::new(100, 0)])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(100, 0)..Point::new(100, 0)]),
+                );
             })
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(
@@ -2778,9 +2802,12 @@ pub mod tests {
 
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(Some(Autoscroll::Next), window, cx, |s| {
-                    s.select_ranges([Point::new(4, 0)..Point::new(4, 0)])
-                });
+                editor.change_selections(
+                    SelectionEffects::scroll(Autoscroll::Next),
+                    window,
+                    cx,
+                    |s| s.select_ranges([Point::new(4, 0)..Point::new(4, 0)]),
+                );
             })
             .unwrap();
         cx.executor().advance_clock(Duration::from_millis(
@@ -2812,7 +2839,7 @@ pub mod tests {
         editor_edited.store(true, Ordering::Release);
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([Point::new(57, 0)..Point::new(57, 0)])
                 });
                 editor.handle_input("++++more text++++", window, cx);
@@ -3130,7 +3157,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
                 })
             })
@@ -3412,7 +3439,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, window, cx| {
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.select_ranges([Point::new(10, 0)..Point::new(10, 0)])
                 })
             })

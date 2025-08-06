@@ -1,72 +1,17 @@
-(_ "(" ")" @end) @indent
 (_ "[" "]" @end) @indent
 (_ "{" "}" @end) @indent
+(_ "(" ")" @end) @indent
 
-(function_definition
-  ":" @start
-  body: (block) @indent
-)
-
-(if_statement
-  ":" @start
-  consequence: (block) @indent
-  alternative: (_)? @outdent
-)
-
-(else_clause
-  ":" @start
-  body: (block) @indent
-)
-
-(elif_clause
-  ":" @start
-  consequence: (block) @indent
-)
-
-(for_statement
-  ":" @start
-  body: (block) @indent
-)
-
-(with_statement
-  ":" @start
-  body: (block) @indent
-)
-
-(while_statement
-  ":" @start
-  body: (block) @indent
-)
-
-(match_statement
-  ":" @start
-  body: (block) @indent
-)
-
-(class_definition
-  ":" @start
-  body: (block) @indent
-)
-
-(case_clause
-  ":" @start
-  consequence: (block) @indent
-)
-
-(try_statement
-  ":" @start
-  body: (block) @indent
-  (except_clause)? @outdent
-  (else_clause)? @outdent
-  (finally_clause)? @outdent
-)
-
-(except_clause
-  ":" @start
-  (block) @indent
-)
-
-(finally_clause
-  ":" @start
-  (block) @indent
-)
+(function_definition) @start.def
+(class_definition) @start.class
+(if_statement) @start.if
+(for_statement) @start.for
+(while_statement) @start.while
+(with_statement) @start.with
+(match_statement) @start.match
+(try_statement) @start.try
+(elif_clause) @start.elif
+(else_clause) @start.else
+(except_clause) @start.except
+(finally_clause) @start.finally
+(case_clause) @start.case

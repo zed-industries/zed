@@ -1,10 +1,14 @@
-use crate::schema::json_schema_for;
+use crate::{
+    schema::json_schema_for,
+    ui::{COLLAPSED_LINES, ToolOutputPreview},
+};
+use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
-    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
-    WeakEntity, Window,
+    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
+    TextStyleRefinement, Transformation, WeakEntity, Window, percentage,
 };
 use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
@@ -25,7 +29,7 @@ use terminal_view::TerminalView;
 use theme::ThemeSettings;
 use ui::{Disclosure, Tooltip, prelude::*};
 use util::{
-    get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    ResultExt, get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
 };
 use workspace::Workspace;
@@ -73,8 +77,12 @@ impl Tool for TerminalTool {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        false
     }
 
     fn description(&self) -> String {
@@ -82,7 +90,7 @@ impl Tool for TerminalTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Terminal
+        IconName::ToolTerminal
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -211,7 +219,7 @@ impl Tool for TerminalTool {
                     .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task::SpawnInTerminal {
-                                command: program,
+                                command: Some(program),
                                 args,
                                 cwd,
                                 env,
@@ -240,6 +248,7 @@ impl Tool for TerminalTool {
                 command_markdown.clone(),
                 working_dir.clone(),
                 cx.entity_id(),
+                cx,
             )
         });
 
@@ -254,22 +263,24 @@ impl Tool for TerminalTool {
 
                 let terminal_view = window.update(cx, |_, window, cx| {
                     cx.new(|cx| {
-                        TerminalView::new(
+                        let mut view = TerminalView::new(
                             terminal.clone(),
                             workspace.downgrade(),
                             None,
                             project.downgrade(),
-                            true,
                             window,
                             cx,
-                        )
+                        );
+                        view.set_embedded_mode(None, cx);
+                        view
                     })
                 })?;
 
-                let _ = card.update(cx, |card, _| {
+                card.update(cx, |card, _| {
                     card.terminal = Some(terminal_view.clone());
                     card.start_instant = Instant::now();
-                });
+                })
+                .log_err();
 
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
@@ -285,7 +296,7 @@ impl Tool for TerminalTool {
                     exit_status.map(portable_pty::ExitStatus::from),
                 );
 
-                let _ = card.update(cx, |card, _| {
+                card.update(cx, |card, _| {
                     card.command_finished = true;
                     card.exit_status = exit_status;
                     card.was_content_truncated = processed_content.len() < previous_len;
@@ -293,7 +304,8 @@ impl Tool for TerminalTool {
                     card.content_line_count = content_line_count;
                     card.finished_with_empty_output = finished_with_empty_output;
                     card.elapsed_time = Some(card.start_instant.elapsed());
-                });
+                })
+                .log_err();
 
                 Ok(processed_content.into())
             }
@@ -431,7 +443,10 @@ impl TerminalToolCard {
         input_command: Entity<Markdown>,
         working_dir: Option<PathBuf>,
         entity_id: EntityId,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let expand_terminal_card =
+            agent_settings::AgentSettings::get_global(cx).expand_terminal_card;
         Self {
             input_command,
             working_dir,
@@ -443,7 +458,7 @@ impl TerminalToolCard {
             finished_with_empty_output: false,
             original_content_len: 0,
             content_line_count: 0,
-            preview_expanded: true,
+            preview_expanded: expand_terminal_card,
             start_instant: Instant::now(),
             elapsed_time: None,
         }
@@ -473,7 +488,6 @@ impl ToolCard for TerminalToolCard {
         let time_elapsed = self
             .elapsed_time
             .unwrap_or_else(|| self.start_instant.elapsed());
-        let should_hide_terminal = tool_failed || self.finished_with_empty_output;
 
         let header_bg = cx
             .theme()
@@ -509,6 +523,46 @@ impl ToolCard for TerminalToolCard {
                             .color(Color::Muted),
                     ),
             )
+            .when(!self.command_finished, |header| {
+                header.child(
+                    Icon::new(IconName::ArrowCircle)
+                        .size(IconSize::XSmall)
+                        .color(Color::Info)
+                        .with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(2)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ),
+                )
+            })
+            .when(tool_failed || command_failed, |header| {
+                header.child(
+                    div()
+                        .id(("terminal-tool-error-code-indicator", self.entity_id))
+                        .child(
+                            Icon::new(IconName::Close)
+                                .size(IconSize::Small)
+                                .color(Color::Error),
+                        )
+                        .when(command_failed && self.exit_status.is_some(), |this| {
+                            this.tooltip(Tooltip::text(format!(
+                                "Exited with code {}",
+                                self.exit_status
+                                    .and_then(|status| status.code())
+                                    .unwrap_or(-1),
+                            )))
+                        })
+                        .when(
+                            !command_failed && tool_failed && status.error().is_some(),
+                            |this| {
+                                this.tooltip(Tooltip::text(format!(
+                                    "Error: {}",
+                                    status.error().unwrap(),
+                                )))
+                            },
+                        ),
+                )
+            })
             .when(self.was_content_truncated, |header| {
                 let tooltip = if self.content_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
                     "Output exceeded terminal max lines and was \
@@ -546,35 +600,7 @@ impl ToolCard for TerminalToolCard {
                         .size(LabelSize::Small),
                 )
             })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", self.entity_id))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when(command_failed && self.exit_status.is_some(), |this| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                self.exit_status
-                                    .and_then(|status| status.code())
-                                    .unwrap_or(-1),
-                            )))
-                        })
-                        .when(
-                            !command_failed && tool_failed && status.error().is_some(),
-                            |this| {
-                                this.tooltip(Tooltip::text(format!(
-                                    "Error: {}",
-                                    status.error().unwrap(),
-                                )))
-                            },
-                        ),
-                )
-            })
-            .when(!should_hide_terminal, |header| {
+            .when(!self.finished_with_empty_output, |header| {
                 header.child(
                     Disclosure::new(
                         ("terminal-tool-disclosure", self.entity_id),
@@ -618,19 +644,51 @@ impl ToolCard for TerminalToolCard {
                         ),
                     ),
             )
-            .when(self.preview_expanded && !should_hide_terminal, |this| {
-                this.child(
-                    div()
-                        .pt_2()
-                        .min_h_72()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
-                        .text_ui_sm(cx)
-                        .child(terminal.clone()),
-                )
-            })
+            .when(
+                self.preview_expanded && !self.finished_with_empty_output,
+                |this| {
+                    this.child(
+                        div()
+                            .pt_2()
+                            .border_t_1()
+                            .when(tool_failed || command_failed, |card| card.border_dashed())
+                            .border_color(border_color)
+                            .bg(cx.theme().colors().editor_background)
+                            .rounded_b_md()
+                            .text_ui_sm(cx)
+                            .child({
+                                let content_mode = terminal.read(cx).content_mode(window, cx);
+
+                                if content_mode.is_scrollable() {
+                                    div().h_72().child(terminal.clone()).into_any_element()
+                                } else {
+                                    ToolOutputPreview::new(
+                                        terminal.clone().into_any_element(),
+                                        terminal.entity_id(),
+                                    )
+                                    .with_total_lines(self.content_line_count)
+                                    .toggle_state(!content_mode.is_limited())
+                                    .on_toggle({
+                                        let terminal = terminal.clone();
+                                        move |is_expanded, _, cx| {
+                                            terminal.update(cx, |terminal, cx| {
+                                                terminal.set_embedded_mode(
+                                                    if is_expanded {
+                                                        None
+                                                    } else {
+                                                        Some(COLLAPSED_LINES)
+                                                    },
+                                                    cx,
+                                                );
+                                            });
+                                        }
+                                    })
+                                    .into_any_element()
+                                }
+                            }),
+                    )
+                },
+            )
             .into_any()
     }
 }
@@ -651,7 +709,7 @@ fn markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     MarkdownStyle {
         base_text_style: text_style.clone(),
-        selection_background_color: cx.theme().players().local().selection,
+        selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
 }

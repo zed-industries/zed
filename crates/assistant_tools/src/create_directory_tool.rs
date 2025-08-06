@@ -33,16 +33,20 @@ impl Tool for CreateDirectoryTool {
         "create_directory".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
-        false
-    }
-
     fn description(&self) -> String {
         include_str!("./create_directory_tool/description.md").into()
     }
 
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
+        false
+    }
+
+    fn may_perform_edits(&self) -> bool {
+        false
+    }
+
     fn icon(&self) -> IconName {
-        IconName::Folder
+        IconName::ToolFolder
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {

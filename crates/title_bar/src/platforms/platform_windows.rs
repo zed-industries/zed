@@ -1,4 +1,4 @@
-use gpui::{Rgba, WindowAppearance, prelude::*};
+use gpui::{Hsla, Rgba, WindowControlArea, prelude::*};
 
 use ui::prelude::*;
 
@@ -33,7 +33,7 @@ impl WindowsWindowControls {
 }
 
 impl RenderOnce for WindowsWindowControls {
-    fn render(self, window: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let close_button_hover_color = Rgba {
             r: 232.0 / 255.0,
             g: 17.0 / 255.0,
@@ -41,20 +41,8 @@ impl RenderOnce for WindowsWindowControls {
             a: 1.0,
         };
 
-        let button_hover_color = match window.appearance() {
-            WindowAppearance::Light | WindowAppearance::VibrantLight => Rgba {
-                r: 0.1,
-                g: 0.1,
-                b: 0.1,
-                a: 0.2,
-            },
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Rgba {
-                r: 0.9,
-                g: 0.9,
-                b: 0.9,
-                a: 0.1,
-            },
-        };
+        let button_hover_color = cx.theme().colors().ghost_element_hover;
+        let button_active_color = cx.theme().colors().ghost_element_active;
 
         div()
             .id("windows-window-controls")
@@ -69,6 +57,7 @@ impl RenderOnce for WindowsWindowControls {
                 "minimize",
                 WindowsCaptionButtonIcon::Minimize,
                 button_hover_color,
+                button_active_color,
             ))
             .child(WindowsCaptionButton::new(
                 "maximize-or-restore",
@@ -78,11 +67,13 @@ impl RenderOnce for WindowsWindowControls {
                     WindowsCaptionButtonIcon::Maximize
                 },
                 button_hover_color,
+                button_active_color,
             ))
             .child(WindowsCaptionButton::new(
                 "close",
                 WindowsCaptionButtonIcon::Close,
                 close_button_hover_color,
+                button_active_color,
             ))
     }
 }
@@ -99,44 +90,48 @@ enum WindowsCaptionButtonIcon {
 struct WindowsCaptionButton {
     id: ElementId,
     icon: WindowsCaptionButtonIcon,
-    hover_background_color: Rgba,
+    hover_background_color: Hsla,
+    active_background_color: Hsla,
 }
 
 impl WindowsCaptionButton {
     pub fn new(
         id: impl Into<ElementId>,
         icon: WindowsCaptionButtonIcon,
-        hover_background_color: Rgba,
+        hover_background_color: impl Into<Hsla>,
+        active_background_color: impl Into<Hsla>,
     ) -> Self {
         Self {
             id: id.into(),
             icon,
-            hover_background_color,
+            hover_background_color: hover_background_color.into(),
+            active_background_color: active_background_color.into(),
         }
     }
 }
 
 impl RenderOnce for WindowsCaptionButton {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
-        // todo(windows) report this width to the Windows platform API
-        // NOTE: this is intentionally hard coded. An option to use the 'native' size
-        //       could be added when the width is reported to the Windows platform API
-        //       as this could change between future Windows versions.
-        let width = px(36.);
-
         h_flex()
             .id(self.id)
             .justify_center()
             .content_center()
-            .w(width)
+            .occlude()
+            .w(px(36.))
             .h_full()
             .text_size(px(10.0))
             .hover(|style| style.bg(self.hover_background_color))
-            .active(|style| {
-                let mut active_color = self.hover_background_color;
-                active_color.a *= 0.2;
-
-                style.bg(active_color)
+            .active(|style| style.bg(self.active_background_color))
+            .map(|this| match self.icon {
+                WindowsCaptionButtonIcon::Close => {
+                    this.window_control_area(WindowControlArea::Close)
+                }
+                WindowsCaptionButtonIcon::Maximize | WindowsCaptionButtonIcon::Restore => {
+                    this.window_control_area(WindowControlArea::Max)
+                }
+                WindowsCaptionButtonIcon::Minimize => {
+                    this.window_control_area(WindowControlArea::Min)
+                }
             })
             .child(match self.icon {
                 WindowsCaptionButtonIcon::Minimize => "\u{e921}",

@@ -25,7 +25,7 @@ mod inline_values;
 #[cfg(test)]
 mod module_list;
 #[cfg(test)]
-mod new_session_modal;
+mod new_process_modal;
 #[cfg(test)]
 mod persistence;
 #[cfg(test)]
@@ -114,6 +114,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
         workspace.start_debug_session(
             config.to_scenario(),
             TaskContext::default(),
+            None,
             None,
             window,
             cx,

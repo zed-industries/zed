@@ -4,6 +4,7 @@ JavaScript support is available natively in Zed.
 
 - Tree-sitter: [tree-sitter/tree-sitter-javascript](https://github.com/tree-sitter/tree-sitter-javascript)
 - Language Server: [typescript-language-server/typescript-language-server](https://github.com/typescript-language-server/typescript-language-server)
+- Debug Adapter: [vscode-js-debug](https://github.com/microsoft/vscode-js-debug)
 
 ## Code formatting
 
@@ -172,6 +173,54 @@ You can configure ESLint's `workingDirectory` setting:
     }
   }
 }
+```
+
+## Debugging
+
+Zed supports debugging JavaScript code out of the box.
+The following can be debugged without writing additional configuration:
+
+- Tasks from `package.json`
+- Tests written using several popular frameworks (Jest, Mocha, Vitest, Jasmine)
+
+Run {#action debugger::Start} ({#kb debugger::Start}) to see a contextual list of these predefined debug tasks.
+
+As for all languages, configurations from `.vscode/launch.json` are also available for debugging in Zed.
+
+If your use-case isn't covered by any of these, you can take full control by adding debug configurations to `.zed/debug.json`. See below for example configurations.
+
+### Debug the current file
+
+```json
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Debug JS file",
+    "type": "node",
+    "request": "launch",
+    "program": "$ZED_FILE",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]
+```
+
+This implicitly runs the current file using `node`.
+
+### Launch a web app in Chrome
+
+```json
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Debug app in Chrome",
+    "type": "chrome",
+    "request": "launch",
+    "file": "$ZED_WORKTREE_ROOT/index.html",
+    "webRoot": "$ZED_WORKTREE_ROOT",
+    "console": "integratedTerminal",
+    "skipFiles": ["<node_internals>/**"]
+  }
+]
 ```
 
 ## See also

@@ -8,8 +8,7 @@
       "ctrl-shift-i": "agent::ToggleFocus",
       "ctrl-l": "agent::ToggleFocus",
       "ctrl-shift-l": "agent::ToggleFocus",
-      "ctrl-alt-b": "agent::ToggleFocus",
-      "ctrl-shift-j": "agent::OpenConfiguration"
+      "ctrl-shift-j": "agent::OpenSettings"
     }
   },
   {
@@ -42,7 +41,6 @@
       "ctrl-shift-i": "workspace::ToggleRightDock",
       "ctrl-l": "workspace::ToggleRightDock",
       "ctrl-shift-l": "workspace::ToggleRightDock",
-      "ctrl-alt-b": "workspace::ToggleRightDock",
       "ctrl-w": "workspace::ToggleRightDock", // technically should close chat
       "ctrl-.": "agent::ToggleProfileSelector",
       "ctrl-/": "agent::ToggleModelSelector",

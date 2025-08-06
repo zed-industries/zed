@@ -51,6 +51,8 @@ pub struct ThemeColors {
     ///
     /// This could include a selected checkbox, a toggleable button that is toggled on, etc.
     pub element_selected: Hsla,
+    /// Background Color. Used for the background of selections in a UI element.
+    pub element_selection_background: Hsla,
     /// Background Color. Used for the disabled state of an element that should have a different background than the surface it's on.
     ///
     /// Disabled states are shown when a user cannot interact with an element, like a disabled button or input.
@@ -129,6 +131,12 @@ pub struct ThemeColors {
     pub panel_indent_guide: Hsla,
     pub panel_indent_guide_hover: Hsla,
     pub panel_indent_guide_active: Hsla,
+
+    /// The color of the overlay surface on top of panel.
+    pub panel_overlay_background: Hsla,
+    /// The color of the overlay surface on top of panel when hovered over.
+    pub panel_overlay_hover: Hsla,
+
     pub pane_focused_border: Hsla,
     pub pane_group_border: Hsla,
     /// The color of the scrollbar thumb.
@@ -273,12 +281,9 @@ pub struct ThemeColors {
     pub version_control_ignored: Hsla,
 
     /// Represents the "ours" region of a merge conflict.
-    pub version_control_conflict_ours_background: Hsla,
+    pub version_control_conflict_marker_ours: Hsla,
     /// Represents the "theirs" region of a merge conflict.
-    pub version_control_conflict_theirs_background: Hsla,
-    pub version_control_conflict_ours_marker_background: Hsla,
-    pub version_control_conflict_theirs_marker_background: Hsla,
-    pub version_control_conflict_divider_background: Hsla,
+    pub version_control_conflict_marker_theirs: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]
@@ -327,6 +332,8 @@ pub enum ThemeColorField {
     PanelIndentGuide,
     PanelIndentGuideHover,
     PanelIndentGuideActive,
+    PanelOverlayBackground,
+    PanelOverlayHover,
     PaneFocusedBorder,
     PaneGroupBorder,
     ScrollbarThumbBackground,
@@ -439,6 +446,8 @@ impl ThemeColors {
             ThemeColorField::PanelIndentGuide => self.panel_indent_guide,
             ThemeColorField::PanelIndentGuideHover => self.panel_indent_guide_hover,
             ThemeColorField::PanelIndentGuideActive => self.panel_indent_guide_active,
+            ThemeColorField::PanelOverlayBackground => self.panel_overlay_background,
+            ThemeColorField::PanelOverlayHover => self.panel_overlay_hover,
             ThemeColorField::PaneFocusedBorder => self.pane_focused_border,
             ThemeColorField::PaneGroupBorder => self.pane_group_border,
             ThemeColorField::ScrollbarThumbBackground => self.scrollbar_thumb_background,
@@ -536,7 +545,7 @@ pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
         .collect()
 }
 
-#[derive(Refineable, Clone, PartialEq)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 pub struct ThemeStyles {
     /// The background appearance of the window.
     pub window_background_appearance: WindowBackgroundAppearance,

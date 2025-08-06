@@ -23,9 +23,13 @@ use language::{
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
+use project::DisableAiSettings;
 use request::StatusNotification;
+use serde_json::json;
+use settings::Settings;
 use settings::SettingsStore;
 use sign_in::{reinstall_and_sign_in_within_workspace, sign_out_within_workspace};
+use std::collections::hash_map::Entry;
 use std::{
     any::TypeId,
     env,
@@ -35,6 +39,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sum_tree::Dimensions;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -44,11 +49,17 @@ pub use crate::sign_in::{CopilotCodeVerification, initiate_sign_in, reinstall_an
 actions!(
     copilot,
     [
+        /// Requests a code completion suggestion from Copilot.
         Suggest,
+        /// Cycles to the next Copilot suggestion.
         NextSuggestion,
+        /// Cycles to the previous Copilot suggestion.
         PreviousSuggestion,
+        /// Reinstalls the Copilot language server.
         Reinstall,
+        /// Signs in to GitHub Copilot.
         SignIn,
+        /// Signs out of GitHub Copilot.
         SignOut
     ]
 );
@@ -60,44 +71,28 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut App,
 ) {
-    copilot_chat::init(fs.clone(), http.clone(), cx);
+    let language_settings = all_language_settings(None, cx);
+    let configuration = copilot_chat::CopilotChatConfiguration {
+        enterprise_uri: language_settings
+            .edit_predictions
+            .copilot
+            .enterprise_uri
+            .clone(),
+    };
+    copilot_chat::init(fs.clone(), http.clone(), configuration, cx);
 
     let copilot = cx.new({
         let node_runtime = node_runtime.clone();
         move |cx| Copilot::start(new_server_id, fs, node_runtime, cx)
     });
     Copilot::set_global(copilot.clone(), cx);
-    cx.observe(&copilot, |handle, cx| {
-        let copilot_action_types = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
-            TypeId::of::<Reinstall>(),
-        ];
-        let copilot_auth_action_types = [TypeId::of::<SignOut>()];
-        let copilot_no_auth_action_types = [TypeId::of::<SignIn>()];
-        let status = handle.read(cx).status();
-        let filter = CommandPaletteFilter::global_mut(cx);
-
-        match status {
-            Status::Disabled => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.hide_action_types(&copilot_no_auth_action_types);
-            }
-            Status::Authorized => {
-                filter.hide_action_types(&copilot_no_auth_action_types);
-                filter.show_action_types(
-                    copilot_action_types
-                        .iter()
-                        .chain(&copilot_auth_action_types),
-                );
-            }
-            _ => {
-                filter.hide_action_types(&copilot_action_types);
-                filter.hide_action_types(&copilot_auth_action_types);
-                filter.show_action_types(copilot_no_auth_action_types.iter());
-            }
+    cx.observe(&copilot, |copilot, cx| {
+        copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
+    })
+    .detach();
+    cx.observe_global::<SettingsStore>(|cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot.update(cx, |copilot, cx| copilot.update_action_visibilities(cx));
         }
     })
     .detach();
@@ -193,8 +188,14 @@ impl Status {
         matches!(self, Status::Authorized)
     }
 
-    pub fn is_disabled(&self) -> bool {
-        matches!(self, Status::Disabled)
+    pub fn is_configured(&self) -> bool {
+        matches!(
+            self,
+            Status::Starting { .. }
+                | Status::Error(_)
+                | Status::SigningIn { .. }
+                | Status::Authorized
+        )
     }
 }
 
@@ -239,7 +240,7 @@ impl RegisteredBuffer {
                         let new_snapshot = new_snapshot.clone();
                         async move {
                             new_snapshot
-                                .edits_since::<(PointUtf16, usize)>(&old_version)
+                                .edits_since::<Dimensions<PointUtf16, usize>>(&old_version)
                                 .map(|edit| {
                                     let edit_start = edit.new.start.0;
                                     let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
@@ -346,8 +347,11 @@ impl Copilot {
             _subscription: cx.on_app_quit(Self::shutdown_language_server),
         };
         this.start_copilot(true, false, cx);
-        cx.observe_global::<SettingsStore>(move |this, cx| this.start_copilot(true, false, cx))
-            .detach();
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.start_copilot(true, false, cx);
+            this.send_configuration_update(cx);
+        })
+        .detach();
         this
     }
 
@@ -408,24 +412,67 @@ impl Copilot {
         let proxy_url = copilot_settings.proxy.clone()?;
         let no_verify = copilot_settings.proxy_no_verify;
         let http_or_https_proxy = if proxy_url.starts_with("http:") {
-            "HTTP_PROXY"
+            Some("HTTP_PROXY")
         } else if proxy_url.starts_with("https:") {
-            "HTTPS_PROXY"
+            Some("HTTPS_PROXY")
         } else {
             log::error!(
                 "Unsupported protocol scheme for language server proxy (must be http or https)"
             );
-            return None;
+            None
         };
 
         let mut env = HashMap::default();
-        env.insert(http_or_https_proxy.to_string(), proxy_url);
 
-        if let Some(true) = no_verify {
-            env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
-        };
+        if let Some(proxy_type) = http_or_https_proxy {
+            env.insert(proxy_type.to_string(), proxy_url);
+            if let Some(true) = no_verify {
+                env.insert("NODE_TLS_REJECT_UNAUTHORIZED".to_string(), "0".to_string());
+            };
+        }
 
-        Some(env)
+        if let Ok(oauth_token) = env::var(copilot_chat::COPILOT_OAUTH_ENV_VAR) {
+            env.insert(copilot_chat::COPILOT_OAUTH_ENV_VAR.to_string(), oauth_token);
+        }
+
+        if env.is_empty() { None } else { Some(env) }
+    }
+
+    fn send_configuration_update(&mut self, cx: &mut Context<Self>) {
+        let copilot_settings = all_language_settings(None, cx)
+            .edit_predictions
+            .copilot
+            .clone();
+
+        let settings = json!({
+            "http": {
+                "proxy": copilot_settings.proxy,
+                "proxyStrictSSL": !copilot_settings.proxy_no_verify.unwrap_or(false)
+            },
+            "github-enterprise": {
+                "uri": copilot_settings.enterprise_uri
+            }
+        });
+
+        if let Some(copilot_chat) = copilot_chat::CopilotChat::global(cx) {
+            copilot_chat.update(cx, |chat, cx| {
+                chat.set_configuration(
+                    copilot_chat::CopilotChatConfiguration {
+                        enterprise_uri: copilot_settings.enterprise_uri.clone(),
+                    },
+                    cx,
+                );
+            });
+        }
+
+        if let Ok(server) = self.server.as_running() {
+            server
+                .lsp
+                .notify::<lsp::notification::DidChangeConfiguration>(
+                    &lsp::DidChangeConfigurationParams { settings },
+                )
+                .log_err();
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -520,7 +567,7 @@ impl Copilot {
 
             let server = cx
                 .update(|cx| {
-                    let mut params = server.default_initialize_params(cx);
+                    let mut params = server.default_initialize_params(false, cx);
                     params.initialization_options = Some(editor_info_json);
                     server.initialize(params, configuration.into(), cx)
                 })?
@@ -533,12 +580,6 @@ impl Copilot {
                 .await
                 .into_response()
                 .context("copilot: check status")?;
-
-            server
-                .request::<request::SetEditorInfo>(editor_info)
-                .await
-                .into_response()
-                .context("copilot: set editor info")?;
 
             anyhow::Ok((server, status))
         };
@@ -557,6 +598,8 @@ impl Copilot {
                     });
                     cx.emit(Event::CopilotLanguageServerStarted);
                     this.update_sign_in_status(status, cx);
+                    // Send configuration now that the LSP is fully started
+                    this.send_configuration_update(cx);
                 }
                 Err(error) => {
                     this.server = CopilotServer::Error(error.to_string().into());
@@ -725,42 +768,43 @@ impl Copilot {
                 return;
             }
 
-            registered_buffers
-                .entry(buffer.entity_id())
-                .or_insert_with(|| {
-                    let uri: lsp::Url = uri_for_buffer(buffer, cx);
-                    let language_id = id_for_language(buffer.read(cx).language());
-                    let snapshot = buffer.read(cx).snapshot();
-                    server
-                        .notify::<lsp::notification::DidOpenTextDocument>(
-                            &lsp::DidOpenTextDocumentParams {
-                                text_document: lsp::TextDocumentItem {
-                                    uri: uri.clone(),
-                                    language_id: language_id.clone(),
-                                    version: 0,
-                                    text: snapshot.text(),
-                                },
+            let entry = registered_buffers.entry(buffer.entity_id());
+            if let Entry::Vacant(e) = entry {
+                let Ok(uri) = uri_for_buffer(buffer, cx) else {
+                    return;
+                };
+                let language_id = id_for_language(buffer.read(cx).language());
+                let snapshot = buffer.read(cx).snapshot();
+                server
+                    .notify::<lsp::notification::DidOpenTextDocument>(
+                        &lsp::DidOpenTextDocumentParams {
+                            text_document: lsp::TextDocumentItem {
+                                uri: uri.clone(),
+                                language_id: language_id.clone(),
+                                version: 0,
+                                text: snapshot.text(),
                             },
-                        )
-                        .ok();
+                        },
+                    )
+                    .ok();
 
-                    RegisteredBuffer {
-                        uri,
-                        language_id,
-                        snapshot,
-                        snapshot_version: 0,
-                        pending_buffer_change: Task::ready(Some(())),
-                        _subscriptions: [
-                            cx.subscribe(buffer, |this, buffer, event, cx| {
-                                this.handle_buffer_event(buffer, event, cx).log_err();
-                            }),
-                            cx.observe_release(buffer, move |this, _buffer, _cx| {
-                                this.buffers.remove(&weak_buffer);
-                                this.unregister_buffer(&weak_buffer);
-                            }),
-                        ],
-                    }
+                e.insert(RegisteredBuffer {
+                    uri,
+                    language_id,
+                    snapshot,
+                    snapshot_version: 0,
+                    pending_buffer_change: Task::ready(Some(())),
+                    _subscriptions: [
+                        cx.subscribe(buffer, |this, buffer, event, cx| {
+                            this.handle_buffer_event(buffer, event, cx).log_err();
+                        }),
+                        cx.observe_release(buffer, move |this, _buffer, _cx| {
+                            this.buffers.remove(&weak_buffer);
+                            this.unregister_buffer(&weak_buffer);
+                        }),
+                    ],
                 });
+            }
         }
     }
 
@@ -792,7 +836,9 @@ impl Copilot {
                     language::BufferEvent::FileHandleChanged
                     | language::BufferEvent::LanguageChanged => {
                         let new_language_id = id_for_language(buffer.read(cx).language());
-                        let new_uri = uri_for_buffer(&buffer, cx);
+                        let Ok(new_uri) = uri_for_buffer(&buffer, cx) else {
+                            return Ok(());
+                        };
                         if new_uri != registered_buffer.uri
                             || new_language_id != registered_buffer.language_id
                         {
@@ -1054,6 +1100,44 @@ impl Copilot {
             cx.notify();
         }
     }
+
+    fn update_action_visibilities(&self, cx: &mut App) {
+        let signed_in_actions = [
+            TypeId::of::<Suggest>(),
+            TypeId::of::<NextSuggestion>(),
+            TypeId::of::<PreviousSuggestion>(),
+            TypeId::of::<Reinstall>(),
+        ];
+        let auth_actions = [TypeId::of::<SignOut>()];
+        let no_auth_actions = [TypeId::of::<SignIn>()];
+        let status = self.status();
+
+        let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let filter = CommandPaletteFilter::global_mut(cx);
+
+        if is_ai_disabled {
+            filter.hide_action_types(&signed_in_actions);
+            filter.hide_action_types(&auth_actions);
+            filter.hide_action_types(&no_auth_actions);
+        } else {
+            match status {
+                Status::Disabled => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.hide_action_types(&no_auth_actions);
+                }
+                Status::Authorized => {
+                    filter.hide_action_types(&no_auth_actions);
+                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
+                }
+                _ => {
+                    filter.hide_action_types(&signed_in_actions);
+                    filter.hide_action_types(&auth_actions);
+                    filter.show_action_types(no_auth_actions.iter());
+                }
+            }
+        }
+    }
 }
 
 fn id_for_language(language: Option<&Arc<Language>>) -> String {
@@ -1062,11 +1146,13 @@ fn id_for_language(language: Option<&Arc<Language>>) -> String {
         .unwrap_or_else(|| "plaintext".to_string())
 }
 
-fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> lsp::Url {
+fn uri_for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Result<lsp::Url, ()> {
     if let Some(file) = buffer.read(cx).file().and_then(|file| file.as_local()) {
-        lsp::Url::from_file_path(file.abs_path(cx)).unwrap()
+        lsp::Url::from_file_path(file.abs_path(cx))
     } else {
-        format!("buffer://{}", buffer.entity_id()).parse().unwrap()
+        format!("buffer://{}", buffer.entity_id())
+            .parse()
+            .map_err(|_| ())
     }
 }
 

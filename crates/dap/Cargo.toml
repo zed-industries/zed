@@ -51,6 +51,9 @@ telemetry.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
+[target.'cfg(not(windows))'.dependencies]
+libc.workspace = true
+
 [dev-dependencies]
 async-pipe.workspace = true
 gpui = { workspace = true, features = ["test-support"] }

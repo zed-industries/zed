@@ -3,18 +3,21 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::Editor;
+use editor::{Editor, actions::DiffClipboardWithSelectionData};
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, FocusHandle, actions};
+use gpui::{Action, App, Context, FocusHandle, Window, actions};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
 use workspace::Workspace;
+use zed_actions;
+
+use crate::text_diff_view::TextDiffView;
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -22,6 +25,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
+pub mod file_diff_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -29,8 +33,15 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod text_diff_view;
 
-actions!(git, [ResetOnboarding]);
+actions!(
+    git,
+    [
+        /// Resets the git onboarding state to show the tutorial again.
+        ResetOnboarding
+    ]
+);
 
 pub fn init(cx: &mut App) {
     GitPanelSettings::register(cx);
@@ -59,7 +70,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.fetch(window, cx);
+                    panel.fetch(true, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::FetchFrom, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.fetch(false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Push, window, cx| {
@@ -67,7 +86,15 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(false, window, cx);
+                    panel.push(false, false, window, cx);
+                });
+            });
+            workspace.register_action(|workspace, _: &git::PushTo, window, cx| {
+                let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                    return;
+                };
+                panel.update(cx, |panel, cx| {
+                    panel.push(false, true, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::ForcePush, window, cx| {
@@ -75,7 +102,7 @@ pub fn init(cx: &mut App) {
                     return;
                 };
                 panel.update(cx, |panel, cx| {
-                    panel.push(true, window, cx);
+                    panel.push(true, false, window, cx);
                 });
             });
             workspace.register_action(|workspace, _: &git::Pull, window, cx| {
@@ -87,6 +114,22 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_all(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_pop(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -126,8 +169,46 @@ pub fn init(cx: &mut App) {
                 panel.git_init(window, cx);
             });
         });
+        workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
+            open_modified_files(workspace, window, cx);
+        });
+        workspace.register_action(
+            |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
+                if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
+                    task.detach();
+                };
+            },
+        );
     })
     .detach();
+}
+
+fn open_modified_files(
+    workspace: &mut Workspace,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+        return;
+    };
+    let modified_paths: Vec<_> = panel.update(cx, |panel, cx| {
+        let Some(repo) = panel.active_repository.as_ref() else {
+            return Vec::new();
+        };
+        let repo = repo.read(cx);
+        repo.cached_status()
+            .filter_map(|entry| {
+                if entry.status.is_modified() {
+                    repo.repo_path_to_project_path(&entry.repo_path, cx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    });
+    for path in modified_paths {
+        workspace.open_path(path, None, true, window, cx).detach();
+    }
 }
 
 pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
@@ -367,9 +448,11 @@ mod remote_button {
                             el.context(keybinding_target.clone())
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
+                        .action("Fetch From", git::FetchFrom.boxed_clone())
                         .action("Pull", git::Pull.boxed_clone())
                         .separator()
                         .action("Push", git::Push.boxed_clone())
+                        .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
                 }))
             })
@@ -445,7 +528,7 @@ mod remote_button {
         )
         .into_any_element();
 
-        SplitButton { left, right }
+        SplitButton::new(left, right)
     }
 }
 

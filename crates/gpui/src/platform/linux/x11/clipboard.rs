@@ -200,7 +200,7 @@ struct ClipboardData {
 }
 
 enum ReadSelNotifyResult {
-    GotData(Vec<u8>),
+    GotData(ClipboardData),
     IncrStarted,
     EventNotRecognized,
 }
@@ -297,22 +297,75 @@ impl Inner {
         }
         let reader = XContext::new()?;
 
-        log::trace!("Trying to get the clipboard data.");
+        let highest_precedence_format =
+            match self.read_single(&reader, selection, self.atoms.TARGETS) {
+                Err(err) => {
+                    log::trace!("Clipboard TARGETS query failed with {err:?}");
+                    None
+                }
+                Ok(ClipboardData { bytes, format }) => {
+                    if format == self.atoms.ATOM {
+                        let available_formats = Self::parse_formats(&bytes);
+                        formats
+                            .iter()
+                            .find(|format| available_formats.contains(format))
+                    } else {
+                        log::trace!(
+                            "Unexpected clipboard TARGETS format {}",
+                            self.atom_name(format)
+                        );
+                        None
+                    }
+                }
+            };
+
+        if let Some(&format) = highest_precedence_format {
+            let data = self.read_single(&reader, selection, format)?;
+            if !formats.contains(&data.format) {
+                // This shouldn't happen since the format is from the TARGETS list.
+                log::trace!(
+                    "Conversion to {} responded with {} which is not supported",
+                    self.atom_name(format),
+                    self.atom_name(data.format),
+                );
+                return Err(Error::ConversionFailure);
+            }
+            return Ok(data);
+        }
+
+        log::trace!("Falling back on attempting to convert clipboard to each format.");
         for format in formats {
             match self.read_single(&reader, selection, *format) {
-                Ok(bytes) => {
-                    return Ok(ClipboardData {
-                        bytes,
-                        format: *format,
-                    });
+                Ok(data) => {
+                    if formats.contains(&data.format) {
+                        return Ok(data);
+                    } else {
+                        log::trace!(
+                            "Conversion to {} responded with {} which is not supported",
+                            self.atom_name(*format),
+                            self.atom_name(data.format),
+                        );
+                        continue;
+                    }
                 }
                 Err(Error::ContentNotAvailable) => {
                     continue;
                 }
-                Err(e) => return Err(e),
+                Err(e) => {
+                    log::trace!("Conversion to {} failed: {}", self.atom_name(*format), e);
+                    return Err(e);
+                }
             }
         }
+        log::trace!("All conversions to supported formats failed.");
         Err(Error::ContentNotAvailable)
+    }
+
+    fn parse_formats(bytes: &[u8]) -> Vec<Atom> {
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .collect()
     }
 
     fn read_single(
@@ -320,7 +373,7 @@ impl Inner {
         reader: &XContext,
         selection: ClipboardKind,
         target_format: Atom,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<ClipboardData> {
         // Delete the property so that we can detect (using property notify)
         // when the selection owner receives our request.
         reader
@@ -392,10 +445,16 @@ impl Inner {
                         event,
                     )?;
                     if result {
-                        return Ok(incr_data);
+                        return Ok(ClipboardData {
+                            bytes: incr_data,
+                            format: target_format,
+                        });
                     }
                 }
-                _ => log::trace!("An unexpected event arrived while reading the clipboard."),
+                _ => log::trace!(
+                    "An unexpected event arrived while reading the clipboard: {:?}",
+                    event
+                ),
             }
         }
         log::info!("Time-out hit while reading the clipboard.");
@@ -440,7 +499,7 @@ impl Inner {
         Ok(current == self.server.win_id)
     }
 
-    fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
+    fn query_atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> Result<String> {
         String::from_utf8(
             self.server
                 .conn
@@ -453,14 +512,14 @@ impl Inner {
         .map_err(into_unknown)
     }
 
-    fn atom_name_dbg(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
+    fn atom_name(&self, atom: x11rb::protocol::xproto::Atom) -> &'static str {
         ATOM_NAME_CACHE.with(|cache| {
             let mut cache = cache.borrow_mut();
             match cache.entry(atom) {
                 Entry::Occupied(entry) => *entry.get(),
                 Entry::Vacant(entry) => {
                     let s = self
-                        .atom_name(atom)
+                        .query_atom_name(atom)
                         .map(|s| Box::leak(s.into_boxed_str()) as &str)
                         .unwrap_or("FAILED-TO-GET-THE-ATOM-NAME");
                     entry.insert(s);
@@ -496,6 +555,12 @@ impl Inner {
             log::warn!("Received a SelectionNotify while already expecting INCR segments.");
             return Ok(ReadSelNotifyResult::EventNotRecognized);
         }
+        // Accept any property type. The property type will typically match the format type except
+        // when it is `TARGETS` in which case it is `ATOM`. `ANY` is provided to handle the case
+        // where the clipboard is not convertible to the requested format. In this case
+        // `reply.type_` will have format information, but `bytes` will only be non-empty if `ANY`
+        // is provided.
+        let property_type = AtomEnum::ANY;
         // request the selection
         let mut reply = reader
             .conn
@@ -503,7 +568,7 @@ impl Inner {
                 true,
                 event.requestor,
                 event.property,
-                event.target,
+                property_type,
                 0,
                 u32::MAX / 4,
             )
@@ -511,12 +576,8 @@ impl Inner {
             .reply()
             .map_err(into_unknown)?;
 
-        //log::trace!("Property.type: {:?}", self.atom_name(reply.type_));
-
         // we found something
-        if reply.type_ == target_format {
-            Ok(ReadSelNotifyResult::GotData(reply.value))
-        } else if reply.type_ == self.atoms.INCR {
+        if reply.type_ == self.atoms.INCR {
             // Note that we call the get_property again because we are
             // indicating that we are ready to receive the data by deleting the
             // property, however deleting only works if the type matches the
@@ -545,8 +606,10 @@ impl Inner {
             }
             Ok(ReadSelNotifyResult::IncrStarted)
         } else {
-            // this should never happen, we have sent a request only for supported types
-            Err(Error::unknown("incorrect type received from clipboard"))
+            Ok(ReadSelNotifyResult::GotData(ClipboardData {
+                bytes: reply.value,
+                format: reply.type_,
+            }))
         }
     }
 
@@ -574,7 +637,11 @@ impl Inner {
                 true,
                 event.window,
                 event.atom,
-                target_format,
+                if target_format == self.atoms.TARGETS {
+                    self.atoms.ATOM
+                } else {
+                    target_format
+                },
                 0,
                 u32::MAX / 4,
             )
@@ -612,7 +679,7 @@ impl Inner {
         if event.target == self.atoms.TARGETS {
             log::trace!(
                 "Handling TARGETS, dst property is {}",
-                self.atom_name_dbg(event.property)
+                self.atom_name(event.property)
             );
             let mut targets = Vec::with_capacity(10);
             targets.push(self.atoms.TARGETS);
@@ -812,8 +879,8 @@ fn serve_requests(context: Arc<Inner>) -> Result<(), Box<dyn std::error::Error>>
             Event::SelectionRequest(event) => {
                 log::trace!(
                     "SelectionRequest - selection is: {}, target is {}",
-                    context.atom_name_dbg(event.selection),
-                    context.atom_name_dbg(event.target),
+                    context.atom_name(event.selection),
+                    context.atom_name(event.target),
                 );
                 // Someone is requesting the clipboard content from us.
                 context
@@ -986,6 +1053,11 @@ impl Clipboard {
         debug_assert!(!format_atoms.contains(&atom_none));
 
         let result = self.inner.read(&format_atoms, selection)?;
+
+        log::trace!(
+            "read clipboard as format {:?}",
+            self.inner.atom_name(result.format)
+        );
 
         for (format_atom, image_format) in image_format_atoms.into_iter().zip(image_formats) {
             if result.format == format_atom {

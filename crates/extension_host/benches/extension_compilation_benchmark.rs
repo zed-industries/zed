@@ -134,11 +134,14 @@ fn manifest() -> ExtensionManifest {
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
-        capabilities: vec![ExtensionCapability::ProcessExec {
-            command: "echo".into(),
-            args: vec!["hello!".into()],
-        }],
+        capabilities: vec![ExtensionCapability::ProcessExec(
+            extension::ProcessExecCapability {
+                command: "echo".into(),
+                args: vec!["hello!".into()],
+            },
+        )],
         debug_adapters: Default::default(),
+        debug_locators: Default::default(),
     }
 }
 

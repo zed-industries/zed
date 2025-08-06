@@ -26,7 +26,7 @@ CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id"
 
 CREATE TABLE "access_tokens" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER REFERENCES users (id),
+    "user_id" INTEGER REFERENCES users (id) ON DELETE CASCADE,
     "impersonated_user_id" INTEGER REFERENCES users (id),
     "hash" VARCHAR(128)
 );
@@ -107,7 +107,7 @@ CREATE INDEX "index_worktree_entries_on_project_id" ON "worktree_entries" ("proj
 CREATE INDEX "index_worktree_entries_on_project_id_and_worktree_id" ON "worktree_entries" ("project_id", "worktree_id");
 
 CREATE TABLE "project_repositories" (
-    "project_id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "abs_path" VARCHAR,
     "id" INTEGER NOT NULL,
     "entry_ids" VARCHAR,
@@ -124,7 +124,7 @@ CREATE TABLE "project_repositories" (
 CREATE INDEX "index_project_repositories_on_project_id" ON "project_repositories" ("project_id");
 
 CREATE TABLE "project_repository_statuses" (
-    "project_id" INTEGER NOT NULL,
+    "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "repository_id" INTEGER NOT NULL,
     "repo_path" VARCHAR NOT NULL,
     "status" INT8 NOT NULL,
@@ -173,6 +173,7 @@ CREATE TABLE "language_servers" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
+    "capabilities" TEXT NOT NULL,
     PRIMARY KEY (project_id, id)
 );
 
@@ -185,7 +186,9 @@ CREATE TABLE "project_collaborators" (
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL,
-    "is_host" BOOLEAN NOT NULL
+    "is_host" BOOLEAN NOT NULL,
+    "committer_name" VARCHAR,
+    "committer_email" VARCHAR
 );
 
 CREATE INDEX "index_project_collaborators_on_project_id" ON "project_collaborators" ("project_id");
@@ -266,10 +269,13 @@ CREATE TABLE "channels" (
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "visibility" VARCHAR NOT NULL,
     "parent_path" TEXT NOT NULL,
-    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE
+    "requires_zed_cla" BOOLEAN NOT NULL DEFAULT FALSE,
+    "channel_order" INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE INDEX "index_channels_on_parent_path" ON "channels" ("parent_path");
+
+CREATE INDEX "index_channels_on_parent_path_and_order" ON "channels" ("parent_path", "channel_order");
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -460,6 +466,7 @@ CREATE TABLE extension_versions (
     provides_slash_commands BOOLEAN NOT NULL DEFAULT FALSE,
     provides_indexed_docs_providers BOOLEAN NOT NULL DEFAULT FALSE,
     provides_snippets BOOLEAN NOT NULL DEFAULT FALSE,
+    provides_debug_adapters BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (extension_id, version)
 );
 
