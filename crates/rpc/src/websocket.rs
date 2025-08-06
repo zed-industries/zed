@@ -1,9 +1,12 @@
+use base64::Engine as _;
 use futures::{Sink, Stream};
+use http::Request;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use yawc::{WebSocket, frame::{FrameView, OpCode}};
-use http::Request;
-use base64::Engine as _;
+use yawc::{
+    WebSocket,
+    frame::{FrameView, OpCode},
+};
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -33,11 +36,9 @@ impl Message {
 
     pub fn from_frame_view(frame: FrameView) -> Option<Self> {
         match frame.opcode {
-            OpCode::Text => {
-                String::from_utf8(frame.payload.to_vec())
-                    .ok()
-                    .map(Message::Text)
-            }
+            OpCode::Text => String::from_utf8(frame.payload.to_vec())
+                .ok()
+                .map(Message::Text),
             OpCode::Binary => Some(Message::Binary(frame.payload.to_vec())),
             OpCode::Ping => Some(Message::Ping(frame.payload.to_vec())),
             OpCode::Pong => Some(Message::Pong(frame.payload.to_vec())),
@@ -132,7 +133,7 @@ pub fn build_websocket_request(
         (Some(h), None) => h.to_string(),
         _ => return Err(anyhow::anyhow!("missing host in URL")),
     };
-    
+
     let mut request_builder = Request::builder()
         .uri(url.as_str())
         .method("GET")
@@ -143,15 +144,14 @@ pub fn build_websocket_request(
         .header("Upgrade", "websocket")
         .header("Sec-WebSocket-Version", "13")
         .header("Sec-WebSocket-Key", generate_websocket_key());
-    
+
     // Add custom headers
     for (name, value) in custom_headers {
         request_builder = request_builder.header(name.as_ref(), value.as_ref());
     }
-    
+
     Ok(request_builder)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -163,22 +163,22 @@ mod tests {
         // Test that we generate valid WebSocket keys
         let key1 = generate_websocket_key();
         let key2 = generate_websocket_key();
-        
+
         // Keys should be different (random)
         assert_ne!(key1, key2);
-        
+
         // Keys should be valid base64
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(&key1)
             .expect("should be valid base64");
-        
+
         // Should be exactly 16 bytes
         assert_eq!(decoded.len(), 16);
-        
+
         // Base64 encoding of 16 bytes should be 24 characters
         // (16 * 8 / 6 = 21.33, rounded up to 24 with padding)
         assert_eq!(key1.len(), 24);
-        
+
         // Should end with "==" due to padding
         assert!(key1.ends_with("=="));
     }
@@ -190,24 +190,30 @@ mod tests {
             ("Authorization", "Bearer token123"),
             ("X-Custom-Header", "value"),
         ];
-        
+
         let request_builder = build_websocket_request(&url, custom_headers).unwrap();
         let request = request_builder.body(()).unwrap();
-        
+
         // Check required WebSocket headers
         assert_eq!(request.headers().get("Host").unwrap(), "example.com:9000");
         assert_eq!(request.headers().get("Connection").unwrap(), "Upgrade");
         assert_eq!(request.headers().get("Upgrade").unwrap(), "websocket");
-        assert_eq!(request.headers().get("Sec-WebSocket-Version").unwrap(), "13");
-        
+        assert_eq!(
+            request.headers().get("Sec-WebSocket-Version").unwrap(),
+            "13"
+        );
+
         // Check that Sec-WebSocket-Key exists and is valid
         let ws_key = request.headers().get("Sec-WebSocket-Key").unwrap();
         assert_eq!(ws_key.len(), 24);
-        
+
         // Check custom headers
-        assert_eq!(request.headers().get("Authorization").unwrap(), "Bearer token123");
+        assert_eq!(
+            request.headers().get("Authorization").unwrap(),
+            "Bearer token123"
+        );
         assert_eq!(request.headers().get("X-Custom-Header").unwrap(), "value");
-        
+
         // Check other request properties
         assert_eq!(request.method(), http::Method::GET);
         assert_eq!(request.version(), http::Version::HTTP_11);
@@ -219,12 +225,15 @@ mod tests {
         let url = url::Url::parse("ws://localhost/").unwrap();
         let request_builder = build_websocket_request(&url, Vec::<(&str, &str)>::new()).unwrap();
         let request = request_builder.body(()).unwrap();
-        
+
         // Should still have all required headers
         assert_eq!(request.headers().get("Host").unwrap(), "localhost");
         assert_eq!(request.headers().get("Connection").unwrap(), "Upgrade");
         assert_eq!(request.headers().get("Upgrade").unwrap(), "websocket");
-        assert_eq!(request.headers().get("Sec-WebSocket-Version").unwrap(), "13");
+        assert_eq!(
+            request.headers().get("Sec-WebSocket-Version").unwrap(),
+            "13"
+        );
         assert!(request.headers().contains_key("Sec-WebSocket-Key"));
     }
 
@@ -236,28 +245,28 @@ mod tests {
         let frame = msg.clone().into_frame_view();
         assert_eq!(frame.opcode, OpCode::Text);
         assert_eq!(frame.payload.as_ref(), text.as_bytes());
-        
+
         // Test Binary message
         let data = vec![1, 2, 3, 4, 5];
         let msg = Message::Binary(data.clone());
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Binary);
         assert_eq!(frame.payload.as_ref(), &data);
-        
+
         // Test Ping message
         let ping_data = vec![42];
         let msg = Message::Ping(ping_data.clone());
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Ping);
         assert_eq!(frame.payload.as_ref(), &ping_data);
-        
+
         // Test Pong message
         let pong_data = vec![99];
         let msg = Message::Pong(pong_data.clone());
         let frame = msg.into_frame_view();
         assert_eq!(frame.opcode, OpCode::Pong);
         assert_eq!(frame.payload.as_ref(), &pong_data);
-        
+
         // Test Close message with reason
         let msg = Message::Close(Some((1000, "Normal closure".to_string())));
         let frame = msg.into_frame_view();
@@ -265,7 +274,7 @@ mod tests {
         // Close frames encode the status code in the first 2 bytes
         assert_eq!(frame.payload[0], 0x03); // 1000 = 0x03E8, high byte
         assert_eq!(frame.payload[1], 0xE8); // 1000 = 0x03E8, low byte
-        
+
         // Test Close message without reason
         let msg = Message::Close(None);
         let frame = msg.into_frame_view();

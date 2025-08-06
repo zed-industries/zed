@@ -7,14 +7,12 @@ pub mod user;
 pub mod zed_urls;
 
 use anyhow::{Context as _, Result, anyhow};
-use yawc::{WebSocket, Options};
-use tokio::io::{AsyncRead, AsyncWrite};
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use credentials_provider::CredentialsProvider;
 use futures::{
-    AsyncReadExt, FutureExt, Stream, StreamExt, TryFutureExt as _,
-    channel::oneshot, future::BoxFuture,
+    AsyncReadExt, FutureExt, Stream, StreamExt, TryFutureExt as _, channel::oneshot,
+    future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
 use http_client::{HttpClient, HttpClientWithUrl, http};
@@ -43,9 +41,11 @@ use std::{
 use std::{cmp, pin::Pin};
 use telemetry::Telemetry;
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use url::Url;
 use util::{ConnectionResult, ResultExt};
+use yawc::{Options, WebSocket};
 
 pub use rpc::*;
 pub use telemetry_events::Event;
@@ -242,7 +242,6 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Websocket(#[from] yawc::WebSocketError),
 }
-
 
 impl EstablishConnectionError {
     pub fn other(error: impl Into<anyhow::Error> + Send + Sync) -> Self {
@@ -1234,12 +1233,21 @@ impl Client {
 
             // Build custom headers for the WebSocket connection
             let mut custom_headers = vec![
-                (http::header::AUTHORIZATION.as_str(), credentials.authorization_header()),
+                (
+                    http::header::AUTHORIZATION.as_str(),
+                    credentials.authorization_header(),
+                ),
                 ("x-zed-protocol-version", rpc::PROTOCOL_VERSION.to_string()),
                 ("x-zed-app-version", app_version.into()),
-                ("x-zed-release-channel", release_channel.map(|r| r.dev_name()).unwrap_or("unknown").into()),
+                (
+                    "x-zed-release-channel",
+                    release_channel
+                        .map(|r| r.dev_name())
+                        .unwrap_or("unknown")
+                        .into(),
+                ),
             ];
-            
+
             if let Some(system_id) = system_id {
                 custom_headers.push(("x-zed-system-id", system_id));
             }
@@ -1247,18 +1255,17 @@ impl Client {
                 custom_headers.push(("x-zed-metrics-id", metrics_id));
             }
             if let Some(user_agent) = user_agent {
-                custom_headers.push((http::header::USER_AGENT.as_str(), user_agent.to_str().context("invalid user agent")?.into()));
+                custom_headers.push((
+                    http::header::USER_AGENT.as_str(),
+                    user_agent.to_str().context("invalid user agent")?.into(),
+                ));
             }
 
             // Connect with proper WebSocket headers
             let request = rpc::build_websocket_request(&rpc_url, custom_headers)?;
-            let ws = WebSocket::handshake_with_request(
-                rpc_url,
-                stream,
-                Options::default(),
-                request,
-            )
-            .await?;
+            let ws =
+                WebSocket::handshake_with_request(rpc_url, stream, Options::default(), request)
+                    .await?;
             let adapter = rpc::WebSocketAdapter::new(ws);
 
             Ok(Connection::new(adapter))

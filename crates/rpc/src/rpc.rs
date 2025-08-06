@@ -7,12 +7,12 @@ mod peer;
 mod websocket;
 
 pub use conn::Connection;
-pub use websocket::{Message as WebSocketMessage, WebSocketAdapter, build_websocket_request};
 pub use extension::*;
 pub use notification::*;
 pub use peer::*;
 pub use proto;
 pub use proto::{Receipt, TypedEnvelope, error::*};
+pub use websocket::{Message as WebSocketMessage, WebSocketAdapter, build_websocket_request};
 mod macros;
 
 #[cfg(feature = "gpui")]

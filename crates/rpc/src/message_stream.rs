@@ -57,19 +57,13 @@ where
 
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
-                self.stream
-                    .send(WebSocketMessage::Binary(buffer))
-                    .await?;
+                self.stream.send(WebSocketMessage::Binary(buffer)).await?;
             }
             Message::Ping => {
-                self.stream
-                    .send(WebSocketMessage::Ping(vec![]))
-                    .await?;
+                self.stream.send(WebSocketMessage::Ping(vec![])).await?;
             }
             Message::Pong => {
-                self.stream
-                    .send(WebSocketMessage::Pong(vec![]))
-                    .await?;
+                self.stream.send(WebSocketMessage::Pong(vec![])).await?;
             }
         }
 
