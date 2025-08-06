@@ -99,7 +99,7 @@ struct Animation {}
 
 impl Component for Animation {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Utilities
     }
 
     fn description() -> Option<&'static str> {

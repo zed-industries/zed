@@ -158,7 +158,7 @@ impl RenderOnce for Callout {
 
 impl Component for Callout {
     fn scope() -> ComponentScope {
-        ComponentScope::Notification
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {

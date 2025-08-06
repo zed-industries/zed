@@ -559,7 +559,7 @@ impl MacWindow {
             }
 
             let native_window: id = match kind {
-                WindowKind::Normal | WindowKind::Overlay => msg_send![WINDOW_CLASS, alloc],
+                WindowKind::Normal => msg_send![WINDOW_CLASS, alloc],
                 WindowKind::PopUp => {
                     style_mask |= NSWindowStyleMaskNonactivatingPanel;
                     msg_send![PANEL_CLASS, alloc]
@@ -711,7 +711,7 @@ impl MacWindow {
             native_window.makeFirstResponder_(native_view);
 
             match kind {
-                WindowKind::Normal | WindowKind::Overlay => {
+                WindowKind::Normal => {
                     native_window.setLevel_(NSNormalWindowLevel);
                     native_window.setAcceptsMouseMovedEvents_(YES);
                 }

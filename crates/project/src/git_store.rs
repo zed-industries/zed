@@ -246,6 +246,8 @@ pub struct RepositorySnapshot {
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
+    pub remote_origin_url: Option<String>,
+    pub remote_upstream_url: Option<String>,
 }
 
 type JobId = u64;
@@ -2673,6 +2675,8 @@ impl RepositorySnapshot {
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
+            remote_origin_url: None,
+            remote_upstream_url: None,
         }
     }
 
@@ -4025,6 +4029,25 @@ impl Repository {
         })
     }
 
+    pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.default_branch().await,
+                RepositoryState::Remote { project_id, client } => {
+                    let response = client
+                        .request(proto::GetDefaultBranch {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    anyhow::Ok(response.branch.map(SharedString::from))
+                }
+            }
+        })
+    }
+
     pub fn diff(&mut self, diff_type: DiffType, _cx: &App) -> oneshot::Receiver<Result<String>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -4799,6 +4822,10 @@ async fn compute_snapshot(
         None => None,
     };
 
+    // Used by edit prediction data collection
+    let remote_origin_url = backend.remote_url("origin");
+    let remote_upstream_url = backend.remote_url("upstream");
+
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
@@ -4807,6 +4834,8 @@ async fn compute_snapshot(
         branch,
         head_commit,
         merge: merge_details,
+        remote_origin_url,
+        remote_upstream_url,
     };
 
     Ok((snapshot, events))

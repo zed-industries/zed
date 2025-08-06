@@ -23,7 +23,6 @@ askpass.workspace = true
 buffer_diff.workspace = true
 call.workspace = true
 chrono.workspace = true
-client.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
@@ -71,6 +70,7 @@ windows.workspace = true
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }

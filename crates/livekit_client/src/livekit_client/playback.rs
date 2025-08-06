@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
+use cpal::{Data, FromSample, I24, SampleFormat, SizedSample};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
@@ -258,9 +259,15 @@ impl AudioStack {
                     let stream = device
                         .build_input_stream_raw(
                             &config.config(),
-                            cpal::SampleFormat::I16,
+                            config.sample_format(),
                             move |data, _: &_| {
-                                let mut data = data.as_slice::<i16>().unwrap();
+                                let data =
+                                    Self::get_sample_data(config.sample_format(), data).log_err();
+                                let Some(data) = data else {
+                                    return;
+                                };
+                                let mut data = data.as_slice();
+
                                 while data.len() > 0 {
                                     let remainder = (buf.capacity() - buf.len()).min(data.len());
                                     buf.extend_from_slice(&data[..remainder]);
@@ -312,6 +319,33 @@ impl AudioStack {
             device_change_listener.next().await;
             drop(end_on_drop_tx)
         }
+    }
+
+    fn get_sample_data(sample_format: SampleFormat, data: &Data) -> Result<Vec<i16>> {
+        match sample_format {
+            SampleFormat::I8 => Ok(Self::convert_sample_data::<i8, i16>(data)),
+            SampleFormat::I16 => Ok(data.as_slice::<i16>().unwrap().to_vec()),
+            SampleFormat::I24 => Ok(Self::convert_sample_data::<I24, i16>(data)),
+            SampleFormat::I32 => Ok(Self::convert_sample_data::<i32, i16>(data)),
+            SampleFormat::I64 => Ok(Self::convert_sample_data::<i64, i16>(data)),
+            SampleFormat::U8 => Ok(Self::convert_sample_data::<u8, i16>(data)),
+            SampleFormat::U16 => Ok(Self::convert_sample_data::<u16, i16>(data)),
+            SampleFormat::U32 => Ok(Self::convert_sample_data::<u32, i16>(data)),
+            SampleFormat::U64 => Ok(Self::convert_sample_data::<u64, i16>(data)),
+            SampleFormat::F32 => Ok(Self::convert_sample_data::<f32, i16>(data)),
+            SampleFormat::F64 => Ok(Self::convert_sample_data::<f64, i16>(data)),
+            _ => anyhow::bail!("Unsupported sample format"),
+        }
+    }
+
+    fn convert_sample_data<TSource: SizedSample, TDest: SizedSample + FromSample<TSource>>(
+        data: &Data,
+    ) -> Vec<TDest> {
+        data.as_slice::<TSource>()
+            .unwrap()
+            .iter()
+            .map(|e| e.to_sample::<TDest>())
+            .collect()
     }
 }
 

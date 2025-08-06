@@ -260,14 +260,25 @@ pub mod icon_theme_selector {
     }
 }
 
+pub mod settings_profile_selector {
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
+    #[action(namespace = settings_profile_selector)]
+    pub struct Toggle;
+}
+
 pub mod agent {
     use gpui::actions;
 
     actions!(
         agent,
         [
-            /// Opens the agent configuration panel.
-            OpenConfiguration,
+            /// Opens the agent settings panel.
+            #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
+            OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
             /// Resets the agent onboarding state.

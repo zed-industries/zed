@@ -8,7 +8,6 @@ use axum::{
 };
 
 use collab::api::CloudflareIpCountryHeader;
-use collab::api::billing::sync_llm_request_usage_with_stripe_periodically;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
 use collab::user_backfiller::spawn_user_backfiller;
@@ -31,7 +30,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
     Layer, filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt,
 };
-use util::{ResultExt as _, maybe};
+use util::ResultExt as _;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -132,29 +131,6 @@ async fn main() -> Result<()> {
                 if mode.is_api() {
                     fetch_extensions_from_blob_store_periodically(state.clone());
                     spawn_user_backfiller(state.clone());
-
-                    let llm_db = maybe!(async {
-                        let database_url = state
-                            .config
-                            .llm_database_url
-                            .as_ref()
-                            .context("missing LLM_DATABASE_URL")?;
-                        let max_connections = state
-                            .config
-                            .llm_database_max_connections
-                            .context("missing LLM_DATABASE_MAX_CONNECTIONS")?;
-
-                        let mut db_options = db::ConnectOptions::new(database_url);
-                        db_options.max_connections(max_connections);
-                        LlmDatabase::new(db_options, state.executor.clone()).await
-                    })
-                    .await
-                    .trace_err();
-
-                    if let Some(mut llm_db) = llm_db {
-                        llm_db.initialize().await?;
-                        sync_llm_request_usage_with_stripe_periodically(state.clone());
-                    }
 
                     app = app
                         .merge(collab::api::events::router())

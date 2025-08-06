@@ -121,6 +121,11 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.base = self.base.layer(elevation);
         self
@@ -295,6 +300,7 @@ pub struct ButtonConfiguration {
     label: SharedString,
     icon: Option<IconName>,
     on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    selected: bool,
 }
 
 mod private {
@@ -308,6 +314,7 @@ pub trait ButtonBuilder: 'static + private::ToggleButtonStyle {
 pub struct ToggleButtonSimple {
     label: SharedString,
     on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    selected: bool,
 }
 
 impl ToggleButtonSimple {
@@ -318,7 +325,13 @@ impl ToggleButtonSimple {
         Self {
             label: label.into(),
             on_click: Box::new(on_click),
+            selected: false,
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -330,6 +343,7 @@ impl ButtonBuilder for ToggleButtonSimple {
             label: self.label,
             icon: None,
             on_click: self.on_click,
+            selected: self.selected,
         }
     }
 }
@@ -338,6 +352,7 @@ pub struct ToggleButtonWithIcon {
     label: SharedString,
     icon: IconName,
     on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    selected: bool,
 }
 
 impl ToggleButtonWithIcon {
@@ -350,7 +365,13 @@ impl ToggleButtonWithIcon {
             label: label.into(),
             icon,
             on_click: Box::new(on_click),
+            selected: false,
         }
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -362,6 +383,7 @@ impl ButtonBuilder for ToggleButtonWithIcon {
             label: self.label,
             icon: Some(self.icon),
             on_click: self.on_click,
+            selected: self.selected,
         }
     }
 }
@@ -373,6 +395,12 @@ pub enum ToggleButtonGroupStyle {
     Outlined,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ToggleButtonGroupSize {
+    Default,
+    Medium,
+}
+
 #[derive(IntoElement)]
 pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
 where
@@ -381,8 +409,10 @@ where
     group_name: &'static str,
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
+    size: ToggleButtonGroupSize,
     button_width: Rems,
     selected_index: usize,
+    tab_index: Option<isize>,
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
@@ -391,8 +421,10 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
             group_name,
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
+            size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
+            tab_index: None,
         }
     }
 }
@@ -403,8 +435,10 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
             group_name,
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
+            size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
+            tab_index: None,
         }
     }
 }
@@ -412,6 +446,11 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
 impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T, COLS, ROWS> {
     pub fn style(mut self, style: ToggleButtonGroupStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    pub fn size(mut self, size: ToggleButtonGroupSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -424,53 +463,74 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
         self.selected_index = index;
         self
     }
+
+    /// Sets the tab index for the toggle button group.
+    /// The tab index is set to the initial value provided, then the
+    /// value is incremented by the number of buttons in the group.
+    pub fn tab_index(mut self, tab_index: &mut isize) -> Self {
+        self.tab_index = Some(*tab_index);
+        *tab_index += (COLS * ROWS) as isize;
+        self
+    }
 }
 
 impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     for ToggleButtonGroup<T, COLS, ROWS>
 {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let entries = self.rows.into_iter().enumerate().map(|(row_index, row)| {
-            row.into_iter().enumerate().map(move |(index, button)| {
-                let ButtonConfiguration {
-                    label,
-                    icon,
-                    on_click,
-                } = button.into_configuration();
+        let entries =
+            self.rows.into_iter().enumerate().map(|(row_index, row)| {
+                row.into_iter().enumerate().map(move |(col_index, button)| {
+                    let ButtonConfiguration {
+                        label,
+                        icon,
+                        on_click,
+                        selected,
+                    } = button.into_configuration();
 
-                ButtonLike::new((self.group_name, row_index * COLS + index))
-                    .when(index == self.selected_index, |this| {
-                        this.toggle_state(true)
-                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
-                    })
-                    .rounding(None)
-                    .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
-                        button.style(ButtonStyle::Filled)
-                    })
-                    .child(
-                        h_flex()
-                            .min_w(self.button_width)
-                            .gap_1p5()
-                            .justify_center()
-                            .when_some(icon, |this, icon| {
-                                this.child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
-                                    if index == self.selected_index {
-                                        this.color(Color::Accent)
-                                    } else {
-                                        this.color(Color::Muted)
-                                    }
-                                }))
-                            })
-                            .child(
-                                Label::new(label).when(index == self.selected_index, |this| {
-                                    this.color(Color::Accent)
-                                }),
-                            ),
-                    )
-                    .on_click(on_click)
-                    .into_any_element()
-            })
-        });
+                    let entry_index = row_index * COLS + col_index;
+
+                    ButtonLike::new((self.group_name, entry_index))
+                        .when_some(self.tab_index, |this, tab_index| {
+                            this.tab_index(tab_index + entry_index as isize)
+                        })
+                        .when(entry_index == self.selected_index || selected, |this| {
+                            this.toggle_state(true)
+                                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                        })
+                        .rounding(None)
+                        .when(self.style == ToggleButtonGroupStyle::Filled, |button| {
+                            button.style(ButtonStyle::Filled)
+                        })
+                        .when(self.size == ToggleButtonGroupSize::Medium, |button| {
+                            button.size(ButtonSize::Medium)
+                        })
+                        .child(
+                            h_flex()
+                                .min_w(self.button_width)
+                                .gap_1p5()
+                                .px_3()
+                                .py_1()
+                                .justify_center()
+                                .when_some(icon, |this, icon| {
+                                    this.py_2()
+                                        .child(Icon::new(icon).size(IconSize::XSmall).map(|this| {
+                                            if entry_index == self.selected_index || selected {
+                                                this.color(Color::Accent)
+                                            } else {
+                                                this.color(Color::Muted)
+                                            }
+                                        }))
+                                })
+                                .child(Label::new(label).size(LabelSize::Small).when(
+                                    entry_index == self.selected_index || selected,
+                                    |this| this.color(Color::Accent),
+                                )),
+                        )
+                        .on_click(on_click)
+                        .into_any_element()
+                })
+            });
 
         let border_color = cx.theme().colors().border.opacity(0.6);
         let is_outlined_or_filled = self.style == ToggleButtonGroupStyle::Outlined
