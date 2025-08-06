@@ -1,9 +1,7 @@
 use anyhow::{Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
-use futures::{StreamExt, io::BufReader};
+use futures::StreamExt;
 use gpui::{App, AppContext, AsyncApp, SharedString, Task};
 use http_client::github::AssetKind;
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -15,12 +13,8 @@ use project::project_settings::ProjectSettings;
 use regex::Regex;
 use serde_json::json;
 use settings::Settings as _;
-use sha2::{Digest, Sha256};
 use smol::fs::{self};
-use smol::io::AsyncSeekExt;
 use std::fmt::Display;
-use std::pin::Pin;
-use std::task::Poll;
 use std::{
     any::Any,
     borrow::Cow,
@@ -28,13 +22,11 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
+use util::fs::make_file_executable;
 use util::merge_json_value_into;
-use util::{
-    ResultExt,
-    fs::{make_file_executable, remove_matching},
-    maybe,
-};
+use util::{ResultExt, fs::remove_matching, maybe};
 
+use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
@@ -65,41 +57,6 @@ impl RustLspAdapter {
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 
-struct HashingWriter<W: AsyncWrite + Unpin> {
-    writer: W,
-    hasher: Sha256,
-}
-
-impl<W: AsyncWrite + Unpin> AsyncWrite for HashingWriter<W> {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::result::Result<usize, std::io::Error>> {
-        match Pin::new(&mut self.writer).poll_write(cx, buf) {
-            Poll::Ready(Ok(n)) => {
-                self.hasher.update(&buf[..n]);
-                Poll::Ready(Ok(n))
-            }
-            other => other,
-        }
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Result<(), std::io::Error>> {
-        Pin::new(&mut self.writer).poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), std::io::Error>> {
-        Pin::new(&mut self.writer).poll_close(cx)
-    }
-}
-
 impl RustLspAdapter {
     fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
@@ -116,70 +73,6 @@ impl RustLspAdapter {
             extension
         )
     }
-
-    async fn stream_response_archive(
-        response: impl AsyncRead + Unpin,
-        url: &str,
-        destination_path: &Path,
-    ) -> Result<()> {
-        match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => extract_tar_gz(destination_path, url, response).await?,
-            AssetKind::Gz => extract_gz(destination_path, url, response).await?,
-            AssetKind::Zip => {
-                util::archive::extract_zip(&destination_path, response).await?;
-            }
-        };
-        Ok(())
-    }
-
-    async fn stream_file_archive(
-        file_archive: impl AsyncRead + AsyncSeek + Unpin,
-        url: &str,
-        destination_path: &Path,
-    ) -> Result<()> {
-        match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz => extract_tar_gz(destination_path, url, file_archive).await?,
-            AssetKind::Gz => extract_gz(destination_path, url, file_archive).await?,
-            #[cfg(not(windows))]
-            AssetKind::Zip => {
-                util::archive::extract_seekable_zip(&destination_path, file_archive).await?;
-            }
-            #[cfg(windows)]
-            AssetKind::Zip => {
-                util::archive::extract_zip(&destination_path, file_archive).await?;
-            }
-        };
-        Ok(())
-    }
-}
-
-async fn extract_tar_gz(
-    destination_path: &Path,
-    url: &str,
-    from: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    let decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let archive = async_tar::Archive::new(decompressed_bytes);
-    archive
-        .unpack(&destination_path)
-        .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
-    Ok(())
-}
-
-async fn extract_gz(
-    destination_path: &Path,
-    url: &str,
-    from: impl AsyncRead + Unpin,
-) -> Result<(), anyhow::Error> {
-    let mut decompressed_bytes = GzipDecoder::new(BufReader::new(from));
-    let mut file = fs::File::create(&destination_path).await.with_context(|| {
-        format!("creating a file {destination_path:?} for a download from {url}")
-    })?;
-    futures::io::copy(&mut decompressed_bytes, &mut file)
-        .await
-        .with_context(|| format!("extracting {url} to {destination_path:?}"))?;
-    Ok(())
 }
 
 pub(crate) struct CargoManifestProvider;
@@ -301,10 +194,9 @@ impl LspAdapter for RustLspAdapter {
         })
         .await;
 
-        let metadata = async_fs::read_to_string(&metadata_path)
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
             .await
-            .ok()
-            .and_then(|json| serde_json::from_str::<GithubBinaryMetadata>(&json).ok());
+            .ok();
         if let Some(metadata) = metadata {
             if let (Some(actual_digest), Some(expected_digest)) =
                 (&metadata.digest, expected_digest)
@@ -341,9 +233,17 @@ impl LspAdapter for RustLspAdapter {
             delegate,
             url,
             expected_digest,
-            &metadata_path,
             &destination_path,
-            &server_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest.map(ToString::to_string),
+            },
+            &metadata_path,
         )
         .await?;
 
@@ -653,77 +553,6 @@ impl LspAdapter for RustLspAdapter {
 
         Ok(original)
     }
-}
-
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
-struct GithubBinaryMetadata {
-    metadata_version: u64,
-    digest: Option<String>,
-}
-
-async fn download_server_binary(
-    delegate: &dyn LspAdapterDelegate,
-    url: &str,
-    digest: Option<&str>,
-    metadata_path: &Path,
-    destination_path: &Path,
-    server_path: &Path,
-) -> Result<(), anyhow::Error> {
-    log::info!("downloading github artifact from {url}");
-    let mut response = delegate
-        .http_client()
-        .get(url, Default::default(), true)
-        .await
-        .with_context(|| format!("downloading release from {url}"))?;
-    let body = response.body_mut();
-    match digest {
-        Some(expected_sha_256) => {
-            let temp_asset_file = tempfile::NamedTempFile::new()
-                .with_context(|| format!("creating a temporary file for {url}"))?;
-            let (temp_asset_file, _temp_guard) = temp_asset_file.into_parts();
-            let mut writer = HashingWriter {
-                writer: async_fs::File::from(temp_asset_file),
-                hasher: Sha256::new(),
-            };
-            futures::io::copy(&mut BufReader::new(body), &mut writer)
-                .await
-                .with_context(|| {
-                    format!("saving archive contents into the temporary file for {url}",)
-                })?;
-            let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-            anyhow::ensure!(
-                asset_sha_256 == expected_sha_256,
-                "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
-            );
-            writer
-                .writer
-                .seek(std::io::SeekFrom::Start(0))
-                .await
-                .with_context(|| format!("seeking temporary file {destination_path:?}",))?;
-            RustLspAdapter::stream_file_archive(&mut writer.writer, url, destination_path)
-                .await
-                .with_context(|| {
-                    format!("extracting downloaded asset for {url} into {destination_path:?}",)
-                })?;
-        }
-        None => RustLspAdapter::stream_response_archive(body, url, destination_path)
-            .await
-            .with_context(|| {
-                format!("extracting response for asset {url} into {destination_path:?}",)
-            })?,
-    }
-    make_file_executable(server_path).await?;
-    let metadata = serde_json::to_string(&GithubBinaryMetadata {
-        metadata_version: 1,
-        digest: digest.map(|d| d.to_owned()),
-    })?;
-    async_fs::File::create(metadata_path)
-        .await
-        .with_context(|| format!("creating metadata file at {metadata_path:?}",))?
-        .write_all(metadata.as_bytes())
-        .await
-        .with_context(|| format!("writing metadata file at {metadata_path:?}",))?;
-    Ok(())
 }
 
 pub(crate) struct RustContextProvider;
