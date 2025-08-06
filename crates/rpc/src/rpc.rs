@@ -4,8 +4,10 @@ mod extension;
 mod message_stream;
 mod notification;
 mod peer;
+mod websocket;
 
 pub use conn::Connection;
+pub use websocket::{Message as WebSocketMessage, WebSocketAdapter};
 pub use extension::*;
 pub use notification::*;
 pub use peer::*;

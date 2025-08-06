@@ -1,4 +1,4 @@
-use async_tungstenite::tungstenite::Message as WebSocketMessage;
+use crate::WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 
 pub struct Connection {

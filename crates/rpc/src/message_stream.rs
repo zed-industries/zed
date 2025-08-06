@@ -2,12 +2,11 @@
 
 pub use ::proto::*;
 
-use async_tungstenite::tungstenite::Message as WebSocketMessage;
+use crate::WebSocketMessage;
 use futures::{SinkExt as _, StreamExt as _};
 use proto::Message as _;
 use std::time::Instant;
 use std::{fmt::Debug, io};
-use zstd::zstd_safe::WriteBuf;
 
 const KIB: usize = 1024;
 const MIB: usize = KIB * 1024;
@@ -59,17 +58,17 @@ where
                 self.encoding_buffer.clear();
                 self.encoding_buffer.shrink_to(MAX_BUFFER_LEN);
                 self.stream
-                    .send(WebSocketMessage::Binary(buffer.into()))
+                    .send(WebSocketMessage::Binary(buffer))
                     .await?;
             }
             Message::Ping => {
                 self.stream
-                    .send(WebSocketMessage::Ping(Default::default()))
+                    .send(WebSocketMessage::Ping(vec![]))
                     .await?;
             }
             Message::Pong => {
                 self.stream
-                    .send(WebSocketMessage::Pong(Default::default()))
+                    .send(WebSocketMessage::Pong(vec![]))
                     .await?;
             }
         }

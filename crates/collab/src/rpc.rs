@@ -20,9 +20,7 @@ use crate::{
     executor::Executor,
 };
 use anyhow::{Context as _, anyhow, bail};
-use async_tungstenite::tungstenite::{
-    Message as TungsteniteMessage, protocol::CloseFrame as TungsteniteCloseFrame,
-};
+use rpc::WebSocketMessage as TungsteniteMessage;
 use axum::headers::UserAgent;
 use axum::{
     Extension, Router, TypedHeader,
@@ -4312,25 +4310,14 @@ async fn get_llm_api_token(
 
 fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
     let message = match message {
-        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload.as_str().to_string()),
+        TungsteniteMessage::Text(payload) => AxumMessage::Text(payload),
         TungsteniteMessage::Binary(payload) => AxumMessage::Binary(payload.into()),
         TungsteniteMessage::Ping(payload) => AxumMessage::Ping(payload.into()),
         TungsteniteMessage::Pong(payload) => AxumMessage::Pong(payload.into()),
-        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|frame| AxumCloseFrame {
-            code: frame.code.into(),
-            reason: frame.reason.as_str().to_owned().into(),
-        })),
-        // We should never receive a frame while reading the message, according
-        // to the `tungstenite` maintainers:
-        //
-        // > It cannot occur when you read messages from the WebSocket, but it
-        // > can be used when you want to send the raw frames (e.g. you want to
-        // > send the frames to the WebSocket without composing the full message first).
-        // >
-        // > — https://github.com/snapview/tungstenite-rs/issues/268
-        TungsteniteMessage::Frame(_) => {
-            bail!("received an unexpected frame while reading the message")
-        }
+        TungsteniteMessage::Close(frame) => AxumMessage::Close(frame.map(|(code, reason)| AxumCloseFrame {
+            code,
+            reason: reason.into(),
+        }))
     };
 
     Ok(message)
@@ -4338,15 +4325,15 @@ fn to_axum_message(message: TungsteniteMessage) -> anyhow::Result<AxumMessage> {
 
 fn to_tungstenite_message(message: AxumMessage) -> TungsteniteMessage {
     match message {
-        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload.into()),
-        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload.into()),
-        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload.into()),
-        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload.into()),
+        AxumMessage::Text(payload) => TungsteniteMessage::Text(payload),
+        AxumMessage::Binary(payload) => TungsteniteMessage::Binary(payload),
+        AxumMessage::Ping(payload) => TungsteniteMessage::Ping(payload),
+        AxumMessage::Pong(payload) => TungsteniteMessage::Pong(payload),
         AxumMessage::Close(frame) => {
-            TungsteniteMessage::Close(frame.map(|frame| TungsteniteCloseFrame {
-                code: frame.code.into(),
-                reason: frame.reason.as_ref().into(),
-            }))
+            TungsteniteMessage::Close(frame.map(|frame| (
+                frame.code,
+                frame.reason.to_string(),
+            )))
         }
     }
 }

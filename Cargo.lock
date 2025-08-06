@@ -3004,7 +3004,6 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "clock",
@@ -3052,6 +3051,7 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
+ "yawc",
 ]
 
 [[package]]
@@ -3214,7 +3214,6 @@ dependencies = [
  "assistant_slash_command",
  "async-stripe",
  "async-trait",
- "async-tungstenite",
  "audio",
  "aws-config",
  "aws-sdk-kinesis",
@@ -3315,6 +3314,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+ "yawc",
  "zlog",
 ]
 
@@ -13922,7 +13922,6 @@ name = "rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-tungstenite",
  "base64 0.22.1",
  "chrono",
  "collections",
@@ -13939,6 +13938,7 @@ dependencies = [
  "tracing",
  "util",
  "workspace-hack",
+ "yawc",
  "zlog",
  "zstd",
 ]
@@ -20311,6 +20311,35 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yawc"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c1516ed8e163edccbabde34e88fcd1594a0e78820d50fbd9bf3c9e9cd7d28d8"
+dependencies = [
+ "base64 0.22.1",
+ "bytes 1.10.1",
+ "flate2",
+ "futures 0.3.31",
+ "http-body-util",
+ "hyper 1.6.0",
+ "hyper-util",
+ "js-sys",
+ "nom",
+ "pin-project",
+ "rand 0.8.5",
+ "sha1",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tokio-util",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "webpki-roots",
+]
 
 [[package]]
 name = "yazi"
