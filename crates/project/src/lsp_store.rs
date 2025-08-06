@@ -59,9 +59,9 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
-    Unclipped,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
+    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
+    Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -96,7 +96,7 @@ use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
@@ -112,7 +112,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -12579,27 +12579,8 @@ impl SshLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for SshLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        self.name.clone()
-    }
-
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let Some(options) = &self.initialization_options else {
-            return Ok(None);
-        };
-        let result = serde_json::from_str(options)?;
-        Ok(result)
-    }
-
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
-    }
-
+impl LspInstaller for SshLspAdapter {
+    type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -12621,17 +12602,39 @@ impl LspAdapter for SshLspAdapter {
         &self,
         _: &dyn LspAdapterDelegate,
         _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+    ) -> Result<()> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: (),
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for SshLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        self.name.clone()
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(options) = &self.initialization_options else {
+            return Ok(None);
+        };
+        let result = serde_json::from_str(options)?;
+        Ok(result)
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        self.code_action_kinds.clone()
     }
 }
 

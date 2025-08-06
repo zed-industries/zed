@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -11,8 +10,8 @@ use extension::{Extension, ExtensionLanguageServerProxy, WorktreeDelegate};
 use futures::{Future, FutureExt, future::join_all};
 use gpui::{App, AppContext, AsyncApp, Task};
 use language::{
-    BinaryStatus, CodeLabel, HighlightId, Language, LanguageName, LspAdapter, LspAdapterDelegate,
-    Toolchain,
+    BinaryStatus, CodeLabel, DynLspInstaller, HighlightId, Language, LanguageName, LspAdapter,
+    LspAdapterDelegate, Toolchain,
 };
 use lsp::{
     CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName,
@@ -155,11 +154,7 @@ impl ExtensionLspAdapter {
 }
 
 #[async_trait(?Send)]
-impl LspAdapter for ExtensionLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        self.language_server_id.clone()
-    }
-
+impl DynLspInstaller for ExtensionLspAdapter {
     fn get_language_server_command<'a>(
         self: Arc<Self>,
         delegate: Arc<dyn LspAdapterDelegate>,
@@ -205,29 +200,20 @@ impl LspAdapter for ExtensionLspAdapter {
         .boxed_local()
     }
 
-    async fn fetch_latest_server_version(
+    async fn try_fetch_server_binary(
         &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        unreachable!("get_language_server_command is overridden")
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: &Arc<dyn LspAdapterDelegate>,
         _: PathBuf,
-        _: &dyn LspAdapterDelegate,
+        _: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        unreachable!("get_language_server_command is overridden")
+        unreachable!("get_language_server_command is overriden")
     }
+}
 
-    async fn cached_server_binary(
-        &self,
-        _: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        unreachable!("get_language_server_command is overridden")
+#[async_trait(?Send)]
+impl LspAdapter for ExtensionLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        self.language_server_id.clone()
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
