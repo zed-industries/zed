@@ -1,4 +1,10 @@
-use crate::{AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels, ForegroundExecutor, Keymap, NoopTextSystem, Platform, PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PromptButton, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow, WindowAppearance, WindowParams, size, LayoutDirection};
+use crate::{
+    AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DevicePixels,
+    ForegroundExecutor, Keymap, LayoutDirection, NoopTextSystem, Platform, PlatformDisplay,
+    PlatformKeyboardLayout, PlatformTextSystem, PromptButton, ScreenCaptureFrame,
+    ScreenCaptureSource, ScreenCaptureStream, SourceMetadata, Task, TestDisplay, TestWindow,
+    WindowAppearance, WindowParams, size,
+};
 use anyhow::Result;
 use collections::VecDeque;
 use futures::channel::oneshot;
@@ -33,7 +39,7 @@ pub(crate) struct TestPlatform {
     #[cfg(target_os = "windows")]
     bitmap_factory: std::mem::ManuallyDrop<IWICImagingFactory>,
     weak: Weak<Self>,
-    default_layout_direction: RefCell<LayoutDirection>
+    default_layout_direction: RefCell<LayoutDirection>,
 }
 
 #[derive(Clone)]
@@ -115,7 +121,7 @@ impl TestPlatform {
             #[cfg(target_os = "windows")]
             bitmap_factory,
             text_system,
-            default_layout_direction: Default::default()
+            default_layout_direction: Default::default(),
         })
     }
 
