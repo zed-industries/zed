@@ -163,6 +163,8 @@ impl LineWrapper {
         line
     }
 
+    /// Any character in this list should be treated as a word character,
+    /// meaning it can be part of a word that should not be wrapped.
     pub(crate) fn is_word_char(c: char) -> bool {
         // ASCII alphanumeric characters, for English, numbers: `Hello123`, etc.
         c.is_ascii_alphanumeric() ||
@@ -183,7 +185,8 @@ impl LineWrapper {
         // e.g. `a-b`, `var_name`, `I'm`, '@mention`, `#hashtag`, `100%`, `3.1415`, `2^3`, `a~b`, etc.
         matches!(c, '-' | '_' | '.' | '\'' | '$' | '%' | '@' | '#' | '^' | '~' | ',') ||
         // Characters that used in URL, e.g. `https://github.com/zed-industries/zed?a=1&b=2` for better wrapping a long URL.
-        matches!(c,  '/' | ':' | '?' | '&' | '=') ||
+        // But `/` or `\` should wrap.
+        matches!(c, ':' | '?' | '&' | '=') ||
         // `⋯` character is special used in Zed, to keep this at the end of the line.
         matches!(c, '⋯')
     }
