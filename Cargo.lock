@@ -3052,7 +3052,6 @@ dependencies = [
  "windows 0.61.1",
  "workspace-hack",
  "worktree",
- "yawc",
 ]
 
 [[package]]
@@ -3323,7 +3322,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
- "yawc",
  "zlog",
 ]
 
