@@ -3036,7 +3036,9 @@ dependencies = [
 name = "cloud_api_types"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
+ "ciborium",
  "cloud_llm_client",
  "pretty_assertions",
  "serde",
