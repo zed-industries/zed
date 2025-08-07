@@ -3,6 +3,7 @@ use crate::templates::Templates;
 use acp_thread::AgentConnection;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
+use assistant_tool::ActionLog;
 use client::{Client, UserStore};
 use fs::FakeFs;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -656,8 +657,16 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         .await;
 
     let project_context = Rc::new(RefCell::new(ProjectContext::default()));
-    let thread =
-        cx.new(|_| Thread::new(project, project_context.clone(), templates, model.clone()));
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let thread = cx.new(|_| {
+        Thread::new(
+            project,
+            project_context.clone(),
+            action_log,
+            templates,
+            model.clone(),
+        )
+    });
     ThreadTest {
         model,
         thread,

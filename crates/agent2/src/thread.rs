@@ -1,6 +1,7 @@
 use crate::templates::{SystemPromptTemplate, Template, Templates};
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
+use assistant_tool::ActionLog;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{
@@ -124,13 +125,14 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    // action_log: Entity<ActionLog>,
+    action_log: Entity<ActionLog>,
 }
 
 impl Thread {
     pub fn new(
         _project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
+        action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         default_model: Arc<dyn LanguageModel>,
     ) -> Self {
@@ -143,6 +145,7 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
+            action_log,
         }
     }
 

@@ -373,8 +373,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
         cx.spawn(async move |cx| {
             log::debug!("Starting thread creation in async context");
+
+            // Generate session ID
+            let session_id = acp::SessionId(uuid::Uuid::new_v4().to_string().into());
+            log::info!("Created session with ID: {}", session_id);
+
+            // Create AcpThread
+            let acp_thread = cx.update(|cx| {
+                cx.new(|cx| {
+                    acp_thread::AcpThread::new("agent2", self.clone(), project.clone(), session_id.clone(), cx)
+                })
+            })?;
+            let action_log = cx.update(|cx| acp_thread.read(cx).action_log().clone())?;
+
             // Create Thread
-            let (session_id, thread) = agent.update(
+            let thread = agent.update(
                 cx,
                 |agent, cx: &mut gpui::Context<NativeAgent>| -> Result<_> {
                     // Fetch default model from registry settings
@@ -399,21 +412,10 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             anyhow!("No default model configured. Please configure a default model in settings.")
                         })?;
 
-                    let thread = cx.new(|_| Thread::new(project.clone(), agent.project_context.clone(), agent.templates.clone(), default_model));
-
-                    // Generate session ID
-                    let session_id = acp::SessionId(uuid::Uuid::new_v4().to_string().into());
-                    log::info!("Created session with ID: {}", session_id);
-                    Ok((session_id, thread))
+                    let thread = cx.new(|_| Thread::new(project, agent.project_context.clone(), action_log, agent.templates.clone(), default_model));
+                    Ok(thread)
                 },
             )??;
-
-            // Create AcpThread
-            let acp_thread = cx.update(|cx| {
-                cx.new(|cx| {
-                    acp_thread::AcpThread::new("agent2", self.clone(), project, session_id.clone(), cx)
-                })
-            })?;
 
             // Store the session
             agent.update(cx, |agent, cx| {
