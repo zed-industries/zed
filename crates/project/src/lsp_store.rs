@@ -654,7 +654,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -709,7 +709,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -738,7 +738,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let options = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
 
@@ -1427,6 +1427,14 @@ impl LocalLspStore {
             }
         }
 
+        // Default to use all language servers.
+        let mut default_formatter_list: Vec<Formatter> = adapters_and_servers
+            .iter()
+            .map(|(_, server)| Formatter::LanguageServer {
+                name: Some(server.name().to_string()),
+            })
+            .collect();
+
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
@@ -1435,11 +1443,10 @@ impl LocalLspStore {
                     SelectedFormatter::Auto => {
                         if settings.prettier.allowed {
                             zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
+                            default_formatter_list.push(Formatter::Prettier);
                         }
+
+                        default_formatter_list.as_ref()
                     }
                     SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
                 }
@@ -1447,7 +1454,6 @@ impl LocalLspStore {
         };
 
         let formatters = code_actions_on_format_formatter.iter().chain(formatters);
-
         for formatter in formatters {
             match formatter {
                 Formatter::Prettier => {
@@ -2028,6 +2034,11 @@ impl LocalLspStore {
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
+        zlog::info!(
+            "------------------------------- server: {}, {:?}",
+            language_server.name(),
+            formatting_provider
+        );
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
