@@ -103,6 +103,7 @@ pub enum AgentResponseEvent {
     ToolCall(acp::ToolCall),
     ToolCallUpdate(acp::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
+    ToolCallDiff(ToolCallDiff),
     Stop(acp::StopReason),
 }
 
@@ -111,6 +112,12 @@ pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCall,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
+}
+
+#[derive(Debug)]
+pub struct ToolCallDiff {
+    pub tool_call_id: acp::ToolCallId,
+    pub diff: Entity<acp_thread::Diff>,
 }
 
 pub struct Thread {

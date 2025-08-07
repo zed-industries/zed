@@ -562,6 +562,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                     )
                                 })??;
                             }
+                            AgentResponseEvent::ToolCallDiff(tool_call_diff) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.set_tool_call_diff(
+                                        &tool_call_diff.tool_call_id,
+                                        tool_call_diff.diff,
+                                        cx,
+                                    )
+                                })??;
+                            }
                             AgentResponseEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
                                 return Ok(acp::PromptResponse { stop_reason });
