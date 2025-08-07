@@ -31,7 +31,7 @@ use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
@@ -80,6 +80,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
     _cancel_task: Option<Task<()>>,
+    _subscriptions: [Subscription; 1],
 }
 
 enum ThreadState {
@@ -178,6 +179,8 @@ impl AcpThreadView {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
+        let subscription = cx.observe_global_in::<SettingsStore>(window, Self::settings_changed);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -200,6 +203,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             message_history,
+            _subscriptions: [subscription],
             _cancel_task: None,
         }
     }
@@ -704,15 +708,7 @@ impl AcpThreadView {
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_expand_all_diff_hunks(cx);
-                editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(
-                        TextSize::Small
-                            .rems(cx)
-                            .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
-                            .into(),
-                    ),
-                    ..Default::default()
-                });
+                editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 editor
             });
             let entity_id = multibuffer.entity_id();
@@ -2597,6 +2593,15 @@ impl AcpThreadView {
             .cursor_default()
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
+
+    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        for diff_editor in self.diff_editors.values() {
+            diff_editor.update(cx, |diff_editor, cx| {
+                diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
+                cx.notify();
+            })
+        }
+    }
 }
 
 impl Focusable for AcpThreadView {
@@ -2871,6 +2876,18 @@ fn plan_label_markdown_style(
             ..default_md_style.base_text_style
         },
         ..default_md_style
+    }
+}
+
+fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
+    TextStyleRefinement {
+        font_size: Some(
+            TextSize::Small
+                .rems(cx)
+                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .into(),
+        ),
+        ..Default::default()
     }
 }
 
