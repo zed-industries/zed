@@ -7931,8 +7931,8 @@ impl LspStore {
                                     .push(proto::DiagnosticSummary {
                                         path: project_path.path.as_ref().to_proto(),
                                         language_server_id: server_id.0 as u64,
-                                        error_count: new_summary.error_count as u32,
-                                        warning_count: new_summary.warning_count as u32,
+                                        error_count: new_summary.error_count,
+                                        warning_count: new_summary.warning_count,
                                     })
                             }
                             None => {
@@ -7942,8 +7942,8 @@ impl LspStore {
                                     summary: Some(proto::DiagnosticSummary {
                                         path: project_path.path.as_ref().to_proto(),
                                         language_server_id: server_id.0 as u64,
-                                        error_count: new_summary.error_count as u32,
-                                        warning_count: new_summary.warning_count as u32,
+                                        error_count: new_summary.error_count,
+                                        warning_count: new_summary.warning_count,
                                     }),
                                     more_summaries: Vec::new(),
                                 })
