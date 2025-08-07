@@ -1,4 +1,5 @@
 use crate::templates::{SystemPromptTemplate, Template, Templates};
+use acp_thread::Diff;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::ActionLog;
@@ -132,7 +133,7 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    _action_log: Entity<ActionLog>,
+    action_log: Entity<ActionLog>,
 }
 
 impl Thread {
@@ -152,7 +153,7 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
-            _action_log: action_log,
+            action_log,
         }
     }
 
@@ -320,6 +321,10 @@ impl Thread {
             }
         }));
         events_rx
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
     }
 
     pub fn build_system_message(&self) -> AgentMessage {
@@ -538,6 +543,11 @@ impl Thread {
                 status: Some(acp::ToolCallStatus::InProgress),
                 ..Default::default()
             });
+            log::trace!(
+                "Running tool {:?} with input: {}",
+                tool_use.name,
+                serde_json::to_string_pretty(&tool_use.input).unwrap_or_default()
+            );
             cx.update(|cx| tool.run(tool_use.input, tool_event_stream, cx))?
                 .await
         })
@@ -586,7 +596,7 @@ impl Thread {
         self.messages.last_mut().unwrap()
     }
 
-    fn build_completion_request(
+    pub(crate) fn build_completion_request(
         &self,
         completion_intent: CompletionIntent,
         cx: &mut App,
@@ -866,6 +876,12 @@ impl AgentResponseEventStream {
             .ok();
     }
 
+    fn send_tool_call_diff(&self, tool_call_diff: ToolCallDiff) {
+        self.0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallDiff(tool_call_diff)))
+            .ok();
+    }
+
     fn send_stop(&self, reason: StopReason) {
         match reason {
             StopReason::EndTurn => {
@@ -908,5 +924,12 @@ impl ToolCallEventStream {
 
     pub fn send_update(&self, fields: acp::ToolCallUpdateFields) {
         self.stream.send_tool_call_update(&self.tool_use_id, fields);
+    }
+
+    pub fn send_diff(&self, diff: Entity<Diff>) {
+        self.stream.send_tool_call_diff(ToolCallDiff {
+            tool_call_id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+            diff,
+        });
     }
 }

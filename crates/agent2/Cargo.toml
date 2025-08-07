@@ -14,9 +14,11 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 agent-client-protocol.workspace = true
+agent_settings.workspace = true
 agent_servers.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
+assistant_tools.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -24,9 +26,11 @@ futures.workspace = true
 gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 indoc.workspace = true
+language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
+paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rust-embed.workspace = true
