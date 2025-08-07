@@ -192,6 +192,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 }
 
+pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &App) + Send + Sync + 'static>;
+
 struct GlobalClient(Arc<Client>);
 
 impl Global for GlobalClient {}
@@ -205,6 +207,7 @@ pub struct Client {
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+    message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -554,6 +557,7 @@ impl Client {
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
+            message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -1651,10 +1655,22 @@ impl Client {
         }
     }
 
-    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, _cx: &AsyncApp) {
-        match message {
-            MessageToClient::UserUpdated => {}
-        }
+    pub fn add_message_to_client_handler(
+        self: &Arc<Client>,
+        handler: impl Fn(&MessageToClient, &App) + Send + Sync + 'static,
+    ) {
+        self.message_to_client_handlers
+            .lock()
+            .push(Box::new(handler));
+    }
+
+    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, cx: &AsyncApp) {
+        cx.update(|cx| {
+            for handler in self.message_to_client_handlers.lock().iter() {
+                handler(&message, cx);
+            }
+        })
+        .ok();
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {
