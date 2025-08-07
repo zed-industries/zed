@@ -8,7 +8,7 @@ pub const PROTOCOL_VERSION: u32 = 0;
 pub const PROTOCOL_VERSION_HEADER_NAME: &str = "x-zed-protocol-version";
 
 /// A message from Cloud to the Zed client.
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum MessageToClient {
     /// The user was updated and should be refreshed.
     UserUpdated,
