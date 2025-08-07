@@ -686,7 +686,10 @@ fn render_popular_settings_section(
                         [
                             ToggleButtonSimple::new("Auto", |_, _, cx| {
                                 write_show_mini_map(ShowMinimap::Auto, cx);
-                            }),
+                            })
+                            .tooltip(Tooltip::text(
+                                "Show the minimap if the editor's scrollbar is visible.",
+                            )),
                             ToggleButtonSimple::new("Always", |_, _, cx| {
                                 write_show_mini_map(ShowMinimap::Always, cx);
                             }),
