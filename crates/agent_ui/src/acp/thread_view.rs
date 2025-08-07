@@ -3056,16 +3056,14 @@ mod tests {
                 cx,
             )
         });
-        let [_, completion]: [_; 2] = dbg!(
-            completions
-                .await
-                .unwrap()
-                .into_iter()
-                .flat_map(|response| response.completions)
-                .collect::<Vec<_>>()
-        )
-        .try_into()
-        .unwrap();
+        let [_, completion]: [_; 2] = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         message_editor.update_in(cx, |editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -3099,8 +3097,8 @@ mod tests {
                 .borrow()
                 .items()
                 .iter()
-                .cloned()
                 .flatten()
+                .cloned()
                 .collect::<Vec<_>>()
         });
 
