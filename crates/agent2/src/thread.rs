@@ -434,6 +434,21 @@ impl Thread {
         event_stream: &AgentResponseEventStream,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
+        let Some(tool) = self.tools.get(tool_use.name.as_ref()).cloned() else {
+            if tool_use.is_input_complete {
+                let content = format!("No tool named {} exists", tool_use.name);
+                return Some(Task::ready(LanguageModelToolResult {
+                    content: LanguageModelToolResultContent::Text(Arc::from(content)),
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    output: None,
+                }));
+            } else {
+                return None;
+            }
+        };
+
         cx.notify();
 
         self.pending_tool_uses
@@ -454,7 +469,7 @@ impl Thread {
             }
         });
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use);
+            event_stream.send_tool_call(&tool_use, tool.kind());
             last_message
                 .content
                 .push(MessageContent::ToolUse(tool_use.clone()));
@@ -472,37 +487,25 @@ impl Thread {
             return None;
         }
 
-        if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
-            let tool_result =
-                self.run_tool(tool.clone(), tool_use.clone(), event_stream.clone(), cx);
-            Some(cx.foreground_executor().spawn(async move {
-                match tool_result.await {
-                    Ok(tool_output) => LanguageModelToolResult {
-                        tool_use_id: tool_use.id,
-                        tool_name: tool_use.name,
-                        is_error: false,
-                        content: LanguageModelToolResultContent::Text(Arc::from(tool_output)),
-                        output: None,
-                    },
-                    Err(error) => LanguageModelToolResult {
-                        tool_use_id: tool_use.id,
-                        tool_name: tool_use.name,
-                        is_error: true,
-                        content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                        output: None,
-                    },
-                }
-            }))
-        } else {
-            let content = format!("No tool named {} exists", tool_use.name);
-            Some(Task::ready(LanguageModelToolResult {
-                content: LanguageModelToolResultContent::Text(Arc::from(content)),
-                tool_use_id: tool_use.id,
-                tool_name: tool_use.name,
-                is_error: true,
-                output: None,
-            }))
-        }
+        let tool_result = self.run_tool(tool, tool_use.clone(), event_stream.clone(), cx);
+        Some(cx.foreground_executor().spawn(async move {
+            match tool_result.await {
+                Ok(tool_output) => LanguageModelToolResult {
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: false,
+                    content: LanguageModelToolResultContent::Text(Arc::from(tool_output)),
+                    output: None,
+                },
+                Err(error) => LanguageModelToolResult {
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
+                    output: None,
+                },
+            }
+        }))
     }
 
     fn run_tool(
@@ -704,6 +707,7 @@ pub struct Erased<T>(T);
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self, cx: &mut App) -> SharedString;
+    fn kind(&self) -> acp::ToolKind;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool>;
     fn run(
@@ -724,6 +728,10 @@ where
 
     fn description(&self, cx: &mut App) -> SharedString {
         self.0.description(cx)
+    }
+
+    fn kind(&self) -> agent_client_protocol::ToolKind {
+        self.0.kind()
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -817,12 +825,12 @@ impl AgentResponseEventStream {
         }
     }
 
-    fn send_tool_call(&self, tool_use: &LanguageModelToolUse) {
+    fn send_tool_call(&self, tool_use: &LanguageModelToolUse, kind: acp::ToolKind) {
         self.0
             .unbounded_send(Ok(AgentResponseEvent::ToolCall(acp::ToolCall {
                 id: acp::ToolCallId(tool_use.id.to_string().into()),
                 title: tool_use.name.to_string(),
-                kind: acp::ToolKind::Other,
+                kind,
                 status: acp::ToolCallStatus::Pending,
                 content: vec![],
                 locations: vec![],
