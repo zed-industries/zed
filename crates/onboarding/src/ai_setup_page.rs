@@ -88,7 +88,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                     h_flex()
                         .gap_2()
                         .justify_between()
-                        .child(Label::new("We don't train models using your data"))
+                        .child(Label::new("Any use or storage of your data is with your explicit, single-use, opt-in consent."))
                         .child(
                             h_flex().gap_1().child(privacy_badge()).child(
                                 Button::new("learn_more", "Learn More")
@@ -407,7 +407,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "Privacy is the default for Zed. Any use or storage of your data is with your explicit, single-use, opt-in consent.";
+        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out, like most of our competitors. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(
@@ -418,7 +418,7 @@ impl Render for AiPrivacyTooltip {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("Privacy First")),
+                    .child(Label::new("Privacy is the default for Zed")),
             )
             .child(
                 div().max_w_64().child(
