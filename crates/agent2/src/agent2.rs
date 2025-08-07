@@ -1,6 +1,5 @@
 mod agent;
 mod native_agent_server;
-mod prompts;
 mod templates;
 mod thread;
 mod tools;

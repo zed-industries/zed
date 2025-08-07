@@ -19,6 +19,10 @@ struct GlobInput {
     glob: SharedString,
 }
 
+#[expect(
+    dead_code,
+    reason = "Marked as unused by Rust 1.89 and left as is as of 07 Aug 2025 to let AI team address it."
+)]
 struct GlobTool {
     project: Entity<Project>,
     templates: Arc<Templates>,
@@ -44,6 +48,10 @@ impl AgentTool for GlobTool {
             .render(&self.templates)
             .expect("template failed to render")
             .into()
+    }
+
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
     }
 
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>> {

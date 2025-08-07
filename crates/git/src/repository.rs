@@ -399,9 +399,9 @@ pub trait GitRepository: Send + Sync {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>>;
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
 
     fn push(
         &self,
@@ -846,14 +846,12 @@ impl GitRepository for RealGitRepository {
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .spawn()?;
-                    child
-                        .stdin
-                        .take()
-                        .unwrap()
-                        .write_all(content.as_bytes())
-                        .await?;
+                    let mut stdin = child.stdin.take().unwrap();
+                    stdin.write_all(content.as_bytes()).await?;
+                    stdin.flush().await?;
+                    drop(stdin);
                     let output = child.output().await?.stdout;
-                    let sha = String::from_utf8(output)?;
+                    let sha = str::from_utf8(&output)?.trim();
 
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
@@ -871,6 +869,7 @@ impl GitRepository for RealGitRepository {
                         String::from_utf8_lossy(&output.stderr)
                     );
                 } else {
+                    log::debug!("removing path {path:?} from the index");
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
@@ -921,6 +920,7 @@ impl GitRepository for RealGitRepository {
                 for rev in &revs {
                     write!(&mut stdin, "{rev}\n")?;
                 }
+                stdin.flush()?;
                 drop(stdin);
 
                 let output = process.wait_with_output()?;
@@ -1203,7 +1203,7 @@ impl GitRepository for RealGitRepository {
         &self,
         paths: Vec<RepoPath>,
         env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
@@ -1227,7 +1227,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {

@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
+use futures::future::{Fuse, FusedFuture};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use itertools::Itertools;
@@ -221,7 +222,9 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.label = cx.new(|cx| Markdown::new_text(title.into(), cx));
+            self.label.update(cx, |label, cx| {
+                label.replace(title, cx);
+            });
         }
 
         if let Some(content) = content {
@@ -411,8 +414,6 @@ impl ToolCallContent {
 pub struct Diff {
     pub multibuffer: Entity<MultiBuffer>,
     pub path: PathBuf,
-    pub new_buffer: Entity<Buffer>,
-    pub old_buffer: Entity<Buffer>,
     _task: Task<Result<()>>,
 }
 
@@ -433,23 +434,34 @@ impl Diff {
         let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
         let old_buffer = cx.new(|cx| Buffer::local(old_text.unwrap_or("".into()), cx));
         let new_buffer_snapshot = new_buffer.read(cx).text_snapshot();
-        let old_buffer_snapshot = old_buffer.read(cx).snapshot();
         let buffer_diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
-        let diff_task = buffer_diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                old_buffer_snapshot,
-                Some(language_registry.clone()),
-                new_buffer_snapshot,
-                cx,
-            )
-        });
 
         let task = cx.spawn({
             let multibuffer = multibuffer.clone();
             let path = path.clone();
-            let new_buffer = new_buffer.clone();
             async move |cx| {
-                diff_task.await?;
+                let language = language_registry
+                    .language_for_file_path(&path)
+                    .await
+                    .log_err();
+
+                new_buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
+
+                let old_buffer_snapshot = old_buffer.update(cx, |buffer, cx| {
+                    buffer.set_language(language, cx);
+                    buffer.snapshot()
+                })?;
+
+                buffer_diff
+                    .update(cx, |diff, cx| {
+                        diff.set_base_text(
+                            old_buffer_snapshot,
+                            Some(language_registry),
+                            new_buffer_snapshot,
+                            cx,
+                        )
+                    })?
+                    .await?;
 
                 multibuffer
                     .update(cx, |multibuffer, cx| {
@@ -468,17 +480,9 @@ impl Diff {
                             editor::DEFAULT_MULTIBUFFER_CONTEXT,
                             cx,
                         );
-                        multibuffer.add_diff(buffer_diff.clone(), cx);
+                        multibuffer.add_diff(buffer_diff, cx);
                     })
                     .log_err();
-
-                if let Some(language) = language_registry
-                    .language_for_file_path(&path)
-                    .await
-                    .log_err()
-                {
-                    new_buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
-                }
 
                 anyhow::Ok(())
             }
@@ -487,8 +491,6 @@ impl Diff {
         Self {
             multibuffer,
             path,
-            new_buffer,
-            old_buffer,
             _task: task,
         }
     }
@@ -557,7 +559,7 @@ pub struct PlanEntry {
 impl PlanEntry {
     pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
         Self {
-            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
             priority: entry.priority,
             status: entry.status,
         }
@@ -571,7 +573,7 @@ pub struct AcpThread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    send_task: Option<Task<()>>,
+    send_task: Option<Fuse<Task<()>>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
 }
@@ -661,7 +663,11 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() {
+        if self
+            .send_task
+            .as_ref()
+            .map_or(false, |t| !t.is_terminated())
+        {
             if self.waiting_for_tool_confirmation() {
                 ThreadStatus::WaitingForToolConfirmation
             } else {
@@ -896,7 +902,7 @@ impl AcpThread {
         });
     }
 
-    pub fn request_tool_call_permission(
+    pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCall,
         options: Vec<acp::PermissionOption>,
@@ -971,13 +977,26 @@ impl AcpThread {
     }
 
     pub fn update_plan(&mut self, request: acp::Plan, cx: &mut Context<Self>) {
-        self.plan = Plan {
-            entries: request
-                .entries
-                .into_iter()
-                .map(|entry| PlanEntry::from_acp(entry, cx))
-                .collect(),
-        };
+        let new_entries_len = request.entries.len();
+        let mut new_entries = request.entries.into_iter();
+
+        // Reuse existing markdown to prevent flickering
+        for (old, new) in self.plan.entries.iter_mut().zip(new_entries.by_ref()) {
+            let PlanEntry {
+                content,
+                priority,
+                status,
+            } = old;
+            content.update(cx, |old, cx| {
+                old.replace(new.content, cx);
+            });
+            *priority = new.priority;
+            *status = new.status;
+        }
+        for new in new_entries {
+            self.plan.entries.push(PlanEntry::from_acp(new, cx))
+        }
+        self.plan.entries.truncate(new_entries_len);
 
         cx.notify();
     }
@@ -1023,28 +1042,31 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
-        self.send_task = Some(cx.spawn(async move |this, cx| {
-            async {
-                cancel_task.await;
+        self.send_task = Some(
+            cx.spawn(async move |this, cx| {
+                async {
+                    cancel_task.await;
 
-                let result = this
-                    .update(cx, |this, cx| {
-                        this.connection.prompt(
-                            acp::PromptRequest {
-                                prompt: message,
-                                session_id: this.session_id.clone(),
-                            },
-                            cx,
-                        )
-                    })?
-                    .await;
-                tx.send(result).log_err();
-                this.update(cx, |this, _cx| this.send_task.take())?;
-                anyhow::Ok(())
-            }
-            .await
-            .log_err();
-        }));
+                    let result = this
+                        .update(cx, |this, cx| {
+                            this.connection.prompt(
+                                acp::PromptRequest {
+                                    prompt: message,
+                                    session_id: this.session_id.clone(),
+                                },
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    tx.send(result).log_err();
+                    anyhow::Ok(())
+                }
+                .await
+                .log_err();
+            })
+            .fuse(),
+        );
 
         cx.spawn(async move |this, cx| match rx.await {
             Ok(Err(e)) => {
