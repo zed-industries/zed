@@ -109,6 +109,11 @@ jobs:
         run: |
           cargo install cargo-nextest --locked
 
+      - name: Build Zed
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo build
+
       - name: Run E2E tests
         shell: bash -euxo pipefail {0}
         run: |
