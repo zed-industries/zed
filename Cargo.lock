@@ -138,9 +138,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.21"
+version = "0.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7ae3c22c23b64a5c3b7fc8a86fcc7c494e989bd2cd66fdce14a58cfc8078381"
+checksum = "3fad72b7b8ee4331b3a4c8d43c107e982a4725564b4ee658ae5c4e79d2b486e8"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -9127,6 +9127,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "futures 0.3.31",
@@ -12636,6 +12637,7 @@ dependencies = [
  "editor",
  "file_icons",
  "git",
+ "git_ui",
  "gpui",
  "indexmap",
  "language",

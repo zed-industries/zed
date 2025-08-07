@@ -270,20 +270,77 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
-                tool_name: tool_call_auth_1.tool_call.title.into(),
+                tool_name: ToolRequiringPermission.name().into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: None
             }),
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
-                tool_name: tool_call_auth_2.tool_call.title.into(),
+                tool_name: ToolRequiringPermission.name().into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
                 output: None
             })
         ]
     );
+}
+
+#[gpui::test]
+async fn test_tool_hallucination(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "abc", cx));
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: "nonexistent_tool".into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(tool_call.title, "nonexistent_tool");
+    assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+}
+
+async fn expect_tool_call(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCall {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
+async fn expect_tool_call_update(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCallUpdate {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCallUpdate(tool_call_update) => return tool_call_update,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
 }
 
 async fn next_tool_call_authorization(
@@ -579,6 +636,77 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         "Session not found",
         "unexpected result: {:?}",
         result
+    );
+}
+
+#[gpui::test]
+async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool));
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "Think", cx));
+    cx.run_until_parked();
+
+    let input = json!({ "content": "Thinking hard!" });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "1".into(),
+            name: ThinkingTool.name().into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(
+        tool_call,
+        acp::ToolCall {
+            id: acp::ToolCallId("1".into()),
+            title: "Thinking".into(),
+            kind: acp::ToolKind::Think,
+            status: acp::ToolCallStatus::Pending,
+            content: vec![],
+            locations: vec![],
+            raw_input: Some(json!({ "content": "Thinking hard!" })),
+            raw_output: None,
+        }
+    );
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::InProgress,),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                content: Some(vec!["Thinking hard!".into()]),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::Completed),
+                ..Default::default()
+            },
+        }
     );
 }
 

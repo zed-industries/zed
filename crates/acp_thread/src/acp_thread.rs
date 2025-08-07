@@ -167,6 +167,7 @@ pub struct ToolCall {
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
     pub raw_input: Option<serde_json::Value>,
+    pub raw_output: Option<serde_json::Value>,
 }
 
 impl ToolCall {
@@ -195,6 +196,7 @@ impl ToolCall {
             locations: tool_call.locations,
             status,
             raw_input: tool_call.raw_input,
+            raw_output: tool_call.raw_output,
         }
     }
 
@@ -211,6 +213,7 @@ impl ToolCall {
             content,
             locations,
             raw_input,
+            raw_output,
         } = fields;
 
         if let Some(kind) = kind {
@@ -240,6 +243,10 @@ impl ToolCall {
 
         if let Some(raw_input) = raw_input {
             self.raw_input = Some(raw_input);
+        }
+
+        if let Some(raw_output) = raw_output {
+            self.raw_output = Some(raw_output);
         }
     }
 
@@ -1547,6 +1554,7 @@ mod tests {
                                     content: vec![],
                                     locations: vec![],
                                     raw_input: None,
+                                    raw_output: None,
                                 }),
                                 cx,
                             )
@@ -1659,6 +1667,7 @@ mod tests {
                                     }],
                                     locations: vec![],
                                     raw_input: None,
+                                    raw_output: None,
                                 }),
                                 cx,
                             )
