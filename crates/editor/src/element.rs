@@ -3682,6 +3682,7 @@ impl EditorElement {
                             .id("path header block")
                             .size_full()
                             .justify_between()
+                            .overflow_hidden()
                             .child(
                                 h_flex()
                                     .gap_2()
