@@ -89,7 +89,7 @@ impl AgentTool for FindPathTool {
                 } else if paginated_matches.len() == 1 {
                     "1 match".into()
                 } else {
-                    format!("{} matches", paginated_matches.len()).into()
+                    format!("{} matches", paginated_matches.len())
                 }),
                 content: Some(
                     paginated_matches
