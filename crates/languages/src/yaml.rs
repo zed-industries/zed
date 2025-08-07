@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
 use language::{
-    LanguageToolchainStore, LspAdapter, LspAdapterDelegate, language_settings::AllLanguageSettings,
+    LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    language_settings::AllLanguageSettings,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -57,7 +58,7 @@ impl LspAdapter for YamlLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -130,7 +131,7 @@ impl LspAdapter for YamlLspAdapter {
         self: Arc<Self>,
         _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let location = SettingsLocation {

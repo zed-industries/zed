@@ -64,6 +64,29 @@ pub trait LanguageToolchainStore: Send + Sync + 'static {
     ) -> Option<Toolchain>;
 }
 
+pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
+    fn active_toolchain(
+        self: Arc<Self>,
+        worktree_id: WorktreeId,
+        relative_path: Arc<Path>,
+        language_name: LanguageName,
+        cx: &mut AsyncApp,
+    ) -> Option<Toolchain>;
+}
+
+#[async_trait(?Send )]
+impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
+    async fn active_toolchain(
+        self: Arc<Self>,
+        worktree_id: WorktreeId,
+        relative_path: Arc<Path>,
+        language_name: LanguageName,
+        cx: &mut AsyncApp,
+    ) -> Option<Toolchain> {
+        self.active_toolchain(worktree_id, relative_path, language_name, cx)
+    }
+}
+
 type DefaultIndex = usize;
 #[derive(Default, Clone)]
 pub struct ToolchainList {
