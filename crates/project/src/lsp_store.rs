@@ -1549,7 +1549,7 @@ impl LocalLspStore {
 
                     let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                         zlog::trace!(logger => "formatting ranges");
-                        Self::format_ranges_via_lsp(
+                        match Self::format_ranges_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             ranges,
@@ -1559,10 +1559,20 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("Failed to format ranges via language server")?
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::warn!(
+                                    logger =>
+                                    "Failed to format ranges via LSP: {}",
+                                    err
+                                );
+                                continue;
+                            }
+                        }
                     } else {
                         zlog::trace!(logger => "formatting full");
-                        Self::format_via_lsp(
+                        match Self::format_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             buffer_path_abs,
@@ -1571,13 +1581,24 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("failed to format via language server")?
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::warn!(
+                                    logger =>
+                                    "Failed to format buffer via LSP: {}",
+                                    err
+                                );
+                                continue;
+                            }
+                        }
                     };
 
                     if edits.is_empty() {
                         zlog::trace!(logger => "No changes");
                         continue;
                     }
+                    zlog::trace!("edits {}", edits.len());
                     extend_formatting_transaction(
                         buffer,
                         formatting_transaction_id,
