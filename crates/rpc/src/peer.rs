@@ -1,3 +1,5 @@
+use crate::HOST_WAITING_MS;
+
 use super::{
     Connection,
     message_stream::{Message, MessageStream},
@@ -420,25 +422,21 @@ impl Peer {
         &self,
         sender_id: ConnectionId,
         receiver_id: ConnectionId,
+        span: tracing::Span,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
         let request_start_time = Instant::now();
-        let elapsed_time = move || request_start_time.elapsed().as_micros() as f64 / 1000.0;
         tracing::info!("start forwarding request");
         self.request_internal(Some(sender_id), receiver_id, request)
+            .inspect(move |_| {
+                span.record(
+                    HOST_WAITING_MS,
+                    request_start_time.elapsed().as_micros() as f64 / 1000.0,
+                );
+            })
             .map_ok(|envelope| envelope.payload)
-            .inspect_err(move |_| {
-                tracing::error!(
-                    waiting_for_response_ms = elapsed_time(),
-                    "error forwarding request"
-                )
-            })
-            .inspect_ok(move |_| {
-                tracing::info!(
-                    waiting_for_response_ms = elapsed_time(),
-                    "finished forwarding request"
-                )
-            })
+            .inspect_err(|_| tracing::error!("error forwarding request"))
+            .inspect_ok(|_| tracing::info!("finished forwarding request"))
     }
 
     fn request_internal<T: RequestMessage>(
