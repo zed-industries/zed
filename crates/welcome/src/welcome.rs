@@ -5,6 +5,7 @@ use gpui::{
     ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, svg,
 };
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use project::DisableAiSettings;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};
@@ -21,7 +22,6 @@ pub use multibuffer_hint::*;
 
 mod base_keymap_picker;
 mod multibuffer_hint;
-mod welcome_ui;
 
 actions!(
     welcome,
@@ -174,23 +174,25 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new(
-                                            "try-zed-edit-prediction",
-                                            edit_prediction_label,
+                                    .when(!DisableAiSettings::get_global(cx).disable_ai, |parent| {
+                                        parent.child(
+                                            Button::new(
+                                                "edit_prediction_onboarding",
+                                                edit_prediction_label,
+                                            )
+                                            .disabled(edit_prediction_provider_is_zed)
+                                            .icon(IconName::ZedPredict)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(
+                                                cx.listener(|_, _, window, cx| {
+                                                    telemetry::event!("Welcome Screen Try Edit Prediction clicked");
+                                                    window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
+                                                }),
+                                            ),
                                         )
-                                        .disabled(edit_prediction_provider_is_zed)
-                                        .icon(IconName::ZedPredict)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                telemetry::event!("Welcome Screen Try Edit Prediction clicked");
-                                                window.dispatch_action(zed_actions::OpenZedPredictOnboarding.boxed_clone(), cx);
-                                            }),
-                                        ),
-                                    )
+                                    })
                                     .child(
                                         Button::new("edit settings", "Edit Settings")
                                             .icon(IconName::Settings)

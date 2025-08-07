@@ -15,6 +15,7 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
+use project::DisableAiSettings;
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
@@ -32,6 +33,7 @@ const MAX_CODE_ACTION_MENU_LINES: u32 = 16;
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
+    _ai_settings_subscription: Subscription,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: Entity<BufferSearchBar>,
     show: bool,
@@ -46,8 +48,28 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
+        let mut was_agent_button = AgentSettings::get_global(cx).button;
+
+        let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
+            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let agent_settings = AgentSettings::get_global(cx);
+
+            if was_ai_disabled != is_ai_disabled
+                || was_agent_enabled != agent_settings.enabled
+                || was_agent_button != agent_settings.button
+            {
+                was_ai_disabled = is_ai_disabled;
+                was_agent_enabled = agent_settings.enabled;
+                was_agent_button = agent_settings.button;
+                cx.notify();
+            }
+        });
+
         let mut this = Self {
             _inlay_hints_enabled_subscription: None,
+            _ai_settings_subscription: ai_settings_subscription,
             active_item: None,
             buffer_search_bar,
             show: true,
@@ -170,7 +192,7 @@ impl Render for QuickActionBar {
             };
             v_flex()
                 .child(
-                    IconButton::new("toggle_code_actions_icon", IconName::Bolt)
+                    IconButton::new("toggle_code_actions_icon", IconName::BoltOutlined)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
@@ -359,7 +381,7 @@ impl Render for QuickActionBar {
                             }
 
                             if has_edit_prediction_provider {
-                                let mut inline_completion_entry = ContextMenuEntry::new("Edit Predictions")
+                                let mut edit_prediction_entry = ContextMenuEntry::new("Edit Predictions")
                                     .toggleable(IconPosition::Start, edit_predictions_enabled_at_cursor && show_edit_predictions)
                                     .disabled(!edit_predictions_enabled_at_cursor)
                                     .action(
@@ -379,12 +401,12 @@ impl Render for QuickActionBar {
                                         }
                                     });
                                 if !edit_predictions_enabled_at_cursor {
-                                    inline_completion_entry = inline_completion_entry.documentation_aside(DocumentationSide::Left, |_| {
+                                    edit_prediction_entry = edit_prediction_entry.documentation_aside(DocumentationSide::Left, |_| {
                                         Label::new("You can't toggle edit predictions for this file as it is within the excluded files list.").into_any_element()
                                     });
                                 }
 
-                                menu = menu.item(inline_completion_entry);
+                                menu = menu.item(edit_prediction_entry);
                             }
 
                             menu = menu.separator();
@@ -575,7 +597,9 @@ impl Render for QuickActionBar {
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled && AgentSettings::get_global(cx).button,
+                AgentSettings::get_global(cx).enabled
+                    && AgentSettings::get_global(cx).button
+                    && !DisableAiSettings::get_global(cx).disable_ai,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

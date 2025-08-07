@@ -14,6 +14,7 @@ use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use anyhow::Context as _;
 use assistant_tool::ToolUseStatus;
 use audio::{Audio, Sound};
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::scroll::Autoscroll;
@@ -52,7 +53,6 @@ use util::ResultExt as _;
 use util::markdown::MarkdownCodeBlock;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
-use zed_llm_client::CompletionIntent;
 
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
@@ -69,8 +69,6 @@ pub struct ActiveThread {
     messages: Vec<MessageId>,
     list_state: ListState,
     scrollbar_state: ScrollbarState,
-    show_scrollbar: bool,
-    hide_scrollbar_task: Option<Task<()>>,
     rendered_messages_by_id: HashMap<MessageId, RenderedMessage>,
     rendered_tool_uses: HashMap<LanguageModelToolUseId, RenderedToolUse>,
     editing_message: Option<(MessageId, EditingMessageState)>,
@@ -780,13 +778,7 @@ impl ActiveThread {
             cx.observe_global::<SettingsStore>(|_, cx| cx.notify()),
         ];
 
-        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.), {
-            let this = cx.entity().downgrade();
-            move |ix, window: &mut Window, cx: &mut App| {
-                this.update(cx, |this, cx| this.render_message(ix, window, cx))
-                    .unwrap()
-            }
-        });
+        let list_state = ListState::new(0, ListAlignment::Bottom, px(2048.));
 
         let workspace_subscription = if let Some(workspace) = workspace.upgrade() {
             Some(cx.observe_release(&workspace, |this, _, cx| {
@@ -811,9 +803,7 @@ impl ActiveThread {
             expanded_thinking_segments: HashMap::default(),
             expanded_code_blocks: HashMap::default(),
             list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state),
-            show_scrollbar: false,
-            hide_scrollbar_task: None,
+            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             editing_message: None,
             last_error: None,
             copied_code_block_ids: HashSet::default(),
@@ -1036,7 +1026,7 @@ impl ActiveThread {
                             .collect::<Vec<_>>()
                             .join("\n");
                         self.last_error = Some(ThreadError::Message {
-                            header: "Error interacting with language model".into(),
+                            header: "Error".into(),
                             message: error_message.into(),
                         });
                     }
@@ -1846,7 +1836,12 @@ impl ActiveThread {
             )))
     }
 
-    fn render_message(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render_message(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let message_id = self.messages[ix];
         let workspace = self.workspace.clone();
         let thread = self.thread.read(cx);
@@ -2629,7 +2624,7 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::ToolBulb)
+                                        Icon::new(IconName::ToolThink)
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
@@ -3202,7 +3197,10 @@ impl ActiveThread {
                                 .border_color(self.tool_card_border_color(cx))
                                 .rounded_b_lg()
                                 .child(
-                                    LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    div()
+                                        .min_w(rems_from_px(145.))
+                                        .child(LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small)
+                                    )
                                 )
                                 .child(
                                     h_flex()
@@ -3247,7 +3245,6 @@ impl ActiveThread {
                                                 },
                                             ))
                                         })
-                                        .child(ui::Divider::vertical())
                                         .child({
                                             let tool_id = tool_use.id.clone();
                                             Button::new("allow-tool-action", "Allow")
@@ -3501,60 +3498,37 @@ impl ActiveThread {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !self.show_scrollbar && !self.scrollbar_state.is_dragging() {
-            return None;
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("active-thread-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("active-thread-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
-    fn hide_scrollbar_later(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn(async move |thread, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            thread
-                .update(cx, |thread, cx| {
-                    if !thread.scrollbar_state.is_dragging() {
-                        thread.show_scrollbar = false;
-                        cx.notify();
-                    }
-                })
-                .log_err();
-        }))
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     pub fn is_codeblock_expanded(&self, message_id: MessageId, ix: usize) -> bool {
@@ -3595,26 +3569,8 @@ impl Render for ActiveThread {
             .size_full()
             .relative()
             .bg(cx.theme().colors().panel_background)
-            .on_mouse_move(cx.listener(|this, _, _, cx| {
-                this.show_scrollbar = true;
-                this.hide_scrollbar_later(cx);
-                cx.notify();
-            }))
-            .on_scroll_wheel(cx.listener(|this, _, _, cx| {
-                this.show_scrollbar = true;
-                this.hide_scrollbar_later(cx);
-                cx.notify();
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.hide_scrollbar_later(cx);
-                }),
-            )
-            .child(list(self.list_state.clone()).flex_grow())
-            .when_some(self.render_vertical_scrollbar(cx), |this, scrollbar| {
-                this.child(scrollbar)
-            })
+            .child(list(self.list_state.clone(), cx.processor(Self::render_message)).flex_grow())
+            .child(self.render_vertical_scrollbar(cx))
     }
 }
 
@@ -3722,8 +3678,11 @@ pub(crate) fn open_context(
 
         AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, cx| {
-                    panel.open_thread(thread_context.thread.clone(), window, cx);
+                let thread = thread_context.thread.clone();
+                window.defer(cx, move |window, cx| {
+                    panel.update(cx, |panel, cx| {
+                        panel.open_thread(thread, window, cx);
+                    });
                 });
             }
         }),
@@ -3731,8 +3690,11 @@ pub(crate) fn open_context(
         AgentContextHandle::TextThread(text_thread_context) => {
             workspace.update(cx, |workspace, cx| {
                 if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                    panel.update(cx, |panel, cx| {
-                        panel.open_prompt_editor(text_thread_context.context.clone(), window, cx)
+                    let context = text_thread_context.context.clone();
+                    window.defer(cx, move |window, cx| {
+                        panel.update(cx, |panel, cx| {
+                            panel.open_prompt_editor(context, window, cx)
+                        });
                     });
                 }
             })
@@ -3887,7 +3849,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model,
                     }),
                     cx,
@@ -3971,7 +3933,7 @@ mod tests {
             LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
                 registry.set_default_model(
                     Some(ConfiguredModel {
-                        provider: Arc::new(FakeLanguageModelProvider),
+                        provider: Arc::new(FakeLanguageModelProvider::default()),
                         model: model.clone(),
                     }),
                     cx,

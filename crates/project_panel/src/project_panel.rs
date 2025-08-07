@@ -114,6 +114,7 @@ pub struct ProjectPanel {
     mouse_down: bool,
     hover_expand_task: Option<Task<()>>,
     previous_drag_position: Option<Point<Pixels>>,
+    sticky_items_count: usize,
 }
 
 struct DragTargetEntry {
@@ -322,6 +323,7 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, action: &Rename, window, cx| {
+            workspace.open_panel::<ProjectPanel>(window, cx);
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     if let Some(first_marked) = panel.marked_entries.first() {
@@ -335,6 +337,7 @@ pub fn init(cx: &mut App) {
         });
 
         workspace.register_action(|workspace, action: &Duplicate, window, cx| {
+            workspace.open_panel::<ProjectPanel>(window, cx);
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.duplicate(action, window, cx);
@@ -384,12 +387,20 @@ struct ItemColors {
     focused: Hsla,
 }
 
-fn get_item_color(cx: &App) -> ItemColors {
+fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
     let colors = cx.theme().colors();
 
     ItemColors {
-        default: colors.panel_background,
-        hover: colors.element_hover,
+        default: if is_sticky {
+            colors.panel_overlay_background
+        } else {
+            colors.panel_background
+        },
+        hover: if is_sticky {
+            colors.panel_overlay_hover
+        } else {
+            colors.element_hover
+        },
         marked: colors.element_selected,
         focused: colors.panel_focused_border,
         drag_over: colors.drop_target_background,
@@ -562,6 +573,9 @@ impl ProjectPanel {
                     if project_panel_settings.hide_root != new_settings.hide_root {
                         this.update_visible_entries(None, cx);
                     }
+                    if project_panel_settings.sticky_scroll && !new_settings.sticky_scroll {
+                        this.sticky_items_count = 0;
+                    }
                     project_panel_settings = new_settings;
                     this.update_diagnostics(cx);
                     cx.notify();
@@ -605,6 +619,7 @@ impl ProjectPanel {
                 mouse_down: false,
                 hover_expand_task: None,
                 previous_drag_position: None,
+                sticky_items_count: 0,
             };
             this.update_visible_entries(None, cx);
 
@@ -2257,8 +2272,11 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut Context<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.scroll_handle
-                .scroll_to_item(index, ScrollStrategy::Center);
+            self.scroll_handle.scroll_to_item_with_offset(
+                index,
+                ScrollStrategy::Center,
+                self.sticky_items_count,
+            );
             cx.notify();
         }
     }
@@ -2713,26 +2731,7 @@ impl ProjectPanel {
     }
 
     fn index_for_selection(&self, selection: SelectedEntry) -> Option<(usize, usize, usize)> {
-        let mut entry_index = 0;
-        let mut visible_entries_index = 0;
-        for (worktree_index, (worktree_id, worktree_entries, _)) in
-            self.visible_entries.iter().enumerate()
-        {
-            if *worktree_id == selection.worktree_id {
-                for entry in worktree_entries {
-                    if entry.id == selection.entry_id {
-                        return Some((worktree_index, entry_index, visible_entries_index));
-                    } else {
-                        visible_entries_index += 1;
-                        entry_index += 1;
-                    }
-                }
-                break;
-            } else {
-                visible_entries_index += worktree_entries.len();
-            }
-        }
-        None
+        self.index_for_entry(selection.entry_id, selection.worktree_id)
     }
 
     fn disjoint_entries(&self, cx: &App) -> BTreeSet<SelectedEntry> {
@@ -3343,12 +3342,12 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         worktree_id: WorktreeId,
     ) -> Option<(usize, usize, usize)> {
-        let mut worktree_ix = 0;
         let mut total_ix = 0;
-        for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
+        for (worktree_ix, (current_worktree_id, visible_worktree_entries, _)) in
+            self.visible_entries.iter().enumerate()
+        {
             if worktree_id != *current_worktree_id {
                 total_ix += visible_worktree_entries.len();
-                worktree_ix += 1;
                 continue;
             }
 
@@ -3903,7 +3902,7 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
-        let item_colors = get_item_color(cx);
+        let item_colors = get_item_color(is_sticky, cx);
 
         let canonical_path = details
             .canonical_path
@@ -4158,13 +4157,12 @@ impl ProjectPanel {
             )
             .on_click(
                 cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right
-                        || event.down.first_mouse
+                    if event.is_right_click() || event.first_focus()
                         || show_editor
                     {
                         return;
                     }
-                    if event.down.button == MouseButton::Left {
+                    if event.standard_click() {
                         this.mouse_down = false;
                     }
                     cx.stop_propagation();
@@ -4204,7 +4202,7 @@ impl ProjectPanel {
                             this.marked_entries.insert(clicked_entry);
                         }
                     } else if event.modifiers().secondary() {
-                        if event.down.click_count > 1 {
+                        if event.click_count() > 1 {
                             this.split_entry(entry_id, cx);
                         } else {
                             this.selection = Some(selection);
@@ -4216,10 +4214,7 @@ impl ProjectPanel {
                         this.marked_entries.clear();
                         if is_sticky {
                             if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                                let strategy = sticky_index
-                                    .map(ScrollStrategy::ToPosition)
-                                    .unwrap_or(ScrollStrategy::Top);
-                                this.scroll_handle.scroll_to_item(index, strategy);
+                                this.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
@@ -4241,7 +4236,7 @@ impl ProjectPanel {
                         }
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
+                        let click_count = event.click_count();
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
                         this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
@@ -5142,7 +5137,10 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(window, cx);
                     }
                 }))
-                .on_click(cx.listener(|this, _event, _, cx| {
+                .on_click(cx.listener(|this, event, _, cx| {
+                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        return;
+                    }
                     cx.stop_propagation();
                     this.selection = None;
                     this.marked_entries.clear();
@@ -5183,7 +5181,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.up.click_count > 1 {
+                            if event.click_count() > 1 {
                                 if let Some(entry_id) = this.last_worktree_root_id {
                                     let project = this.project.read(cx);
 
@@ -5356,7 +5354,10 @@ impl Render for ProjectPanel {
                                 items
                             },
                             |this, marker_entry, window, cx| {
-                                this.render_sticky_entries(marker_entry, window, cx)
+                                let sticky_entries =
+                                    this.render_sticky_entries(marker_entry, window, cx);
+                                this.sticky_items_count = sticky_entries.len();
+                                sticky_entries
                             },
                         );
                         list.with_decoration(if show_indent_guides {

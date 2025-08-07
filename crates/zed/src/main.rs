@@ -1,6 +1,7 @@
 mod reliability;
 mod zed;
 
+use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -14,7 +15,7 @@ use extension_host::ExtensionStore;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, Application, AsyncApp, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
@@ -41,7 +42,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::{
@@ -50,10 +51,12 @@ use workspace::{
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
-    derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
-    handle_settings_changed, handle_settings_file_changes, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions,
+    derive_paths_with_position, edit_prediction_registry, handle_cli_connection,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, open_paths_with_positions,
 };
+
+use crate::zed::OpenRequestKind;
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -169,10 +172,27 @@ pub fn main() {
 
     let args = Args::parse();
 
+    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
+    if let Some(socket) = &args.crash_handler {
+        crashes::crash_server(socket.as_path());
+        return;
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
         return;
+    }
+
+    // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
+    if let Some(socket) = &args.nc {
+        match nc::main(socket) {
+            Ok(()) => return,
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                process::exit(1);
+            }
+        }
     }
 
     // `zed --printenv` Outputs environment variables as JSON to stdout
@@ -250,6 +270,9 @@ pub fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
 
+    app.background_executor()
+        .spawn(crashes::init(session_id.clone()))
+        .detach();
     reliability::init_panic_hook(
         app_version,
         app_commit_sha.clone(),
@@ -540,15 +563,12 @@ pub fn main() {
         supermaven::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
+        agent_settings::init(cx);
         agent_servers::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
-        inline_completion_registry::init(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            cx,
-        );
+        edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
         agent_ui::init(
             app_state.fs.clone(),
@@ -598,6 +618,7 @@ pub fn main() {
         language_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
+        settings_profile_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -608,6 +629,7 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         welcome::init(cx);
+        onboarding::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
@@ -665,17 +687,9 @@ pub fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| match authenticate(client, &cx).await {
-                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
-                ConnectionResult::ConnectionReset => {
-                    log::error!("Connection reset during initial auth")
-                }
-                ConnectionResult::Result(r) => {
-                    r.log_err();
-                }
-            }
+            async move |cx| authenticate(client, &cx).await
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -734,32 +748,46 @@ pub fn main() {
 }
 
 fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut App) {
-    if let Some(connection) = request.cli_connection {
-        let app_state = app_state.clone();
-        cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
-            .detach();
-        return;
-    }
+    if let Some(kind) = request.kind {
+        match kind {
+            OpenRequestKind::CliConnection(connection) => {
+                let app_state = app_state.clone();
+                cx.spawn(async move |cx| handle_cli_connection(connection, app_state, cx).await)
+                    .detach();
+            }
+            OpenRequestKind::Extension { extension_id } => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |_, window, cx| {
+                        window.dispatch_action(
+                            Box::new(zed_actions::Extensions {
+                                category_filter: None,
+                                id: Some(extension_id),
+                            }),
+                            cx,
+                        );
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::AgentPanel => {
+                cx.spawn(async move |cx| {
+                    let workspace =
+                        workspace::get_any_active_workspace(app_state, cx.clone()).await?;
+                    workspace.update(cx, |workspace, window, cx| {
+                        if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                            panel.focus_handle(cx).focus(window);
+                        }
+                    })
+                })
+                .detach_and_log_err(cx);
+            }
+            OpenRequestKind::DockMenuAction { index } => {
+                cx.perform_dock_menu_action(index);
+            }
+        }
 
-    if let Some(action_index) = request.dock_menu_action {
-        cx.perform_dock_menu_action(action_index);
-        return;
-    }
-
-    if let Some(extension) = request.extension_id {
-        cx.spawn(async move |cx| {
-            let workspace = workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-            workspace.update(cx, |_, window, cx| {
-                window.dispatch_action(
-                    Box::new(zed_actions::Extensions {
-                        category_filter: None,
-                        id: Some(extension),
-                    }),
-                    cx,
-                );
-            })
-        })
-        .detach_and_log_err(cx);
         return;
     }
 
@@ -811,15 +839,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                match authenticate(client, &cx).await {
-                    ConnectionResult::Timeout => {
-                        log::error!("Timeout during open request handling")
-                    }
-                    ConnectionResult::ConnectionReset => {
-                        log::error!("Connection reset during open request handling")
-                    }
-                    ConnectionResult::Result(r) => r?,
-                };
+                authenticate(client, &cx).await.log_err();
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -869,18 +889,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            return client.authenticate_and_connect(false, cx).await;
+            client.sign_in_with_optional_connect(false, cx).await?;
         } else if client.has_credentials(cx).await {
-            return client.authenticate_and_connect(true, cx).await;
+            client.sign_in_with_optional_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
-        return client.authenticate_and_connect(true, cx).await;
+        client.sign_in_with_optional_connect(true, cx).await?;
     }
 
-    ConnectionResult::Result(Ok(()))
+    Ok(())
 }
 
 async fn system_id() -> Result<IdType> {
@@ -1114,6 +1134,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::config_dir(),
         paths::extensions_dir(),
         paths::languages_dir(),
+        paths::debug_adapters_dir(),
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
@@ -1167,6 +1188,16 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     askpass: Option<String>,
+
+    /// Used for the MCP Server, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    nc: Option<String>,
+
+    /// Used for recording minidumps on crashes by having Zed run a separate
+    /// process communicating over a socket.
+    #[arg(long, hide = true)]
+    crash_handler: Option<PathBuf>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]

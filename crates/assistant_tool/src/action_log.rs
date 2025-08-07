@@ -51,23 +51,13 @@ impl ActionLog {
         Some(self.tracked_buffers.get(buffer)?.snapshot.clone())
     }
 
-    pub fn has_unnotified_user_edits(&self) -> bool {
-        self.tracked_buffers
-            .values()
-            .any(|tracked| tracked.has_unnotified_user_edits)
-    }
-
     /// Return a unified diff patch with user edits made since last read or notification
     pub fn unnotified_user_edits(&self, cx: &Context<Self>) -> Option<String> {
-        if !self.has_unnotified_user_edits() {
-            return None;
-        }
-
-        let unified_diff = self
+        let diffs = self
             .tracked_buffers
             .values()
             .filter_map(|tracked| {
-                if !tracked.has_unnotified_user_edits {
+                if !tracked.may_have_unnotified_user_edits {
                     return None;
                 }
 
@@ -95,9 +85,13 @@ impl ActionLog {
 
                 Some(result)
             })
-            .collect::<Vec<_>>()
-            .join("\n\n");
+            .collect::<Vec<_>>();
 
+        if diffs.is_empty() {
+            return None;
+        }
+
+        let unified_diff = diffs.join("\n\n");
         Some(unified_diff)
     }
 
@@ -106,7 +100,7 @@ impl ActionLog {
     pub fn flush_unnotified_user_edits(&mut self, cx: &Context<Self>) -> Option<String> {
         let patch = self.unnotified_user_edits(cx);
         self.tracked_buffers.values_mut().for_each(|tracked| {
-            tracked.has_unnotified_user_edits = false;
+            tracked.may_have_unnotified_user_edits = false;
             tracked.last_seen_base = tracked.diff_base.clone();
         });
         patch
@@ -185,7 +179,7 @@ impl ActionLog {
                     version: buffer.read(cx).version(),
                     diff,
                     diff_update: diff_update_tx,
-                    has_unnotified_user_edits: false,
+                    may_have_unnotified_user_edits: false,
                     _open_lsp_handle: open_lsp_handle,
                     _maintain_diff: cx.spawn({
                         let buffer = buffer.clone();
@@ -331,32 +325,40 @@ impl ActionLog {
                 .get_mut(buffer)
                 .context("buffer not tracked")?;
 
-            if let ChangeAuthor::User = author {
-                tracked_buffer.has_unnotified_user_edits = true;
-            }
-
             let rebase = cx.background_spawn({
                 let mut base_text = tracked_buffer.diff_base.clone();
                 let old_snapshot = tracked_buffer.snapshot.clone();
                 let new_snapshot = buffer_snapshot.clone();
                 let unreviewed_edits = tracked_buffer.unreviewed_edits.clone();
                 let edits = diff_snapshots(&old_snapshot, &new_snapshot);
+                let mut has_user_changes = false;
                 async move {
                     if let ChangeAuthor::User = author {
-                        apply_non_conflicting_edits(
+                        has_user_changes = apply_non_conflicting_edits(
                             &unreviewed_edits,
                             edits,
                             &mut base_text,
                             new_snapshot.as_rope(),
                         );
                     }
-                    (Arc::new(base_text.to_string()), base_text)
+
+                    (Arc::new(base_text.to_string()), base_text, has_user_changes)
                 }
             });
 
             anyhow::Ok(rebase)
         })??;
-        let (new_base_text, new_diff_base) = rebase.await;
+        let (new_base_text, new_diff_base, has_user_changes) = rebase.await;
+
+        this.update(cx, |this, _| {
+            let tracked_buffer = this
+                .tracked_buffers
+                .get_mut(buffer)
+                .context("buffer not tracked")
+                .unwrap();
+            tracked_buffer.may_have_unnotified_user_edits |= has_user_changes;
+        })?;
+
         Self::update_diff(
             this,
             buffer,
@@ -628,6 +630,11 @@ impl ActionLog {
                         false
                     }
                 });
+                if tracked_buffer.unreviewed_edits.is_empty() {
+                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
+                        tracked_buffer.status = TrackedBufferStatus::Modified;
+                    }
+                }
                 tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
             }
         }
@@ -773,6 +780,9 @@ impl ActionLog {
             .retain(|_buffer, tracked_buffer| match tracked_buffer.status {
                 TrackedBufferStatus::Deleted => false,
                 _ => {
+                    if let TrackedBufferStatus::Created { .. } = &mut tracked_buffer.status {
+                        tracked_buffer.status = TrackedBufferStatus::Modified;
+                    }
                     tracked_buffer.unreviewed_edits.clear();
                     tracked_buffer.diff_base = tracked_buffer.snapshot.as_rope().clone();
                     tracked_buffer.schedule_diff_update(ChangeAuthor::User, cx);
@@ -828,11 +838,12 @@ fn apply_non_conflicting_edits(
     edits: Vec<Edit<u32>>,
     old_text: &mut Rope,
     new_text: &Rope,
-) {
+) -> bool {
     let mut old_edits = patch.edits().iter().cloned().peekable();
     let mut new_edits = edits.into_iter().peekable();
     let mut applied_delta = 0i32;
     let mut rebased_delta = 0i32;
+    let mut has_made_changes = false;
 
     while let Some(mut new_edit) = new_edits.next() {
         let mut conflict = false;
@@ -882,8 +893,10 @@ fn apply_non_conflicting_edits(
                 &new_text.chunks_in_range(new_bytes).collect::<String>(),
             );
             applied_delta += new_edit.new_len() as i32 - new_edit.old_len() as i32;
+            has_made_changes = true;
         }
     }
+    has_made_changes
 }
 
 fn diff_snapshots(
@@ -957,7 +970,7 @@ struct TrackedBuffer {
     diff: Entity<BufferDiff>,
     snapshot: text::BufferSnapshot,
     diff_update: mpsc::UnboundedSender<(ChangeAuthor, text::BufferSnapshot)>,
-    has_unnotified_user_edits: bool,
+    may_have_unnotified_user_edits: bool,
     _open_lsp_handle: OpenLspBufferHandle,
     _maintain_diff: Task<()>,
     _subscription: Subscription,
@@ -2068,6 +2081,134 @@ mod tests {
 
         let content = buffer.read_with(cx, |buffer, _| buffer.text());
         assert_eq!(content, "ai content\nuser added this line");
+    }
+
+    #[gpui::test]
+    async fn test_reject_after_accepting_hunk_on_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/new_file", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path.clone(), cx))
+            .await
+            .unwrap();
+
+        // AI creates file with initial content
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v1", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User accepts the single hunk
+        action_log.update(cx, |log, cx| {
+            log.keep_edits_in_range(buffer.clone(), Anchor::MIN..Anchor::MAX, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+
+        // AI modifies the file
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v2", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User rejects the hunk
+        action_log
+            .update(cx, |log, cx| {
+                log.reject_edits_in_ranges(buffer.clone(), vec![Anchor::MIN..Anchor::MAX], cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await,);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "ai content v1"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
+    }
+
+    #[gpui::test]
+    async fn test_reject_edits_on_previously_accepted_created_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+
+        let file_path = project
+            .read_with(cx, |project, cx| {
+                project.find_project_path("dir/new_file", cx)
+            })
+            .unwrap();
+        let buffer = project
+            .update(cx, |project, cx| project.open_buffer(file_path.clone(), cx))
+            .await
+            .unwrap();
+
+        // AI creates file with initial content
+        cx.update(|cx| {
+            action_log.update(cx, |log, cx| log.buffer_created(buffer.clone(), cx));
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v1", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        // User clicks "Accept All"
+        action_log.update(cx, |log, cx| log.keep_all_edits(cx));
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]); // Hunks are cleared
+
+        // AI modifies file again
+        cx.update(|cx| {
+            buffer.update(cx, |buffer, cx| buffer.set_text("ai content v2", cx));
+            action_log.update(cx, |log, cx| log.buffer_edited(buffer.clone(), cx));
+        });
+        project
+            .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_ne!(unreviewed_hunks(&action_log, cx), vec![]);
+
+        // User clicks "Reject All"
+        action_log
+            .update(cx, |log, cx| log.reject_all_edits(cx))
+            .await;
+        cx.run_until_parked();
+        assert!(fs.is_file(path!("/dir/new_file").as_ref()).await);
+        assert_eq!(
+            buffer.read_with(cx, |buffer, _| buffer.text()),
+            "ai content v1"
+        );
+        assert_eq!(unreviewed_hunks(&action_log, cx), vec![]);
     }
 
     #[gpui::test(iterations = 100)]

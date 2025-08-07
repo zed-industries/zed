@@ -19,10 +19,10 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyTooltip, AnyView, App, Bounds, ClickEvent, DispatchPhase,
     Element, ElementId, Entity, FocusHandle, Global, GlobalElementId, Hitbox, HitboxBehavior,
     HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent,
-    LayoutId, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
+    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Overflow, ParentElement, Pixels,
+    Point, Render, ScrollWheelEvent, SharedString, Size, Style, StyleRefinement, Styled, Task,
+    TooltipId, Visibility, Window, WindowControlArea, point, px, size,
 };
 use collections::HashMap;
 use refineable::Refineable;
@@ -484,10 +484,9 @@ impl Interactivity {
     where
         Self: Sized,
     {
-        self.click_listeners
-            .push(Box::new(move |event, window, cx| {
-                listener(event, window, cx)
-            }));
+        self.click_listeners.push(Rc::new(move |event, window, cx| {
+            listener(event, window, cx)
+        }));
     }
 
     /// On drag initiation, this callback will be used to create a new view to render the dragged value for a
@@ -616,6 +615,13 @@ pub trait InteractiveElement: Sized {
     fn track_focus(mut self, focus_handle: &FocusHandle) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
+        self
+    }
+
+    /// Set index of the tab stop order.
+    fn tab_index(mut self, index: isize) -> Self {
+        self.interactivity().focusable = true;
+        self.interactivity().tab_index = Some(index);
         self
     }
 
@@ -1149,7 +1155,7 @@ pub(crate) type MouseMoveListener =
 pub(crate) type ScrollWheelListener =
     Box<dyn Fn(&ScrollWheelEvent, DispatchPhase, &Hitbox, &mut Window, &mut App) + 'static>;
 
-pub(crate) type ClickListener = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
+pub(crate) type ClickListener = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
 pub(crate) type DragListener =
     Box<dyn Fn(&dyn Any, Point<Pixels>, &mut Window, &mut App) -> AnyView + 'static>;
@@ -1327,7 +1333,6 @@ impl Element for Div {
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
             let mut state = scroll_handle.0.borrow_mut();
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
-            state.bounds = bounds;
             for child_layout_id in &request_layout.child_layout_ids {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
@@ -1462,6 +1467,7 @@ pub struct Interactivity {
     pub(crate) tooltip_builder: Option<TooltipBuilder>,
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
+    pub(crate) tab_index: Option<isize>,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1521,12 +1527,17 @@ impl Interactivity {
                 // as frames contain an element with this id.
                 if self.focusable && self.tracked_focus_handle.is_none() {
                     if let Some(element_state) = element_state.as_mut() {
-                        self.tracked_focus_handle = Some(
-                            element_state
-                                .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
-                                .clone(),
-                        );
+                        let mut handle = element_state
+                            .focus_handle
+                            .get_or_insert_with(|| cx.focus_handle())
+                            .clone()
+                            .tab_stop(false);
+
+                        if let Some(index) = self.tab_index {
+                            handle = handle.tab_index(index).tab_stop(true);
+                        }
+
+                        self.tracked_focus_handle = Some(handle);
                     }
                 }
 
@@ -1651,6 +1662,11 @@ impl Interactivity {
         window: &mut Window,
         _cx: &mut App,
     ) -> Point<Pixels> {
+        fn round_to_two_decimals(pixels: Pixels) -> Pixels {
+            const ROUNDING_FACTOR: f32 = 100.0;
+            (pixels * ROUNDING_FACTOR).round() / ROUNDING_FACTOR
+        }
+
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             let mut scroll_to_bottom = false;
             let mut tracked_scroll_handle = self
@@ -1665,8 +1681,16 @@ impl Interactivity {
             let rem_size = window.rem_size();
             let padding = style.padding.to_pixels(bounds.size.into(), rem_size);
             let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
+            // The floating point values produced by Taffy and ours often vary
+            // slightly after ~5 decimal places. This can lead to cases where after
+            // subtracting these, the container becomes scrollable for less than
+            // 0.00000x pixels. As we generally don't benefit from a precision that
+            // high for the maximum scroll, we round the scroll max to 2 decimal
+            // places here.
             let padded_content_size = self.content_size + padding_size;
-            let scroll_max = (padded_content_size - bounds.size).max(&Size::default());
+            let scroll_max = (padded_content_size - bounds.size)
+                .map(round_to_two_decimals)
+                .max(&Default::default());
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -1679,7 +1703,8 @@ impl Interactivity {
             }
 
             if let Some(mut scroll_handle_state) = tracked_scroll_handle {
-                scroll_handle_state.padded_content_size = padded_content_size;
+                scroll_handle_state.max_offset = scroll_max;
+                scroll_handle_state.bounds = bounds;
             }
 
             *scroll_offset
@@ -1727,6 +1752,10 @@ impl Interactivity {
 
                 if style.visibility == Visibility::Hidden {
                     return ((), element_state);
+                }
+
+                if let Some(focus_handle) = &self.tracked_focus_handle {
+                    window.next_frame.tab_handles.insert(focus_handle);
                 }
 
                 window.with_element_opacity(style.opacity, |window| {
@@ -1920,6 +1949,12 @@ impl Interactivity {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let is_focused = self
+            .tracked_focus_handle
+            .as_ref()
+            .map(|handle| handle.is_focused(window))
+            .unwrap_or(false);
+
         // If this element can be focused, register a mouse down listener
         // that will automatically transfer focus when hitting the element.
         // This behavior can be suppressed by using `cx.prevent_default()`.
@@ -2083,6 +2118,39 @@ impl Interactivity {
                     }
                 });
 
+                if is_focused {
+                    // Press enter, space to trigger click, when the element is focused.
+                    window.on_key_event({
+                        let click_listeners = click_listeners.clone();
+                        let hitbox = hitbox.clone();
+                        move |event: &KeyUpEvent, phase, window, cx| {
+                            if phase.bubble() && !window.default_prevented() {
+                                let stroke = &event.keystroke;
+                                let keyboard_button = if stroke.key.eq("enter") {
+                                    Some(KeyboardButton::Enter)
+                                } else if stroke.key.eq("space") {
+                                    Some(KeyboardButton::Space)
+                                } else {
+                                    None
+                                };
+
+                                if let Some(button) = keyboard_button
+                                    && !stroke.modifiers.modified()
+                                {
+                                    let click_event = ClickEvent::Keyboard(KeyboardClickEvent {
+                                        button,
+                                        bounds: hitbox.bounds,
+                                    });
+
+                                    for listener in &click_listeners {
+                                        listener(&click_event, window, cx);
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
                 window.on_mouse_event({
                     let mut captured_mouse_down = None;
                     let hitbox = hitbox.clone();
@@ -2108,10 +2176,10 @@ impl Interactivity {
                         // Fire click handlers during the bubble phase.
                         DispatchPhase::Bubble => {
                             if let Some(mouse_down) = captured_mouse_down.take() {
-                                let mouse_click = ClickEvent {
+                                let mouse_click = ClickEvent::Mouse(MouseClickEvent {
                                     down: mouse_down,
                                     up: event.clone(),
-                                };
+                                });
                                 for listener in &click_listeners {
                                     listener(&mouse_click, window, cx);
                                 }
@@ -2919,7 +2987,7 @@ impl ScrollAnchor {
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,
     bounds: Bounds<Pixels>,
-    padded_content_size: Size<Pixels>,
+    max_offset: Size<Pixels>,
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
@@ -2948,6 +3016,11 @@ impl ScrollHandle {
         *self.0.borrow().offset.borrow()
     }
 
+    /// Get the maximum scroll offset.
+    pub fn max_offset(&self) -> Size<Pixels> {
+        self.0.borrow().max_offset
+    }
+
     /// Get the top child that's scrolled into view.
     pub fn top_item(&self) -> usize {
         let state = self.0.borrow();
@@ -2972,19 +3045,9 @@ impl ScrollHandle {
         self.0.borrow().bounds
     }
 
-    /// Set the bounds into which this child is painted
-    pub(super) fn set_bounds(&self, bounds: Bounds<Pixels>) {
-        self.0.borrow_mut().bounds = bounds;
-    }
-
     /// Get the bounds for a specific child.
     pub fn bounds_for_item(&self, ix: usize) -> Option<Bounds<Pixels>> {
         self.0.borrow().child_bounds.get(ix).cloned()
-    }
-
-    /// Get the size of the content with padding of the container.
-    pub fn padded_content_size(&self) -> Size<Pixels> {
-        self.0.borrow().padded_content_size
     }
 
     /// scroll_to_item scrolls the minimal amount to ensure that the child is
