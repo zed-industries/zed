@@ -21,9 +21,10 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
-    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ButtonLike, ContextMenu, DecoratedIcon,
+    IconButtonShape, IconDecoration, IconDecorationKind, Indicator, Modal, ModalFooter,
+    ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _, Tooltip, Window,
+    prelude::*,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -2415,6 +2416,7 @@ impl Render for KeybindingEditorModal {
                     .header(
                         ModalHeader::new().child(
                             v_flex()
+                                .w_full()
                                 .pb_1p5()
                                 .mb_1()
                                 .gap_0p5()
@@ -2438,17 +2440,55 @@ impl Render for KeybindingEditorModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_2p5()
                                 .child(
                                     v_flex()
-                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(self.keybind_editor.clone()),
+                                        .child(Label::new("Edit Keystroke"))
+                                        .child(self.keybind_editor.clone())
+                                        .child(h_flex().gap_px().when(
+                                            matching_bindings_count > 0,
+                                            |this| {
+                                                let label = format!(
+                                                    "There {} {} {} with the same keystrokes.",
+                                                    if matching_bindings_count == 1 {
+                                                        "is"
+                                                    } else {
+                                                        "are"
+                                                    },
+                                                    matching_bindings_count,
+                                                    if matching_bindings_count == 1 {
+                                                        "binding"
+                                                    } else {
+                                                        "bindings"
+                                                    }
+                                                );
+
+                                                this.child(
+                                                    Label::new(label)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Button::new("show_matching", "View")
+                                                        .label_size(LabelSize::Small)
+                                                        .icon(IconName::ArrowUpRight)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::XSmall)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_matching_bindings(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                )
+                                            },
+                                        )),
                                 )
                                 .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
-                                            .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
                                             .child(editor),
@@ -2459,50 +2499,25 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         Banner::new()
                                             .severity(error.severity)
-                                            // For some reason, the div overflows its container to the
-                                            //right. The padding accounts for that.
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .pr_2()
-                                                    .child(Label::new(error.content.clone())),
-                                            ),
+                                            .child(Label::new(error.content.clone())),
                                     )
                                 }),
                         ),
                     )
                     .footer(
-                        ModalFooter::new()
-                            .start_slot(
-                                div().when(matching_bindings_count > 0, |this| {
-                                    this.child(
-                                        Button::new("show_matching", format!(
-                                            "There {} {} {} with the same keystrokes. Click to view",
-                                            if matching_bindings_count == 1 { "is" } else { "are" },
-                                            matching_bindings_count,
-                                            if matching_bindings_count == 1 { "binding" } else { "bindings" }
-                                        ))
-                                        .style(ButtonStyle::Transparent)
-                                        .color(Color::Accent)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.show_matching_bindings(window, cx);
-                                        }))
-                                    )
-                                })
-                            )
-                            .end_slot(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        Button::new("cancel", "Cancel")
-                                            .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
-                                    )
-                                    .child(Button::new("save-btn", "Save").on_click(cx.listener(
-                                        |this, _event, _window, cx| {
-                                            this.save_or_display_error(cx);
-                                        },
-                                    ))),
-                            ),
+                        ModalFooter::new().end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Button::new("cancel", "Cancel")
+                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                                )
+                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                    |this, _event, _window, cx| {
+                                        this.save_or_display_error(cx);
+                                    },
+                                ))),
+                        ),
                     ),
             )
     }
