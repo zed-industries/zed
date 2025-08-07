@@ -409,7 +409,9 @@ impl Onboarding {
                                                     .ml_1()
                                                     .w_full()
                                                     .justify_between()
-                                                    .child(Label::new("Skip All"))
+                                                    .child(
+                                                        Label::new("Skip All").color(Color::Muted),
+                                                    )
                                                     .child(keybinding.map_or_else(
                                                         || gpui::Empty.into_any_element(),
                                                         IntoElement::into_any_element,
