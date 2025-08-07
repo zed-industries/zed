@@ -16,7 +16,6 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
-async-trait.workspace = true
 gpui.workspace = true
 project.workspace = true
 schemars.workspace = true
@@ -24,7 +23,6 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 util.workspace = true
-zlog.workspace = true
 paths.workspace = true
 task.workspace = true
 snippet_provider.workspace = true

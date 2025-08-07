@@ -8911,7 +8911,6 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "extension",
  "gpui",
  "paths",
@@ -8923,7 +8922,6 @@ dependencies = [
  "snippet_provider",
  "task",
  "util",
- "zlog",
 ]
 
 [[package]]
@@ -9305,14 +9303,12 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "serde_json_lenient",
  "settings",
  "sha2",
  "smol",
- "snippet_provider",
  "task",
  "tempfile",
  "text",
