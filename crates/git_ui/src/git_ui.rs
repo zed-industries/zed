@@ -276,9 +276,12 @@ impl RenameBranchModal {
         }
 
         let repo = self.repo.clone();
+        let current_branch = self.current_branch.to_string();
         cx.spawn(async move |_, cx| {
             match repo
-                .update(cx, |repo, _| repo.rename_branch(new_name.clone()))?
+                .update(cx, |repo, _| {
+                    repo.rename_branch(current_branch, new_name.clone())
+                })?
                 .await
             {
                 Ok(Ok(_)) => Ok(()),

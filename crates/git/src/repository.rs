@@ -370,7 +370,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
-    fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>>;
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1131,7 +1131,7 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>> {
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.git_binary_path.clone();
         let working_directory = self.working_directory();
         let executor = self.executor.clone();
@@ -1139,7 +1139,7 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 match GitBinary::new(git_binary_path, working_directory?, executor)
-                    .run_with_output(&["branch", "-m", &new_name])
+                    .run_with_output(&["branch", "-m", &branch, &new_name])
                     .await
                 {
                     Ok(_) => Ok(()),

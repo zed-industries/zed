@@ -1,5 +1,5 @@
 use crate::{FakeFs, FakeFsEntry, Fs};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
@@ -350,11 +350,13 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn rename_branch(&self, new_name: String) -> BoxFuture<'_, Result<()>> {
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
-            if let Some(current_branch) = &state.current_branch_name {
-                state.branches.insert(new_name.clone());
-                state.branches.remove(current_branch);
+            if !state.branches.remove(&branch) {
+                bail!("no such branch: {branch}");
+            }
+            state.branches.insert(new_name.clone());
+            if state.current_branch_name == Some(branch) {
                 state.current_branch_name = Some(new_name);
             }
             Ok(())
