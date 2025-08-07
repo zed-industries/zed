@@ -2,15 +2,12 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use client::Client;
+use cloud_llm_client::{EXPIRED_LLM_TOKEN_HEADER_NAME, WebSearchBody, WebSearchResponse};
 use futures::AsyncReadExt as _;
 use gpui::{App, AppContext, Context, Entity, Subscription, Task};
 use http_client::{HttpClient, Method};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use web_search::{WebSearchProvider, WebSearchProviderId};
-use zed_llm_client::{
-    CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, EXPIRED_LLM_TOKEN_HEADER_NAME,
-    WebSearchBody, WebSearchResponse,
-};
 
 pub struct CloudWebSearchProvider {
     state: Entity<State>,
@@ -92,7 +89,6 @@ async fn perform_web_search(
             .uri(http_client.build_zed_llm_url("/web_search", &[])?.as_ref())
             .header("Content-Type", "application/json")
             .header("Authorization", format!("Bearer {token}"))
-            .header(CLIENT_SUPPORTS_EXA_WEB_SEARCH_PROVIDER_HEADER_NAME, "true")
             .body(serde_json::to_string(&body)?.into())?;
         let mut response = http_client
             .send(request)

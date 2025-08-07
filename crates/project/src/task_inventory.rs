@@ -12,7 +12,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
 use dap::DapRegistry;
 use fs::Fs;
-use gpui::{App, AppContext as _, Context, Entity, SharedString, Task};
+use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
     Buffer, ContextLocation, ContextProvider, File, Language, LanguageToolchainStore, Location,
@@ -31,11 +31,18 @@ use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
 
+#[derive(Clone, Debug, Default)]
+pub struct DebugScenarioContext {
+    pub task_context: TaskContext,
+    pub worktree_id: Option<WorktreeId>,
+    pub active_buffer: Option<WeakEntity<Buffer>>,
+}
+
 /// Inventory tracks available tasks for a given project.
 pub struct Inventory {
     fs: Arc<dyn Fs>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    last_scheduled_scenarios: VecDeque<DebugScenario>,
+    last_scheduled_scenarios: VecDeque<(DebugScenario, DebugScenarioContext)>,
     templates_from_settings: InventoryFor<TaskTemplate>,
     scenarios_from_settings: InventoryFor<DebugScenario>,
 }
@@ -245,16 +252,29 @@ impl Inventory {
         })
     }
 
-    pub fn scenario_scheduled(&mut self, scenario: DebugScenario) {
+    pub fn scenario_scheduled(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: TaskContext,
+        worktree_id: Option<WorktreeId>,
+        active_buffer: Option<WeakEntity<Buffer>>,
+    ) {
         self.last_scheduled_scenarios
-            .retain(|s| s.label != scenario.label);
-        self.last_scheduled_scenarios.push_back(scenario);
+            .retain(|(s, _)| s.label != scenario.label);
+        self.last_scheduled_scenarios.push_back((
+            scenario,
+            DebugScenarioContext {
+                task_context,
+                worktree_id,
+                active_buffer,
+            },
+        ));
         if self.last_scheduled_scenarios.len() > 5_000 {
             self.last_scheduled_scenarios.pop_front();
         }
     }
 
-    pub fn last_scheduled_scenario(&self) -> Option<&DebugScenario> {
+    pub fn last_scheduled_scenario(&self) -> Option<&(DebugScenario, DebugScenarioContext)> {
         self.last_scheduled_scenarios.back()
     }
 
@@ -265,7 +285,10 @@ impl Inventory {
         current_resolved_tasks: Vec<(TaskSourceKind, task::ResolvedTask)>,
         add_current_language_tasks: bool,
         cx: &mut App,
-    ) -> Task<(Vec<DebugScenario>, Vec<(TaskSourceKind, DebugScenario)>)> {
+    ) -> Task<(
+        Vec<(DebugScenario, DebugScenarioContext)>,
+        Vec<(TaskSourceKind, DebugScenario)>,
+    )> {
         let mut scenarios = Vec::new();
 
         if let Some(worktree_id) = task_contexts
@@ -765,7 +788,7 @@ impl Inventory {
                 }
             }
         }
-        self.last_scheduled_scenarios.retain_mut(|scenario| {
+        self.last_scheduled_scenarios.retain_mut(|(scenario, _)| {
             if !previously_existing_scenarios.contains(&scenario.label) {
                 return true;
             }
@@ -1304,7 +1327,7 @@ mod tests {
             .clone();
 
         inventory.update(cx, |this, _| {
-            this.scenario_scheduled(scenario.clone());
+            this.scenario_scheduled(scenario.clone(), TaskContext::default(), None, None);
         });
 
         assert_eq!(
@@ -1316,7 +1339,8 @@ mod tests {
                 .0
                 .first()
                 .unwrap()
-                .clone(),
+                .clone()
+                .0,
             scenario
         );
 
@@ -1346,6 +1370,7 @@ mod tests {
                 .0
                 .first()
                 .unwrap()
+                .0
                 .adapter,
             "Delve",
         );
@@ -1367,15 +1392,14 @@ mod tests {
             .unwrap();
         });
 
-        assert_eq!(
+        assert!(
             inventory
                 .update(cx, |this, cx| {
                     this.list_debug_scenarios(&TaskContexts::default(), vec![], vec![], false, cx)
                 })
                 .await
                 .0
-                .first(),
-            None
+                .is_empty(),
         );
     }
 

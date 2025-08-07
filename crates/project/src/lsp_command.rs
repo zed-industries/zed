@@ -171,27 +171,27 @@ pub(crate) struct PerformRename {
     pub push_to_history: bool,
 }
 
-#[derive(Debug)]
-pub struct GetDefinition {
+#[derive(Debug, Clone, Copy)]
+pub struct GetDefinitions {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetDeclaration {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetDeclarations {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetTypeDefinition {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetTypeDefinitions {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
-pub(crate) struct GetImplementation {
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GetImplementations {
     pub position: PointUtf16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
 }
@@ -350,7 +350,7 @@ impl LspCommand for PrepareRename {
             }
             Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
                 let snapshot = buffer.snapshot();
-                let (range, _) = snapshot.surrounding_word(self.position);
+                let (range, _) = snapshot.surrounding_word(self.position, false);
                 let range = snapshot.anchor_after(range.start)..snapshot.anchor_before(range.end);
                 Ok(PrepareRenameResponse::Success(range))
             }
@@ -588,7 +588,7 @@ impl LspCommand for PerformRename {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetDefinition {
+impl LspCommand for GetDefinitions {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
@@ -690,7 +690,7 @@ impl LspCommand for GetDefinition {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetDeclaration {
+impl LspCommand for GetDeclarations {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDeclaration;
     type ProtoRequest = proto::GetDeclaration;
@@ -793,7 +793,7 @@ impl LspCommand for GetDeclaration {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetImplementation {
+impl LspCommand for GetImplementations {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoImplementation;
     type ProtoRequest = proto::GetImplementation;
@@ -895,7 +895,7 @@ impl LspCommand for GetImplementation {
 }
 
 #[async_trait(?Send)]
-impl LspCommand for GetTypeDefinition {
+impl LspCommand for GetTypeDefinitions {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoTypeDefinition;
     type ProtoRequest = proto::GetTypeDefinition;
@@ -1846,12 +1846,15 @@ impl LspCommand for GetSignatureHelp {
     async fn response_from_lsp(
         self,
         message: Option<lsp::SignatureHelp>,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
         _: LanguageServerId,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(message.and_then(SignatureHelp::new))
+        let Some(message) = message else {
+            return Ok(None);
+        };
+        cx.update(|cx| SignatureHelp::new(message, Some(lsp_store.read(cx).languages.clone()), cx))
     }
 
     fn to_proto(&self, project_id: u64, buffer: &Buffer) -> Self::ProtoRequest {
@@ -1902,14 +1905,18 @@ impl LspCommand for GetSignatureHelp {
     async fn response_from_proto(
         self,
         response: proto::GetSignatureHelpResponse,
-        _: Entity<LspStore>,
+        lsp_store: Entity<LspStore>,
         _: Entity<Buffer>,
-        _: AsyncApp,
+        cx: AsyncApp,
     ) -> Result<Self::Response> {
-        Ok(response
-            .signature_help
-            .map(proto_to_lsp_signature)
-            .and_then(SignatureHelp::new))
+        cx.update(|cx| {
+            response
+                .signature_help
+                .map(proto_to_lsp_signature)
+                .and_then(|signature| {
+                    SignatureHelp::new(signature, Some(lsp_store.read(cx).languages.clone()), cx)
+                })
+        })
     }
 
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId> {
@@ -2147,6 +2154,16 @@ impl LspCommand for GetHover {
     }
 }
 
+impl GetCompletions {
+    pub fn can_resolve_completions(capabilities: &lsp::ServerCapabilities) -> bool {
+        capabilities
+            .completion_provider
+            .as_ref()
+            .and_then(|options| options.resolve_provider)
+            .unwrap_or(false)
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetCompletions {
     type Response = CoreCompletionResponse;
@@ -2262,7 +2279,7 @@ impl LspCommand for GetCompletions {
                     // the range based on the syntax tree.
                     None => {
                         if self.position != clipped_position {
-                            log::info!("completion out of expected range");
+                            log::info!("completion out of expected range ");
                             return false;
                         }
 
@@ -2290,7 +2307,7 @@ impl LspCommand for GetCompletions {
                             range_for_token
                                 .get_or_insert_with(|| {
                                     let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot.surrounding_word(offset);
+                                    let (range, kind) = snapshot.surrounding_word(offset, true);
                                     let range = if kind == Some(CharKind::Word) {
                                         range
                                     } else {
@@ -2476,7 +2493,9 @@ pub(crate) fn parse_completion_text_edit(
         let start = snapshot.clip_point_utf16(range.start, Bias::Left);
         let end = snapshot.clip_point_utf16(range.end, Bias::Left);
         if start != range.start.0 || end != range.end.0 {
-            log::info!("completion out of expected range");
+            log::info!(
+                "completion out of expected range, start: {start:?}, end: {end:?}, range: {range:?}"
+            );
             return None;
         }
         snapshot.anchor_before(start)..snapshot.anchor_after(end)
@@ -2753,6 +2772,23 @@ impl GetCodeActions {
     }
 }
 
+impl OnTypeFormatting {
+    pub fn supports_on_type_formatting(trigger: &str, capabilities: &ServerCapabilities) -> bool {
+        let Some(on_type_formatting_options) = &capabilities.document_on_type_formatting_provider
+        else {
+            return false;
+        };
+        on_type_formatting_options
+            .first_trigger_character
+            .contains(trigger)
+            || on_type_formatting_options
+                .more_trigger_character
+                .iter()
+                .flatten()
+                .any(|chars| chars.contains(trigger))
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
@@ -2764,20 +2800,7 @@ impl LspCommand for OnTypeFormatting {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(on_type_formatting_options) = &capabilities
-            .server_capabilities
-            .document_on_type_formatting_provider
-        else {
-            return false;
-        };
-        on_type_formatting_options
-            .first_trigger_character
-            .contains(&self.trigger)
-            || on_type_formatting_options
-                .more_trigger_character
-                .iter()
-                .flatten()
-                .any(|chars| chars.contains(&self.trigger))
+        Self::supports_on_type_formatting(&self.trigger, &capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3261,6 +3284,16 @@ impl InlayHints {
             })
             .unwrap_or(false)
     }
+
+    pub fn check_capabilities(capabilities: &ServerCapabilities) -> bool {
+        capabilities
+            .inlay_hint_provider
+            .as_ref()
+            .is_some_and(|inlay_hint_provider| match inlay_hint_provider {
+                lsp::OneOf::Left(enabled) => *enabled,
+                lsp::OneOf::Right(_) => true,
+            })
+    }
 }
 
 #[async_trait(?Send)]
@@ -3274,17 +3307,7 @@ impl LspCommand for InlayHints {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
-        else {
-            return false;
-        };
-        match inlay_hint_provider {
-            lsp::OneOf::Left(enabled) => *enabled,
-            lsp::OneOf::Right(inlay_hint_capabilities) => match inlay_hint_capabilities {
-                lsp::InlayHintServerCapabilities::Options(_) => true,
-                lsp::InlayHintServerCapabilities::RegistrationOptions(_) => false,
-            },
-        }
+        Self::check_capabilities(&capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3571,6 +3594,18 @@ impl LspCommand for GetCodeLens {
     }
 }
 
+impl LinkedEditingRange {
+    pub fn check_server_capabilities(capabilities: ServerCapabilities) -> bool {
+        let Some(linked_editing_options) = capabilities.linked_editing_range_provider else {
+            return false;
+        };
+        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
+            return false;
+        }
+        true
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
@@ -3582,16 +3617,7 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        let Some(linked_editing_options) = &capabilities
-            .server_capabilities
-            .linked_editing_range_provider
-        else {
-            return false;
-        };
-        if let LinkedEditingRangeServerCapabilities::Simple(false) = linked_editing_options {
-            return false;
-        }
-        true
+        Self::check_server_capabilities(capabilities.server_capabilities)
     }
 
     fn to_lsp(
@@ -3815,7 +3841,7 @@ impl GetDocumentDiagnostics {
             code,
             code_description: match diagnostic.code_description {
                 Some(code_description) => Some(CodeDescription {
-                    href: lsp::Url::parse(&code_description).unwrap(),
+                    href: Some(lsp::Url::parse(&code_description).unwrap()),
                 }),
                 None => None,
             },
@@ -3891,7 +3917,7 @@ impl GetDocumentDiagnostics {
             tags,
             code_description: diagnostic
                 .code_description
-                .map(|desc| desc.href.to_string()),
+                .and_then(|desc| desc.href.map(|url| url.to_string())),
             message: diagnostic.message,
             data: diagnostic.data.as_ref().map(|data| data.to_string()),
         })
@@ -4209,8 +4235,9 @@ impl LspCommand for GetDocumentColor {
         server_capabilities
             .server_capabilities
             .color_provider
+            .as_ref()
             .is_some_and(|capability| match capability {
-                lsp::ColorProviderCapability::Simple(supported) => supported,
+                lsp::ColorProviderCapability::Simple(supported) => *supported,
                 lsp::ColorProviderCapability::ColorProvider(..) => true,
                 lsp::ColorProviderCapability::Options(..) => true,
             })

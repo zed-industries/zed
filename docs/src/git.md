@@ -1,3 +1,8 @@
+---
+description: Zed is a text editor that supports lots of Git features
+title: Zed Editor Git integration documentation
+---
+
 # Git
 
 Zed currently offers a set of fundamental Git features, with support coming in the future for more advanced ones, like conflict resolution tools, line by line staging, and more.
@@ -76,7 +81,7 @@ You can ask AI to generate a commit message by focusing on the message editor wi
 
 > Note that you need to have an LLM provider configured. Visit [the AI configuration page](./ai/configuration.md) to learn how to do so.
 
-You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/configuration.md#feature-specific-models) for more information.
+You can specify your preferred model to use by providing a `commit_message_model` agent setting. See [Feature-specific models](./ai/agent-settings.md#feature-specific-models) for more information.
 
 ```json
 {
@@ -112,29 +117,56 @@ by creating a [custom key bindings](key-bindings.md#custom-key-bindings) to the
 `editor::CopyPermalinkToLine` or `editor::OpenPermalinkToLine` actions
 or by simply right clicking and selecting `Copy Permalink` with line(s) selected in your editor.
 
+## Diff Hunk Keyboard Shortcuts
+
+When viewing files with changes, Zed displays diff hunks that can be expanded or collapsed for detailed review:
+
+- **Expand all diff hunks**: {#action editor::ExpandAllDiffHunks} ({#kb editor::ExpandAllDiffHunks})
+- **Collapse all diff hunks**: Press `Escape` (bound to {#action editor::Cancel})
+- **Toggle selected diff hunks**: {#action editor::ToggleSelectedDiffHunks} ({#kb editor::ToggleSelectedDiffHunks})
+- **Navigate between hunks**: {#action editor::GoToHunk} and {#action editor::GoToPreviousHunk}
+
+> **Tip:** The `Escape` key is the quickest way to collapse all expanded diff hunks and return to an overview of your changes.
+
 ## Action Reference
 
-| Action                                 | Keybinding                         |
-| -------------------------------------- | ---------------------------------- |
-| {#action git::Add}                     | {#kb git::Add}                     |
-| {#action git::StageAll}                | {#kb git::StageAll}                |
-| {#action git::UnstageAll}              | {#kb git::UnstageAll}              |
-| {#action git::ToggleStaged}            | {#kb git::ToggleStaged}            |
-| {#action git::StageAndNext}            | {#kb git::StageAndNext}            |
-| {#action git::UnstageAndNext}          | {#kb git::UnstageAndNext}          |
-| {#action git::Commit}                  | {#kb git::Commit}                  |
-| {#action git::ExpandCommitEditor}      | {#kb git::ExpandCommitEditor}      |
-| {#action git::Push}                    | {#kb git::Push}                    |
-| {#action git::ForcePush}               | {#kb git::ForcePush}               |
-| {#action git::Pull}                    | {#kb git::Pull}                    |
-| {#action git::Fetch}                   | {#kb git::Fetch}                   |
-| {#action git::Diff}                    | {#kb git::Diff}                    |
-| {#action git::Restore}                 | {#kb git::Restore}                 |
-| {#action git::RestoreFile}             | {#kb git::RestoreFile}             |
-| {#action git::Branch}                  | {#kb git::Branch}                  |
-| {#action git::Switch}                  | {#kb git::Switch}                  |
-| {#action git::CheckoutBranch}          | {#kb git::CheckoutBranch}          |
-| {#action git::Blame}                   | {#kb git::Blame}                   |
-| {#action editor::ToggleGitBlameInline} | {#kb editor::ToggleGitBlameInline} |
+| Action                                    | Keybinding                            |
+| ----------------------------------------- | ------------------------------------- |
+| {#action git::Add}                        | {#kb git::Add}                        |
+| {#action git::StageAll}                   | {#kb git::StageAll}                   |
+| {#action git::UnstageAll}                 | {#kb git::UnstageAll}                 |
+| {#action git::ToggleStaged}               | {#kb git::ToggleStaged}               |
+| {#action git::StageAndNext}               | {#kb git::StageAndNext}               |
+| {#action git::UnstageAndNext}             | {#kb git::UnstageAndNext}             |
+| {#action git::Commit}                     | {#kb git::Commit}                     |
+| {#action git::ExpandCommitEditor}         | {#kb git::ExpandCommitEditor}         |
+| {#action git::Push}                       | {#kb git::Push}                       |
+| {#action git::ForcePush}                  | {#kb git::ForcePush}                  |
+| {#action git::Pull}                       | {#kb git::Pull}                       |
+| {#action git::Fetch}                      | {#kb git::Fetch}                      |
+| {#action git::Diff}                       | {#kb git::Diff}                       |
+| {#action git::Restore}                    | {#kb git::Restore}                    |
+| {#action git::RestoreFile}                | {#kb git::RestoreFile}                |
+| {#action git::Branch}                     | {#kb git::Branch}                     |
+| {#action git::Switch}                     | {#kb git::Switch}                     |
+| {#action git::CheckoutBranch}             | {#kb git::CheckoutBranch}             |
+| {#action git::Blame}                      | {#kb git::Blame}                      |
+| {#action editor::ToggleGitBlameInline}    | {#kb editor::ToggleGitBlameInline}    |
+| {#action editor::ExpandAllDiffHunks}      | {#kb editor::ExpandAllDiffHunks}      |
+| {#action editor::ToggleSelectedDiffHunks} | {#kb editor::ToggleSelectedDiffHunks} |
 
 > Not all actions have default keybindings, but can be bound by [customizing your keymap](./key-bindings.md#user-keymaps).
+
+## Git CLI Configuration
+
+If you would like to also use Zed for your [git commit message editor](https://git-scm.com/book/en/v2/Customizing-Git-Git-Configuration#_core_editor) when committing from the command line you can use `zed --wait`:
+
+```sh
+git config --global core.editor "zed --wait"
+```
+
+Or add the following to your shell environment (in `~/.zshrc`, `~/.bashrc`, etc):
+
+```sh
+export GIT_EDITOR="zed --wait"
+```

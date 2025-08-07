@@ -31,7 +31,13 @@ use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 const GIT_OPERATION_DELAY: Duration = Duration::from_millis(0);
 
-actions!(activity_indicator, [ShowErrorMessage]);
+actions!(
+    activity_indicator,
+    [
+        /// Displays error messages from language servers in the status bar.
+        ShowErrorMessage
+    ]
+);
 
 pub enum Event {
     ShowStatus {
@@ -225,7 +231,6 @@ impl ActivityIndicator {
                 status,
             } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
-                let project = project.clone();
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {
@@ -241,8 +246,7 @@ impl ActivityIndicator {
                     workspace.update_in(cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
                             Box::new(cx.new(|cx| {
-                                let mut editor =
-                                    Editor::for_buffer(buffer, Some(project.clone()), window, cx);
+                                let mut editor = Editor::for_buffer(buffer, None, window, cx);
                                 editor.set_read_only(true);
                                 editor
                             })),
@@ -442,7 +446,7 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!("Debug: {}", session.read(cx).adapter()),
-                tooltip_message: Some(session.read(cx).label().to_string()),
+                tooltip_message: session.read(cx).label().map(|label| label.to_string()),
                 on_click: None,
             });
         }

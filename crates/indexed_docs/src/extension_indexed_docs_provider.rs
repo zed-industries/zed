@@ -29,6 +29,11 @@ impl ExtensionIndexedDocsProviderProxy for IndexedDocsRegistryProxy {
                 ProviderId(provider_id),
             )));
     }
+
+    fn unregister_indexed_docs_provider(&self, provider_id: Arc<str>) {
+        self.indexed_docs_registry
+            .unregister_provider(&ProviderId(provider_id));
+    }
 }
 
 pub struct ExtensionIndexedDocsProvider {

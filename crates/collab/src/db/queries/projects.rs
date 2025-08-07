@@ -112,7 +112,7 @@ impl Database {
     }
 
     pub async fn delete_project(&self, project_id: ProjectId) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             project::Entity::delete_by_id(project_id).exec(&*tx).await?;
             Ok(())
         })
@@ -692,6 +692,7 @@ impl Database {
                 project_id: ActiveValue::set(project_id),
                 id: ActiveValue::set(server.id as i64),
                 name: ActiveValue::set(server.name.clone()),
+                capabilities: ActiveValue::set(update.capabilities.clone()),
             })
             .on_conflict(
                 OnConflict::columns([
@@ -1054,10 +1055,13 @@ impl Database {
             repositories,
             language_servers: language_servers
                 .into_iter()
-                .map(|language_server| proto::LanguageServer {
-                    id: language_server.id as u64,
-                    name: language_server.name,
-                    worktree_id: None,
+                .map(|language_server| LanguageServer {
+                    server: proto::LanguageServer {
+                        id: language_server.id as u64,
+                        name: language_server.name,
+                        worktree_id: None,
+                    },
+                    capabilities: language_server.capabilities,
                 })
                 .collect(),
         };

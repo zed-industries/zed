@@ -13,7 +13,15 @@ use language::{Point, SelectionGoal};
 use std::ops::Range;
 use std::sync::Arc;
 
-actions!(vim, [ToggleReplace, UndoReplace]);
+actions!(
+    vim,
+    [
+        /// Toggles replace mode.
+        ToggleReplace,
+        /// Undoes the last replacement.
+        UndoReplace
+    ]
+);
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleReplace, window, cx| {

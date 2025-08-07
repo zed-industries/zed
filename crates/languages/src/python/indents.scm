@@ -14,4 +14,4 @@
 (else_clause) @start.else
 (except_clause) @start.except
 (finally_clause) @start.finally
-(case_pattern) @start.case
+(case_clause) @start.case

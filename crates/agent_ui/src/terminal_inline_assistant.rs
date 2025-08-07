@@ -10,6 +10,7 @@ use agent::{
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
+use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, VecDeque};
 use editor::{MultiBuffer, actions::SelectAll};
 use fs::Fs;
@@ -27,7 +28,6 @@ use terminal_view::TerminalView;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::{Toast, Workspace, notifications::NotificationId};
-use zed_llm_client::CompletionIntent;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -297,6 +297,7 @@ impl TerminalInlineAssistant {
                 tool_choice: None,
                 stop: Vec::new(),
                 temperature,
+                thinking_allowed: false,
             }
         }))
     }

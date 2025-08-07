@@ -37,8 +37,8 @@ use util::ResultExt;
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
 
-const PROVIDER_ID: &str = "google";
-const PROVIDER_NAME: &str = "Google AI";
+const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct GoogleSettings {
@@ -94,6 +94,7 @@ pub struct State {
     _subscription: Subscription,
 }
 
+const GEMINI_API_KEY_VAR: &str = "GEMINI_API_KEY";
 const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
 
 impl State {
@@ -151,6 +152,8 @@ impl State {
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR) {
                 (api_key, true)
+            } else if let Ok(api_key) = std::env::var(GEMINI_API_KEY_VAR) {
+                (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
                     .read_credentials(&api_url, &cx)
@@ -207,11 +210,11 @@ impl LanguageModelProviderState for GoogleLanguageModelProvider {
 
 impl LanguageModelProvider for GoogleLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -334,11 +337,11 @@ impl LanguageModel for GoogleLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -423,9 +426,7 @@ impl LanguageModel for GoogleLanguageModel {
         );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request
-                .await
-                .map_err(|err| LanguageModelCompletionError::Other(anyhow!(err)))?;
+            let response = request.await.map_err(LanguageModelCompletionError::from)?;
             Ok(GoogleEventMapper::new().map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -561,11 +562,11 @@ pub fn into_google(
             stop_sequences: Some(request.stop),
             max_output_tokens: None,
             temperature: request.temperature.map(|t| t as f64).or(Some(1.0)),
-            thinking_config: match mode {
-                GoogleModelMode::Thinking { budget_tokens } => {
+            thinking_config: match (request.thinking_allowed, mode) {
+                (true, GoogleModelMode::Thinking { budget_tokens }) => {
                     budget_tokens.map(|thinking_budget| ThinkingConfig { thinking_budget })
                 }
-                GoogleModelMode::Default => None,
+                _ => None,
             },
             top_p: None,
             top_k: None,
@@ -622,7 +623,7 @@ impl GoogleEventMapper {
                 futures::stream::iter(match event {
                     Some(Ok(event)) => self.map_event(event),
                     Some(Err(error)) => {
-                        vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))]
+                        vec![Err(LanguageModelCompletionError::from(error))]
                     }
                     None => vec![Ok(LanguageModelCompletionEvent::Stop(self.stop_reason))],
                 })
@@ -879,7 +880,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with Google AI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
@@ -905,7 +906,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {GOOGLE_AI_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {GEMINI_API_KEY_VAR} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -924,7 +925,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {GOOGLE_AI_API_KEY_VAR} environment variable.")
+                            format!("API key set in {GEMINI_API_KEY_VAR} environment variable.")
                         } else {
                             "API key configured.".to_string()
                         })),
@@ -937,7 +938,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {GOOGLE_AI_API_KEY_VAR} environment variable.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR} and {GOOGLE_AI_API_KEY_VAR} environment variables are unset.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )

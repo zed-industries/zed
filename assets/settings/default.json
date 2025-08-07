@@ -84,7 +84,7 @@
   "bottom_dock_layout": "contained",
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes horizontally. Defaults to "left"
+  // The direction that you want to split panes vertically. Defaults to "left"
   "pane_split_direction_vertical": "left",
   // Centered layout related settings.
   "centered_layout": {
@@ -197,6 +197,8 @@
   //    "inline"
   // 3. Place snippets at the bottom of the completion list:
   //    "bottom"
+  // 4. Do not show snippets in the completion list:
+  //    "none"
   "snippet_sort_order": "inline",
   // How to highlight the current line in the editor.
   //
@@ -228,7 +230,12 @@
   // Whether to show code action button at start of buffer line.
   "inline_code_actions": true,
   // Whether to allow drag and drop text selection in buffer.
-  "drag_and_drop_selection": true,
+  "drag_and_drop_selection": {
+    // When true, enables drag and drop text selection in buffer.
+    "enabled": true,
+    // The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    "delay": 300
+  },
   // What to do when go to definition yields no results.
   //
   // 1. Do nothing: `none`
@@ -357,7 +364,9 @@
     // Whether to show user picture in the titlebar.
     "show_user_picture": true,
     // Whether to show the sign in button in the titlebar.
-    "show_sign_in": true
+    "show_sign_in": true,
+    // Whether to show the menus in the titlebar.
+    "show_menus": false
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -617,6 +626,8 @@
     // 3. Mark files with errors and warnings:
     //    "all"
     "show_diagnostics": "all",
+    // Whether to stick parent directories at top of the project panel.
+    "sticky_scroll": true,
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.
@@ -680,7 +691,10 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
+    // Default depth to expand outline items in the current file.
+    // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
+    "expand_outlines_with_depth": 100
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -746,8 +760,6 @@
     "default_width": 380
   },
   "agent": {
-    // Version of this setting.
-    "version": "2",
     // Whether the agent is enabled.
     "enabled": true,
     /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
@@ -810,6 +822,7 @@
           "edit_file": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": false,
           "move_path": true,
           "now": true,
           "find_path": true,
@@ -829,6 +842,7 @@
           "diagnostics": true,
           "fetch": true,
           "list_directory": true,
+          "project_notifications": false,
           "now": true,
           "find_path": true,
           "read_file": true,
@@ -855,7 +869,15 @@
     // its response, or needs user input.
 
     // Default: false
-    "play_sound_when_agent_done": false
+    "play_sound_when_agent_done": false,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    "expand_edit_card": true,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    "expand_terminal_card": true
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1057,6 +1079,10 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
+  // Whether to disable all AI features in Zed.
+  //
+  // Default: false
+  "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
@@ -1118,6 +1144,7 @@
     "**/.svn",
     "**/.hg",
     "**/.jj",
+    "**/.repo",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
@@ -1140,16 +1167,14 @@
     // Control whether the git blame information is shown inline,
     // in the currently focused line.
     "inline_blame": {
-      "enabled": true
+      "enabled": true,
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
-      // "delay_ms": 600
-      //
+      "delay_ms": 0,
       // Whether or not to display the git commit summary on the same line.
-      // "show_commit_summary": false
-      //
+      "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
-      // "min_column": 0
+      "min_column": 0
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
@@ -1292,6 +1317,8 @@
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
+    // Whether to keep the text selection after copying it to the clipboard
+    "keep_selection_on_copy": false,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's
@@ -1348,7 +1375,7 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
     // "font_size": 15,
@@ -1360,11 +1387,26 @@
     // This will be merged with the platform's default font fallbacks
     // "font_fallbacks": ["FiraCode Nerd Fonts"],
     // The weight of the editor font in standard CSS units from 100 to 900.
-    // "font_weight": 400
+    "font_weight": 400,
     // Sets the maximum number of lines in the terminal's scrollback buffer.
     // Default: 10_000, maximum: 100_000 (all bigger values set will be treated as 100_000), 0 disables the scrolling.
     // Existing terminals will not pick up this change until they are recreated.
-    // "max_scroll_history_lines": 10000,
+    "max_scroll_history_lines": 10000,
+    // The minimum APCA perceptual contrast between foreground and background colors.
+    // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    // especially for dark mode. Values range from 0 to 106.
+    //
+    // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    // https://readtech.org/ARC/tests/bronze-simple-mode/
+    // - 0: No contrast adjustment
+    // - 45: Minimum for large fluent text (36px+)
+    // - 60: Minimum for other content text
+    // - 75: Minimum for body text
+    // - 90: Preferred for body text
+    //
+    // Most terminal themes have APCA values of 40-70.
+    // A value of 45 preserves colorful themes while ensuring legibility.
+    "minimum_contrast": 45
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.
@@ -1576,6 +1618,9 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
+      "completions": {
+        "words": "disabled"
+      },
       "prettier": {
         "allowed": true
       }
@@ -1589,6 +1634,9 @@
       }
     },
     "Plain Text": {
+      "completions": {
+        "words": "disabled"
+      },
       "allow_rewrap": "anywhere"
     },
     "Python": {
@@ -1632,6 +1680,10 @@
         "allowed": true
       }
     },
+    "SystemVerilog": {
+      "format_on_save": "off",
+      "use_on_type_format": false
+    },
     "Vue.js": {
       "language_servers": ["vue-language-server", "..."],
       "prettier": {
@@ -1656,7 +1708,6 @@
   // Different settings for specific language models.
   "language_models": {
     "anthropic": {
-      "version": "1",
       "api_url": "https://api.anthropic.com"
     },
     "google": {
@@ -1666,9 +1717,9 @@
       "api_url": "http://localhost:11434"
     },
     "openai": {
-      "version": "1",
       "api_url": "https://api.openai.com/v1"
     },
+    "openai_compatible": {},
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1"
     },
@@ -1784,7 +1835,8 @@
   // `socks5h`. `http` will be used when no scheme is specified.
   //
   // By default no proxy will be used, or Zed will try get proxy settings from
-  // environment variables.
+  // environment variables. If certain hosts should not be proxied,
+  // set the `no_proxy` environment variable and provide a comma-separated list.
   //
   // Examples:
   //   - "proxy": "socks5h://localhost:10808"
@@ -1818,10 +1870,32 @@
   "read_ssh_config": true,
   // Configures context servers for use by the agent.
   "context_servers": {},
+  // Configures agent servers available in the agent panel.
+  "agent_servers": {},
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
     "dock": "bottom",
     "button": true
-  }
+  },
+  // Configures any number of settings profiles that are temporarily applied on
+  // top of your existing user settings when selected from
+  // `settings profile selector: toggle`.
+  // Examples:
+  // "profiles": {
+  //   "Presenting": {
+  //     "agent_font_size": 20.0,
+  //     "buffer_font_size": 20.0,
+  //     "theme": "One Light",
+  //     "ui_font_size": 20.0
+  //   },
+  //   "Python (ty)": {
+  //     "languages": {
+  //       "Python": {
+  //         "language_servers": ["ty"]
+  //       }
+  //     }
+  //   }
+  // }
+  "profiles": []
 }

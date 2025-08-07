@@ -7,8 +7,8 @@ use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, SelectionEffects};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ListState, ParentElement, Render, RetainAllImageCache, Styled, Subscription, Task,
-    WeakEntity, Window, list,
+    IntoElement, IsZero, ListState, ParentElement, Render, RetainAllImageCache, Styled,
+    Subscription, Task, WeakEntity, Window, list,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -18,8 +18,9 @@ use workspace::item::{Item, ItemHandle};
 use workspace::{Pane, Workspace};
 
 use crate::markdown_elements::ParsedMarkdownElement;
+use crate::markdown_renderer::CheckboxClickedEvent;
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
+    MovePageDown, MovePageUp, OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide,
     markdown_elements::ParsedMarkdown,
     markdown_parser::parse_markdown,
     markdown_renderer::{RenderContext, render_markdown_block},
@@ -203,114 +204,7 @@ impl MarkdownPreviewView {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let view = cx.entity().downgrade();
-
-            let list_state = ListState::new(
-                0,
-                gpui::ListAlignment::Top,
-                px(1000.),
-                move |ix, window, cx| {
-                    if let Some(view) = view.upgrade() {
-                        view.update(cx, |this: &mut Self, cx| {
-                            let Some(contents) = &this.contents else {
-                                return div().into_any();
-                            };
-
-                            let mut render_cx =
-                                RenderContext::new(Some(this.workspace.clone()), window, cx)
-                                    .with_checkbox_clicked_callback({
-                                        let view = view.clone();
-                                        move |checked, source_range, window, cx| {
-                                            view.update(cx, |view, cx| {
-                                                if let Some(editor) = view
-                                                    .active_editor
-                                                    .as_ref()
-                                                    .map(|s| s.editor.clone())
-                                                {
-                                                    editor.update(cx, |editor, cx| {
-                                                        let task_marker =
-                                                            if checked { "[x]" } else { "[ ]" };
-
-                                                        editor.edit(
-                                                            vec![(source_range, task_marker)],
-                                                            cx,
-                                                        );
-                                                    });
-                                                    view.parse_markdown_from_active_editor(
-                                                        false, window, cx,
-                                                    );
-                                                    cx.notify();
-                                                }
-                                            })
-                                        }
-                                    });
-
-                            let block = contents.children.get(ix).unwrap();
-                            let rendered_block = render_markdown_block(block, &mut render_cx);
-
-                            let should_apply_padding = Self::should_apply_padding_between(
-                                block,
-                                contents.children.get(ix + 1),
-                            );
-
-                            div()
-                                .id(ix)
-                                .when(should_apply_padding, |this| {
-                                    this.pb(render_cx.scaled_rems(0.75))
-                                })
-                                .group("markdown-block")
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, window, cx| {
-                                        if event.down.click_count == 2 {
-                                            if let Some(source_range) = this
-                                                .contents
-                                                .as_ref()
-                                                .and_then(|c| c.children.get(ix))
-                                                .and_then(|block| block.source_range())
-                                            {
-                                                this.move_cursor_to_block(
-                                                    window,
-                                                    cx,
-                                                    source_range.start..source_range.start,
-                                                );
-                                            }
-                                        }
-                                    },
-                                ))
-                                .map(move |container| {
-                                    let indicator = div()
-                                        .h_full()
-                                        .w(px(4.0))
-                                        .when(ix == this.selected_block, |this| {
-                                            this.bg(cx.theme().colors().border)
-                                        })
-                                        .group_hover("markdown-block", |s| {
-                                            if ix == this.selected_block {
-                                                s
-                                            } else {
-                                                s.bg(cx.theme().colors().border_variant)
-                                            }
-                                        })
-                                        .rounded_xs();
-
-                                    container.child(
-                                        div()
-                                            .relative()
-                                            .child(
-                                                div()
-                                                    .pl(render_cx.scaled_rems(1.0))
-                                                    .child(rendered_block),
-                                            )
-                                            .child(indicator.absolute().left_0().top_0()),
-                                    )
-                                })
-                                .into_any()
-                        })
-                    } else {
-                        div().into_any()
-                    }
-                },
-            );
+            let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
 
             let mut this = Self {
                 selected_block: 0,
@@ -530,6 +424,26 @@ impl MarkdownPreviewView {
     ) -> bool {
         !(current_block.is_list_item() && next_block.map(|b| b.is_list_item()).unwrap_or(false))
     }
+
+    fn scroll_page_up(&mut self, _: &MovePageUp, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(-viewport_height);
+        cx.notify();
+    }
+
+    fn scroll_page_down(&mut self, _: &MovePageDown, _window: &mut Window, cx: &mut Context<Self>) {
+        let viewport_height = self.list_state.viewport_bounds().size.height;
+        if viewport_height.is_zero() {
+            return;
+        }
+
+        self.list_state.scroll_by(viewport_height);
+        cx.notify();
+    }
 }
 
 impl Focusable for MarkdownPreviewView {
@@ -580,15 +494,114 @@ impl Render for MarkdownPreviewView {
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_up))
+            .on_action(cx.listener(MarkdownPreviewView::scroll_page_down))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()
             .text_size(buffer_size)
             .line_height(relative(buffer_line_height.value()))
-            .child(
-                div()
-                    .flex_grow()
-                    .map(|this| this.child(list(self.list_state.clone()).size_full())),
-            )
+            .child(div().flex_grow().map(|this| {
+                this.child(
+                    list(
+                        self.list_state.clone(),
+                        cx.processor(|this, ix, window, cx| {
+                            let Some(contents) = &this.contents else {
+                                return div().into_any();
+                            };
+
+                            let mut render_cx =
+                                RenderContext::new(Some(this.workspace.clone()), window, cx)
+                                    .with_checkbox_clicked_callback(cx.listener(
+                                        move |this, e: &CheckboxClickedEvent, window, cx| {
+                                            if let Some(editor) = this
+                                                .active_editor
+                                                .as_ref()
+                                                .map(|s| s.editor.clone())
+                                            {
+                                                editor.update(cx, |editor, cx| {
+                                                    let task_marker =
+                                                        if e.checked() { "[x]" } else { "[ ]" };
+
+                                                    editor.edit(
+                                                        vec![(e.source_range(), task_marker)],
+                                                        cx,
+                                                    );
+                                                });
+                                                this.parse_markdown_from_active_editor(
+                                                    false, window, cx,
+                                                );
+                                                cx.notify();
+                                            }
+                                        },
+                                    ));
+
+                            let block = contents.children.get(ix).unwrap();
+                            let rendered_block = render_markdown_block(block, &mut render_cx);
+
+                            let should_apply_padding = Self::should_apply_padding_between(
+                                block,
+                                contents.children.get(ix + 1),
+                            );
+
+                            div()
+                                .id(ix)
+                                .when(should_apply_padding, |this| {
+                                    this.pb(render_cx.scaled_rems(0.75))
+                                })
+                                .group("markdown-block")
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, window, cx| {
+                                        if event.click_count() == 2 {
+                                            if let Some(source_range) = this
+                                                .contents
+                                                .as_ref()
+                                                .and_then(|c| c.children.get(ix))
+                                                .and_then(|block: &ParsedMarkdownElement| {
+                                                    block.source_range()
+                                                })
+                                            {
+                                                this.move_cursor_to_block(
+                                                    window,
+                                                    cx,
+                                                    source_range.start..source_range.start,
+                                                );
+                                            }
+                                        }
+                                    },
+                                ))
+                                .map(move |container| {
+                                    let indicator = div()
+                                        .h_full()
+                                        .w(px(4.0))
+                                        .when(ix == this.selected_block, |this| {
+                                            this.bg(cx.theme().colors().border)
+                                        })
+                                        .group_hover("markdown-block", |s| {
+                                            if ix == this.selected_block {
+                                                s
+                                            } else {
+                                                s.bg(cx.theme().colors().border_variant)
+                                            }
+                                        })
+                                        .rounded_xs();
+
+                                    container.child(
+                                        div()
+                                            .relative()
+                                            .child(
+                                                div()
+                                                    .pl(render_cx.scaled_rems(1.0))
+                                                    .child(rendered_block),
+                                            )
+                                            .child(indicator.absolute().left_0().top_0()),
+                                    )
+                                })
+                                .into_any()
+                        }),
+                    )
+                    .size_full(),
+                )
+            }))
     }
 }

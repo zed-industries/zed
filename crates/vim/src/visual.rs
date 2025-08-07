@@ -23,23 +23,41 @@ use crate::{
 actions!(
     vim,
     [
+        /// Toggles visual mode.
         ToggleVisual,
+        /// Toggles visual line mode.
         ToggleVisualLine,
+        /// Toggles visual block mode.
         ToggleVisualBlock,
+        /// Deletes the visual selection.
         VisualDelete,
+        /// Deletes entire lines in visual selection.
         VisualDeleteLine,
+        /// Yanks (copies) the visual selection.
         VisualYank,
+        /// Yanks entire lines in visual selection.
         VisualYankLine,
+        /// Moves cursor to the other end of the selection.
         OtherEnd,
+        /// Moves cursor to the other end of the selection (row-aware).
         OtherEndRowAware,
+        /// Selects the next occurrence of the current selection.
         SelectNext,
+        /// Selects the previous occurrence of the current selection.
         SelectPrevious,
+        /// Selects the next match of the current selection.
         SelectNextMatch,
+        /// Selects the previous match of the current selection.
         SelectPreviousMatch,
+        /// Selects the next smaller syntax node.
         SelectSmallerSyntaxNode,
+        /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Restores the previous visual selection.
         RestoreVisualSelection,
+        /// Inserts at the end of each line in visual selection.
         VisualInsertEndOfLine,
+        /// Inserts at the first non-whitespace character of each line.
         VisualInsertFirstNonWhiteSpace,
     ]
 );

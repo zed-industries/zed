@@ -20,7 +20,7 @@ pub struct PlayerColor {
 ///
 /// The rest of the default colors crisscross back and forth on the
 /// color wheel so that the colors are as distinct as possible.
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PlayerColors(pub Vec<PlayerColor>);
 
 impl Default for PlayerColors {

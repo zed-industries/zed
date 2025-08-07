@@ -222,11 +222,13 @@ message Completion {
     optional Anchor buffer_word_end = 10;
     Anchor old_insert_start = 11;
     Anchor old_insert_end = 12;
+    optional string sort_text = 13;
 
     enum Source {
         Lsp = 0;
         Custom = 1;
         BufferWord = 2;
+        Dap = 3;
     }
 }
 
@@ -516,12 +518,14 @@ message LanguageServer {
 message StartLanguageServer {
     uint64 project_id = 1;
     LanguageServer server = 2;
+    string capabilities = 3;
 }
 
 message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     DiagnosticSummary summary = 3;
+    repeated DiagnosticSummary more_summaries = 4;
 }
 
 message DiagnosticSummary {
@@ -543,6 +547,7 @@ message UpdateLanguageServer {
         LspDiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 7;
         StatusUpdate status_update = 9;
         RegisteredForBuffer registered_for_buffer = 10;
+        ServerMetadataUpdated metadata_updated = 11;
     }
 }
 
@@ -595,6 +600,11 @@ enum ServerBinaryStatus {
 
 message RegisteredForBuffer {
     string buffer_abs_path = 1;
+    uint64 buffer_id = 2;
+}
+
+message ServerMetadataUpdated {
+    optional string capabilities = 1;
 }
 
 message LanguageServerLog {
@@ -757,6 +767,11 @@ message MultiLspQuery {
         GetCodeLens get_code_lens = 8;
         GetDocumentDiagnostics get_document_diagnostics = 9;
         GetDocumentColor get_document_color = 10;
+        GetDefinition get_definition = 11;
+        GetDeclaration get_declaration = 12;
+        GetTypeDefinition get_type_definition = 13;
+        GetImplementation get_implementation = 14;
+        GetReferences get_references = 15;
     }
 }
 
@@ -795,18 +810,13 @@ message LspResponse {
         GetCodeLensResponse get_code_lens_response = 4;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 5;
         GetDocumentColorResponse get_document_color_response = 6;
+        GetDefinitionResponse get_definition_response = 8;
+        GetDeclarationResponse get_declaration_response = 9;
+        GetTypeDefinitionResponse get_type_definition_response = 10;
+        GetImplementationResponse get_implementation_response = 11;
+        GetReferencesResponse get_references_response = 12;
     }
     uint64 server_id = 7;
-}
-
-message LanguageServerIdForName {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    string name = 3;
-}
-
-message LanguageServerIdForNameResponse {
-    optional uint64 server_id = 1;
 }
 
 message LspExtRunnables {

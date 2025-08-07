@@ -41,7 +41,7 @@ static VERSION_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create VERSION_REGEX"));
 
 static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
+    Regex::new(r#"[.*+?^${}()|\[\]\\"']"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
 });
 
 const BINARY: &str = if cfg!(target_os = "windows") {
@@ -685,11 +685,20 @@ impl ContextProvider for GoContextProvider {
 }
 
 fn extract_subtest_name(input: &str) -> Option<String> {
-    let replaced_spaces = input.trim_matches('"').replace(' ', "_");
+    let content = if input.starts_with('`') && input.ends_with('`') {
+        input.trim_matches('`')
+    } else {
+        input.trim_matches('"')
+    };
+
+    let processed = content
+        .chars()
+        .map(|c| if c.is_whitespace() { '_' } else { c })
+        .collect::<String>();
 
     Some(
         GO_ESCAPE_SUBTEST_NAME_REGEX
-            .replace_all(&replaced_spaces, |caps: &regex::Captures| {
+            .replace_all(&processed, |caps: &regex::Captures| {
                 format!("\\{}", &caps[0])
             })
             .to_string(),
@@ -700,7 +709,7 @@ fn extract_subtest_name(input: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::language;
-    use gpui::Hsla;
+    use gpui::{AppContext, Hsla, TestAppContext};
     use theme::SyntaxTheme;
 
     #[gpui::test]
@@ -789,5 +798,109 @@ mod tests {
                 runs: vec![(12..15, highlight_type)],
             })
         );
+    }
+
+    #[gpui::test]
+    fn test_go_runnable_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let interpreted_string_subtest = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            t.Run("subtest with double quotes", func(t *testing.T) {
+                // test code
+            })
+        }
+        "#;
+
+        let raw_string_subtest = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            t.Run(`subtest with
+            multiline
+            backticks`, func(t *testing.T) {
+                // test code
+            })
+        }
+        "#;
+
+        let buffer = cx.new(|cx| {
+            crate::Buffer::local(interpreted_string_subtest, cx).with_language(language.clone(), cx)
+        });
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(0..interpreted_string_subtest.len())
+                .collect()
+        });
+
+        assert!(
+            runnables.len() == 2,
+            "Should find test function and subtest with double quotes, found: {}",
+            runnables.len()
+        );
+
+        let buffer = cx.new(|cx| {
+            crate::Buffer::local(raw_string_subtest, cx).with_language(language.clone(), cx)
+        });
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .runnable_ranges(0..raw_string_subtest.len())
+                .collect()
+        });
+
+        assert!(
+            runnables.len() == 2,
+            "Should find test function and subtest with backticks, found: {}",
+            runnables.len()
+        );
+    }
+
+    #[test]
+    fn test_extract_subtest_name() {
+        // Interpreted string literal
+        let input_double_quoted = r#""subtest with double quotes""#;
+        let result = extract_subtest_name(input_double_quoted);
+        assert_eq!(result, Some(r#"subtest_with_double_quotes"#.to_string()));
+
+        let input_double_quoted_with_backticks = r#""test with `backticks` inside""#;
+        let result = extract_subtest_name(input_double_quoted_with_backticks);
+        assert_eq!(result, Some(r#"test_with_`backticks`_inside"#.to_string()));
+
+        // Raw string literal
+        let input_with_backticks = r#"`subtest with backticks`"#;
+        let result = extract_subtest_name(input_with_backticks);
+        assert_eq!(result, Some(r#"subtest_with_backticks"#.to_string()));
+
+        let input_raw_with_quotes = r#"`test with "quotes" and other chars`"#;
+        let result = extract_subtest_name(input_raw_with_quotes);
+        assert_eq!(
+            result,
+            Some(r#"test_with_\"quotes\"_and_other_chars"#.to_string())
+        );
+
+        let input_multiline = r#"`subtest with
+        multiline
+        backticks`"#;
+        let result = extract_subtest_name(input_multiline);
+        assert_eq!(
+            result,
+            Some(r#"subtest_with_________multiline_________backticks"#.to_string())
+        );
+
+        let input_with_double_quotes = r#"`test with "double quotes"`"#;
+        let result = extract_subtest_name(input_with_double_quotes);
+        assert_eq!(result, Some(r#"test_with_\"double_quotes\""#.to_string()));
     }
 }

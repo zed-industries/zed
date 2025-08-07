@@ -27,7 +27,7 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
     let workspace = init_test_workspace(&project, cx).await;
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
-    let session = start_debug_session_with(
+    let _session = start_debug_session_with(
         &workspace,
         cx,
         DebugTaskDefinition {
@@ -59,14 +59,6 @@ async fn test_direct_attach_to_process(executor: BackgroundExecutor, cx: &mut Te
             assert!(workspace.active_modal::<AttachModal>(cx).is_none());
         })
         .unwrap();
-
-    let shutdown_session = project.update(cx, |project, cx| {
-        project.dap_store().update(cx, |dap_store, cx| {
-            dap_store.shutdown_session(session.read(cx).session_id(), cx)
-        })
-    });
-
-    shutdown_session.await.unwrap();
 }
 
 #[gpui::test]

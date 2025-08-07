@@ -115,6 +115,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
             config.to_scenario(),
             TaskContext::default(),
             None,
+            None,
             window,
             cx,
         )

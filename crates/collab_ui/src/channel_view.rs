@@ -30,7 +30,13 @@ use workspace::{
 };
 use workspace::{item::Dedup, notifications::NotificationId};
 
-actions!(collab, [CopyLink]);
+actions!(
+    collab,
+    [
+        /// Copies a link to the current position in the channel buffer.
+        CopyLink
+    ]
+);
 
 pub fn init(cx: &mut App) {
     workspace::FollowableViewRegistry::register::<ChannelView>(cx)

@@ -8,7 +8,18 @@ pub mod markdown_renderer;
 
 actions!(
     markdown,
-    [OpenPreview, OpenPreviewToTheSide, OpenFollowingPreview]
+    [
+        /// Scrolls up by one page in the markdown preview.
+        MovePageUp,
+        /// Scrolls down by one page in the markdown preview.
+        MovePageDown,
+        /// Opens a markdown preview for the current file.
+        OpenPreview,
+        /// Opens a markdown preview in a split pane.
+        OpenPreviewToTheSide,
+        /// Opens a following markdown preview that syncs with the editor.
+        OpenFollowingPreview
+    ]
 );
 
 pub fn init(cx: &mut App) {

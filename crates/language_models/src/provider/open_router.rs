@@ -29,8 +29,8 @@ use util::ResultExt;
 
 use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 
-const PROVIDER_ID: &str = "openrouter";
-const PROVIDER_NAME: &str = "OpenRouter";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
@@ -244,11 +244,11 @@ impl LanguageModelProviderState for OpenRouterLanguageModelProvider {
 
 impl LanguageModelProvider for OpenRouterLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -363,11 +363,11 @@ impl LanguageModel for OpenRouterLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -376,7 +376,7 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
-        if model_id.contains("gemini") {
+        if model_id.contains("gemini") || model_id.contains("grok-4") {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -523,7 +523,9 @@ pub fn into_open_router(
             None
         },
         usage: open_router::RequestUsage { include: true },
-        reasoning: if let OpenRouterModelMode::Thinking { budget_tokens } = model.mode {
+        reasoning: if request.thinking_allowed
+            && let OpenRouterModelMode::Thinking { budget_tokens } = model.mode
+        {
             Some(open_router::Reasoning {
                 effort: None,
                 max_tokens: budget_tokens,
@@ -607,7 +609,7 @@ impl OpenRouterEventMapper {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::Other(anyhow!(error)))],
+                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
             })
         })
     }
@@ -617,7 +619,7 @@ impl OpenRouterEventMapper {
         event: ResponseStreamEvent,
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let Some(choice) = event.choices.first() else {
-            return vec![Err(LanguageModelCompletionError::Other(anyhow!(
+            return vec![Err(LanguageModelCompletionError::from(anyhow!(
                 "Response contained no choices"
             )))];
         };
@@ -683,10 +685,10 @@ impl OpenRouterEventMapper {
                                 raw_input: tool_call.arguments.clone(),
                             },
                         )),
-                        Err(error) => Err(LanguageModelCompletionError::BadInputJson {
-                            id: tool_call.id.into(),
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: tool_call.id.clone().into(),
                             tool_name: tool_call.name.as_str().into(),
-                            raw_input: tool_call.arguments.into(),
+                            raw_input: tool_call.arguments.clone().into(),
                             json_parse_error: error.to_string(),
                         }),
                     }
@@ -853,7 +855,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with OpenRouter, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with OpenRouter, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(

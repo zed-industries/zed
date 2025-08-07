@@ -11,24 +11,29 @@ fi
 input_file=$1;
 
 if [[ "$input_file" == *.json ]]; then
-    version=$(cat $input_file | jq -r .app_version)
-    channel=$(cat $input_file | jq -r .release_channel)
-    target_triple=$(cat $input_file | jq -r .target)
+    version=$(cat $input_file | jq -r .panic.app_version)
+    channel=$(cat $input_file | jq -r .panic.release_channel)
+    target_triple=$(cat $input_file | jq -r .panic.target)
 
-    which llvm-symbolizer rustfilt >dev/null || echo Need to install llvm-symbolizer and rustfilt
+    which llvm-symbolizer rustfilt >/dev/null || (echo Need to install llvm-symbolizer and rustfilt && exit 1)
 
     echo $channel;
 
     mkdir -p target/dsyms/$channel
 
-    dsym="$channel/zed-$version-$target_triple.dbg"
+    if [[ "$version" == "remote-server-"* ]]; then
+        version="${version#remote-server-}"
+        dsym="$channel/remote_server-$version-$target_triple.dbg"
+    else
+        dsym="$channel/zed-$version-$target_triple.dbg"
+    fi
     if [[ ! -f target/dsyms/$dsym ]]; then
         echo "Downloading $dsym..."
         curl -o target/dsyms/$dsym.gz "https://zed-debug-symbols.nyc3.digitaloceanspaces.com/$dsym.gz"
         gunzip  target/dsyms/$dsym.gz
     fi
 
-    cat $input_file | jq -r .backtrace[] | sed s'/.*+//' | llvm-symbolizer --no-demangle --obj=target/dsyms/$dsym | rustfilt
+    cat $input_file | jq -r .panic.backtrace[] | sed s'/.*+//' | llvm-symbolizer --no-demangle --obj=target/dsyms/$dsym | rustfilt
 
 else # ips file
 
