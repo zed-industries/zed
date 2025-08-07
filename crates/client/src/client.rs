@@ -16,6 +16,7 @@ use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
 use cloud_api_client::websocket_protocol::MessageToClient;
 use credentials_provider::CredentialsProvider;
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
@@ -964,25 +965,51 @@ impl Client {
         Ok(())
     }
 
-    /// Performs a sign-in and also connects to Collab.
+    /// Performs a sign-in and also (optionally) connects to Collab.
     ///
-    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
-    /// to `sign_in` when we're ready to remove auto-connection to Collab.
+    /// Only Zed staff automatically connect to Collab.
     pub async fn sign_in_with_optional_connect(
         self: &Arc<Self>,
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<()> {
+        let (is_staff_tx, is_staff_rx) = oneshot::channel::<bool>();
+        let mut is_staff_tx = Some(is_staff_tx);
+        cx.update(|cx| {
+            cx.on_flags_ready(move |state, _cx| {
+                if let Some(is_staff_tx) = is_staff_tx.take() {
+                    is_staff_tx.send(state.is_staff).log_err();
+                }
+            })
+            .detach();
+        })
+        .log_err();
+
         let credentials = self.sign_in(try_provider, cx).await?;
 
         self.connect_to_cloud(cx).await.log_err();
 
-        let connect_result = match self.connect_with_credentials(credentials, cx).await {
-            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
-            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
-            ConnectionResult::Result(result) => result.context("client auth and connect"),
-        };
-        connect_result.log_err();
+        cx.update(move |cx| {
+            cx.spawn({
+                let client = self.clone();
+                async move |cx| {
+                    let is_staff = is_staff_rx.await?;
+                    if is_staff {
+                        match client.connect_with_credentials(credentials, cx).await {
+                            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
+                            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
+                            ConnectionResult::Result(result) => {
+                                result.context("client auth and connect")
+                            }
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .detach_and_log_err(cx);
+        })
+        .log_err();
 
         Ok(())
     }
