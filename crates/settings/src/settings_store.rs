@@ -1203,7 +1203,7 @@ impl SettingsStore {
                             global: global_settings.as_ref(),
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
-                            release_channel: os_settings.as_ref(),
+                            release_channel: release_channel_settings.as_ref(),
                             operating_system: os_settings.as_ref(),
                             profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
