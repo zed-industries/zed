@@ -673,7 +673,10 @@ pub fn count_open_ai_tokens(
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            | Model::O4Mini
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
         }
         .map(|tokens| tokens as u64)
     })
