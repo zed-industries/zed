@@ -429,13 +429,13 @@ impl Peer {
             .map_ok(|envelope| envelope.payload)
             .inspect_err(move |_| {
                 tracing::error!(
-                    waiting_for_host_ms = elapsed_time(),
+                    waiting_for_response_ms = elapsed_time(),
                     "error forwarding request"
                 )
             })
             .inspect_ok(move |_| {
                 tracing::info!(
-                    waiting_for_host_ms = elapsed_time(),
+                    waiting_for_response_ms = elapsed_time(),
                     "finished forwarding request"
                 )
             })
