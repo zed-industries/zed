@@ -88,6 +88,7 @@ members = [
     "crates/jj",
     "crates/jj_ui",
     "crates/journal",
+    "crates/json_schema_store",
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
@@ -313,6 +314,7 @@ install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
 jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
+json_schema_store = { path = "crates/json_schema_store" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
@@ -770,6 +772,7 @@ image_viewer = { codegen-units = 1 }
 edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
+json_schema_store = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }

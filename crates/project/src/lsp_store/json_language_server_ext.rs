@@ -1,6 +1,7 @@
-use anyhow::Context as _;
-use collections::HashMap;
-use gpui::WeakEntity;
+use std::sync::Arc;
+
+use anyhow::{Context, Result};
+use gpui::{App, AppContext, AsyncApp, Global, WeakEntity};
 use lsp::LanguageServer;
 
 use crate::LspStore;
@@ -20,82 +21,34 @@ impl lsp::request::Request for SchemaContentRequest {
     const METHOD: &'static str = "vscode/content";
 }
 
+pub trait SchemaHandling {
+    fn handle_schema_request(&self, params: String, cx: &mut AsyncApp) -> Result<String>;
+}
+
+pub struct SchemaHandlingImpl(Arc<dyn SchemaHandling>);
+
+impl Global for SchemaHandlingImpl {}
+
+pub fn register_schema_handler(handler: Arc<dyn SchemaHandling>, cx: &mut App) {
+    debug_assert!(
+        !cx.has_global::<SchemaHandlingImpl>(),
+        "SchemaHandlingImpl already registered"
+    );
+    cx.set_global(SchemaHandlingImpl(handler));
+}
+
 pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     language_server
-        .on_request::<SchemaContentRequest, _, _>(|params, cx| {
-            // PERF: Use a cache (`OnceLock`?) to avoid recomputing the action schemas
-            let mut generator = settings::KeymapFile::action_schema_generator();
-            let all_schemas = cx.update(|cx| HashMap::from_iter(cx.action_schemas(&mut generator)));
+        .on_request::<SchemaContentRequest, _, _>(|mut params, cx| {
+            let handler = cx.try_read_global::<SchemaHandlingImpl, _>(|schema_handling_impl, _| {
+                schema_handling_impl.0.clone()
+            });
+            let mut cx = cx.clone();
             async move {
-                let all_schemas = all_schemas?;
-                let Some(uri) = params.get(0) else {
-                    anyhow::bail!("No URI");
-                };
-                let normalized_action_name = uri
-                    .strip_prefix("zed://schemas/action/")
-                    .context("Invalid URI")?;
-                let action_name = denormalize_action_name(normalized_action_name);
-                let schema = root_schema_from_action_schema(
-                    all_schemas
-                        .get(action_name.as_str())
-                        .and_then(Option::as_ref),
-                    &mut generator,
-                )
-                .to_value();
-
-                serde_json::to_string(&schema).context("Failed to serialize schema")
+                let handler = handler.context("No schema handler registered")?;
+                let uri = params.pop().context("No URI")?;
+                handler.handle_schema_request(uri, &mut cx)
             }
         })
         .detach();
-}
-
-pub fn normalize_action_name(action_name: &str) -> String {
-    action_name.replace("::", "__")
-}
-
-pub fn denormalize_action_name(action_name: &str) -> String {
-    action_name.replace("__", "::")
-}
-
-pub fn normalized_action_file_name(action_name: &str) -> String {
-    normalized_action_name_to_file_name(normalize_action_name(action_name))
-}
-
-pub fn normalized_action_name_to_file_name(mut normalized_action_name: String) -> String {
-    normalized_action_name.push_str(".json");
-    normalized_action_name
-}
-
-pub fn url_schema_for_action(action_name: &str) -> serde_json::Value {
-    let normalized_name = normalize_action_name(action_name);
-    let file_name = normalized_action_name_to_file_name(normalized_name.clone());
-    serde_json::json!({
-        "fileMatch": [file_name],
-        "url": format!("zed://schemas/action/{}", normalized_name)
-    })
-}
-
-fn root_schema_from_action_schema(
-    action_schema: Option<&schemars::Schema>,
-    generator: &mut schemars::SchemaGenerator,
-) -> schemars::Schema {
-    let Some(action_schema) = action_schema else {
-        return schemars::json_schema!(false);
-    };
-    let meta_schema = generator
-        .settings()
-        .meta_schema
-        .as_ref()
-        .expect("meta_schema should be present in schemars settings")
-        .to_string();
-    let defs = generator.definitions();
-    let mut schema = schemars::json_schema!({
-        "$schema": meta_schema,
-        "allowTrailingCommas": true,
-        "$defs": defs,
-    });
-    schema
-        .ensure_object()
-        .extend(std::mem::take(action_schema.clone().ensure_object()));
-    schema
 }
