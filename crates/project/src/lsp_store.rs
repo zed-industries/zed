@@ -2034,11 +2034,6 @@ impl LocalLspStore {
         let capabilities = &language_server.capabilities();
 
         let formatting_provider = capabilities.document_formatting_provider.as_ref();
-        zlog::info!(
-            "------------------------------- server: {}, {:?}",
-            language_server.name(),
-            formatting_provider
-        );
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
 
         let lsp_edits = if matches!(formatting_provider, Some(p) if *p != OneOf::Left(false)) {
