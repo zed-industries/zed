@@ -151,12 +151,12 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::ClaudeSonnet4 => "claude-4-sonnet",
-            Model::ClaudeSonnet4Thinking => "claude-4-sonnet-thinking",
-            Model::ClaudeOpus4 => "claude-4-opus",
-            Model::ClaudeOpus4_1 => "claude-4-opus-1",
-            Model::ClaudeOpus4Thinking => "claude-4-opus-thinking",
-            Model::ClaudeOpus4_1Thinking => "claude-4-opus-1-thinking",
+            Model::ClaudeSonnet4 => "claude-sonnet-4",
+            Model::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking",
+            Model::ClaudeOpus4 => "claude-opus-4",
+            Model::ClaudeOpus4_1 => "claude-opus-4-1",
+            Model::ClaudeOpus4Thinking => "claude-opus-4-thinking",
+            Model::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
