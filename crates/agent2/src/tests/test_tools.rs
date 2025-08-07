@@ -23,6 +23,10 @@ impl AgentTool for EchoTool {
         acp::ToolKind::Other
     }
 
+    fn initial_title(&self, _: Self::Input) -> SharedString {
+        "Echo".into()
+    }
+
     fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
         false
     }
@@ -51,6 +55,10 @@ impl AgentTool for DelayTool {
 
     fn name(&self) -> SharedString {
         "delay".into()
+    }
+
+    fn initial_title(&self, input: Self::Input) -> SharedString {
+        format!("Delay {}ms", input.ms).into()
     }
 
     fn kind(&self) -> acp::ToolKind {
@@ -93,6 +101,10 @@ impl AgentTool for ToolRequiringPermission {
         acp::ToolKind::Other
     }
 
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This tool requires permission".into()
+    }
+
     fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
         true
     }
@@ -125,6 +137,10 @@ impl AgentTool for InfiniteTool {
 
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This is the tool that never ends... it just goes on and on my friends!".into()
     }
 
     fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
@@ -171,6 +187,10 @@ impl AgentTool for WordListTool {
 
     fn name(&self) -> SharedString {
         "word_list".into()
+    }
+
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "List of random words".into()
     }
 
     fn kind(&self) -> acp::ToolKind {

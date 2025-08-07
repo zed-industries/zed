@@ -33,6 +33,10 @@ impl AgentTool for ThinkingTool {
         acp::ToolKind::Think
     }
 
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "Thinking".into()
+    }
+
     fn run(
         self: Arc<Self>,
         input: Self::Input,

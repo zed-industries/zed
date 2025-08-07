@@ -66,6 +66,10 @@ impl AgentTool for FindPathTool {
         acp::ToolKind::Search
     }
 
+    fn initial_title(&self, input: Self::Input) -> SharedString {
+        format!("Find paths matching “`{}`”", input.glob).into()
+    }
+
     fn needs_authorization(&self, _: Self::Input, _: &App) -> bool {
         false
     }
