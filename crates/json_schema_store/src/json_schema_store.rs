@@ -57,11 +57,11 @@ pub fn all_schema_file_associations(cx: &mut App) -> Vec<serde_json::Value> {
     let mut file_associations = vec![
         serde_json::json!({
             "fileMatch": ["tsconfig.json"],
-            "schema": "zed://schemas/tsconfig"
+            "url": "zed://schemas/tsconfig"
         }),
         serde_json::json!({
             "fileMatch": ["package.json"],
-            "schema": "zed://schemas/package_json"
+            "url": "zed://schemas/package_json"
         }),
     ];
     file_associations.extend(
