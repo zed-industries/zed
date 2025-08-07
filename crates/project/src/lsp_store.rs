@@ -6589,7 +6589,7 @@ impl LspStore {
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<LspPullDiagnostics>>> {
+    ) -> Task<Result<Option<Vec<LspPullDiagnostics>>>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some((client, upstream_project_id)) = self.upstream_client() {
@@ -6600,7 +6600,7 @@ impl LspStore {
                 },
                 cx,
             ) {
-                return Task::ready(Ok(Vec::new()));
+                return Task::ready(Ok(None));
             }
             let request_task = client.request(proto::MultiLspQuery {
                 buffer_id: buffer_id.to_proto(),
@@ -6618,7 +6618,7 @@ impl LspStore {
                 )),
             });
             cx.background_spawn(async move {
-                Ok(request_task
+                let _proto_responses = request_task
                     .await?
                     .responses
                     .into_iter()
@@ -6631,8 +6631,11 @@ impl LspStore {
                             None
                         }
                     })
-                    .flat_map(GetDocumentDiagnostics::diagnostics_from_proto)
-                    .collect())
+                    .collect::<Vec<_>>();
+                // Proto requests cause the diagnostics to be pulled from language server(s) on the local side
+                // and then, buffer state updated with the diagnostics received, which will be later propagated to the client.
+                // Do not attempt to further process the dummy responses here.
+                Ok(None)
             })
         } else {
             let server_ids = buffer.update(cx, |buffer, cx| {
@@ -6660,7 +6663,7 @@ impl LspStore {
                 for diagnostics in join_all(pull_diagnostics).await {
                     responses.extend(diagnostics?);
                 }
-                Ok(responses)
+                Ok(Some(responses))
             })
         }
     }
@@ -6728,7 +6731,9 @@ impl LspStore {
     ) -> Task<anyhow::Result<()>> {
         let diagnostics = self.pull_diagnostics(buffer, cx);
         cx.spawn(async move |lsp_store, cx| {
-            let diagnostics = diagnostics.await.context("pulling diagnostics")?;
+            let Some(diagnostics) = diagnostics.await.context("pulling diagnostics")? else {
+                return Ok(());
+            };
             lsp_store.update(cx, |lsp_store, cx| {
                 if lsp_store.as_local().is_none() {
                     return;
