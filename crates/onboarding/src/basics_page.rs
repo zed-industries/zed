@@ -297,7 +297,7 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
                 ToggleButtonWithIcon::new("Emacs", IconName::EditorEmacs, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Emacs, cx);
                 }),
-                ToggleButtonWithIcon::new("Cursor (Beta)", IconName::EditorCursor, |_, _, cx| {
+                ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Cursor, cx);
                 }),
             ],
