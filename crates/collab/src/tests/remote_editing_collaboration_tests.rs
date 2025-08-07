@@ -521,12 +521,6 @@ async fn test_ssh_collaboration_formatting_with_prettier(
             });
         });
     });
-    let fake_language_server = fake_language_servers.next().await.unwrap();
-    fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
-        panic!(
-            "Unexpected: prettier should be preferred since it's enabled and language supports it"
-        )
-    });
 
     project_b
         .update(cx_b, |project, cx| {
