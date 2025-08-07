@@ -4374,7 +4374,6 @@ pub mod tests {
 
         let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let workspace = window.root(cx).unwrap();
         let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
 
         (project, window, search)
