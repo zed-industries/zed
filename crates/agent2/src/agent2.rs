@@ -10,3 +10,4 @@ mod tests;
 pub use agent::*;
 pub use native_agent_server::NativeAgentServer;
 pub use thread::*;
+pub use tools::*;

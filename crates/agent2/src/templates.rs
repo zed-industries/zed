@@ -33,19 +33,6 @@ pub trait Template: Sized {
     }
 }
 
-#[expect(
-    dead_code,
-    reason = "Marked as unused by Rust 1.89 and left as is as of 07 Aug 2025 to let AI team address it."
-)]
-#[derive(Serialize)]
-pub struct GlobTemplate {
-    pub project_roots: String,
-}
-
-impl Template for GlobTemplate {
-    const TEMPLATE_NAME: &'static str = "glob.hbs";
-}
-
 #[derive(Serialize)]
 pub struct SystemPromptTemplate<'a> {
     #[serde(flatten)]

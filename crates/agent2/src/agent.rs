@@ -1,5 +1,5 @@
-use crate::ToolCallAuthorization;
 use crate::{templates::Templates, AgentResponseEvent, Thread};
+use crate::{FindPathTool, ThinkingTool, ToolCallAuthorization};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
@@ -412,7 +412,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             anyhow!("No default model configured. Please configure a default model in settings.")
                         })?;
 
-                    let thread = cx.new(|_| Thread::new(project, agent.project_context.clone(), action_log, agent.templates.clone(), default_model));
+                    let thread = cx.new(|_| {
+                        let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log, agent.templates.clone(), default_model);
+                        thread.add_tool(ThinkingTool);
+                        thread.add_tool(FindPathTool::new(project.clone()));
+                        thread
+                    });
+
                     Ok(thread)
                 },
             )??;
