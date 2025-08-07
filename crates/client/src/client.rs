@@ -193,7 +193,7 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 }
 
-pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &App) + Send + Sync + 'static>;
+pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &mut App) + Send + Sync + 'static>;
 
 struct GlobalClient(Arc<Client>);
 
@@ -1684,7 +1684,7 @@ impl Client {
 
     pub fn add_message_to_client_handler(
         self: &Arc<Client>,
-        handler: impl Fn(&MessageToClient, &App) + Send + Sync + 'static,
+        handler: impl Fn(&MessageToClient, &mut App) + Send + Sync + 'static,
     ) {
         self.message_to_client_handlers
             .lock()
