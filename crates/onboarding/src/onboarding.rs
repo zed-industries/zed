@@ -77,6 +77,8 @@ actions!(
         ActivateAISetupPage,
         /// Finish the onboarding process.
         Finish,
+        /// Sign in while in the onboarding flow.
+        SignIn
     ]
 );
 
@@ -376,6 +378,7 @@ impl Onboarding {
                                     cx,
                                 )
                                 .map(|kb| kb.size(rems_from_px(12.)));
+
                                 if ai_setup_page {
                                     this.child(
                                         ButtonLike::new("start_building")
@@ -387,14 +390,7 @@ impl Onboarding {
                                                     .w_full()
                                                     .justify_between()
                                                     .child(Label::new("Start Building"))
-                                                    .child(keybinding.map_or_else(
-                                                        || {
-                                                            Icon::new(IconName::Check)
-                                                                .size(IconSize::Small)
-                                                                .into_any_element()
-                                                        },
-                                                        IntoElement::into_any_element,
-                                                    )),
+                                                    .children(keybinding),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
@@ -412,10 +408,7 @@ impl Onboarding {
                                                     .child(
                                                         Label::new("Skip All").color(Color::Muted),
                                                     )
-                                                    .child(keybinding.map_or_else(
-                                                        || gpui::Empty.into_any_element(),
-                                                        IntoElement::into_any_element,
-                                                    )),
+                                                    .children(keybinding),
                                             )
                                             .on_click(|_, window, cx| {
                                                 window.dispatch_action(Finish.boxed_clone(), cx);
@@ -437,20 +430,33 @@ impl Onboarding {
                     Button::new("sign_in", "Sign In")
                         .full_width()
                         .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .key_binding(
+                            KeyBinding::for_action_in(&SignIn, &self.focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
                         .on_click(|_, window, cx| {
-                            let client = Client::global(cx);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    client
-                                        .sign_in_with_optional_connect(true, &cx)
-                                        .await
-                                        .notify_async_err(cx);
-                                })
-                                .detach();
+                            window.dispatch_action(SignIn.boxed_clone(), cx);
                         })
                         .into_any_element()
                 },
             )
+    }
+
+    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+        go_to_welcome_page(cx);
+    }
+
+    fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
+        let client = Client::global(cx);
+        window
+            .spawn(cx, async move |cx| {
+                client
+                    .sign_in_with_optional_connect(true, &cx)
+                    .await
+                    .notify_async_err(cx);
+            })
+            .detach();
     }
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -468,10 +474,6 @@ impl Onboarding {
             .into_any_element(),
         }
     }
-
-    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
-        go_to_welcome_page(cx);
-    }
 }
 
 impl Render for Onboarding {
@@ -488,6 +490,7 @@ impl Render for Onboarding {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .on_action(Self::on_finish)
+            .on_action(Self::handle_sign_in)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
                 this.set_page(SelectedPage::Basics, cx);
             }))
