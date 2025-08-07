@@ -204,7 +204,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         .pt_6()
         .gap_4()
         .border_t_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border_variant.opacity(0.5))
         .child(Label::new("Telemetry").size(LabelSize::Large))
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",

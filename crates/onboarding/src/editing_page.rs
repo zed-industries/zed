@@ -590,7 +590,7 @@ fn render_popular_settings_section(
         .pt_6()
         .gap_4()
         .border_t_1()
-        .border_color(cx.theme().colors().border_variant)
+        .border_color(cx.theme().colors().border_variant.opacity(0.5))
         .child(Label::new("Popular Settings").size(LabelSize::Large))
         .child(render_font_customization_section(tab_index, window, cx))
         .child(
