@@ -487,7 +487,7 @@ pub struct InlineBlameSettings {
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
-    /// Default: 6
+    /// Default: 7
     #[serde(default = "default_inline_blame_padding")]
     pub padding: u32,
     /// The minimum column number to show the inline blame information at
