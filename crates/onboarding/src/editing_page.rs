@@ -12,7 +12,7 @@ use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, Divider, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
+    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
     ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip,
     prelude::*,
 };
