@@ -25,6 +25,9 @@ serde_json.workspace = true
 settings.workspace = true
 util.workspace = true
 zlog.workspace = true
+paths.workspace = true
+task.workspace = true
+snippet_provider.workspace = true
 
 
 # Uncomment other workspace dependencies as needed

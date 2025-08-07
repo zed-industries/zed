@@ -12,13 +12,13 @@ pub struct VsSnippetsFile {
 }
 
 impl VsSnippetsFile {
-    pub fn generate_json_schema() -> Value {
+    pub fn generate_json_schema() -> serde_json::Value {
         let schema = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
             .into_generator()
             .root_schema_for::<Self>();
 
-        serde_json_lenient::to_value(schema).unwrap()
+        serde_json::to_value(schema).unwrap()
     }
 }
 

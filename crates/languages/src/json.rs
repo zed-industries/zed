@@ -15,7 +15,7 @@ use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
-use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
+use settings::{SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
     io::BufReader,
@@ -152,7 +152,6 @@ impl JsonLspAdapter {
         adapter_schemas: AdapterSchemas,
         cx: &mut App,
     ) -> Value {
-        let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
@@ -162,9 +161,7 @@ impl JsonLspAdapter {
             cx,
         );
 
-        let tasks_schema = task::TaskTemplates::generate_json_schema();
-        let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
-        let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
+        let debug_tasks = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
 
         #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
@@ -176,46 +173,13 @@ impl JsonLspAdapter {
                 "schema": settings_schema,
             },
             {
-                "fileMatch": [schema_file_match(paths::keymap_file())],
-                "schema": keymap_schema,
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(paths::tasks_file()),
-                    paths::local_tasks_file_relative_path()
-                ],
-                "schema": tasks_schema,
-            },
-            {
-                "fileMatch": [
-                    schema_file_match(
-                        paths::snippets_dir()
-                            .join("*.json")
-                            .as_path()
-                    )
-                ],
-                "schema": snippets_schema,
-            },
-            {
                 "fileMatch": [
                     schema_file_match(paths::debug_scenarios_file()),
                     paths::local_debug_file_relative_path()
                 ],
-                "schema": debug_schema,
+                "schema": debug_tasks,
             },
         ]);
-
-        #[cfg(debug_assertions)]
-        {
-            schemas.as_array_mut().unwrap().push(serde_json::json!(
-                {
-                    "fileMatch": [
-                        "zed-inspector-style.json"
-                    ],
-                    "schema": generate_inspector_style_schema(),
-                }
-            ))
-        }
 
         schemas
             .as_array_mut()
@@ -229,8 +193,7 @@ impl JsonLspAdapter {
                 "format": {
                     "enable": true,
                 },
-                "validate":
-                {
+                "validate": {
                     "enable": true,
                 },
                 "schemas": schemas
@@ -266,16 +229,6 @@ impl JsonLspAdapter {
         writer.replace(config.clone());
         return Ok(config);
     }
-}
-
-#[cfg(debug_assertions)]
-fn generate_inspector_style_schema() -> serde_json_lenient::Value {
-    let schema = schemars::generate::SchemaSettings::draft2019_09()
-        .with_transform(util::schemars::DefaultDenyUnknownFields)
-        .into_generator()
-        .root_schema_for::<gpui::StyleRefinement>();
-
-    serde_json_lenient::to_value(schema).unwrap()
 }
 
 #[async_trait(?Send)]

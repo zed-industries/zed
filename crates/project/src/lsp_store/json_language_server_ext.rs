@@ -39,7 +39,7 @@ pub fn register_schema_handler(handler: Arc<dyn SchemaHandling>, cx: &mut App) {
 
 pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
     language_server
-        .on_request::<SchemaContentRequest, _, _>(|mut params, cx| {
+        .on_request::<SchemaContentRequest, _, _>(|params, cx| {
             let handler = cx.try_read_global::<SchemaHandlingImpl, _>(|schema_handling_impl, _| {
                 schema_handling_impl.0.clone()
             });

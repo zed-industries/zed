@@ -18,6 +18,7 @@ gpui.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 serde_json_lenient.workspace = true
 snippet.workspace = true
 util.workspace = true
