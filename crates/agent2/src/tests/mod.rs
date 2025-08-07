@@ -28,6 +28,7 @@ mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -47,6 +48,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
 
@@ -118,6 +120,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -167,6 +170,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -311,6 +315,7 @@ async fn next_tool_call_authorization(
 }
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -349,6 +354,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
