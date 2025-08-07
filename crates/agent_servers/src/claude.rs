@@ -269,7 +269,7 @@ impl AgentConnection for ClaudeAgentConnection {
         let request_id = new_request_id();
 
         let turn_state = session.turn_state.take();
-        let TurnState::InProgress { end_tx } = session.turn_state.take() else {
+        let TurnState::InProgress { end_tx } = turn_state else {
             // Already cancelled or idle, put it back
             session.turn_state.replace(turn_state);
             return;
