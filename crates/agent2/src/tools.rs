@@ -1,2 +1,2 @@
-mod find_path_tool;
+mod find_path;
 mod glob;
