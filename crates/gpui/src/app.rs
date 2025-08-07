@@ -1545,7 +1545,7 @@ impl App {
         self.platform.set_default_layout_direction(direction)
     }
 
-    /// Gets the default layout direction for elements taht are not tied to a window
+    /// Gets the default layout direction for elements that are not tied to a window
     pub fn get_default_layout_direction(&self) -> LayoutDirection {
         self.platform.get_default_layout_direction()
     }
