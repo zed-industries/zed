@@ -1616,8 +1616,9 @@ fn up_down_buffer_rows(
     }
 
     let new_col = if i == goal_wrap {
-        let calculated_col = map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details);
-        
+        let calculated_col =
+            map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details);
+
         // When navigating vertically in vim mode with inlay hints present,
         // we need to be careful about bias direction. Using Bias::Right when
         // moving down can cause the cursor to jump past inlay hints, leading
@@ -1630,7 +1631,7 @@ fn up_down_buffer_rows(
             let test_point = DisplayPoint::new(begin_folded_line.row(), calculated_col);
             let buffer_point = map.display_point_to_point(test_point, bias);
             let redisplay_point = map.point_to_display_point(buffer_point, bias);
-            
+
             // If the round-trip changed our column, we likely hit an inlay hint
             // Use the buffer column to avoid jumping past the hint
             if redisplay_point.column() != test_point.column() {
@@ -3940,10 +3941,7 @@ mod test {
         );
 
         // Test with multiple movements
-        cx.set_state(
-            "let aˇ = 1;\nlet b = 2;\n\nlet c = 3;",
-            Mode::Normal,
-        );
+        cx.set_state("let aˇ = 1;\nlet b = 2;\n\nlet c = 3;", Mode::Normal);
 
         // Add type hint on the empty line
         cx.update_editor(|editor, _window, cx| {
@@ -3956,10 +3954,7 @@ mod test {
 
         // Enter visual mode and move down twice
         cx.simulate_keystrokes("v j j");
-        cx.assert_state(
-            "let a« = 1;\nlet b = 2;\n\nˇ»let c = 3;",
-            Mode::Visual,
-        );
+        cx.assert_state("let a« = 1;\nlet b = 2;\n\nˇ»let c = 3;", Mode::Visual);
     }
 
     #[gpui::test]
