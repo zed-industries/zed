@@ -1,14 +1,10 @@
-use anyhow::anyhow;
-use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
-use util::ResultExt as _;
 
-use crate::{AgentServer, AgentServerCommand, AgentServerVersion};
-use acp_thread::{AgentConnection, LoadError, OldAcpAgentConnection, OldAcpClientDelegate};
-use agentic_coding_protocol as acp_old;
-use anyhow::{Context as _, Result};
-use gpui::{AppContext as _, AsyncApp, Entity, Task, WeakEntity};
+use crate::{AgentServer, AgentServerCommand};
+use acp_thread::AgentConnection;
+use anyhow::Result;
+use gpui::{Entity, Task};
 use project::Project;
 use settings::SettingsStore;
 use ui::App;
@@ -43,143 +39,22 @@ impl AgentServer for Gemini {
         project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let root_dir = root_dir.to_path_buf();
         let project = project.clone();
-        let this = self.clone();
-        let name = self.name();
-
+        let root_dir = root_dir.to_path_buf();
+        let server_name = self.name();
         cx.spawn(async move |cx| {
-            let command = this.command(&project, cx).await?;
+            let settings = cx.read_global(|settings: &SettingsStore, _| {
+                settings.get::<AllAgentServersSettings>(None).gemini.clone()
+            })?;
 
-            let mut child = util::command::new_smol_command(&command.path)
-                .args(command.args.iter())
-                .current_dir(root_dir)
-                .stdin(std::process::Stdio::piped())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::inherit())
-                .kill_on_drop(true)
-                .spawn()?;
+            let Some(command) =
+                AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
+            else {
+                anyhow::bail!("Failed to find gemini binary");
+            };
 
-            let stdin = child.stdin.take().unwrap();
-            let stdout = child.stdout.take().unwrap();
-
-            let foreground_executor = cx.foreground_executor().clone();
-
-            let thread_rc = Rc::new(RefCell::new(WeakEntity::new_invalid()));
-
-            let (connection, io_fut) = acp_old::AgentConnection::connect_to_agent(
-                OldAcpClientDelegate::new(thread_rc.clone(), cx.clone()),
-                stdin,
-                stdout,
-                move |fut| foreground_executor.spawn(fut).detach(),
-            );
-
-            let io_task = cx.background_spawn(async move {
-                io_fut.await.log_err();
-            });
-
-            let child_status = cx.background_spawn(async move {
-                let result = match child.status().await {
-                    Err(e) => Err(anyhow!(e)),
-                    Ok(result) if result.success() => Ok(()),
-                    Ok(result) => {
-                        if let Some(AgentServerVersion::Unsupported {
-                            error_message,
-                            upgrade_message,
-                            upgrade_command,
-                        }) = this.version(&command).await.log_err()
-                        {
-                            Err(anyhow!(LoadError::Unsupported {
-                                error_message,
-                                upgrade_message,
-                                upgrade_command
-                            }))
-                        } else {
-                            Err(anyhow!(LoadError::Exited(result.code().unwrap_or(-127))))
-                        }
-                    }
-                };
-                drop(io_task);
-                result
-            });
-
-            let connection: Rc<dyn AgentConnection> = Rc::new(OldAcpAgentConnection {
-                name,
-                connection,
-                child_status,
-                current_thread: thread_rc,
-            });
-
-            Ok(connection)
+            crate::acp::connect(server_name, command, &root_dir, cx).await
         })
-    }
-}
-
-impl Gemini {
-    async fn command(
-        &self,
-        project: &Entity<Project>,
-        cx: &mut AsyncApp,
-    ) -> Result<AgentServerCommand> {
-        let settings = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<AllAgentServersSettings>(None).gemini.clone()
-        })?;
-
-        if let Some(command) =
-            AgentServerCommand::resolve("gemini", &[ACP_ARG], settings, &project, cx).await
-        {
-            return Ok(command);
-        };
-
-        let (fs, node_runtime) = project.update(cx, |project, _| {
-            (project.fs().clone(), project.node_runtime().cloned())
-        })?;
-        let node_runtime = node_runtime.context("gemini not found on path")?;
-
-        let directory = ::paths::agent_servers_dir().join("gemini");
-        fs.create_dir(&directory).await?;
-        node_runtime
-            .npm_install_packages(&directory, &[("@google/gemini-cli", "latest")])
-            .await?;
-        let path = directory.join("node_modules/.bin/gemini");
-
-        Ok(AgentServerCommand {
-            path,
-            args: vec![ACP_ARG.into()],
-            env: None,
-        })
-    }
-
-    async fn version(&self, command: &AgentServerCommand) -> Result<AgentServerVersion> {
-        let version_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--version")
-            .kill_on_drop(true)
-            .output();
-
-        let help_fut = util::command::new_smol_command(&command.path)
-            .args(command.args.iter())
-            .arg("--help")
-            .kill_on_drop(true)
-            .output();
-
-        let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
-
-        let current_version = String::from_utf8(version_output?.stdout)?;
-        let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
-
-        if supported {
-            Ok(AgentServerVersion::Supported)
-        } else {
-            Ok(AgentServerVersion::Unsupported {
-                error_message: format!(
-                    "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                    current_version
-                ).into(),
-                upgrade_message: "Upgrade Gemini to Latest".into(),
-                upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
-            })
-        }
     }
 }
 
@@ -189,7 +64,7 @@ pub(crate) mod tests {
     use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini, allow_option_id = "0");
+    crate::common_e2e_tests!(Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -199,7 +74,7 @@ pub(crate) mod tests {
 
         AgentServerCommand {
             path: "node".into(),
-            args: vec![cli_path, ACP_ARG.into()],
+            args: vec![cli_path],
             env: None,
         }
     }

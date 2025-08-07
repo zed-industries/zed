@@ -97,7 +97,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsSources, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -277,6 +277,13 @@ pub enum Event {
     LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
+    // [`lsp::notification::DidOpenTextDocument`] was sent to this server using the buffer data.
+    // Zed's buffer-related data is updated accordingly.
+    LanguageServerBufferRegistered {
+        server_id: LanguageServerId,
+        buffer_id: BufferId,
+        buffer_abs_path: PathBuf,
+    },
     Toast {
         notification_id: SharedString,
         message: String,
@@ -942,10 +949,38 @@ pub enum PulledDiagnostics {
     },
 }
 
+/// Whether to disable all AI features in Zed.
+///
+/// Default: false
+#[derive(Copy, Clone, Debug)]
+pub struct DisableAiSettings {
+    pub disable_ai: bool,
+}
+
+impl settings::Settings for DisableAiSettings {
+    const KEY: Option<&'static str> = Some("disable_ai");
+
+    type FileContent = Option<bool>;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        Ok(Self {
+            disable_ai: sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        })
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+}
+
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
+        DisableAiSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -2903,8 +2938,8 @@ impl Project {
             }
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
-                message,
                 name,
+                message,
             } => {
                 if self.is_local() {
                     self.enqueue_buffer_ordered_message(
@@ -2915,6 +2950,32 @@ impl Project {
                         },
                     )
                     .ok();
+                }
+
+                match message {
+                    proto::update_language_server::Variant::MetadataUpdated(update) => {
+                        if let Some(capabilities) = update
+                            .capabilities
+                            .as_ref()
+                            .and_then(|capabilities| serde_json::from_str(capabilities).ok())
+                        {
+                            self.lsp_store.update(cx, |lsp_store, _| {
+                                lsp_store
+                                    .lsp_server_capabilities
+                                    .insert(*language_server_id, capabilities);
+                            });
+                        }
+                    }
+                    proto::update_language_server::Variant::RegisteredForBuffer(update) => {
+                        if let Some(buffer_id) = BufferId::new(update.buffer_id).ok() {
+                            cx.emit(Event::LanguageServerBufferRegistered {
+                                buffer_id,
+                                server_id: *language_server_id,
+                                buffer_abs_path: PathBuf::from(&update.buffer_abs_path),
+                            });
+                        }
+                    }
+                    _ => (),
                 }
             }
             LspStoreEvent::Notification(message) => cx.emit(Event::Toast {
@@ -3448,20 +3509,6 @@ impl Project {
         })
     }
 
-    fn document_highlights_impl(
-        &mut self,
-        buffer: &Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<DocumentHighlight>>> {
-        self.request_lsp(
-            buffer.clone(),
-            LanguageServerToQuery::FirstCapable,
-            GetDocumentHighlights { position },
-            cx,
-        )
-    }
-
     pub fn document_highlights<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -3469,7 +3516,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<DocumentHighlight>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.document_highlights_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer.clone(),
+            LanguageServerToQuery::FirstCapable,
+            GetDocumentHighlights { position },
+            cx,
+        )
     }
 
     pub fn document_symbols(
@@ -3570,14 +3622,14 @@ impl Project {
             .update(cx, |lsp_store, cx| lsp_store.hover(buffer, position, cx))
     }
 
-    pub fn linked_edit(
+    pub fn linked_edits(
         &self,
         buffer: &Entity<Buffer>,
         position: Anchor,
         cx: &mut Context<Self>,
     ) -> Task<Result<Vec<Range<Anchor>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.linked_edit(buffer, position, cx)
+            lsp_store.linked_edits(buffer, position, cx)
         })
     }
 
@@ -3669,19 +3721,6 @@ impl Project {
         })
     }
 
-    fn prepare_rename_impl(
-        &mut self,
-        buffer: Entity<Buffer>,
-        position: PointUtf16,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<PrepareRenameResponse>> {
-        self.request_lsp(
-            buffer,
-            LanguageServerToQuery::FirstCapable,
-            PrepareRename { position },
-            cx,
-        )
-    }
     pub fn prepare_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3689,7 +3728,12 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.prepare_rename_impl(buffer, position, cx)
+        self.request_lsp(
+            buffer,
+            LanguageServerToQuery::FirstCapable,
+            PrepareRename { position },
+            cx,
+        )
     }
 
     pub fn perform_rename<T: ToPointUtf16>(

@@ -807,7 +807,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Mistral, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with Mistral, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(

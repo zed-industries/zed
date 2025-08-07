@@ -40,6 +40,7 @@ members = [
     "crates/component",
     "crates/context_server",
     "crates/copilot",
+    "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
@@ -79,8 +80,8 @@ members = [
     "crates/icons",
     "crates/image_viewer",
     "crates/indexed_docs",
-    "crates/inline_completion",
-    "crates/inline_completion_button",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
@@ -266,6 +267,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
@@ -302,8 +304,8 @@ http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
-inline_completion = { path = "crates/inline_completion" }
-inline_completion_button = { path = "crates/inline_completion_button" }
+edit_prediction = { path = "crates/edit_prediction" }
+edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -421,7 +423,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.11"
+agent-client-protocol = "0.0.18"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -466,6 +468,7 @@ core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
+crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -513,6 +516,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
+minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
@@ -552,6 +556,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "charset",
     "http2",
     "macos-system-configuration",
+    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",
@@ -756,7 +761,7 @@ feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
-inline_completion_button = { codegen-units = 1 }
+edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }

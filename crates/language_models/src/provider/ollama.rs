@@ -654,7 +654,7 @@ impl Render for ConfigurationView {
                                     }
                                 })
                                 .child(
-                                    Button::new("view-models", "All Models")
+                                    Button::new("view-models", "View All Models")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
                                         .icon_size(IconSize::XSmall)
@@ -681,7 +681,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_ollama_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::Play)
+                                        .icon(IconName::PlayOutlined)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
                                         })),

@@ -224,7 +224,7 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut Context<Ed
     editor
         .register_action(cx.listener(
             |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut Context<Editor>| {
-                editor.show_inline_completion(&Default::default(), window, cx);
+                editor.show_edit_prediction(&Default::default(), window, cx);
             },
         ))
         .detach();
@@ -260,7 +260,7 @@ fn assign_edit_prediction_provider(
 
     match provider {
         EditPredictionProvider::None => {
-            editor.set_edit_prediction_provider::<ZetaInlineCompletionProvider>(None, window, cx);
+            editor.set_edit_prediction_provider::<ZetaEditPredictionProvider>(None, window, cx);
         }
         EditPredictionProvider::Copilot => {
             if let Some(copilot) = Copilot::global(cx) {
@@ -318,7 +318,7 @@ fn assign_edit_prediction_provider(
                     ProviderDataCollection::new(zeta.clone(), singleton_buffer, cx);
 
                 let provider =
-                    cx.new(|_| zeta::ZetaInlineCompletionProvider::new(zeta, data_collection));
+                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, data_collection));
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }

@@ -1,6 +1,6 @@
 mod app_menus;
 pub mod component_preview;
-pub mod inline_completion_registry;
+pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
@@ -332,18 +332,18 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let inline_completion_menu_handle = PopoverMenuHandle::default();
+        let edit_prediction_menu_handle = PopoverMenuHandle::default();
         let edit_prediction_button = cx.new(|cx| {
-            inline_completion_button::InlineCompletionButton::new(
+            edit_prediction_button::EditPredictionButton::new(
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
-                inline_completion_menu_handle.clone(),
+                edit_prediction_menu_handle.clone(),
                 cx,
             )
         });
         workspace.register_action({
-            move |_, _: &inline_completion_button::ToggleMenu, window, cx| {
-                inline_completion_menu_handle.toggle(window, cx);
+            move |_, _: &edit_prediction_button::ToggleMenu, window, cx| {
+                edit_prediction_menu_handle.toggle(window, cx);
             }
         });
 

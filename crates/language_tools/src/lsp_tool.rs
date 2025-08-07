@@ -1015,7 +1015,7 @@ impl Render for LspTool {
                 .anchor(Corner::BottomLeft)
                 .with_handle(self.popover_menu_handle.clone())
                 .trigger_with_tooltip(
-                    IconButton::new("zed-lsp-tool-button", IconName::Bolt)
+                    IconButton::new("zed-lsp-tool-button", IconName::BoltOutlined)
                         .when_some(indicator, IconButton::indicator)
                         .icon_size(IconSize::Small)
                         .indicator_border_color(Some(cx.theme().colors().status_bar_background)),
