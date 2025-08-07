@@ -25,10 +25,6 @@ impl AgentTool for ThinkingTool {
         "thinking".into()
     }
 
-    fn needs_authorization(&self, _: Self::Input, _: &App) -> bool {
-        false
-    }
-
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Think
     }

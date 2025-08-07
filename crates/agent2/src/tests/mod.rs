@@ -270,14 +270,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         vec![
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
-                tool_name: tool_call_auth_1.tool_call.title.into(),
+                tool_name: ToolRequiringPermission.name().into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: None
             }),
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
-                tool_name: tool_call_auth_2.tool_call.title.into(),
+                tool_name: ToolRequiringPermission.name().into(),
                 is_error: true,
                 content: "Permission to run tool denied by user".into(),
                 output: None
@@ -666,7 +666,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         tool_call,
         acp::ToolCall {
             id: acp::ToolCallId("1".into()),
-            title: "thinking".into(),
+            title: "Thinking".into(),
             kind: acp::ToolKind::Think,
             status: acp::ToolCallStatus::Pending,
             content: vec![],

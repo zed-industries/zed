@@ -27,10 +27,6 @@ impl AgentTool for EchoTool {
         "Echo".into()
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
-    }
-
     fn run(
         self: Arc<Self>,
         input: Self::Input,
@@ -63,10 +59,6 @@ impl AgentTool for DelayTool {
 
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Other
-    }
-
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
     }
 
     fn run(
@@ -105,21 +97,20 @@ impl AgentTool for ToolRequiringPermission {
         "This tool requires permission".into()
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        true
-    }
-
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>>
     where
         Self: Sized,
     {
-        cx.foreground_executor()
-            .spawn(async move { Ok("Allowed".to_string()) })
+        let auth_check = self.authorize(input, event_stream);
+        cx.foreground_executor().spawn(async move {
+            auth_check.await?;
+            Ok("Allowed".to_string())
+        })
     }
 }
 
@@ -141,10 +132,6 @@ impl AgentTool for InfiniteTool {
 
     fn initial_title(&self, _input: Self::Input) -> SharedString {
         "This is the tool that never ends... it just goes on and on my friends!".into()
-    }
-
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
     }
 
     fn run(
@@ -195,10 +182,6 @@ impl AgentTool for WordListTool {
 
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Other
-    }
-
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
     }
 
     fn run(

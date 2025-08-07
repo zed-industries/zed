@@ -19,7 +19,7 @@ use log;
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, collections::BTreeMap, fmt::Write, future::Future, rc::Rc, sync::Arc};
 use util::{markdown::MarkdownCodeBlock, ResultExt};
@@ -514,13 +514,7 @@ impl Thread {
         event_stream: AgentResponseEventStream,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
-        // TODO: should we push this down into the tool itself?
-        let needs_authorization = tool.needs_authorization(tool_use.input.clone(), cx);
         cx.spawn(async move |_this, cx| {
-            if needs_authorization? {
-                event_stream.authorize_tool_call(&tool, &tool_use).await?;
-            }
-
             let tool_event_stream = ToolCallEventStream::new(tool_use.id, event_stream);
             tool_event_stream.send_update(acp::ToolCallUpdateFields {
                 status: Some(acp::ToolCallStatus::InProgress),
@@ -663,7 +657,7 @@ pub trait AgentTool
 where
     Self: 'static + Sized,
 {
-    type Input: for<'de> Deserialize<'de> + JsonSchema;
+    type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
 
     fn name(&self) -> SharedString;
 
@@ -687,9 +681,15 @@ where
         schemars::schema_for!(Self::Input)
     }
 
-    /// Returns true if the tool needs the users's authorization
-    /// before running.
-    fn needs_authorization(&self, input: Self::Input, cx: &App) -> bool;
+    /// Allows the tool to authorize a given tool call with the user if necessary
+    fn authorize(
+        &self,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
+    ) -> impl use<Self> + Future<Output = Result<()>> {
+        let json_input = serde_json::json!(&input);
+        event_stream.authorize(self.initial_title(input).into(), self.kind(), json_input)
+    }
 
     /// Runs the tool with the provided input.
     fn run(
@@ -712,7 +712,6 @@ pub trait AnyAgentTool {
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value) -> Result<SharedString>;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
-    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool>;
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
@@ -746,11 +745,6 @@ where
         let mut json = serde_json::to_value(self.0.input_schema())?;
         adapt_schema_to_format(&mut json, format)?;
         Ok(json)
-    }
-
-    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool> {
-        let parsed_input = serde_json::from_value(input)?;
-        Ok(self.0.needs_authorization(parsed_input, cx))
     }
 
     fn run(
@@ -787,14 +781,16 @@ impl AgentResponseEventStream {
 
     fn authorize_tool_call(
         &self,
-        tool: &Arc<dyn AnyAgentTool>,
-        tool_use: &LanguageModelToolUse,
+        id: &LanguageModelToolUseId,
+        title: String,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
     ) -> impl use<> + Future<Output = Result<()>> {
         let (response_tx, response_rx) = oneshot::channel();
         self.0
             .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: Self::initial_tool_call(Some(tool), tool_use),
+                    tool_call: Self::initial_tool_call(id, title, kind, input),
                     options: vec![
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("always_allow".into()),
@@ -831,30 +827,30 @@ impl AgentResponseEventStream {
     ) {
         self.0
             .unbounded_send(Ok(AgentResponseEvent::ToolCall(Self::initial_tool_call(
-                tool, tool_use,
+                &tool_use.id,
+                tool.and_then(|t| t.initial_title(tool_use.input.clone()).ok())
+                    .map(|i| i.into())
+                    .unwrap_or_else(|| tool_use.name.to_string()),
+                tool.map(|t| t.kind()).unwrap_or(acp::ToolKind::Other),
+                tool_use.input.clone(),
             ))))
             .ok();
     }
 
     fn initial_tool_call(
-        tool: Option<&Arc<dyn AnyAgentTool>>,
-        tool_use: &LanguageModelToolUse,
+        id: &LanguageModelToolUseId,
+        title: String,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
-            id: acp::ToolCallId(tool_use.id.to_string().into()),
-            title: tool
-                .as_ref()
-                .and_then(|t| t.initial_title(tool_use.input.clone()).ok())
-                .map(|i| i.into())
-                .unwrap_or_else(|| tool_use.name.to_string()),
-            kind: tool
-                .as_ref()
-                .map(|t| t.kind())
-                .unwrap_or(acp::ToolKind::Other),
+            id: acp::ToolCallId(id.to_string().into()),
+            title,
+            kind,
             status: acp::ToolCallStatus::Pending,
             content: vec![],
             locations: vec![],
-            raw_input: Some(tool_use.input.clone()),
+            raw_input: Some(input),
             raw_output: None,
         }
     }
@@ -916,5 +912,15 @@ impl ToolCallEventStream {
 
     pub fn send_update(&self, fields: acp::ToolCallUpdateFields) {
         self.stream.send_tool_call_update(&self.tool_use_id, fields);
+    }
+
+    pub fn authorize(
+        &self,
+        title: String,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
+    ) -> impl use<> + Future<Output = Result<()>> {
+        self.stream
+            .authorize_tool_call(&self.tool_use_id, title, kind, input)
     }
 }

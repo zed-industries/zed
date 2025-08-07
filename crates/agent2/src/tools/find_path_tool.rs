@@ -70,10 +70,6 @@ impl AgentTool for FindPathTool {
         format!("Find paths matching “`{}`”", input.glob).into()
     }
 
-    fn needs_authorization(&self, _: Self::Input, _: &App) -> bool {
-        false
-    }
-
     fn run(
         self: Arc<Self>,
         input: Self::Input,
