@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use dap::{Scope, StackFrame, Variable, requests::Variables};
-use editor::{Editor, EditorMode, MultiBuffer};
+use editor::{Editor, EditorMode, INLINE_VALUES_DEBOUNCE_TIMEOUT, MultiBuffer};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tree_sitter_rust};
 use project::{FakeFs, Project};
@@ -241,6 +241,7 @@ fn main() {
 
     editor.update(cx, |editor, cx| editor.refresh_inline_values(cx));
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -298,6 +299,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -355,6 +357,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -412,6 +415,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -469,6 +473,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -576,6 +581,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -683,6 +689,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -802,6 +809,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -921,6 +929,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1053,6 +1062,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1110,6 +1120,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1188,6 +1199,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1333,6 +1345,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1478,6 +1491,7 @@ fn main() {
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -1813,6 +1827,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
         }))
         .await;
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {
@@ -2108,6 +2123,7 @@ async fn test_inline_values_util(
 
     editor.update(cx, |editor, cx| editor.refresh_inline_values(cx));
 
+    cx.executor().advance_clock(INLINE_VALUES_DEBOUNCE_TIMEOUT);
     cx.run_until_parked();
 
     editor.update_in(cx, |editor, window, cx| {

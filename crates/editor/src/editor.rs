@@ -228,6 +228,7 @@ pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 const SELECTION_HIGHLIGHT_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
+pub const INLINE_VALUES_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(100);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -19794,7 +19795,7 @@ impl Editor {
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
             cx.background_executor()
-                .timer(Duration::from_millis(100))
+                .timer(INLINE_VALUES_DEBOUNCE_TIMEOUT)
                 .await;
 
             let inline_values = editor
