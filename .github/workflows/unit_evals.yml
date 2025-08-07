@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
     name: Run unit evals
     runs-on:
-      - namespace-profile-16x64-ubuntu-2004
+      - namespace-profile-32x64-ubuntu-2004
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
