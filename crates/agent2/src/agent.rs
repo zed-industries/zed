@@ -143,7 +143,7 @@ impl NativeAgent {
             let worktrees = worktrees
                 .into_iter()
                 .map(|(worktree, _rules_error)| {
-                    // todo!
+                    // TODO: show error message
                     // if let Some(rules_error) = rules_error {
                     //     this.update(cx, |_, cx| cx.emit(rules_error)).ok();
                     // }
@@ -163,7 +163,7 @@ impl NativeAgent {
                         contents,
                     }),
                     Err(_err) => {
-                        // todo!
+                        // TODO: show error message
                         // this.update(cx, |_, cx| {
                         //     cx.emit(RulesLoadingError {
                         //         message: format!("{err:?}").into(),
