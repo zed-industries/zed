@@ -280,6 +280,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .map(into_new_tool_call_location)
             .collect(),
         raw_input: None,
+        raw_output: None,
     }
 }
 
