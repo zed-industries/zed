@@ -73,7 +73,6 @@ use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
     Task, WeakEntity, Window,
 };
-use itertools::Itertools;
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
     LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
@@ -113,7 +112,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -668,10 +667,10 @@ pub enum ResolveState {
 }
 
 impl InlayHint {
-    pub fn text(&self) -> String {
+    pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => s.to_owned(),
-            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &part.value).join(""),
+            InlayHintLabel::String(s) => Rope::from(s),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
     }
 }
