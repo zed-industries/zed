@@ -121,7 +121,7 @@ struct WatcherRegistrationState {
 struct WatcherState {
     // two mutexes because calling watcher.add triggers an watcher.event, which needs watchers.
     #[cfg(target_os = "linux")]
-    watcher: Mutex<notify::INotifyWatcher>,
+    watcher: notify::INotifyWatcher,
     #[cfg(target_os = "freebsd")]
     watcher: notify::KqueueWatcher,
     #[cfg(target_os = "windows")]
