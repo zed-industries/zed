@@ -459,7 +459,6 @@ impl Thread {
         if push_new_tool_use {
             event_stream.send_tool_call(
                 &tool_use,
-                // todo! add default
                 tool.as_ref()
                     .map(|t| t.kind())
                     .unwrap_or(acp::ToolKind::Other),
