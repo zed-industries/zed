@@ -137,7 +137,7 @@ impl RenderOnce for AiUpsellCard {
             .size(rems_from_px(72.))
             .child(
                 Vector::new(
-                    VectorName::CertifiedUserStamp,
+                    VectorName::ProUserStamp,
                     rems_from_px(72.),
                     rems_from_px(72.),
                 )
