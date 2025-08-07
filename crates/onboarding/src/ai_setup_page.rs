@@ -109,7 +109,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                 )
                 .child(
                     Label::new(
-                        "Feel confident in the security and privacy of your projects using Zed.",
+                        "Zed’s AI tools are designed to respect your content and your consent.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -407,7 +407,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "One of Zed's most important principles is transparency. This is why we are and value open-source so much. And it wouldn't be any different with AI.";
+        const DESCRIPTION: &'static str = "Zed never trains on your code, tracks you, or stores your data. Privacy is the default—no sign-in required, no tricks.";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(
@@ -418,7 +418,7 @@ impl Render for AiPrivacyTooltip {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("Privacy Principle")),
+                    .child(Label::new("Privacy First")),
             )
             .child(
                 div().max_w_64().child(

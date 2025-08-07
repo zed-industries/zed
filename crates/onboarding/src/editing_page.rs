@@ -584,7 +584,8 @@ fn render_popular_settings_section(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
-    const LIGATURE_TOOLTIP: &'static str = "Ligatures are when a font creates a special character out of combining two characters into one. For example, with ligatures turned on, =/= would become ≠.";
+    const LIGATURE_TOOLTIP: &'static str =
+        "Font ligatures combine two characters into one. For example, turning =/= into ≠.";
 
     v_flex()
         .pt_6()

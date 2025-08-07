@@ -209,7 +209,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
         .child(SwitchField::new(
             "onboarding-telemetry-metrics",
             "Help Improve Zed",
-            Some("Sending anonymous usage data helps us build the right features and create the best experience.".into()),
+            Some("Anonymous usage data helps us build the right features and improve your experience.".into()),
             if TelemetrySettings::get_global(cx).metrics {
                 ui::ToggleState::Selected
             } else {
@@ -329,10 +329,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
     SwitchField::new(
         "onboarding-vim-mode",
         "Vim Mode",
-        Some(
-            "Coming from Neovim? Zed's first-class implementation of Vim Mode has got your back."
-                .into(),
-        ),
+        Some("Coming from Neovim? Use our first-class implementation of Vim Mode.".into()),
         toggle_state,
         {
             let fs = <dyn Fs>::global(cx);
