@@ -3522,7 +3522,7 @@ impl Serialize for Length {
 /// # Returns
 ///
 /// A `DefiniteLength` representing the relative length as a fraction of the parent's size.
-pub fn relative(fraction: f32) -> DefiniteLength {
+pub const fn relative(fraction: f32) -> DefiniteLength {
     DefiniteLength::Fraction(fraction)
 }
 

@@ -31,7 +31,7 @@ use std::sync::Arc;
 use agent::{Thread, ThreadId};
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
-use client::{Client, DisableAiSettings};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
@@ -40,6 +40,7 @@ use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
+use project::DisableAiSettings;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -150,7 +151,7 @@ enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
-    Codex,
+    NativeAgent,
 }
 
 impl ExternalAgent {
@@ -158,7 +159,7 @@ impl ExternalAgent {
         match self {
             ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
             ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::Codex => Rc::new(agent_servers::Codex),
+            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer),
         }
     }
 }

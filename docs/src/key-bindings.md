@@ -93,7 +93,7 @@ For example:
 # in an editor, it might look like this:
 Workspace os=macos keyboard_layout=com.apple.keylayout.QWERTY
   Pane
-    Editor mode=full extension=md inline_completion vim_mode=insert
+    Editor mode=full extension=md vim_mode=insert
 
 # in the project panel
 Workspace os=macos

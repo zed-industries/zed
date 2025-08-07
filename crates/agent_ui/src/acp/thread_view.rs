@@ -5,6 +5,7 @@ use audio::{Audio, Sound};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::ExitStatus;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,20 +21,22 @@ use editor::{
 use file_icons::FileIcons;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, PlatformDisplay, SharedString,
-    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
-    UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop, linear_gradient,
-    list, percentage, point, prelude::*, pulsating_between,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
+    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
+    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
+    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
-use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, prelude::*};
+use ui::{
+    Disclosure, Divider, DividerColor, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*,
+};
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
@@ -68,6 +71,7 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
+    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -76,6 +80,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
     _cancel_task: Option<Task<()>>,
+    _subscriptions: [Subscription; 1],
 }
 
 enum ThreadState {
@@ -89,6 +94,9 @@ enum ThreadState {
     LoadError(LoadError),
     Unauthenticated {
         connection: Rc<dyn AgentConnection>,
+    },
+    ServerExited {
+        status: ExitStatus,
     },
 }
 
@@ -169,22 +177,9 @@ impl AcpThreadView {
 
         let mention_set = mention_set.clone();
 
-        let list_state = ListState::new(
-            0,
-            gpui::ListAlignment::Bottom,
-            px(2048.0),
-            cx.processor({
-                move |this: &mut Self, index: usize, window, cx| {
-                    let Some((entry, len)) = this.thread().and_then(|thread| {
-                        let entries = &thread.read(cx).entries();
-                        Some((entries.get(index)?, entries.len()))
-                    }) else {
-                        return Empty.into_any();
-                    };
-                    this.render_entry(index, len, entry, window, cx)
-                }
-            }),
-        );
+        let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
+
+        let subscription = cx.observe_global_in::<SettingsStore>(window, Self::settings_changed);
 
         Self {
             agent: agent.clone(),
@@ -198,7 +193,8 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
-            list_state: list_state,
+            list_state: list_state.clone(),
+            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -207,6 +203,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             message_history,
+            _subscriptions: [subscription],
             _cancel_task: None,
         }
     }
@@ -228,7 +225,7 @@ impl AcpThreadView {
         let connect_task = agent.connect(&root_dir, &project, cx);
         let load_task = cx.spawn_in(window, async move |this, cx| {
             let connection = match connect_task.await {
-                Ok(thread) => thread,
+                Ok(connection) => connection,
                 Err(err) => {
                     this.update(cx, |this, cx| {
                         this.handle_load_error(err, cx);
@@ -239,6 +236,20 @@ impl AcpThreadView {
                 }
             };
 
+            // this.update_in(cx, |_this, _window, cx| {
+            //     let status = connection.exit_status(cx);
+            //     cx.spawn(async move |this, cx| {
+            //         let status = status.await.ok();
+            //         this.update(cx, |this, cx| {
+            //             this.thread_state = ThreadState::ServerExited { status };
+            //             cx.notify();
+            //         })
+            //         .ok();
+            //     })
+            //     .detach();
+            // })
+            // .ok();
+
             let result = match connection
                 .clone()
                 .new_thread(project.clone(), &root_dir, cx)
@@ -246,7 +257,7 @@ impl AcpThreadView {
             {
                 Err(e) => {
                     let mut cx = cx.clone();
-                    if e.downcast_ref::<acp_thread::Unauthenticated>().is_some() {
+                    if e.is::<acp_thread::AuthRequired>() {
                         this.update(&mut cx, |this, cx| {
                             this.thread_state = ThreadState::Unauthenticated { connection };
                             cx.notify();
@@ -307,7 +318,8 @@ impl AcpThreadView {
             ThreadState::Ready { thread, .. } => Some(thread),
             ThreadState::Unauthenticated { .. }
             | ThreadState::Loading { .. }
-            | ThreadState::LoadError(..) => None,
+            | ThreadState::LoadError(..)
+            | ThreadState::ServerExited { .. } => None,
         }
     }
 
@@ -317,6 +329,7 @@ impl AcpThreadView {
             ThreadState::Loading { .. } => "Loading…".into(),
             ThreadState::LoadError(_) => "Failed to load".into(),
             ThreadState::Unauthenticated { .. } => "Not authenticated".into(),
+            ThreadState::ServerExited { .. } => "Server exited unexpectedly".into(),
         }
     }
 
@@ -424,10 +437,13 @@ impl AcpThreadView {
         let mention_set = self.mention_set.clone();
 
         self.set_editor_is_expanded(false, cx);
+
         self.message_editor.update(cx, |editor, cx| {
             editor.clear(window, cx);
             editor.remove_creases(mention_set.lock().drain(), cx)
         });
+
+        self.scroll_to_bottom(cx);
 
         self.message_history.borrow_mut().push(chunks);
     }
@@ -643,6 +659,9 @@ impl AcpThreadView {
                     cx,
                 );
             }
+            AcpThreadEvent::ServerExited(status) => {
+                self.thread_state = ThreadState::ServerExited { status: *status };
+            }
         }
         cx.notify();
     }
@@ -689,15 +708,7 @@ impl AcpThreadView {
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_expand_all_diff_hunks(cx);
-                editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(
-                        TextSize::Small
-                            .rems(cx)
-                            .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
-                            .into(),
-                    ),
-                    ..Default::default()
-                });
+                editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 editor
             });
             let entity_id = multibuffer.entity_id();
@@ -719,13 +730,18 @@ impl AcpThreadView {
         Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
     }
 
-    fn authenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn authenticate(
+        &mut self,
+        method: acp::AuthMethodId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let ThreadState::Unauthenticated { ref connection } = self.thread_state else {
             return;
         };
 
         self.last_error.take();
-        let authenticate = connection.authenticate(cx);
+        let authenticate = connection.authenticate(method, cx);
         self.auth_task = Some(cx.spawn_in(window, {
             let project = self.project.clone();
             let agent = self.agent.clone();
@@ -777,7 +793,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        match &entry {
+        let primary = match &entry {
             AgentThreadEntry::UserMessage(message) => div()
                 .py_4()
                 .px_2()
@@ -838,10 +854,25 @@ impl AcpThreadView {
                     .into_any()
             }
             AgentThreadEntry::ToolCall(tool_call) => div()
+                .w_full()
                 .py_1p5()
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
                 .into_any(),
+        };
+
+        let Some(thread) = self.thread() else {
+            return primary;
+        };
+        let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+        if index == total_entries - 1 && !is_generating {
+            v_flex()
+                .w_full()
+                .child(primary)
+                .child(self.render_thread_controls(cx))
+                .into_any_element()
+        } else {
+            primary
         }
     }
 
@@ -869,6 +900,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let header_id = SharedString::from(format!("thinking-block-header-{}", entry_ix));
+        let card_header_id = SharedString::from("inner-card-header");
         let key = (entry_ix, chunk_ix);
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
@@ -876,41 +908,53 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id(header_id)
-                    .group("disclosure-header")
+                    .group(&card_header_id)
+                    .relative()
                     .w_full()
-                    .justify_between()
+                    .gap_1p5()
                     .opacity(0.8)
                     .hover(|style| style.opacity(1.))
                     .child(
                         h_flex()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(IconName::ToolBulb)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
+                            .size_4()
+                            .justify_center()
                             .child(
                                 div()
-                                    .text_size(self.tool_name_font_size())
-                                    .child("Thinking"),
+                                    .group_hover(&card_header_id, |s| s.invisible().w_0())
+                                    .child(
+                                        Icon::new(IconName::ToolThink)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .absolute()
+                                    .inset_0()
+                                    .invisible()
+                                    .justify_center()
+                                    .group_hover(&card_header_id, |s| s.visible())
+                                    .child(
+                                        Disclosure::new(("expand", entry_ix), is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronRight)
+                                            .on_click(cx.listener({
+                                                move |this, _event, _window, cx| {
+                                                    if is_open {
+                                                        this.expanded_thinking_blocks.remove(&key);
+                                                    } else {
+                                                        this.expanded_thinking_blocks.insert(key);
+                                                    }
+                                                    cx.notify();
+                                                }
+                                            })),
+                                    ),
                             ),
                     )
                     .child(
-                        div().visible_on_hover("disclosure-header").child(
-                            Disclosure::new("thinking-disclosure", is_open)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener({
-                                    move |this, _event, _window, cx| {
-                                        if is_open {
-                                            this.expanded_thinking_blocks.remove(&key);
-                                        } else {
-                                            this.expanded_thinking_blocks.insert(key);
-                                        }
-                                        cx.notify();
-                                    }
-                                })),
-                        ),
+                        div()
+                            .text_size(self.tool_name_font_size())
+                            .child("Thinking"),
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
@@ -941,6 +985,67 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    fn render_tool_call_icon(
+        &self,
+        group_name: SharedString,
+        entry_ix: usize,
+        is_collapsible: bool,
+        is_open: bool,
+        tool_call: &ToolCall,
+        cx: &Context<Self>,
+    ) -> Div {
+        let tool_icon = Icon::new(match tool_call.kind {
+            acp::ToolKind::Read => IconName::ToolRead,
+            acp::ToolKind::Edit => IconName::ToolPencil,
+            acp::ToolKind::Delete => IconName::ToolDeleteFile,
+            acp::ToolKind::Move => IconName::ArrowRightLeft,
+            acp::ToolKind::Search => IconName::ToolSearch,
+            acp::ToolKind::Execute => IconName::ToolTerminal,
+            acp::ToolKind::Think => IconName::ToolThink,
+            acp::ToolKind::Fetch => IconName::ToolWeb,
+            acp::ToolKind::Other => IconName::ToolHammer,
+        })
+        .size(IconSize::Small)
+        .color(Color::Muted);
+
+        if is_collapsible {
+            h_flex()
+                .size_4()
+                .justify_center()
+                .child(
+                    div()
+                        .group_hover(&group_name, |s| s.invisible().w_0())
+                        .child(tool_icon),
+                )
+                .child(
+                    h_flex()
+                        .absolute()
+                        .inset_0()
+                        .invisible()
+                        .justify_center()
+                        .group_hover(&group_name, |s| s.visible())
+                        .child(
+                            Disclosure::new(("expand", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronRight)
+                                .on_click(cx.listener({
+                                    let id = tool_call.id.clone();
+                                    move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                        if is_open {
+                                            this.expanded_tool_calls.remove(&id);
+                                        } else {
+                                            this.expanded_tool_calls.insert(id.clone());
+                                        }
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                )
+        } else {
+            div().child(tool_icon)
+        }
+    }
+
     fn render_tool_call(
         &self,
         entry_ix: usize,
@@ -948,7 +1053,8 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let header_id = SharedString::from(format!("tool-call-header-{}", entry_ix));
+        let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
+        let card_header_id = SharedString::from("inner-tool-call-header");
 
         let status_icon = match &tool_call.status {
             ToolCallStatus::Allowed {
@@ -997,6 +1103,21 @@ impl AcpThreadView {
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
         let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
 
+        let gradient_color = cx.theme().colors().panel_background;
+        let gradient_overlay = {
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .w_12()
+                .h_full()
+                .bg(linear_gradient(
+                    90.,
+                    linear_color_stop(gradient_color, 1.),
+                    linear_color_stop(gradient_color.opacity(0.2), 0.),
+                ))
+        };
+
         v_flex()
             .when(needs_confirmation, |this| {
                 this.rounded_lg()
@@ -1013,43 +1134,38 @@ impl AcpThreadView {
                     .justify_between()
                     .map(|this| {
                         if needs_confirmation {
-                            this.px_2()
+                            this.pl_2()
+                                .pr_1()
                                 .py_1()
                                 .rounded_t_md()
-                                .bg(self.tool_card_header_bg(cx))
                                 .border_b_1()
                                 .border_color(self.tool_card_border_color(cx))
+                                .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
                         }
                     })
                     .child(
                         h_flex()
-                            .id("tool-call-header")
-                            .overflow_x_scroll()
+                            .group(&card_header_id)
+                            .relative()
+                            .w_full()
                             .map(|this| {
-                                if needs_confirmation {
-                                    this.text_xs()
+                                if tool_call.locations.len() == 1 {
+                                    this.gap_0()
                                 } else {
-                                    this.text_size(self.tool_name_font_size())
+                                    this.gap_1p5()
                                 }
                             })
-                            .gap_1p5()
-                            .child(
-                                Icon::new(match tool_call.kind {
-                                    acp::ToolKind::Read => IconName::ToolRead,
-                                    acp::ToolKind::Edit => IconName::ToolPencil,
-                                    acp::ToolKind::Delete => IconName::ToolDeleteFile,
-                                    acp::ToolKind::Move => IconName::ArrowRightLeft,
-                                    acp::ToolKind::Search => IconName::ToolSearch,
-                                    acp::ToolKind::Execute => IconName::ToolTerminal,
-                                    acp::ToolKind::Think => IconName::ToolBulb,
-                                    acp::ToolKind::Fetch => IconName::ToolWeb,
-                                    acp::ToolKind::Other => IconName::ToolHammer,
-                                })
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                            )
+                            .text_size(self.tool_name_font_size())
+                            .child(self.render_tool_call_icon(
+                                card_header_id,
+                                entry_ix,
+                                is_collapsible,
+                                is_open,
+                                tool_call,
+                                cx,
+                            ))
                             .child(if tool_call.locations.len() == 1 {
                                 let name = tool_call.locations[0]
                                     .path
@@ -1060,13 +1176,11 @@ impl AcpThreadView {
 
                                 h_flex()
                                     .id(("open-tool-call-location", entry_ix))
-                                    .child(name)
                                     .w_full()
                                     .max_w_full()
-                                    .pr_1()
-                                    .gap_0p5()
-                                    .cursor_pointer()
+                                    .px_1p5()
                                     .rounded_sm()
+                                    .overflow_x_scroll()
                                     .opacity(0.8)
                                     .hover(|label| {
                                         label.opacity(1.).bg(cx
@@ -1075,53 +1189,49 @@ impl AcpThreadView {
                                             .element_hover
                                             .opacity(0.5))
                                     })
+                                    .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_tool_call_location(entry_ix, 0, window, cx);
                                     }))
                                     .into_any_element()
                             } else {
-                                self.render_markdown(
-                                    tool_call.label.clone(),
-                                    default_markdown_style(needs_confirmation, window, cx),
-                                )
-                                .into_any()
+                                h_flex()
+                                    .id("non-card-label-container")
+                                    .w_full()
+                                    .relative()
+                                    .overflow_hidden()
+                                    .child(
+                                        h_flex()
+                                            .id("non-card-label")
+                                            .pr_8()
+                                            .w_full()
+                                            .overflow_x_scroll()
+                                            .child(self.render_markdown(
+                                                tool_call.label.clone(),
+                                                default_markdown_style(
+                                                    needs_confirmation,
+                                                    window,
+                                                    cx,
+                                                ),
+                                            )),
+                                    )
+                                    .child(gradient_overlay)
+                                    .on_click(cx.listener({
+                                        let id = tool_call.id.clone();
+                                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                            if is_open {
+                                                this.expanded_tool_calls.remove(&id);
+                                            } else {
+                                                this.expanded_tool_calls.insert(id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .into_any()
                             }),
                     )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .when(is_collapsible, |this| {
-                                this.child(
-                                    Disclosure::new(("expand", entry_ix), is_open)
-                                        .opened_icon(IconName::ChevronUp)
-                                        .closed_icon(IconName::ChevronDown)
-                                        .on_click(cx.listener({
-                                            let id = tool_call.id.clone();
-                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                if is_open {
-                                                    this.expanded_tool_calls.remove(&id);
-                                                } else {
-                                                    this.expanded_tool_calls.insert(id.clone());
-                                                }
-                                                cx.notify();
-                                            }
-                                        })),
-                                )
-                            })
-                            .children(status_icon),
-                    )
-                    .on_click(cx.listener({
-                        let id = tool_call.id.clone();
-                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                            if is_open {
-                                this.expanded_tool_calls.remove(&id);
-                            } else {
-                                this.expanded_tool_calls.insert(id.clone());
-                            }
-                            cx.notify();
-                        }
-                    })),
+                    .children(status_icon),
             )
             .when(is_open, |this| {
                 this.child(
@@ -1215,8 +1325,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
-            .py_1p5()
-            .px_1p5()
+            .p_1p5()
             .gap_1()
             .justify_end()
             .when(!empty_content, |this| {
@@ -1225,7 +1334,7 @@ impl AcpThreadView {
             })
             .children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.label.clone())
+                Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| match option.kind {
                         acp::PermissionOptionKind::AllowOnce => {
                             this.icon(IconName::Check).icon_color(Color::Success)
@@ -1242,6 +1351,7 @@ impl AcpThreadView {
                     })
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.id.clone();
@@ -1361,7 +1471,29 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_error_state(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
+    fn render_server_exited(&self, status: ExitStatus, _cx: &Context<Self>) -> AnyElement {
+        v_flex()
+            .items_center()
+            .justify_center()
+            .child(self.render_error_agent_logo())
+            .child(
+                v_flex()
+                    .mt_4()
+                    .mb_2()
+                    .gap_0p5()
+                    .text_center()
+                    .items_center()
+                    .child(Headline::new("Server exited unexpectedly").size(HeadlineSize::Medium))
+                    .child(
+                        Label::new(format!("Exit status: {}", status.code().unwrap_or(-127)))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn render_load_error(&self, e: &LoadError, cx: &Context<Self>) -> AnyElement {
         let mut container = v_flex()
             .items_center()
             .justify_center()
@@ -1469,7 +1601,7 @@ impl AcpThreadView {
                     })
             })
             .when(!changed_buffers.is_empty(), |this| {
-                this.child(Divider::horizontal())
+                this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_edits_summary(
                         action_log,
                         &changed_buffers,
@@ -1499,6 +1631,7 @@ impl AcpThreadView {
         {
             h_flex()
                 .w_full()
+                .cursor_default()
                 .gap_1()
                 .text_xs()
                 .text_color(cx.theme().colors().text_muted)
@@ -1528,7 +1661,7 @@ impl AcpThreadView {
             let status_label = if stats.pending == 0 {
                 "All Done".to_string()
             } else if stats.completed == 0 {
-                format!("{}", plan.entries.len())
+                format!("{} Tasks", plan.entries.len())
             } else {
                 format!("{}/{}", stats.completed, plan.entries.len())
             };
@@ -1642,7 +1775,6 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id("edits-container")
-                    .cursor_pointer()
                     .w_full()
                     .gap_1()
                     .child(Disclosure::new("edits-disclosure", expanded))
@@ -2017,15 +2149,15 @@ impl AcpThreadView {
                 .icon_color(Color::Accent)
                 .style(ButtonStyle::Filled)
                 .disabled(self.thread().is_none() || is_editor_empty)
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.chat(&Chat, window, cx);
-                }))
                 .when(!is_editor_empty, |button| {
                     button.tooltip(move |window, cx| Tooltip::for_action("Send", &Chat, window, cx))
                 })
                 .when(is_editor_empty, |button| {
                     button.tooltip(Tooltip::text("Type a message to submit"))
                 })
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.chat(&Chat, window, cx);
+                }))
                 .into_any_element()
         } else {
             IconButton::new("stop-generation", IconName::StopFilled)
@@ -2240,6 +2372,14 @@ impl AcpThreadView {
         cx.notify();
     }
 
+    pub fn scroll_to_bottom(&mut self, cx: &mut Context<Self>) {
+        if let Some(thread) = self.thread() {
+            let entry_count = thread.read(cx).entries().len();
+            self.list_state.reset(entry_count);
+            cx.notify();
+        }
+    }
+
     fn notify_with_sound(
         &mut self,
         caption: impl Into<SharedString>,
@@ -2387,17 +2527,9 @@ impl AcpThreadView {
             self.notification_subscriptions.remove(&window);
         }
     }
-}
 
-impl Focusable for AcpThreadView {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.message_editor.focus_handle(cx)
-    }
-}
-
-impl Render for AcpThreadView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::DocumentText)
+    fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -2416,6 +2548,70 @@ impl Render for AcpThreadView {
                 this.scroll_to_top(cx);
             }));
 
+        h_flex()
+            .w_full()
+            .mr_1()
+            .pb_2()
+            .px(RESPONSE_PADDING_X)
+            .opacity(0.4)
+            .hover(|style| style.opacity(1.))
+            .flex_wrap()
+            .justify_end()
+            .child(open_as_markdown)
+            .child(scroll_to_top)
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .id("acp-thread-scrollbar")
+            .occlude()
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
+    }
+
+    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        for diff_editor in self.diff_editors.values() {
+            diff_editor.update(cx, |diff_editor, cx| {
+                diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
+                cx.notify();
+            })
+        }
+    }
+}
+
+impl Focusable for AcpThreadView {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.message_editor.focus_handle(cx)
+    }
+}
+
+impl Render for AcpThreadView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .key_context("AcpThread")
@@ -2423,66 +2619,80 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
+            .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
-                ThreadState::Unauthenticated { .. } => {
-                    v_flex()
-                        .p_2()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .child(self.render_pending_auth_state())
-                        .child(
-                            h_flex().mt_1p5().justify_center().child(
-                                Button::new("sign-in", format!("Sign in to {}", self.agent.name()))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.authenticate(window, cx)
-                                    })),
-                            ),
-                        )
-                }
+                ThreadState::Unauthenticated { connection } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_pending_auth_state())
+                    .child(h_flex().mt_1p5().justify_center().children(
+                        connection.auth_methods().into_iter().map(|method| {
+                            Button::new(
+                                SharedString::from(method.id.0.clone()),
+                                method.name.clone(),
+                            )
+                            .on_click({
+                                let method_id = method.id.clone();
+                                cx.listener(move |this, _, window, cx| {
+                                    this.authenticate(method_id.clone(), window, cx)
+                                })
+                            })
+                        }),
+                    )),
                 ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .child(self.render_error_state(e, cx)),
-                ThreadState::Ready { thread, .. } => v_flex().flex_1().map(|this| {
-                    if self.list_state.item_count() > 0 {
-                        this.child(
-                            list(self.list_state.clone())
+                    .child(self.render_load_error(e, cx)),
+                ThreadState::ServerExited { status } => v_flex()
+                    .p_2()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .child(self.render_server_exited(*status, cx)),
+                ThreadState::Ready { thread, .. } => {
+                    let thread_clone = thread.clone();
+
+                    v_flex().flex_1().map(|this| {
+                        if self.list_state.item_count() > 0 {
+                            this.child(
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(|this, index: usize, window, cx| {
+                                        let Some((entry, len)) = this.thread().and_then(|thread| {
+                                            let entries = &thread.read(cx).entries();
+                                            Some((entries.get(index)?, entries.len()))
+                                        }) else {
+                                            return Empty.into_any();
+                                        };
+                                        this.render_entry(index, len, entry, window, cx)
+                                    }),
+                                )
                                 .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
                                 .flex_grow()
                                 .into_any(),
-                        )
-                        .child(
-                            h_flex()
-                                .group("controls")
-                                .mt_1()
-                                .mr_1()
-                                .py_2()
-                                .px(RESPONSE_PADDING_X)
-                                .opacity(0.4)
-                                .hover(|style| style.opacity(1.))
-                                .flex_wrap()
-                                .justify_end()
-                                .child(open_as_markdown)
-                                .child(scroll_to_top)
-                                .into_any_element(),
-                        )
-                        .children(match thread.read(cx).status() {
-                            ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => None,
-                            ThreadStatus::Generating => div()
-                                .px_5()
-                                .py_2()
-                                .child(LoadingLabel::new("").size(LabelSize::Small))
-                                .into(),
-                        })
-                        .children(self.render_activity_bar(&thread, window, cx))
-                    } else {
-                        this.child(self.render_empty_state(cx))
-                    }
-                }),
+                            )
+                            .child(self.render_vertical_scrollbar(cx))
+                            .children(match thread_clone.read(cx).status() {
+                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
+                                    None
+                                }
+                                ThreadStatus::Generating => div()
+                                    .px_5()
+                                    .py_2()
+                                    .child(LoadingLabel::new("").size(LabelSize::Small))
+                                    .into(),
+                            })
+                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                        } else {
+                            this.child(self.render_empty_state(cx))
+                        }
+                    })
+                }
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
@@ -2669,6 +2879,18 @@ fn plan_label_markdown_style(
     }
 }
 
+fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
+    TextStyleRefinement {
+        font_size: Some(
+            TextSize::Small
+                .rems(cx)
+                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .into(),
+        ),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use agent_client_protocol::SessionId;
@@ -2680,6 +2902,16 @@ mod tests {
     use settings::SettingsStore;
 
     use super::*;
+
+    #[gpui::test]
+    async fn test_drop(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (thread_view, _cx) = setup_thread_view(StubAgentServer::default(), cx).await;
+        let weak_view = thread_view.downgrade();
+        drop(thread_view);
+        assert!(!weak_view.is_upgradable());
+    }
 
     #[gpui::test]
     async fn test_notification_for_stop_event(cx: &mut TestAppContext) {
@@ -2741,7 +2973,7 @@ mod tests {
         let tool_call_id = acp::ToolCallId("1".into());
         let tool_call = acp::ToolCall {
             id: tool_call_id.clone(),
-            label: "Label".into(),
+            title: "Label".into(),
             kind: acp::ToolKind::Edit,
             status: acp::ToolCallStatus::Pending,
             content: vec!["hi".into()],
@@ -2753,7 +2985,7 @@ mod tests {
                 tool_call_id,
                 vec![acp::PermissionOption {
                     id: acp::PermissionOptionId("1".into()),
-                    label: "Allow".into(),
+                    name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
                 }],
             )]));
@@ -2878,8 +3110,8 @@ mod tests {
     }
 
     impl AgentConnection for StubAgentConnection {
-        fn name(&self) -> &'static str {
-            "StubAgentConnection"
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
         }
 
         fn new_thread(
@@ -2897,17 +3129,25 @@ mod tests {
                     .into(),
             );
             let thread = cx
-                .new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))
+                .new(|cx| AcpThread::new("Test", self.clone(), project, session_id.clone(), cx))
                 .unwrap();
             self.sessions.lock().insert(session_id, thread.downgrade());
             Task::ready(Ok(thread))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, params: acp::PromptArguments, cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             let sessions = self.sessions.lock();
             let thread = sessions.get(&params.session_id).unwrap();
             let mut tasks = vec![];
@@ -2924,7 +3164,7 @@ mod tests {
                 let task = cx.spawn(async move |cx| {
                     if let Some((tool_call, options)) = permission_request {
                         let permission = thread.update(cx, |thread, cx| {
-                            thread.request_tool_call_permission(
+                            thread.request_tool_call_authorization(
                                 tool_call.clone(),
                                 options.clone(),
                                 cx,
@@ -2941,7 +3181,9 @@ mod tests {
             }
             cx.spawn(async move |_| {
                 try_join_all(tasks).await?;
-                Ok(())
+                Ok(acp::PromptResponse {
+                    stop_reason: acp::StopReason::EndTurn,
+                })
             })
         }
 
@@ -2954,10 +3196,6 @@ mod tests {
     struct SaboteurAgentConnection;
 
     impl AgentConnection for SaboteurAgentConnection {
-        fn name(&self) -> &'static str {
-            "SaboteurAgentConnection"
-        }
-
         fn new_thread(
             self: Rc<Self>,
             project: Entity<Project>,
@@ -2965,15 +3203,35 @@ mod tests {
             cx: &mut gpui::AsyncApp,
         ) -> Task<gpui::Result<Entity<AcpThread>>> {
             Task::ready(Ok(cx
-                .new(|cx| AcpThread::new(self, project, SessionId("test".into()), cx))
+                .new(|cx| {
+                    AcpThread::new(
+                        "SaboteurAgentConnection",
+                        self,
+                        project,
+                        SessionId("test".into()),
+                        cx,
+                    )
+                })
                 .unwrap()))
         }
 
-        fn authenticate(&self, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn auth_methods(&self) -> &[acp::AuthMethod] {
+            &[]
+        }
+
+        fn authenticate(
+            &self,
+            _method_id: acp::AuthMethodId,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<()>> {
             unimplemented!()
         }
 
-        fn prompt(&self, _params: acp::PromptArguments, _cx: &mut App) -> Task<gpui::Result<()>> {
+        fn prompt(
+            &self,
+            _params: acp::PromptRequest,
+            _cx: &mut App,
+        ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Err(anyhow::anyhow!("Error prompting")))
         }
 

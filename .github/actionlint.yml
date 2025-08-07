@@ -5,6 +5,11 @@ self-hosted-runner:
     # GitHub-hosted Runners
     - github-8vcpu-ubuntu-2404
     - github-16vcpu-ubuntu-2404
+    - github-32vcpu-ubuntu-2404
+    - github-8vcpu-ubuntu-2204
+    - github-16vcpu-ubuntu-2204
+    - github-32vcpu-ubuntu-2204
+    - github-16vcpu-ubuntu-2204-arm
     - windows-2025-16
     - windows-2025-32
     - windows-2025-64
@@ -24,7 +29,6 @@ self-hosted-runner:
     - buildjet-8vcpu-ubuntu-2204-arm
     - buildjet-16vcpu-ubuntu-2204-arm
     - buildjet-32vcpu-ubuntu-2204-arm
-    - buildjet-64vcpu-ubuntu-2204-arm
     # Self Hosted Runners
     - self-mini-macos
     - self-32vcpu-windows-2022

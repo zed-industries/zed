@@ -62,7 +62,7 @@ pub struct SelectedEntry {
 #[derive(Debug)]
 pub struct DraggedSelection {
     pub active_selection: SelectedEntry,
-    pub marked_selections: Arc<BTreeSet<SelectedEntry>>,
+    pub marked_selections: Arc<[SelectedEntry]>,
 }
 
 impl DraggedSelection {
@@ -1664,10 +1664,33 @@ impl Pane {
                 }
 
                 if should_save {
-                    if !Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
-                        .await?
+                    match Self::save_item(project.clone(), &pane, &*item_to_close, save_intent, cx)
+                        .await
                     {
-                        break;
+                        Ok(success) => {
+                            if !success {
+                                break;
+                            }
+                        }
+                        Err(err) => {
+                            let answer = pane.update_in(cx, |_, window, cx| {
+                                let detail = Self::file_names_for_prompt(
+                                    &mut [&item_to_close].into_iter(),
+                                    cx,
+                                );
+                                window.prompt(
+                                    PromptLevel::Warning,
+                                    &format!("Unable to save file: {}", &err),
+                                    Some(&detail),
+                                    &["Close Without Saving", "Cancel"],
+                                    cx,
+                                )
+                            })?;
+                            match answer.await {
+                                Ok(0) => {}
+                                Ok(1..) | Err(_) => break,
+                            }
+                        }
                     }
                 }
 
@@ -2832,7 +2855,7 @@ impl Pane {
             })
             .collect::<Vec<_>>();
         let tab_count = tab_items.len();
-        if self.pinned_tab_count > tab_count {
+        if self.is_tab_pinned(tab_count) {
             log::warn!(
                 "Pinned tab count ({}) exceeds actual tab count ({}). \
                 This should not happen. If possible, add reproduction steps, \
@@ -2922,7 +2945,7 @@ impl Pane {
                                 this.handle_external_paths_drop(paths, window, cx)
                             }))
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-                                if event.up.click_count == 2 {
+                                if event.click_count() == 2 {
                                     window.dispatch_action(
                                         this.double_click_dispatch_action.boxed_clone(),
                                         cx,
@@ -3062,13 +3085,13 @@ impl Pane {
                     }
                     to_pane.update(cx, |this, _| {
                         if to_pane == from_pane {
-                            let to_ix = this
+                            let actual_ix = this
                                 .items
                                 .iter()
                                 .position(|item| item.item_id() == item_id)
                                 .unwrap_or(0);
 
-                            let is_pinned_in_to_pane = to_ix < this.pinned_tab_count;
+                            let is_pinned_in_to_pane = this.is_tab_pinned(actual_ix);
 
                             if !was_pinned_in_from_pane && is_pinned_in_to_pane {
                                 this.pinned_tab_count += 1;
@@ -3617,7 +3640,7 @@ impl Render for Pane {
                                 .justify_center()
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
-                                        if event.up.click_count == 2 {
+                                        if event.click_count() == 2 {
                                             window.dispatch_action(
                                                 this.double_click_dispatch_action.boxed_clone(),
                                                 cx,
