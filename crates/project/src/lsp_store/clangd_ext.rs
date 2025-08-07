@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use ::serde::{Deserialize, Serialize};
 use gpui::WeakEntity;
@@ -87,7 +87,9 @@ pub fn register_notifications(
                             server_id,
                             diagnostics: mapped_diagnostics,
                             result_id: None,
-                            disk_based_sources: adapter.disk_based_diagnostic_sources.clone(),
+                            disk_based_sources: Cow::Borrowed(
+                                &adapter.disk_based_diagnostic_sources,
+                            ),
                         }],
                         |_, diag, _| !is_inactive_region(diag),
                         cx,

@@ -141,12 +141,17 @@ impl FormatTrigger {
 }
 
 #[derive(Debug)]
-pub struct DocumentDiagnosticsUpdate {
-    pub diagnostics: lsp::PublishDiagnosticsParams,
+pub struct DocumentDiagnosticsUpdate<'a, D> {
+    pub diagnostics: D,
     pub result_id: Option<String>,
     pub server_id: LanguageServerId,
-    // TODO kb was not owned, make a ref type?
-    pub disk_based_sources: Vec<String>,
+    pub disk_based_sources: Cow<'a, [String]>,
+}
+
+struct DocumentDiagnostics {
+    diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+    document_abs_path: PathBuf,
+    version: Option<i32>,
 }
 
 pub struct LocalLspStore {
@@ -518,9 +523,9 @@ impl LocalLspStore {
                                     server_id,
                                     diagnostics: params,
                                     result_id: None,
-                                    disk_based_sources: adapter
-                                        .disk_based_diagnostic_sources
-                                        .clone(),
+                                    disk_based_sources: Cow::Borrowed(
+                                        &adapter.disk_based_diagnostic_sources,
+                                    ),
                                 }],
                                 |_, diagnostic, cx| match diagnostic.source_kind {
                                     DiagnosticSourceKind::Other | DiagnosticSourceKind::Pushed => {
@@ -6750,12 +6755,14 @@ impl LspStore {
                                     (result_id, diagnostics)
                                 }
                             };
-                            let disk_based_sources = lsp_store
-                                .language_server_adapter_for_id(server_id)
-                                .as_ref()
-                                .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                                .unwrap_or(&[])
-                                .to_vec();
+                            let disk_based_sources = Cow::Owned(
+                                lsp_store
+                                    .language_server_adapter_for_id(server_id)
+                                    .as_ref()
+                                    .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                                    .unwrap_or(&[])
+                                    .to_vec(),
+                            );
                             acc.entry(server_id).or_insert_with(Vec::new).push(
                                 DocumentDiagnosticsUpdate {
                                     server_id,
@@ -7818,24 +7825,25 @@ impl LspStore {
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         self.merge_diagnostic_entries(
-            server_id,
-            abs_path,
-            result_id,
-            version,
-            diagnostics,
+            vec![DocumentDiagnosticsUpdate {
+                diagnostics: DocumentDiagnostics {
+                    diagnostics,
+                    document_abs_path: abs_path,
+                    version,
+                },
+                result_id,
+                server_id,
+                disk_based_sources: Cow::Borrowed(&[]),
+            }],
             |_, _, _| false,
             cx,
         )?;
         Ok(())
     }
 
-    pub fn merge_diagnostic_entries(
+    pub fn merge_diagnostic_entries<'a>(
         &mut self,
-        server_id: LanguageServerId,
-        abs_path: PathBuf,
-        result_id: Option<String>,
-        version: Option<i32>,
-        mut diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
+        updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
         filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
@@ -10693,7 +10701,7 @@ impl LspStore {
                 diagnostics,
                 result_id,
                 server_id,
-                disk_based_sources: disk_based_sources.to_vec(),
+                disk_based_sources: Cow::Borrowed(disk_based_sources),
             }],
             |_, _, _| false,
             cx,
@@ -10703,26 +10711,54 @@ impl LspStore {
     pub fn merge_diagnostics(
         &mut self,
         source_kind: DiagnosticSourceKind,
-        updates: Vec<DocumentDiagnosticsUpdate>,
+        updates: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
         filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
-        let abs_path = params
-            .uri
-            .to_file_path()
-            .map_err(|()| anyhow!("URI is not a file"))?;
+        let updates = updates
+            .into_iter()
+            .filter_map(|update| {
+                let abs_path = update.diagnostics.uri.to_file_path().ok()?;
+                Some(DocumentDiagnosticsUpdate {
+                    diagnostics: self.lsp_to_document_diagnostics(
+                        abs_path,
+                        source_kind,
+                        update.server_id,
+                        update.diagnostics,
+                        &update.disk_based_sources,
+                    ),
+                    result_id: update.result_id,
+                    server_id: update.server_id,
+                    disk_based_sources: update.disk_based_sources,
+                })
+            })
+            .collect();
+        self.merge_diagnostic_entries(updates, filter, cx)?;
+        Ok(())
+    }
+
+    fn lsp_to_document_diagnostics(
+        &mut self,
+        document_abs_path: PathBuf,
+        source_kind: DiagnosticSourceKind,
+        server_id: LanguageServerId,
+        mut lsp_diagnostics: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &[String],
+    ) -> DocumentDiagnostics {
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostics = HashMap::default();
 
-        let adapter = self.language_server_adapter_for_id(language_server_id);
+        let adapter = self.language_server_adapter_for_id(server_id);
 
         // Ensure that primary diagnostics are always the most severe
-        params.diagnostics.sort_by_key(|item| item.severity);
+        lsp_diagnostics
+            .diagnostics
+            .sort_by_key(|item| item.severity);
 
-        for diagnostic in &params.diagnostics {
+        for diagnostic in &lsp_diagnostics.diagnostics {
             let source = diagnostic.source.as_ref();
             let range = range_from_lsp(diagnostic.range);
             let is_supporting = diagnostic
@@ -10744,7 +10780,7 @@ impl LspStore {
                 .map_or(false, |tags| tags.contains(&DiagnosticTag::UNNECESSARY));
 
             let underline = self
-                .language_server_adapter_for_id(language_server_id)
+                .language_server_adapter_for_id(server_id)
                 .map_or(true, |adapter| adapter.underline_diagnostic(diagnostic));
 
             if is_supporting {
@@ -10786,7 +10822,7 @@ impl LspStore {
                 });
                 if let Some(infos) = &diagnostic.related_information {
                     for info in infos {
-                        if info.location.uri == params.uri && !info.message.is_empty() {
+                        if info.location.uri == lsp_diagnostics.uri && !info.message.is_empty() {
                             let range = range_from_lsp(info.location.range);
                             diagnostics.push(DiagnosticEntry {
                                 range,
@@ -10834,16 +10870,11 @@ impl LspStore {
             }
         }
 
-        self.merge_diagnostic_entries(
-            language_server_id,
-            abs_path,
-            result_id,
-            params.version,
+        DocumentDiagnostics {
             diagnostics,
-            filter,
-            cx,
-        )?;
-        Ok(())
+            document_abs_path,
+            version: lsp_diagnostics.version,
+        }
     }
 
     fn insert_newly_running_language_server(
@@ -11629,12 +11660,13 @@ impl LspStore {
                             (result_id, diagnostics)
                         }
                     };
-                    let disk_based_sources = self
-                        .language_server_adapter_for_id(server_id)
-                        .as_ref()
-                        .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
-                        .unwrap_or(&[])
-                        .to_vec();
+                    let disk_based_sources = Cow::Owned(
+                        self.language_server_adapter_for_id(server_id)
+                            .as_ref()
+                            .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
+                            .unwrap_or(&[])
+                            .to_vec(),
+                    );
                     acc.entry(server_id)
                         .or_insert_with(Vec::new)
                         .push(DocumentDiagnosticsUpdate {
