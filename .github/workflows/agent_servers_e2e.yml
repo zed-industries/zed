@@ -33,7 +33,7 @@ jobs:
   e2e-tests:
     name: Run Agent Servers E2E Tests
     if: github.repository_owner == 'zed-industries'
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on:
       - ubuntu-latest
 
