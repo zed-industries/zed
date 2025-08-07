@@ -223,6 +223,7 @@ TBD: Centered layout related settings
       "enabled": true,             // Show/hide inline blame
       "delay": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
+      "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
     },
     "hunk_style": "staged_hollow"  // staged_hollow, unstaged_hollow
