@@ -1443,7 +1443,7 @@ impl LocalLspStore {
                     SelectedFormatter::Auto => {
                         if settings.prettier.allowed {
                             zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            default_formatter_list.push(Formatter::Prettier);
+                            default_formatter_list.insert(0, Formatter::Prettier);
                         }
 
                         default_formatter_list.as_ref()
