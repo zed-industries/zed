@@ -1,7 +1,7 @@
 use crate::templates::{SystemPromptTemplate, Template, Templates};
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::ActionLog;
+use assistant_tool::{adapt_schema_to_format, ActionLog};
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{
@@ -601,7 +601,7 @@ impl Thread {
                     name: tool_name,
                     description: tool.description(cx).to_string(),
                     input_schema: tool
-                        .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
+                        .input_schema(self.selected_model.tool_input_format())
                         .log_err()?,
                 })
             })
@@ -685,7 +685,7 @@ where
     fn kind(&self) -> acp::ToolKind;
 
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, _format: LanguageModelToolSchemaFormat) -> Schema {
+    fn input_schema(&self) -> Schema {
         schemars::schema_for!(Self::Input)
     }
 
@@ -739,7 +739,9 @@ where
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        Ok(serde_json::to_value(self.0.input_schema(format))?)
+        let mut json = serde_json::to_value(self.0.input_schema())?;
+        adapt_schema_to_format(&mut json, format)?;
+        Ok(json)
     }
 
     fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool> {
