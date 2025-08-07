@@ -286,6 +286,7 @@ pub(crate) fn render_ai_setup_page(
                 .child(AiUpsellCard {
                     sign_in_status: SignInStatus::SignedIn,
                     sign_in: Arc::new(|_, _| {}),
+                    account_too_young: user_store.read(cx).account_too_young(),
                     user_plan: user_store.read(cx).plan(),
                     tab_index: Some({
                         tab_index += 1;
