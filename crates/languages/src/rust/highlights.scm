@@ -6,6 +6,9 @@
 (self) @variable.special
 (field_identifier) @property
 
+(shorthand_field_initializer
+  (identifier) @property)
+
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
 (abstract_type trait: (type_identifier) @type.interface)
@@ -38,7 +41,8 @@
     (identifier) @function.special
     (scoped_identifier
       name: (identifier) @function.special)
-  ])
+  ]
+  "!" @function.special)
 
 (macro_definition
   name: (identifier) @function.special.definition)
