@@ -517,7 +517,7 @@ impl LocalLspStore {
                                 adapter.process_diagnostics(&mut params, server_id, buffer);
                             }
 
-                            this.merge_diagnostics(
+                            this.merge_lsp_diagnostics(
                                 DiagnosticSourceKind::Pushed,
                                 vec![DocumentDiagnosticsUpdate {
                                     server_id,
@@ -6788,7 +6788,7 @@ impl LspStore {
 
                 for diagnostic_updates in server_diagnostics_updates.into_values() {
                     lsp_store
-                        .merge_diagnostics(
+                        .merge_lsp_diagnostics(
                             DiagnosticSourceKind::Pulled,
                             diagnostic_updates,
                             |buffer, old_diagnostic, cx| {
@@ -7850,13 +7850,13 @@ impl LspStore {
 
     pub fn merge_diagnostic_entries<'a>(
         &mut self,
-        updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
-        filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        diagnostic_updates: Vec<DocumentDiagnosticsUpdate<'a, DocumentDiagnostics>>,
+        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let mut diagnostics_summary = None::<proto::UpdateDiagnosticSummary>;
         let mut updated_diagnostics_paths = HashMap::default();
-        for mut update in updates {
+        for mut update in diagnostic_updates {
             let abs_path = &update.diagnostics.document_abs_path;
             let server_id = update.server_id;
             let Some((worktree, relative_path)) =
@@ -7880,7 +7880,7 @@ impl LspStore {
                     .into_iter()
                     .flat_map(|diag| {
                         diag.iter()
-                            .filter(|v| filter(buffer, &v.diagnostic, cx))
+                            .filter(|v| merge(buffer, &v.diagnostic, cx))
                             .map(|v| {
                                 let start = Unclipped(v.range.start.to_point_utf16(&snapshot));
                                 let end = Unclipped(v.range.end.to_point_utf16(&snapshot));
@@ -10781,7 +10781,7 @@ impl LspStore {
         disk_based_sources: &[String],
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        self.merge_diagnostics(
+        self.merge_lsp_diagnostics(
             source_kind,
             vec![DocumentDiagnosticsUpdate {
                 diagnostics,
@@ -10794,15 +10794,15 @@ impl LspStore {
         )
     }
 
-    pub fn merge_diagnostics(
+    pub fn merge_lsp_diagnostics(
         &mut self,
         source_kind: DiagnosticSourceKind,
-        updates: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
-        filter: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
+        lsp_diagnostics: Vec<DocumentDiagnosticsUpdate<lsp::PublishDiagnosticsParams>>,
+        merge: impl Fn(&Buffer, &Diagnostic, &App) -> bool + Clone,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         anyhow::ensure!(self.mode.is_local(), "called update_diagnostics on remote");
-        let updates = updates
+        let updates = lsp_diagnostics
             .into_iter()
             .filter_map(|update| {
                 let abs_path = update.diagnostics.uri.to_file_path().ok()?;
@@ -10820,7 +10820,7 @@ impl LspStore {
                 })
             })
             .collect();
-        self.merge_diagnostic_entries(updates, filter, cx)?;
+        self.merge_diagnostic_entries(updates, merge, cx)?;
         Ok(())
     }
 
@@ -11770,7 +11770,7 @@ impl LspStore {
             );
 
         for diagnostic_updates in workspace_diagnostics_updates.into_values() {
-            self.merge_diagnostics(
+            self.merge_lsp_diagnostics(
                 DiagnosticSourceKind::Pulled,
                 diagnostic_updates,
                 |buffer, old_diagnostic, cx| {

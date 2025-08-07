@@ -81,7 +81,7 @@ pub fn register_notifications(
                         version: params.text_document.version,
                         diagnostics,
                     };
-                    this.merge_diagnostics(
+                    this.merge_lsp_diagnostics(
                         DiagnosticSourceKind::Pushed,
                         vec![DocumentDiagnosticsUpdate {
                             server_id,
