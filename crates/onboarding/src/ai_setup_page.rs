@@ -12,8 +12,8 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use project::DisableAiSettings;
 use settings::{Settings, update_settings_file};
 use ui::{
-    Badge, ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, ToggleState,
-    prelude::*, tooltip_container,
+    Badge, ButtonLike, Divider, KeyBinding, Modal, ModalFooter, ModalHeader, Section, SwitchField,
+    ToggleState, prelude::*, tooltip_container,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -336,6 +336,10 @@ impl AiConfigurationModal {
             selected_provider,
         }
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
 }
 
 impl ModalView for AiConfigurationModal {}
@@ -349,11 +353,15 @@ impl Focusable for AiConfigurationModal {
 }
 
 impl Render for AiConfigurationModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("OnboardingAiConfigurationModal")
             .w(rems(34.))
             .elevation_3(cx)
             .track_focus(&self.focus_handle)
+            .on_action(
+                cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
+            )
             .child(
                 Modal::new("onboarding-ai-setup-modal", None)
                     .header(
@@ -368,18 +376,19 @@ impl Render for AiConfigurationModal {
                     .section(Section::new().child(self.configuration_view.clone()))
                     .footer(
                         ModalFooter::new().end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("onboarding-closing-cancel", "Cancel")
-                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                            Button::new("ai-onb-modal-Done", "Done")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::Cancel,
+                                        &self.focus_handle.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
-                                .child(Button::new("save-btn", "Done").on_click(cx.listener(
-                                    |_, _, window, cx| {
-                                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                                        cx.emit(DismissEvent);
-                                    },
-                                ))),
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.cancel(&menu::Cancel, cx)
+                                })),
                         ),
                     ),
             )
