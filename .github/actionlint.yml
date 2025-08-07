@@ -13,6 +13,19 @@ self-hosted-runner:
     - windows-2025-16
     - windows-2025-32
     - windows-2025-64
+    # Namespace Ubuntu 20.04 (Release builds)
+    - namespace-profile-16x32-ubuntu-2004
+    - namespace-profile-16x64-ubuntu-2004
+    - namespace-profile-16x32-ubuntu-2004-arm
+    - namespace-profile-16x64-ubuntu-2004-arm
+    # Namespace Ubuntu 22.04
+    - namespace-profile-2x8-ubuntu-2204
+    - namespace-profile-4x8-ubuntu-2204
+    - namespace-profile-4x16-ubuntu-2204
+    - namespace-profile-8x16-ubuntu-2204
+    - namespace-profile-8x32-ubuntu-2204
+    - namespace-profile-16x32-ubuntu-2204
+    - namespace-profile-16x64-ubuntu-2204
     # Buildjet Ubuntu 20.04 - AMD x86_64
     - buildjet-2vcpu-ubuntu-2004
     - buildjet-4vcpu-ubuntu-2004

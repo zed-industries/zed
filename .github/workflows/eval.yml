@@ -32,7 +32,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'run-eval'))
     runs-on:
-      - github-16vcpu-ubuntu-2204
+      - namespace-profile-16x64-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"

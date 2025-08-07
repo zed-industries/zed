@@ -128,7 +128,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - github-16vcpu-ubuntu-2204
+      - namespace-profile-16x64-ubuntu-2004
       # - buildjet-16vcpu-ubuntu-2004
     needs: tests
     steps:
@@ -169,7 +169,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - github-16vcpu-ubuntu-2204-arm
+      - namespace-profile-16x64-ubuntu-2004-arm
     needs: tests
     steps:
       - name: Checkout repo
