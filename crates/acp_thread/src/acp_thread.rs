@@ -902,7 +902,7 @@ impl AcpThread {
         });
     }
 
-    pub fn request_tool_call_permission(
+    pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCall,
         options: Vec<acp::PermissionOption>,
