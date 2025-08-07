@@ -61,7 +61,7 @@ jobs:
       - style
       - tests
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - github-16vcpu-ubuntu-2204
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -94,7 +94,7 @@ jobs:
     needs:
       - publish
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - github-16vcpu-ubuntu-2204
 
     steps:
       - name: Checkout repo
