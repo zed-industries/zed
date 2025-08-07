@@ -28,6 +28,7 @@ zlog.workspace = true
 paths.workspace = true
 task.workspace = true
 snippet_provider.workspace = true
+extension.workspace = true
 
 
 # Uncomment other workspace dependencies as needed

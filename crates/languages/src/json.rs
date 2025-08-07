@@ -152,26 +152,10 @@ impl JsonLspAdapter {
         adapter_schemas: AdapterSchemas,
         cx: &mut App,
     ) -> Value {
-        let font_names = &cx.text_system().all_font_names();
-        let settings_schema = cx.global::<SettingsStore>().json_schema(
-            &SettingsJsonSchemaParams {
-                language_names: &language_names,
-                font_names,
-            },
-            cx,
-        );
-
         let debug_tasks = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
 
         #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
-            {
-                "fileMatch": [
-                    schema_file_match(paths::settings_file()),
-                    paths::local_settings_file_relative_path()
-                ],
-                "schema": settings_schema,
-            },
             {
                 "fileMatch": [
                     schema_file_match(paths::debug_scenarios_file()),

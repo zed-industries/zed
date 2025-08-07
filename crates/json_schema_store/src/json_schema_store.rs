@@ -1,39 +1,105 @@
 //! # json_schema_store
-use std::{
-    str::FromStr,
-    sync::{Arc, OnceLock},
-};
+use std::{str::FromStr, sync::OnceLock};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
+use project::LspStore;
 use schemars::{Schema, SchemaGenerator};
 use std::collections::HashMap;
 
 static ALL_ACTION_SCHEMAS: OnceLock<HashMap<&'static str, Option<Schema>>> = OnceLock::new();
+
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
 const PACKAGE_JSON_SCHEMA: &str = include_str!("schemas/package.json");
 
 pub fn init(cx: &mut App) {
-    let schema_store = Arc::new(SchemaStore {});
-    project::lsp_store::json_language_server_ext::register_schema_handler(schema_store, cx);
+    cx.set_global(SchemaStore::default());
+    project::lsp_store::json_language_server_ext::register_schema_handler(
+        handle_schema_request,
+        cx,
+    );
+
+    cx.observe_new(|_, _, cx| {
+        let lsp_store = cx.weak_entity();
+        cx.global_mut::<SchemaStore>().lsp_stores.push(lsp_store);
+    })
+    .detach();
+
+    cx.observe_new(|_: &mut extension::ExtensionEvents, _, cx| {
+        cx.subscribe(&cx.entity(), |_, _, evt, cx| {
+            match evt {
+                extension::Event::ExtensionInstalled(_)
+                | extension::Event::ExtensionUninstalled(_)
+                | extension::Event::ConfigureExtensionRequested(_) => return,
+                extension::Event::ExtensionsInstalledChanged => {}
+            }
+            cx.update_global::<SchemaStore, _>(|schema_store, cx| {
+                schema_store.notify_schema_changed("zed://schemas/settings", cx);
+            });
+        })
+        .detach();
+    })
+    .detach();
 }
 
-struct SchemaStore {}
+#[derive(Default)]
+struct SchemaStore {
+    lsp_stores: Vec<WeakEntity<LspStore>>,
+}
 
-impl project::lsp_store::json_language_server_ext::SchemaHandling for SchemaStore {
-    fn handle_schema_request(&self, uri: String, cx: &mut AsyncApp) -> Result<String> {
-        let schema = resolve_schema_request(uri, cx)?;
-        serde_json::to_string(&schema).context("Failed to serialize schema")
+impl gpui::Global for SchemaStore {}
+
+impl SchemaStore {
+    fn notify_schema_changed(&mut self, uri: &str, cx: &mut App) {
+        let uri = uri.to_string();
+        self.lsp_stores.retain(|lsp_store| {
+            let Some(lsp_store) = lsp_store.upgrade() else {
+                return false;
+            };
+            project::lsp_store::json_language_server_ext::notify_schema_changed(
+                lsp_store, &uri, cx,
+            );
+            true
+        })
     }
 }
 
-fn resolve_schema_request(uri: String, cx: &mut AsyncApp) -> Result<serde_json::Value> {
+fn handle_schema_request(
+    lsp_store: Entity<LspStore>,
+    uri: String,
+    cx: &mut AsyncApp,
+) -> Result<String> {
+    let schema = resolve_schema_request(lsp_store, uri, cx)?;
+    serde_json::to_string(&schema).context("Failed to serialize schema")
+}
+
+fn resolve_schema_request(
+    lsp_store: Entity<LspStore>,
+    uri: String,
+    cx: &mut AsyncApp,
+) -> Result<serde_json::Value> {
     let path = uri.strip_prefix("zed://schemas/").context("Invalid URI")?;
 
     let (family, rest) = path.split_once('/').unzip();
     let family = family.unwrap_or(path);
     let schema = match family {
+        "settings" => cx.update(|cx| {
+            let font_names = &cx.text_system().all_font_names();
+            let language_names = &lsp_store
+                .read_with(cx, |lsp_store, _| lsp_store.languages.clone())
+                .language_names()
+                .into_iter()
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>();
+            cx.global::<settings::SettingsStore>().json_schema(
+                &settings::SettingsJsonSchemaParams {
+                    language_names,
+                    font_names,
+                },
+                cx,
+            )
+        })?,
         "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions)?,
         "action" => {
             let normalized_action_name = rest.context("No Action name provided")?;
@@ -65,6 +131,13 @@ fn resolve_schema_request(uri: String, cx: &mut AsyncApp) -> Result<serde_json::
 
 pub fn all_schema_file_associations(cx: &mut App) -> Vec<serde_json::Value> {
     let mut file_associations = serde_json::json!([
+        {
+            "fileMatch": [
+                schema_file_match(paths::settings_file()),
+                paths::local_settings_file_relative_path()
+            ],
+            "url": "zed://schemas/settings",
+        },
         {
             "fileMatch": [schema_file_match(paths::keymap_file())],
             "url": "zed://schemas/keymap",
