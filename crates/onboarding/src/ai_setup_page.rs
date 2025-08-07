@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use ai_onboarding::{AiUpsellCard, SignInStatus};
-use client::UserStore;
+use ai_onboarding::AiUpsellCard;
+use client::{Client, UserStore};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
@@ -240,6 +240,7 @@ fn render_llm_provider_card(
 pub(crate) fn render_ai_setup_page(
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
+    client: Arc<Client>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -283,15 +284,16 @@ pub(crate) fn render_ai_setup_page(
             v_flex()
                 .mt_2()
                 .gap_6()
-                .child(AiUpsellCard {
-                    sign_in_status: SignInStatus::SignedIn,
-                    sign_in: Arc::new(|_, _| {}),
-                    account_too_young: user_store.read(cx).account_too_young(),
-                    user_plan: user_store.read(cx).plan(),
-                    tab_index: Some({
+                .child({
+                    let mut ai_upsell_card =
+                        AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx);
+
+                    ai_upsell_card.tab_index = Some({
                         tab_index += 1;
                         tab_index - 1
-                    }),
+                    });
+
+                    ai_upsell_card
                 })
                 .child(render_llm_provider_section(
                     &mut tab_index,

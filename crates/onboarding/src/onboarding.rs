@@ -449,6 +449,7 @@ impl Onboarding {
 
     fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
         let client = Client::global(cx);
+
         window
             .spawn(cx, async move |cx| {
                 client
@@ -460,6 +461,8 @@ impl Onboarding {
     }
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let client = Client::global(cx);
+
         match self.selected_page {
             SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
@@ -468,6 +471,7 @@ impl Onboarding {
             SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
                 self.workspace.clone(),
                 self.user_store.clone(),
+                client,
                 window,
                 cx,
             )
