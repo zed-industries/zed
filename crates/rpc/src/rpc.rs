@@ -19,4 +19,3 @@ mod proto_client;
 pub use proto_client::*;
 
 pub const PROTOCOL_VERSION: u32 = 68;
-pub const HOST_WAITING_MS: &str = "host_waiting_ms";

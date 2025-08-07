@@ -41,6 +41,7 @@ use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
 use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
@@ -52,8 +53,7 @@ use futures::{
 };
 use prometheus::{IntGauge, register_int_gauge};
 use rpc::{
-    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, HOST_WAITING_MS, Peer, Receipt,
-    TypedEnvelope,
+    Connection, ConnectionId, ErrorCode, ErrorCodeExt, ErrorExt, Peer, Receipt, TypedEnvelope,
     proto::{
         self, Ack, AnyTypedEnvelope, EntityMessage, EnvelopedMessage, LiveKitConnectionInfo,
         RequestMessage, ShareProject, UpdateChannelBufferCollaborators,
@@ -99,6 +99,7 @@ static CONCURRENT_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 const TOTAL_DURATION_MS: &str = "total_duration_ms";
 const PROCESSING_DURATION_MS: &str = "processing_duration_ms";
 const QUEUE_DURATION_MS: &str = "queue_duration_ms";
+const HOST_WAITING_MS: &str = "host_waiting_ms";
 
 type MessageHandler =
     Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session, Span) -> BoxFuture<'static, ()>>;
@@ -180,6 +181,28 @@ impl Deref for MessageContext {
 
     fn deref(&self) -> &Self::Target {
         &self.session
+    }
+}
+
+impl MessageContext {
+    pub fn forward_request<T: RequestMessage>(
+        &self,
+        receiver_id: ConnectionId,
+        request: T,
+    ) -> impl Future<Output = anyhow::Result<T::Response>> {
+        let request_start_time = Instant::now();
+        let span = self.span.clone();
+        tracing::info!("start forwarding request");
+        self.peer
+            .forward_request(self.connection_id, receiver_id, request)
+            .inspect(move |_| {
+                span.record(
+                    HOST_WAITING_MS,
+                    request_start_time.elapsed().as_micros() as f64 / 1000.0,
+                );
+            })
+            .inspect_err(|_| tracing::error!("error forwarding request"))
+            .inspect_ok(|_| tracing::info!("finished forwarding request"))
     }
 }
 
@@ -2375,15 +2398,7 @@ where
         .await
         .host_for_read_only_project_request(project_id, session.connection_id)
         .await?;
-    let payload = session
-        .peer
-        .forward_request(
-            session.connection_id,
-            host_connection_id,
-            session.span.clone(),
-            request,
-        )
-        .await?;
+    let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
     Ok(())
 }
@@ -2405,15 +2420,7 @@ where
         .await
         .host_for_mutating_project_request(project_id, session.connection_id)
         .await?;
-    let payload = session
-        .peer
-        .forward_request(
-            session.connection_id,
-            host_connection_id,
-            session.span.clone(),
-            request,
-        )
-        .await?;
+    let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
     Ok(())
 }
@@ -2488,15 +2495,7 @@ async fn update_buffer(
     };
 
     if host != session.connection_id {
-        session
-            .peer
-            .forward_request(
-                session.connection_id,
-                host,
-                session.span.clone(),
-                request.clone(),
-            )
-            .await?;
+        session.forward_request(host, request.clone()).await?;
     }
 
     response.send(proto::Ack {})?;
@@ -2586,15 +2585,7 @@ async fn follow(
         .check_room_participants(room_id, leader_id, session.connection_id)
         .await?;
 
-    let response_payload = session
-        .peer
-        .forward_request(
-            session.connection_id,
-            leader_id,
-            session.span.clone(),
-            request,
-        )
-        .await?;
+    let response_payload = session.forward_request(leader_id, request).await?;
     response.send(response_payload)?;
 
     if let Some(project_id) = project_id {
