@@ -19793,6 +19793,10 @@ impl Editor {
             .and_then(|lines| lines.last().map(|line| line.range.end));
 
         self.inline_value_cache.refresh_task = cx.spawn(async move |editor, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(100))
+                .await;
+
             let inline_values = editor
                 .update(cx, |editor, cx| {
                     let Some(current_execution_position) = current_execution_position else {
