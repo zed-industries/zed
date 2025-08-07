@@ -153,7 +153,7 @@ impl McpServerTool for PermissionTool {
 
         let chosen_option = thread
             .update(cx, |thread, cx| {
-                thread.request_tool_call_permission(
+                thread.request_tool_call_authorization(
                     claude_tool.as_acp(tool_call_id),
                     vec![
                         acp::PermissionOption {
