@@ -12,7 +12,7 @@ use project::project_settings::ProjectSettings;
 use settings::{Settings as _, update_settings_file};
 use theme::{FontFamilyCache, FontFamilyName, ThemeSettings};
 use ui::{
-    ButtonLike, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
+    ButtonLike, Divider, ListItem, ListItemSpacing, NumericStepper, PopoverMenu, SwitchField,
     ToggleButtonGroup, ToggleButtonGroupStyle, ToggleButtonSimple, ToggleState, Tooltip,
     prelude::*,
 };
@@ -587,8 +587,11 @@ fn render_popular_settings_section(
     const LIGATURE_TOOLTIP: &'static str = "Ligatures are when a font creates a special character out of combining two characters into one. For example, with ligatures turned on, =/= would become ≠.";
 
     v_flex()
-        .gap_5()
-        .child(Label::new("Popular Settings").size(LabelSize::Large).mt_8())
+        .pt_6()
+        .gap_4()
+        .border_t_1()
+        .border_color(cx.theme().colors().border_variant)
+        .child(Label::new("Popular Settings").size(LabelSize::Large))
         .child(render_font_customization_section(tab_index, window, cx))
         .child(
             SwitchField::new(
@@ -707,7 +710,7 @@ fn render_popular_settings_section(
 pub(crate) fn render_editing_page(window: &mut Window, cx: &mut App) -> impl IntoElement {
     let mut tab_index = 0;
     v_flex()
-        .gap_4()
+        .gap_6()
         .child(render_import_settings_section(&mut tab_index, cx))
         .child(render_popular_settings_section(&mut tab_index, window, cx))
 }
