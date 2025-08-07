@@ -407,7 +407,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "Zed never trains on your code, tracks you, or stores your data. Privacy is the default—no sign-in required, no tricks.";
+        const DESCRIPTION: &'static str = "Privacy is the default for Zed. Any use or storage of your data is with your explicit, single-use, opt-in consent.";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(
