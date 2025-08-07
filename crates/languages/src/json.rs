@@ -37,10 +37,6 @@ use crate::PackageJsonData;
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
-// Origin: https://github.com/SchemaStore/schemastore
-const TSCONFIG_SCHEMA: &str = include_str!("json/schemas/tsconfig.json");
-const PACKAGE_JSON_SCHEMA: &str = include_str!("json/schemas/package.json");
-
 pub(crate) struct JsonTaskProvider;
 
 impl ContextProvider for JsonTaskProvider {
@@ -169,19 +165,9 @@ impl JsonLspAdapter {
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
         let snippets_schema = snippet_provider::format::VsSnippetsFile::generate_json_schema();
-        let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
-        let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
         #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
-            {
-                "fileMatch": ["tsconfig.json"],
-                "schema":tsconfig_schema
-            },
-            {
-                "fileMatch": ["package.json"],
-                "schema":package_json_schema
-            },
             {
                 "fileMatch": [
                     schema_file_match(paths::settings_file()),
@@ -231,11 +217,10 @@ impl JsonLspAdapter {
             ))
         }
 
-        schemas.as_array_mut().unwrap().extend(
-            cx.all_action_names()
-                .into_iter()
-                .map(|&name| json_schema_store::url_schema_for_action(name)),
-        );
+        schemas
+            .as_array_mut()
+            .unwrap()
+            .extend(json_schema_store::all_schema_file_associations(cx));
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`

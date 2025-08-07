@@ -8919,6 +8919,7 @@ dependencies = [
  "serde_json",
  "settings",
  "util",
+ "zlog",
 ]
 
 [[package]]

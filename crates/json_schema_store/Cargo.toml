@@ -16,14 +16,15 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
-gpui.workspace = true
-util.workspace = true
-project.workspace = true
 async-trait.workspace = true
-settings.workspace = true
+gpui.workspace = true
+project.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars.workspace = true
+settings.workspace = true
+util.workspace = true
+zlog.workspace = true
 
 
 # Uncomment other workspace dependencies as needed
