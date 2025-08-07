@@ -1473,10 +1473,10 @@ impl GitStore {
             GitStoreState::Local { fs, .. } => {
                 let fs = fs.clone();
                 cx.background_executor()
-                    .spawn(async move { fs.git_clone(&repo_url, &path) })
+                    .spawn(async move { fs.git_clone(&repo_url, &path).await })
             }
             _ => {
-                todo!()
+                todo!("Implement ssh support")
             }
         }
     }

@@ -2081,7 +2081,7 @@ impl GitPanel {
             .detach_and_log_err(cx);
     }
 
-    pub(crate) fn git_clone(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
         let path = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,
@@ -2089,8 +2089,42 @@ impl GitPanel {
         });
 
         cx.spawn_in(window, async move |this, cx| {
-            let path = path.await.ok()?.ok()??;
-            dbg!(path);
+            let paths = path.await.ok()?.ok()??;
+            let path = paths.first()?.as_path();
+
+            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
+            let result_toast = match fs.git_clone(&repo, path).await {
+                Ok(_) => cx.update(|_, cx| {
+                    StatusToast::new(
+                        format!(
+                            "repo: {}, has been cloned in {}",
+                            &repo,
+                            path.to_string_lossy()
+                        ),
+                        cx,
+                        |this, _| {
+                            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                .dismiss_button(true)
+                        },
+                    )
+                }),
+                Err(e) => cx.update(|_, cx| {
+                    StatusToast::new(e.to_string(), cx, |this, _| {
+                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                            .dismiss_button(true)
+                    })
+                }),
+            }
+            .ok()?;
+
+            this.update(cx, |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.toggle_status_toast(result_toast, cx);
+                    })
+                    .ok();
+            })
+            .ok();
 
             Some(())
         })
