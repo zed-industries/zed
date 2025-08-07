@@ -50,6 +50,10 @@ impl AgentTool for GlobTool {
             .into()
     }
 
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
+    }
+
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>> {
         let path_matcher = match PathMatcher::new([&input.glob]) {
             Ok(matcher) => matcher,

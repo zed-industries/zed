@@ -341,7 +341,7 @@ impl LspAdapter for RustLspAdapter {
                 let name = &completion.label;
                 let text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
-                let source = Rope::from(format!("{prefix}{text} }}"));
+                let source = Rope::from_iter([prefix, &text, " }"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 mk_label(text, runs)
@@ -353,7 +353,7 @@ impl LspAdapter for RustLspAdapter {
                 let name = &completion.label;
                 let text = format!("{name}: {signature}",);
                 let prefix = "let ";
-                let source = Rope::from(format!("{prefix}{text} = ();"));
+                let source = Rope::from_iter([prefix, &text, " = ();"]);
                 let runs =
                     language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 mk_label(text, runs)
@@ -387,7 +387,7 @@ impl LspAdapter for RustLspAdapter {
                         &completion.label
                     };
                     let text = format!("{label}{suffix}");
-                    let source = Rope::from(format!("{prefix} {text} {{}}"));
+                    let source = Rope::from_iter([prefix, " ", &text, " {}"]);
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
                     mk_label(text, runs)
@@ -450,55 +450,22 @@ impl LspAdapter for RustLspAdapter {
         kind: lsp::SymbolKind,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let (text, filter_range, display_range) = match kind {
-            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
-                let text = format!("fn {} () {{}}", name);
-                let filter_range = 3..3 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::STRUCT => {
-                let text = format!("struct {} {{}}", name);
-                let filter_range = 7..7 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::ENUM => {
-                let text = format!("enum {} {{}}", name);
-                let filter_range = 5..5 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::INTERFACE => {
-                let text = format!("trait {} {{}}", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::CONSTANT => {
-                let text = format!("const {}: () = ();", name);
-                let filter_range = 6..6 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::MODULE => {
-                let text = format!("mod {} {{}}", name);
-                let filter_range = 4..4 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
-            lsp::SymbolKind::TYPE_PARAMETER => {
-                let text = format!("type {} {{}}", name);
-                let filter_range = 5..5 + name.len();
-                let display_range = 0..filter_range.end;
-                (text, filter_range, display_range)
-            }
+        let (prefix, suffix) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => ("fn ", " () {}"),
+            lsp::SymbolKind::STRUCT => ("struct ", " {}"),
+            lsp::SymbolKind::ENUM => ("enum ", " {}"),
+            lsp::SymbolKind::INTERFACE => ("trait ", " {}"),
+            lsp::SymbolKind::CONSTANT => ("const ", ": () = ();"),
+            lsp::SymbolKind::MODULE => ("mod ", " {}"),
+            lsp::SymbolKind::TYPE_PARAMETER => ("type ", " {}"),
             _ => return None,
         };
 
+        let filter_range = prefix.len()..prefix.len() + name.len();
+        let display_range = 0..filter_range.end;
         Some(CodeLabel {
-            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
-            text: text[display_range].to_string(),
+            runs: language.highlight_text(&Rope::from_iter([prefix, name, suffix]), display_range),
+            text: format!("{prefix}{name}"),
             filter_range,
         })
     }

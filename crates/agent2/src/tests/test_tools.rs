@@ -19,6 +19,10 @@ impl AgentTool for EchoTool {
         "echo".into()
     }
 
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
+    }
+
     fn run(self: Arc<Self>, input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
         Task::ready(Ok(input.text))
     }
@@ -40,6 +44,10 @@ impl AgentTool for DelayTool {
         "delay".into()
     }
 
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
+    }
+
     fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>
     where
         Self: Sized,
@@ -48,6 +56,31 @@ impl AgentTool for DelayTool {
             smol::Timer::after(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
         })
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct ToolRequiringPermissionInput {}
+
+pub struct ToolRequiringPermission;
+
+impl AgentTool for ToolRequiringPermission {
+    type Input = ToolRequiringPermissionInput;
+
+    fn name(&self) -> SharedString {
+        "tool_requiring_permission".into()
+    }
+
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        true
+    }
+
+    fn run(self: Arc<Self>, _input: Self::Input, cx: &mut App) -> Task<Result<String>>
+    where
+        Self: Sized,
+    {
+        cx.foreground_executor()
+            .spawn(async move { Ok("Allowed".to_string()) })
     }
 }
 
@@ -61,6 +94,10 @@ impl AgentTool for InfiniteTool {
 
     fn name(&self) -> SharedString {
         "infinite".into()
+    }
+
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
     }
 
     fn run(self: Arc<Self>, _input: Self::Input, cx: &mut App) -> Task<Result<String>> {
@@ -98,6 +135,10 @@ impl AgentTool for WordListTool {
 
     fn name(&self) -> SharedString {
         "word_list".into()
+    }
+
+    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
+        false
     }
 
     fn run(self: Arc<Self>, _input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
