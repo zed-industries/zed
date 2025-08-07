@@ -1618,7 +1618,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 
@@ -1666,7 +1666,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            path: (worktree_id, Path::new("a.rs")).into()
+            paths: vec![(worktree_id, Path::new("a.rs")).into()],
         }
     );
 

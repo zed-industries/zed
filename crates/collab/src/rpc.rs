@@ -1629,15 +1629,15 @@ fn notify_rejoined_projects(
             }
 
             // Stream this worktree's diagnostics.
-            for summary in worktree.diagnostic_summaries {
-                session.peer.send(
-                    session.connection_id,
-                    proto::UpdateDiagnosticSummary {
-                        project_id: project.id.to_proto(),
-                        worktree_id: worktree.id,
-                        summary: Some(summary),
-                    },
-                )?;
+            let mut worktree_diagnostics = worktree.diagnostic_summaries.into_iter();
+            if let Some(summary) = worktree_diagnostics.next() {
+                let message = proto::UpdateDiagnosticSummary {
+                    project_id: project.id.to_proto(),
+                    worktree_id: worktree.id,
+                    summary: Some(summary),
+                    more_summaries: worktree_diagnostics.collect(),
+                };
+                session.peer.send(session.connection_id, message)?;
             }
 
             for settings_file in worktree.settings_files {
@@ -2059,15 +2059,15 @@ async fn join_project(
         }
 
         // Stream this worktree's diagnostics.
-        for summary in worktree.diagnostic_summaries {
-            session.peer.send(
-                session.connection_id,
-                proto::UpdateDiagnosticSummary {
-                    project_id: project_id.to_proto(),
-                    worktree_id: worktree.id,
-                    summary: Some(summary),
-                },
-            )?;
+        let mut worktree_diagnostics = worktree.diagnostic_summaries.into_iter();
+        if let Some(summary) = worktree_diagnostics.next() {
+            let message = proto::UpdateDiagnosticSummary {
+                project_id: project.id.to_proto(),
+                worktree_id: worktree.id,
+                summary: Some(summary),
+                more_summaries: worktree_diagnostics.collect(),
+            };
+            session.peer.send(session.connection_id, message)?;
         }
 
         for settings_file in worktree.settings_files {

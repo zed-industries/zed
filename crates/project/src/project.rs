@@ -306,7 +306,7 @@ pub enum Event {
         language_server_id: LanguageServerId,
     },
     DiagnosticsUpdated {
-        path: ProjectPath,
+        paths: Vec<ProjectPath>,
         language_server_id: LanguageServerId,
     },
     RemoteIdChanged(Option<u64>),
@@ -2896,18 +2896,17 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LspStoreEvent::DiagnosticsUpdated {
-                language_server_id,
-                path,
-            } => cx.emit(Event::DiagnosticsUpdated {
-                path: path.clone(),
-                language_server_id: *language_server_id,
-            }),
-            LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
-                Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
+            LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
+                cx.emit(Event::DiagnosticsUpdated {
+                    paths: paths.clone(),
+                    language_server_id: *server_id,
+                })
+            }
+            LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => cx.emit(
+                Event::LanguageServerAdded(*server_id, name.clone(), *worktree_id),
             ),
-            LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerRemoved(*language_server_id))
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
