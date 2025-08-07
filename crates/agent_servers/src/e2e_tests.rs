@@ -13,12 +13,12 @@ use gpui::{Entity, TestAppContext};
 use indoc::indoc;
 use project::{FakeFs, Project};
 use settings::{Settings, SettingsStore};
-use util::path;
 
 pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
     let fs = init_test(cx).await;
+    let tempdir = tempfile::tempdir().unwrap();
     let project = Project::test(fs, [], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from Zed!", cx))
@@ -40,6 +40,8 @@ pub async fn test_basic(server: impl AgentServer + 'static, cx: &mut TestAppCont
             AgentThreadEntry::AssistantMessage(_)
         ));
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_path_mentions(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
@@ -118,7 +120,7 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
     std::fs::write(&foo_path, "Lorem ipsum dolor").expect("failed to write file");
 
     let project = Project::example([tempdir.path()], &mut cx.to_async()).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
 
     thread
         .update(cx, |thread, cx| {
@@ -156,8 +158,9 @@ pub async fn test_tool_call_with_permission(
     cx: &mut TestAppContext,
 ) {
     let fs = init_test(cx).await;
-    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let tempdir = tempfile::tempdir().unwrap();
+    let project = Project::test(fs, [tempdir.path()], cx).await;
+    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
     let full_turn = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -239,13 +242,15 @@ pub async fn test_tool_call_with_permission(
             "Expected content to contain 'Hello'"
         );
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
     let fs = init_test(cx).await;
-
-    let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let tempdir = tempfile::tempdir().unwrap();
+    let project = Project::test(fs, [tempdir.path()], cx).await;
+    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
     let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
@@ -308,12 +313,15 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
             AgentThreadEntry::AssistantMessage(..),
         ))
     });
+
+    drop(tempdir);
 }
 
 pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
     let fs = init_test(cx).await;
+    let tempdir = tempfile::tempdir().unwrap();
     let project = Project::test(fs, [], cx).await;
-    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+    let thread = new_test_thread(server, project.clone(), tempdir.path(), cx).await;
 
     thread
         .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
@@ -329,6 +337,8 @@ pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestA
 
     cx.executor().run_until_parked();
     assert!(!weak_thread.is_upgradable());
+
+    drop(tempdir);
 }
 
 #[macro_export]

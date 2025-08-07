@@ -893,9 +893,10 @@ pub(crate) mod tests {
     #[cfg_attr(not(feature = "e2e"), ignore)]
     async fn test_todo_plan(cx: &mut TestAppContext) {
         let fs = e2e_tests::init_test(cx).await;
+        let tempdir = tempfile::tempdir().unwrap();
         let project = Project::test(fs, [], cx).await;
         let thread =
-            e2e_tests::new_test_thread(ClaudeCode, project.clone(), "/private/tmp", cx).await;
+            e2e_tests::new_test_thread(ClaudeCode, project.clone(), tempdir.path(), cx).await;
 
         thread
             .update(cx, |thread, cx| {
@@ -949,6 +950,8 @@ pub(crate) mod tests {
             ));
             assert_eq!(thread.plan().entries.len(), entries_len);
         });
+
+        drop(tempdir);
     }
 
     #[test]
