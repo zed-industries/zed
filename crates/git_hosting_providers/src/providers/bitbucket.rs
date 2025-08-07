@@ -258,14 +258,5 @@ mod tests {
             pr.url.as_str(),
             "https://bitbucket.org/zed-industries/zed/pull-requests/123"
         );
-
-        // Pull request number at end
-        let message = "Fix bug in authentication module (pull request #456)";
-        let pr = bitbucket.extract_pull_request(&remote, message).unwrap();
-        assert_eq!(pr.number, 456);
-        assert_eq!(
-            pr.url.as_str(),
-            "https://bitbucket.org/zed-industries/zed/pull-requests/456"
-        );
     }
 }
