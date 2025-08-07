@@ -18,6 +18,7 @@ use git::{
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
+use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
