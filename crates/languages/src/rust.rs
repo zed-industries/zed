@@ -305,21 +305,23 @@ impl LspAdapter for RustLspAdapter {
         completion: &lsp::CompletionItem,
         language: &Arc<Language>,
     ) -> Option<CodeLabel> {
-        let detail = completion
+        // rust-analyzer calls these detail left and detail right in terms of where it expects things to be rendered
+        // this usually contains signatures of the thing to be completed
+        let detail_right = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.detail.as_ref())
+            .and_then(|detail| detail.description.as_ref())
             .or(completion.detail.as_ref())
             .map(|detail| detail.trim());
-        let function_signature = completion
+        // this tends to contain alias and import information
+        let detail_left = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.description.as_deref())
-            .or(completion.detail.as_deref());
-        match (detail, completion.kind) {
-            (Some(detail), Some(lsp::CompletionItemKind::FIELD)) => {
+            .and_then(|detail| detail.detail.as_deref());
+        match (detail_left, detail_right, completion.kind) {
+            (detail_left, Some(signature), Some(lsp::CompletionItemKind::FIELD)) => {
                 let name = &completion.label;
-                let text = format!("{name}: {detail}");
+                let mut text = format!("{name}: {signature}");
                 let prefix = "struct S { ";
                 let source = Rope::from(format!("{prefix}{text} }}"));
                 let runs =
@@ -329,6 +331,16 @@ impl LspAdapter for RustLspAdapter {
                     .as_deref()
                     .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
                     .unwrap_or(0..name.len());
+                if let Some(detail_left) = detail_left {
+                    text.push(' ');
+                    if !detail_left.starts_with('(') {
+                        text.push('(');
+                    }
+                    text.push_str(detail_left);
+                    if !detail_left.ends_with(')') {
+                        text.push(')');
+                    }
+                }
                 return Some(CodeLabel {
                     text,
                     runs,
@@ -336,15 +348,12 @@ impl LspAdapter for RustLspAdapter {
                 });
             }
             (
-                Some(detail),
+                _,
+                Some(signature),
                 Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE),
             ) if completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) => {
                 let name = &completion.label;
-                let text = format!(
-                    "{}: {}",
-                    name,
-                    completion.detail.as_deref().unwrap_or(detail)
-                );
+                let mut text = format!("{name}: {signature}",);
                 let prefix = "let ";
                 let source = Rope::from(format!("{prefix}{text} = ();"));
                 let runs =
@@ -354,6 +363,16 @@ impl LspAdapter for RustLspAdapter {
                     .as_deref()
                     .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
                     .unwrap_or(0..name.len());
+                if let Some(detail_left) = detail_left {
+                    text.push(' ');
+                    if !detail_left.starts_with('(') {
+                        text.push('(');
+                    }
+                    text.push_str(detail_left);
+                    if !detail_left.ends_with(')') {
+                        text.push(')');
+                    }
+                }
                 return Some(CodeLabel {
                     text,
                     runs,
@@ -361,10 +380,10 @@ impl LspAdapter for RustLspAdapter {
                 });
             }
             (
-                Some(detail),
+                detail_left,
+                Some(function_signature),
                 Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD),
             ) => {
-                static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
                 const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
@@ -373,29 +392,38 @@ impl LspAdapter for RustLspAdapter {
                     "unsafe fn",
                     "fn",
                 ];
-                // Is it function `async`?
-                let fn_keyword = FUNCTION_PREFIXES.iter().find_map(|prefix| {
-                    function_signature.as_ref().and_then(|signature| {
-                        signature
-                            .strip_prefix(*prefix)
-                            .map(|suffix| (*prefix, suffix))
-                    })
+                let fn_prefixed = FUNCTION_PREFIXES.iter().find_map(|&prefix| {
+                    function_signature
+                        .strip_prefix(prefix)
+                        .map(|suffix| (prefix, suffix))
                 });
                 // fn keyword should be followed by opening parenthesis.
-                if let Some((prefix, suffix)) = fn_keyword {
-                    let mut text = REGEX.replace(&completion.label, suffix).to_string();
+                if let Some((prefix, suffix)) = fn_prefixed {
+                    let mut text = if let Some(label) = completion.label.strip_suffix("(…)") {
+                        label.to_owned()
+                    } else {
+                        format!("{}{suffix}", completion.label)
+                    };
                     let source = Rope::from(format!("{prefix} {text} {{}}"));
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
-                    if detail.starts_with("(") {
-                        text.push(' ');
-                        text.push_str(&detail);
-                    }
+
                     let filter_range = completion
                         .filter_text
                         .as_deref()
                         .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
                         .unwrap_or(0..completion.label.find('(').unwrap_or(text.len()));
+
+                    if let Some(detail_left) = detail_left {
+                        text.push(' ');
+                        if !detail_left.starts_with('(') {
+                            text.push('(');
+                        }
+                        text.push_str(detail_left);
+                        if !detail_left.ends_with(')') {
+                            text.push(')');
+                        }
+                    }
                     return Some(CodeLabel {
                         filter_range,
                         text,
@@ -406,7 +434,7 @@ impl LspAdapter for RustLspAdapter {
                     .as_ref()
                     .map_or(false, |detail| detail.starts_with("macro_rules! "))
                 {
-                    let text = completion.label.clone();
+                    let mut text = completion.label.clone();
                     let len = text.len();
                     let source = Rope::from(text.as_str());
                     let runs = language.highlight_text(&source, 0..len);
@@ -415,6 +443,16 @@ impl LspAdapter for RustLspAdapter {
                         .as_deref()
                         .and_then(|filter| text.find(filter).map(|ix| ix..ix + filter.len()))
                         .unwrap_or(0..len);
+                    if let Some(detail_left) = detail_left {
+                        text.push(' ');
+                        if !detail_left.starts_with('(') {
+                            text.push('(');
+                        }
+                        text.push_str(detail_left);
+                        if !detail_left.ends_with(')') {
+                            text.push(')');
+                        }
+                    }
                     return Some(CodeLabel {
                         filter_range,
                         text,
@@ -422,7 +460,7 @@ impl LspAdapter for RustLspAdapter {
                     });
                 }
             }
-            (_, Some(kind)) => {
+            (detail_left, _, Some(kind)) => {
                 let highlight_name = match kind {
                     lsp::CompletionItemKind::STRUCT
                     | lsp::CompletionItemKind::INTERFACE
@@ -436,9 +474,15 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 let mut label = completion.label.clone();
-                if let Some(detail) = detail.filter(|detail| detail.starts_with("(")) {
+                if let Some(detail_left) = detail_left {
                     label.push(' ');
-                    label.push_str(detail);
+                    if !detail_left.starts_with('(') {
+                        label.push('(');
+                    }
+                    label.push_str(detail_left);
+                    if !detail_left.ends_with(')') {
+                        label.push(')');
+                    }
                 }
                 let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                 if let Some(highlight_name) = highlight_name {
