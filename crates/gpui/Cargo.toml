@@ -121,7 +121,7 @@ smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
 sum_tree.workspace = true
-taffy = "=0.8.3"
+taffy = "=0.9.0"
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
