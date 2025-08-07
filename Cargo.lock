@@ -157,6 +157,8 @@ dependencies = [
  "agent-client-protocol",
  "agent_servers",
  "anyhow",
+ "assistant_tool",
+ "assistant_tools",
  "client",
  "clock",
  "cloud_llm_client",
