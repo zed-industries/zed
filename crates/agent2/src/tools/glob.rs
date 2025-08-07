@@ -19,6 +19,10 @@ struct GlobInput {
     glob: SharedString,
 }
 
+#[expect(
+    dead_code,
+    reason = "Marked as unused by Rust 1.89 and left as is as of 07 Aug 2025 to let AI team address it."
+)]
 struct GlobTool {
     project: Entity<Project>,
     templates: Arc<Templates>,
