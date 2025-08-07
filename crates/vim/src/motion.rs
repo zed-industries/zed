@@ -1616,7 +1616,31 @@ fn up_down_buffer_rows(
     }
 
     let new_col = if i == goal_wrap {
-        map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details)
+        let calculated_col = map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details);
+        
+        // When navigating vertically in vim mode with inlay hints present,
+        // we need to be careful about bias direction. Using Bias::Right when
+        // moving down can cause the cursor to jump past inlay hints, leading
+        // to unexpected cursor positions. This is especially problematic in
+        // visual mode where precise selection is important.
+        //
+        // See: https://github.com/zed-industries/zed/issues/29134
+        if bias == Bias::Right {
+            // Check if we're about to clip into an inlay hint position
+            let test_point = DisplayPoint::new(begin_folded_line.row(), calculated_col);
+            let buffer_point = map.display_point_to_point(test_point, bias);
+            let redisplay_point = map.point_to_display_point(buffer_point, bias);
+            
+            // If the round-trip changed our column, we likely hit an inlay hint
+            // Use the buffer column to avoid jumping past the hint
+            if redisplay_point.column() != test_point.column() {
+                buffer_point.column
+            } else {
+                calculated_col
+            }
+        } else {
+            calculated_col
+        }
     } else {
         map.line_len(begin_folded_line.row())
     };
@@ -3851,6 +3875,90 @@ mod test {
             }
         "},
             Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_visual_mode_with_inlay_hints_on_empty_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Test the exact scenario from issue #29134
+        cx.set_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_oneˇ = this_is_a_long_name
+                        .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Normal,
+        );
+
+        // Add type hint inlay on the empty line (line 3, after "this_is_a_long_name")
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            // The empty line is at line 3 (0-indexed)
+            let line_start = snapshot.anchor_after(Point::new(3, 0));
+            let inlay_text = ": Vec<u32>";
+            let inlay = Inlay::edit_prediction(1, line_start, inlay_text);
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        // Enter visual mode
+        cx.simulate_keystrokes("v");
+        cx.assert_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_one« ˇ»= this_is_a_long_name
+                        .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Move down - should go to the beginning of line 4, not skip to line 5
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+                fn main() {
+                    let this_is_a_long_name = Vec::<u32>::new();
+                    let new_one« = this_is_a_long_name
+                      ˇ»  .iter()
+                        .map(|i| i + 1)
+                        .map(|i| i * 2)
+                        .collect::<Vec<_>>();
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // Test with multiple movements
+        cx.set_state(
+            "let aˇ = 1;\nlet b = 2;\n\nlet c = 3;",
+            Mode::Normal,
+        );
+
+        // Add type hint on the empty line
+        cx.update_editor(|editor, _window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let empty_line_start = snapshot.anchor_after(Point::new(2, 0));
+            let inlay_text = ": i32";
+            let inlay = Inlay::edit_prediction(2, empty_line_start, inlay_text);
+            editor.splice_inlays(&[], vec![inlay], cx);
+        });
+
+        // Enter visual mode and move down twice
+        cx.simulate_keystrokes("v j j");
+        cx.assert_state(
+            "let a« = 1;\nlet b = 2;\n\nˇ»let c = 3;",
+            Mode::Visual,
         );
     }
 
