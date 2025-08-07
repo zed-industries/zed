@@ -44,6 +44,7 @@ use core::fmt::{self, Debug, Formatter};
 use reqwest_client::ReqwestClient;
 use rpc::proto::{MultiLspQuery, split_repository_update};
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
+use tracing::Span;
 
 use futures::{
     FutureExt, SinkExt, StreamExt, TryStreamExt, channel::oneshot, future::BoxFuture,
@@ -94,8 +95,13 @@ const MAX_CONCURRENT_CONNECTIONS: usize = 512;
 
 static CONCURRENT_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 
+const TOTAL_DURATION_MS: &str = "total_duration_ms";
+const PROCESSING_DURATION_MS: &str = "processing_duration_ms";
+const QUEUE_DURATION_MS: &str = "queue_duration_ms";
+const HOST_WAITING_MS: &str = "host_waiting_ms";
+
 type MessageHandler =
-    Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session) -> BoxFuture<'static, ()>>;
+    Box<dyn Send + Sync + Fn(Box<dyn AnyTypedEnvelope>, Session, Span) -> BoxFuture<'static, ()>>;
 
 pub struct ConnectionGuard;
 
@@ -652,7 +658,7 @@ impl Server {
     {
         let prev_handler = self.handlers.insert(
             TypeId::of::<M>(),
-            Box::new(move |envelope, session| {
+            Box::new(move |envelope, session, span| {
                 let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
                 let received_at = envelope.received_at;
                 tracing::info!("message received");
@@ -663,23 +669,14 @@ impl Server {
                     let total_duration_ms = received_at.elapsed().as_micros() as f64 / 1000.0;
                     let processing_duration_ms = start_time.elapsed().as_micros() as f64 / 1000.0;
                     let queue_duration_ms = total_duration_ms - processing_duration_ms;
-
+                    span.record(TOTAL_DURATION_MS, total_duration_ms);
+                    span.record(PROCESSING_DURATION_MS, processing_duration_ms);
+                    span.record(QUEUE_DURATION_MS, queue_duration_ms);
                     match result {
                         Err(error) => {
-                            tracing::error!(
-                                ?error,
-                                total_duration_ms,
-                                processing_duration_ms,
-                                queue_duration_ms,
-                                "error handling message"
-                            )
+                            tracing::error!(?error, "error handling message")
                         }
-                        Ok(()) => tracing::info!(
-                            total_duration_ms,
-                            processing_duration_ms,
-                            queue_duration_ms,
-                            "finished handling message"
-                        ),
+                        Ok(()) => tracing::info!("finished handling message"),
                     }
                 }
                 .boxed()
@@ -889,12 +886,16 @@ impl Server {
                                 login=field::Empty,
                                 impersonator=field::Empty,
                                 multi_lsp_query_request=field::Empty,
+                                { TOTAL_DURATION_MS }=field::Empty,
+                                { PROCESSING_DURATION_MS }=field::Empty,
+                                { QUEUE_DURATION_MS }=field::Empty,
+                                { HOST_WAITING_MS }=field::Empty
                             );
                             principal.update_span(&span);
                             let span_enter = span.enter();
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 let is_background = message.is_background();
-                                let handle_message = (handler)(message, session.clone());
+                                let handle_message = (handler)(message, session.clone(), span.clone());
                                 drop(span_enter);
 
                                 let handle_message = async move {
