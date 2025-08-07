@@ -423,7 +423,7 @@ impl Peer {
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
         let request_start_time = Instant::now();
-        let elapsed_time = move || request_start_time.elapsed().as_millis();
+        let elapsed_time = move || request_start_time.elapsed().as_micros() as f64 / 1000.0;
         tracing::info!("start forwarding request");
         self.request_internal(Some(sender_id), receiver_id, request)
             .map_ok(|envelope| envelope.payload)
