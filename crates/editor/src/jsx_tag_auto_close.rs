@@ -843,7 +843,7 @@ mod jsx_tag_autoclose_tests {
         let mut cx = EditorTestContext::for_editor(editor, cx).await;
 
         cx.update_editor(|editor, window, cx| {
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select(vec![
                     Selection::from_offset(4),
                     Selection::from_offset(9),

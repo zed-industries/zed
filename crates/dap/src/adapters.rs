@@ -10,6 +10,7 @@ use gpui::{AsyncApp, SharedString};
 pub use http_client::{HttpClient, github::latest_github_release};
 use language::{LanguageName, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::WorktreeId;
 use smol::fs::File;
@@ -47,7 +48,10 @@ pub trait DapDelegate: Send + Sync + 'static {
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize, JsonSchema,
+)]
+#[serde(transparent)]
 pub struct DebugAdapterName(pub SharedString);
 
 impl Deref for DebugAdapterName {
@@ -66,6 +70,12 @@ impl AsRef<str> for DebugAdapterName {
 
 impl Borrow<str> for DebugAdapterName {
     fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Borrow<SharedString> for DebugAdapterName {
+    fn borrow(&self) -> &SharedString {
         &self.0
     }
 }
@@ -344,6 +354,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        user_args: Option<Vec<String>>,
         cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary>;
 
@@ -372,6 +383,14 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     fn label_for_child_session(&self, _args: &StartDebuggingRequestArguments) -> Option<String> {
         None
+    }
+
+    fn compact_child_session(&self) -> bool {
+        false
+    }
+
+    fn prefer_thread_name(&self) -> bool {
+        false
     }
 }
 
@@ -434,12 +453,21 @@ impl DebugAdapter for FakeAdapter {
         _: &Arc<dyn DapDelegate>,
         task_definition: &DebugTaskDefinition,
         _: Option<PathBuf>,
+        _: Option<Vec<String>>,
         _: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
+        let connection = task_definition
+            .tcp_connection
+            .as_ref()
+            .map(|connection| TcpArguments {
+                host: connection.host(),
+                port: connection.port.unwrap_or(17),
+                timeout: connection.timeout,
+            });
         Ok(DebugAdapterBinary {
             command: Some("command".into()),
             arguments: vec![],
-            connection: None,
+            connection,
             envs: HashMap::default(),
             cwd: None,
             request_args: StartDebuggingRequestArguments {

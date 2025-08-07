@@ -10,7 +10,7 @@ use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
 };
-use gpui::{Window, actions, impl_actions};
+use gpui::{Action, Window, actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
@@ -46,20 +46,26 @@ pub enum Object {
     EntireFile,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects a word text object.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects a subword text object.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+/// Selects text at the same indentation level.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct IndentObj {
     #[serde(default)]
@@ -252,30 +258,48 @@ fn find_mini_brackets(
     find_mini_delimiters(map, display_point, around, &is_bracket_delimiter)
 }
 
-impl_actions!(vim, [Word, Subword, IndentObj]);
-
 actions!(
     vim,
     [
+        /// Selects a sentence text object.
         Sentence,
+        /// Selects a paragraph text object.
         Paragraph,
+        /// Selects text within single quotes.
         Quotes,
+        /// Selects text within backticks.
         BackQuotes,
+        /// Selects text within the nearest quotes (single or double).
         MiniQuotes,
+        /// Selects text within any type of quotes.
         AnyQuotes,
+        /// Selects text within double quotes.
         DoubleQuotes,
+        /// Selects text within vertical bars (pipes).
         VerticalBars,
+        /// Selects text within parentheses.
         Parentheses,
+        /// Selects text within the nearest brackets.
         MiniBrackets,
+        /// Selects text within any type of brackets.
         AnyBrackets,
+        /// Selects text within square brackets.
         SquareBrackets,
+        /// Selects text within curly brackets.
         CurlyBrackets,
+        /// Selects text within angle brackets.
         AngleBrackets,
+        /// Selects a function argument.
         Argument,
+        /// Selects an HTML/XML tag.
         Tag,
+        /// Selects a method or function.
         Method,
+        /// Selects a class definition.
         Class,
+        /// Selects a comment block.
         Comment,
+        /// Selects the entire file.
         EntireFile
     ]
 );
@@ -372,10 +396,12 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
 
 impl Vim {
     fn object(&mut self, object: Object, window: &mut Window, cx: &mut Context<Self>) {
+        let count = Self::take_count(cx);
+
         match self.mode {
-            Mode::Normal => self.normal_object(object, window, cx),
+            Mode::Normal => self.normal_object(object, count, window, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                self.visual_object(object, window, cx)
+                self.visual_object(object, count, window, cx)
             }
             Mode::Insert | Mode::Replace | Mode::HelixNormal => {
                 // Shouldn't execute a text object in insert mode. Ignoring
@@ -484,6 +510,7 @@ impl Object {
         map: &DisplaySnapshot,
         selection: Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> Option<Range<DisplayPoint>> {
         let relative_to = selection.head();
         match self {
@@ -502,7 +529,8 @@ impl Object {
                 }
             }
             Object::Sentence => sentence(map, relative_to, around),
-            Object::Paragraph => paragraph(map, relative_to, around),
+            //change others later
+            Object::Paragraph => paragraph(map, relative_to, around, times.unwrap_or(1)),
             Object::Quotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '\'', '\'')
             }
@@ -691,8 +719,9 @@ impl Object {
         map: &DisplaySnapshot,
         selection: &mut Selection<DisplayPoint>,
         around: bool,
+        times: Option<usize>,
     ) -> bool {
-        if let Some(range) = self.range(map, selection.clone(), around) {
+        if let Some(range) = self.range(map, selection.clone(), around, times) {
             selection.start = range.start;
             selection.end = range.end;
             true
@@ -1398,30 +1427,37 @@ fn paragraph(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,
+    times: usize,
 ) -> Option<Range<DisplayPoint>> {
     let mut paragraph_start = start_of_paragraph(map, relative_to);
     let mut paragraph_end = end_of_paragraph(map, relative_to);
 
-    let paragraph_end_row = paragraph_end.row();
-    let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
-    let point = relative_to.to_point(map);
-    let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
+    for i in 0..times {
+        let paragraph_end_row = paragraph_end.row();
+        let paragraph_ends_with_eof = paragraph_end_row == map.max_point().row();
+        let point = relative_to.to_point(map);
+        let current_line_is_empty = map.buffer_snapshot.is_line_blank(MultiBufferRow(point.row));
 
-    if around {
-        if paragraph_ends_with_eof {
-            if current_line_is_empty {
-                return None;
-            }
+        if around {
+            if paragraph_ends_with_eof {
+                if current_line_is_empty {
+                    return None;
+                }
 
-            let paragraph_start_row = paragraph_start.row();
-            if paragraph_start_row.0 != 0 {
-                let previous_paragraph_last_line_start =
-                    DisplayPoint::new(paragraph_start_row - 1, 0);
-                paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                let paragraph_start_row = paragraph_start.row();
+                if paragraph_start_row.0 != 0 {
+                    let previous_paragraph_last_line_start =
+                        Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
+                }
+            } else {
+                let mut start_row = paragraph_end_row.0 + 1;
+                if i > 0 {
+                    start_row += 1;
+                }
+                let next_paragraph_start = Point::new(start_row, 0).to_display_point(map);
+                paragraph_end = end_of_paragraph(map, next_paragraph_start);
             }
-        } else {
-            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
-            paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
 

@@ -6,7 +6,7 @@ use collab_ui::{
     channel_view::ChannelView,
     notifications::project_shared_notification::ProjectSharedNotification,
 };
-use editor::{Editor, MultiBuffer, PathKey};
+use editor::{Editor, MultiBuffer, PathKey, SelectionEffects};
 use gpui::{
     AppContext as _, BackgroundExecutor, BorrowAppContext, Entity, SharedString, TestAppContext,
     VisualContext, VisualTestContext, point,
@@ -376,7 +376,9 @@ async fn test_basic_following(
 
     // Changes to client A's editor are reflected on client B.
     editor_a1.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([1..1, 2..2]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1, 2..2])
+        });
     });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
     executor.run_until_parked();
@@ -393,7 +395,9 @@ async fn test_basic_following(
     editor_b1.update(cx_b, |editor, cx| assert_eq!(editor.text(cx), "TWO"));
 
     editor_a1.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([3..3]));
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([3..3])
+        });
         editor.set_scroll_position(point(0., 100.), window, cx);
     });
     executor.advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -435,7 +439,7 @@ async fn test_basic_following(
         editor_a1.item_id()
     );
 
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    // #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
     {
         use crate::rpc::RECONNECT_TIMEOUT;
         use gpui::TestScreenCaptureSource;
@@ -452,11 +456,19 @@ async fn test_basic_following(
             .await
             .unwrap();
         cx_b.set_screen_capture_sources(vec![display]);
+        let source = cx_b
+            .read(|cx| cx.screen_capture_sources())
+            .await
+            .unwrap()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
         active_call_b
             .update(cx_b, |call, cx| {
                 call.room()
                     .unwrap()
-                    .update(cx, |room, cx| room.share_screen(cx))
+                    .update(cx, |room, cx| room.share_screen(source, cx))
             })
             .await
             .unwrap();
@@ -1009,7 +1021,7 @@ async fn test_peers_following_each_other(cx_a: &mut TestAppContext, cx_b: &mut T
     // and some of which were originally opened by client B.
     workspace_b.update_in(cx_b, |workspace, window, cx| {
         workspace.active_pane().update(cx, |pane, cx| {
-            pane.close_inactive_items(&Default::default(), window, cx)
+            pane.close_other_items(&Default::default(), None, window, cx)
                 .detach();
         });
     });
@@ -1647,7 +1659,9 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // b should follow a to position 1
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([1..1]))
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([1..1])
+        })
     });
     cx_a.executor()
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -1667,7 +1681,9 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
 
     // b should not follow a to position 2
     editor_a.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| s.select_ranges([2..2]))
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([2..2])
+        })
     });
     cx_a.executor()
         .advance_clock(workspace::item::LEADER_UPDATE_THROTTLE);
@@ -1968,7 +1984,7 @@ async fn test_following_to_channel_notes_without_a_shared_project(
         assert_eq!(notes.channel(cx).unwrap().name, "channel-1");
         notes.editor.update(cx, |editor, cx| {
             editor.insert("Hello from A.", window, cx);
-            editor.change_selections(None, window, cx, |selections| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
                 selections.select_ranges(vec![3..4]);
             });
         });
@@ -2109,7 +2125,7 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
         workspace.add_item_to_center(Box::new(editor.clone()) as _, window, cx)
     });
     editor.update_in(cx_a, |editor, window, cx| {
-        editor.change_selections(None, window, cx, |s| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::row_range(4..4)]);
         })
     });

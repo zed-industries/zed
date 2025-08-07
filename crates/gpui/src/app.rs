@@ -39,8 +39,8 @@ use crate::{
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, PlatformKeyboardLayout, Point, PromptBuilder, PromptButton, PromptHandle,
     PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation, ScreenCaptureSource,
-    SharedString, SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window,
-    WindowAppearance, WindowHandle, WindowId, WindowInvalidator,
+    SubscriberSet, Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance,
+    WindowHandle, WindowId, WindowInvalidator,
     colors::{Colors, GlobalColors},
     current_platform, hash, init_app_menus,
 };
@@ -272,6 +272,7 @@ pub struct App {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
@@ -344,6 +345,7 @@ impl App {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keystroke_interceptors: SubscriberSet::new(),
                 keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
@@ -446,15 +448,23 @@ impl App {
     }
 
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
-        self.pending_updates += 1;
+        self.start_update();
         let result = update(self);
+        self.finish_update();
+        result
+    }
+
+    pub(crate) fn start_update(&mut self) {
+        self.pending_updates += 1;
+    }
+
+    pub(crate) fn finish_update(&mut self) {
         if !self.flushing_effects && self.pending_updates == 1 {
             self.flushing_effects = true;
             self.flush_effects();
             self.flushing_effects = false;
         }
         self.pending_updates -= 1;
-        result
     }
 
     /// Arrange a callback to be invoked when the given entity calls `notify` on its respective context.
@@ -686,7 +696,7 @@ impl App {
     /// Returns a list of available screen capture sources.
     pub fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         self.platform.screen_capture_sources()
     }
 
@@ -866,7 +876,6 @@ impl App {
         loop {
             self.release_dropped_entities();
             self.release_dropped_focus_handles();
-
             if let Some(effect) = self.pending_effects.pop_front() {
                 match effect {
                     Effect::Notify { emitter } => {
@@ -909,7 +918,7 @@ impl App {
                     })
                     .collect::<Vec<_>>()
                 {
-                    self.update_window(window, |_, window, cx| window.draw(cx))
+                    self.update_window(window, |_, window, cx| window.draw(cx).clear())
                         .unwrap();
                 }
 
@@ -945,8 +954,8 @@ impl App {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, count| {
-                if count.load(SeqCst) == 0 {
+            .retain(|handle_id, focus| {
+                if focus.ref_count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
@@ -1248,11 +1257,7 @@ impl App {
                         .downcast::<T>()
                         .unwrap()
                         .update(cx, |entity_state, cx| {
-                            if let Some(window) = window {
-                                on_new(entity_state, Some(window), cx);
-                            } else {
-                                on_new(entity_state, None, cx);
-                            }
+                            on_new(entity_state, window.as_deref_mut(), cx)
                         })
                 },
             ),
@@ -1322,6 +1327,32 @@ impl App {
         )
     }
 
+    /// Register a callback to be invoked when a keystroke is received by the application
+    /// in any window. Note that this fires _before_ all other action and event mechanisms have resolved
+    /// unlike [`App::observe_keystrokes`] which fires after. This means that `cx.stop_propagation` calls
+    /// within interceptors will prevent action dispatch
+    pub fn intercept_keystrokes(
+        &mut self,
+        mut f: impl FnMut(&KeystrokeEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        fn inner(
+            keystroke_interceptors: &SubscriberSet<(), KeystrokeObserver>,
+            handler: KeystrokeObserver,
+        ) -> Subscription {
+            let (subscription, activate) = keystroke_interceptors.insert((), handler);
+            activate();
+            subscription
+        }
+
+        inner(
+            &mut self.keystroke_interceptors,
+            Box::new(move |event, window, cx| {
+                f(event, window, cx);
+                true
+            }),
+        )
+    }
+
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
@@ -1334,7 +1365,14 @@ impl App {
         self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
-    /// Register a global listener for actions invoked via the keyboard.
+    /// Get all key bindings in the app.
+    pub fn key_bindings(&self) -> Rc<RefCell<Keymap>> {
+        self.keymap.clone()
+    }
+
+    /// Register a global handler for actions invoked via the keyboard. These handlers are run at
+    /// the end of the bubble phase for actions, and so will only be invoked if there are no other
+    /// handlers or if they called `cx.propagate()`.
     pub fn on_action<A: Action>(&mut self, listener: impl Fn(&A, &mut Self) + 'static) {
         self.global_action_listeners
             .entry(TypeId::of::<A>())
@@ -1374,7 +1412,7 @@ impl App {
 
     /// Get all action names that have been registered. Note that registration only allows for
     /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
-    pub fn all_action_names(&self) -> &[SharedString] {
+    pub fn all_action_names(&self) -> &[&'static str] {
         self.actions.all_action_names()
     }
 
@@ -1388,14 +1426,24 @@ impl App {
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Vec<(&'static str, Option<schemars::Schema>)> {
         self.actions.action_schemas(generator)
     }
 
-    /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
-        self.actions.action_deprecations()
+    /// Get a map from a deprecated action name to the canonical name.
+    pub fn deprecated_actions_to_preferred_actions(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecated_aliases()
+    }
+
+    /// Get a map from an action name to the deprecation messages.
+    pub fn action_deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.deprecation_messages()
+    }
+
+    /// Get a map from an action name to the documentation.
+    pub fn action_documentation(&self) -> &HashMap<&'static str, &'static str> {
+        self.actions.documentation()
     }
 
     /// Register a callback to be invoked when the application is about to quit.
@@ -1780,6 +1828,13 @@ impl AppContext for App {
         })
     }
 
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> GpuiBorrow<'a, T>
+    where
+        T: 'static,
+    {
+        GpuiBorrow::new(handle.clone(), self)
+    }
+
     fn read_entity<T, R>(
         &self,
         handle: &Entity<T>,
@@ -1968,11 +2023,91 @@ impl HttpClient for NullHttpClient {
         .boxed()
     }
 
+    fn user_agent(&self) -> Option<&http_client::http::HeaderValue> {
+        None
+    }
+
     fn proxy(&self) -> Option<&Url> {
         None
     }
 
     fn type_name(&self) -> &'static str {
         type_name::<Self>()
+    }
+}
+
+/// A mutable reference to an entity owned by GPUI
+pub struct GpuiBorrow<'a, T> {
+    inner: Option<Lease<T>>,
+    app: &'a mut App,
+}
+
+impl<'a, T: 'static> GpuiBorrow<'a, T> {
+    fn new(inner: Entity<T>, app: &'a mut App) -> Self {
+        app.start_update();
+        let lease = app.entities.lease(&inner);
+        Self {
+            inner: Some(lease),
+            app,
+        }
+    }
+}
+
+impl<'a, T: 'static> std::borrow::Borrow<T> for GpuiBorrow<'a, T> {
+    fn borrow(&self) -> &T {
+        self.inner.as_ref().unwrap().borrow()
+    }
+}
+
+impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        self.inner.as_mut().unwrap().borrow_mut()
+    }
+}
+
+impl<'a, T> Drop for GpuiBorrow<'a, T> {
+    fn drop(&mut self) {
+        let lease = self.inner.take().unwrap();
+        self.app.notify(lease.id);
+        self.app.entities.end_lease(lease);
+        self.app.finish_update();
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{cell::RefCell, rc::Rc};
+
+    use crate::{AppContext, TestAppContext};
+
+    #[test]
+    fn test_gpui_borrow() {
+        let cx = TestAppContext::single();
+        let observation_count = Rc::new(RefCell::new(0));
+
+        let state = cx.update(|cx| {
+            let state = cx.new(|_| false);
+            cx.observe(&state, {
+                let observation_count = observation_count.clone();
+                move |_, _| {
+                    let mut count = observation_count.borrow_mut();
+                    *count += 1;
+                }
+            })
+            .detach();
+
+            state
+        });
+
+        cx.update(|cx| {
+            // Calling this like this so that we don't clobber the borrow_mut above
+            *std::borrow::BorrowMut::borrow_mut(&mut state.as_mut(cx)) = true;
+        });
+
+        cx.update(|cx| {
+            state.write(cx, false);
+        });
+
+        assert_eq!(*observation_count.borrow(), 2);
     }
 }

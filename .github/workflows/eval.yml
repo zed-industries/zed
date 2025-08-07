@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - "**"
-    types: [opened, synchronize, reopened, labeled]
+    types: [synchronize, reopened, labeled]
 
   workflow_dispatch:
 
@@ -25,16 +25,6 @@ env:
   ZED_EVAL_TELEMETRY: 1
 
 jobs:
-  # This is a no-op job that we run to prevent GitHub from marking the workflow
-  # as failed for PRs that don't have the `run-eval` label.
-  noop:
-    name: No-op
-    runs-on: ubuntu-latest
-    if: github.repository_owner == 'zed-industries'
-    steps:
-      - name: No-op
-        run: echo "Nothing to do"
-
   run_eval:
     timeout-minutes: 60
     name: Run Agent Eval
@@ -45,7 +35,7 @@ jobs:
       - buildjet-16vcpu-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
-        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4

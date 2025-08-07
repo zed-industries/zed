@@ -141,7 +141,15 @@ pub type CodeBlockRenderFn = Arc<
 pub type CodeBlockTransformFn =
     Arc<dyn Fn(AnyDiv, Range<usize>, CodeBlockMetadata, &mut Window, &App) -> AnyDiv>;
 
-actions!(markdown, [Copy, CopyAsMarkdown]);
+actions!(
+    markdown,
+    [
+        /// Copies the selected text to the clipboard.
+        Copy,
+        /// Copies the selected text as markdown to the clipboard.
+        CopyAsMarkdown
+    ]
+);
 
 impl Markdown {
     pub fn new(
@@ -421,7 +429,7 @@ impl Selection {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
@@ -504,7 +512,6 @@ impl MarkdownElement {
         let selection = self.markdown.read(cx).selection;
         let selection_start = rendered_text.position_for_source_index(selection.start);
         let selection_end = rendered_text.position_for_source_index(selection.end);
-
         if let Some(((start_position, start_line_height), (end_position, end_line_height))) =
             selection_start.zip(selection_end)
         {
@@ -1673,7 +1680,7 @@ struct RenderedText {
     links: Rc<[RenderedLink]>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 struct RenderedLink {
     source_range: Range<usize>,
     destination_url: SharedString,

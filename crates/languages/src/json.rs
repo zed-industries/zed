@@ -8,7 +8,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
+    LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -31,6 +32,8 @@ use std::{
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
+use crate::PackageJsonData;
+
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-json-language-server";
 
@@ -47,12 +50,14 @@ impl ContextProvider for JsonTaskProvider {
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
-        let Some(file) = project::File::from_dyn(file.as_ref())
-            .filter(|file| file.path.file_name() == Some("package.json".as_ref()))
-            .cloned()
-        else {
+        let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
             return Task::ready(None);
         };
+        let is_package_json = file.path.ends_with("package.json");
+        let is_composer_json = file.path.ends_with("composer.json");
+        if !is_package_json && !is_composer_json {
+            return Task::ready(None);
+        }
 
         cx.spawn(async move |cx| {
             let contents = file
@@ -61,54 +66,70 @@ impl ContextProvider for JsonTaskProvider {
                 .ok()?
                 .await
                 .ok()?;
+            let path = cx.update(|cx| file.abs_path(cx)).ok()?.as_path().into();
 
-            let as_json = serde_json_lenient::Value::from_str(&contents.text).ok()?;
-            let gutter_tasks = [
-                TaskTemplate {
-                    label: "package script $ZED_CUSTOM_script".to_owned(),
-                    command: "npm".to_owned(),
-                    args: vec![
-                        "--prefix".into(),
-                        "$ZED_DIRNAME".into(),
-                        "run".into(),
-                        VariableName::Custom("script".into()).template_value(),
-                    ],
-                    tags: vec!["package-script".into()],
-                    ..TaskTemplate::default()
-                },
-                TaskTemplate {
-                    label: "composer script $ZED_CUSTOM_script".to_owned(),
-                    command: "composer".to_owned(),
-                    args: vec![
-                        "-d".into(),
-                        "$ZED_DIRNAME".into(),
-                        VariableName::Custom("script".into()).template_value(),
-                    ],
-                    tags: vec!["composer-script".into()],
-                    ..TaskTemplate::default()
-                },
-            ];
-            let tasks = as_json
-                .get("scripts")?
-                .as_object()?
-                .keys()
-                .map(|key| TaskTemplate {
-                    label: format!("run {key}"),
-                    command: "npm".to_owned(),
-                    args: vec![
-                        "--prefix".into(),
-                        "$ZED_DIRNAME".into(),
-                        "run".into(),
-                        key.into(),
-                    ],
-                    ..TaskTemplate::default()
-                })
-                .chain(gutter_tasks)
-                .collect();
-            Some(TaskTemplates(tasks))
+            let task_templates = if is_package_json {
+                let package_json = serde_json_lenient::from_str::<
+                    HashMap<String, serde_json_lenient::Value>,
+                >(&contents.text)
+                .ok()?;
+                let package_json = PackageJsonData::new(path, package_json);
+                let command = package_json.package_manager.unwrap_or("npm").to_owned();
+                package_json
+                    .scripts
+                    .into_iter()
+                    .map(|(_, key)| TaskTemplate {
+                        label: format!("run {key}"),
+                        command: command.clone(),
+                        args: vec!["run".into(), key],
+                        cwd: Some(VariableName::Dirname.template_value()),
+                        ..TaskTemplate::default()
+                    })
+                    .chain([TaskTemplate {
+                        label: "package script $ZED_CUSTOM_script".to_owned(),
+                        command: command.clone(),
+                        args: vec![
+                            "run".into(),
+                            VariableName::Custom("script".into()).template_value(),
+                        ],
+                        cwd: Some(VariableName::Dirname.template_value()),
+                        tags: vec!["package-script".into()],
+                        ..TaskTemplate::default()
+                    }])
+                    .collect()
+            } else if is_composer_json {
+                serde_json_lenient::Value::from_str(&contents.text)
+                    .ok()?
+                    .get("scripts")?
+                    .as_object()?
+                    .keys()
+                    .map(|key| TaskTemplate {
+                        label: format!("run {key}"),
+                        command: "composer".to_owned(),
+                        args: vec!["-d".into(), "$ZED_DIRNAME".into(), key.into()],
+                        ..TaskTemplate::default()
+                    })
+                    .chain([TaskTemplate {
+                        label: "composer script $ZED_CUSTOM_script".to_owned(),
+                        command: "composer".to_owned(),
+                        args: vec![
+                            "-d".into(),
+                            "$ZED_DIRNAME".into(),
+                            VariableName::Custom("script".into()).template_value(),
+                        ],
+                        tags: vec!["composer-script".into()],
+                        ..TaskTemplate::default()
+                    }])
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            Some(TaskTemplates(task_templates))
         })
     }
 }
+
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
@@ -210,6 +231,13 @@ impl JsonLspAdapter {
             ))
         }
 
+        schemas
+            .as_array_mut()
+            .unwrap()
+            .extend(cx.all_action_names().into_iter().map(|&name| {
+                project::lsp_store::json_language_server_ext::url_schema_for_action(name)
+            }));
+
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
@@ -241,7 +269,15 @@ impl JsonLspAdapter {
             .await;
 
         let config = cx.update(|cx| {
-            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+            Self::get_workspace_config(
+                self.languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect(),
+                adapter_schemas,
+                cx,
+            )
         })?;
         writer.replace(config.clone());
         return Ok(config);
@@ -250,10 +286,10 @@ impl JsonLspAdapter {
 
 #[cfg(debug_assertions)]
 fn generate_inspector_style_schema() -> serde_json_lenient::Value {
-    let schema = schemars::r#gen::SchemaSettings::draft07()
-        .with(|settings| settings.option_add_null_type = false)
+    let schema = schemars::generate::SchemaSettings::draft2019_09()
+        .with_transform(util::schemars::DefaultDenyUnknownFields)
         .into_generator()
-        .into_root_schema_for::<gpui::StyleRefinement>();
+        .root_schema_for::<gpui::StyleRefinement>();
 
     serde_json_lenient::to_value(schema).unwrap()
 }
@@ -380,10 +416,10 @@ impl LspAdapter for JsonLspAdapter {
         Ok(config)
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         [
-            ("JSON".into(), "json".into()),
-            ("JSONC".into(), "jsonc".into()),
+            (LanguageName::new("JSON"), "json".into()),
+            (LanguageName::new("JSONC"), "jsonc".into()),
         ]
         .into_iter()
         .collect()
@@ -481,6 +517,7 @@ impl LspAdapter for NodeVersionAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 

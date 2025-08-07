@@ -8,7 +8,7 @@ A given extension may provide one or more DAP servers.
 Each DAP server must be registered in the `extension.toml`:
 
 ```toml
-[debug-adapters.my-debug-adapter]
+[debug_adapters.my-debug-adapter]
 # Optional relative path to the JSON schema for the debug adapter configuration schema. Defaults to `debug_adapter_schemas/$DEBUG_ADAPTER_NAME_ID.json`.
 # Note that while this field is optional, a schema is mandatory.
 schema_path = "relative/path/to/schema.json"
@@ -56,7 +56,7 @@ impl zed::Extension for MyExtension {
 }
 ```
 
-`dap_config_to_scenario` is used when the user spawns a session via new session modal UI. At a high level, it takes a generic debug configuration (that isn't specific to any
+`dap_config_to_scenario` is used when the user spawns a session via new process modal UI. At a high level, it takes a generic debug configuration (that isn't specific to any
 debug adapter) and tries to turn it into a concrete debug scenario for your adapter.
 Put another way, it is supposed to answer the question: "Given a program, a list of arguments, current working directory and environment variables, what would the configuration for spawning this debug adapter look like?".
 
@@ -72,7 +72,7 @@ Locators can (but don't have to) be agnostic to the debug adapter they are used 
 Your extension can define one or more debug locators. Each debug locator must be registered in the `extension.toml`:
 
 ```toml
-[debug-locators.my-debug-locator]
+[debug_locators.my-debug-locator]
 ```
 
 Locators have two components.

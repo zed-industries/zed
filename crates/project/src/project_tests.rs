@@ -18,6 +18,7 @@ use git::{
 use git2::RepositoryInitOptions;
 use gpui::{App, BackgroundExecutor, SemanticVersion, UpdateGlobal};
 use http_client::Url;
+use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiskState, FakeLspAdapter, LanguageConfig,
     LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
@@ -568,7 +569,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .map(|(source_kind, task)| {
                 let resolved = task.resolved;
-                (source_kind, resolved.command)
+                (source_kind, resolved.command.unwrap())
             })
             .collect::<Vec<_>>(),
         vec![(
@@ -918,6 +919,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
+            HashSet::default(),
             cx,
         );
     });
@@ -1099,7 +1101,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     let fake_server = fake_servers.next().await.unwrap();
     let (server_id, server_name) = lsp_store.read_with(cx, |lsp_store, _| {
         let (id, status) = lsp_store.language_server_statuses().next().unwrap();
-        (id, LanguageServerName::from(status.name.as_str()))
+        (id, status.name.clone())
     });
 
     // Simulate jumping to a definition in a dependency outside of the worktree.
@@ -1697,7 +1699,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             name: "the-language-server",
             disk_based_diagnostics_sources: vec!["disk".into()],
             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1709,18 +1711,23 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
     });
     let mut events = cx.events(&project);
 
     // Simulate the newly started server sending more diagnostics.
     let fake_server = fake_servers.next().await.unwrap();
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerRemoved(LanguageServerId(0))
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
@@ -1731,6 +1738,14 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     );
     assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     fake_server.start_progress(progress_token).await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerBufferRegistered {
+            server_id: LanguageServerId(1),
+            buffer_id,
+            buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+        }
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -1820,7 +1835,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     // The diagnostics are cleared.
@@ -1875,7 +1890,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], cx);
+        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -2018,7 +2033,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2037,14 +2052,14 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
             settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("Rust"),
                     LanguageSettingsContent {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
-                settings.languages.insert(
+                settings.languages.0.insert(
                     LanguageName::new("JavaScript"),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2988,7 +3003,7 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
         )))
     });
     let mut definitions = project
-        .update(cx, |project, cx| project.definition(&buffer, 22, cx))
+        .update(cx, |project, cx| project.definitions(&buffer, 22, cx))
         .await
         .unwrap();
 
@@ -7497,13 +7512,13 @@ async fn test_staging_random_hunks(
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(true, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(true, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(false, &[hunk.clone()], &snapshot, true, cx);
+                diff.stage_or_unstage_hunks(false, std::slice::from_ref(hunk), &snapshot, true, cx);
             });
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }

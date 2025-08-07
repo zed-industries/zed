@@ -201,13 +201,13 @@ pub struct Response {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
     #[serde(default)]
-    pub prompt_cache_hit_tokens: u32,
+    pub prompt_cache_hit_tokens: u64,
     #[serde(default)]
-    pub prompt_cache_miss_tokens: u32,
+    pub prompt_cache_miss_tokens: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -224,6 +224,7 @@ pub struct StreamResponse {
     pub created: u64,
     pub model: String,
     pub choices: Vec<StreamChoice>,
+    pub usage: Option<Usage>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

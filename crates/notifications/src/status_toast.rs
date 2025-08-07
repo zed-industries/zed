@@ -39,6 +39,7 @@ pub struct StatusToast {
     icon: Option<ToastIcon>,
     text: SharedString,
     action: Option<ToastAction>,
+    show_dismiss: bool,
     this_handle: Entity<Self>,
     focus_handle: FocusHandle,
 }
@@ -57,6 +58,7 @@ impl StatusToast {
                     text: text.into(),
                     icon: None,
                     action: None,
+                    show_dismiss: false,
                     this_handle: cx.entity(),
                     focus_handle,
                 },
@@ -87,20 +89,33 @@ impl StatusToast {
         ));
         self
     }
+
+    pub fn dismiss_button(mut self, show: bool) -> Self {
+        self.show_dismiss = show;
+        self
+    }
 }
 
 impl Render for StatusToast {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_action_or_dismiss = self.action.is_some() || self.show_dismiss;
+
         h_flex()
             .id("status-toast")
             .elevation_3(cx)
             .gap_2()
             .py_1p5()
-            .px_2p5()
+            .pl_2p5()
+            .map(|this| {
+                if has_action_or_dismiss {
+                    this.pr_1p5()
+                } else {
+                    this.pr_2p5()
+                }
+            })
             .flex_none()
             .bg(cx.theme().colors().surface_background)
             .shadow_lg()
-            .items_center()
             .when_some(self.icon.as_ref(), |this, icon| {
                 this.child(Icon::new(icon.icon).color(icon.color))
             })
@@ -115,6 +130,20 @@ impl Render for StatusToast {
                         .color(Color::Muted)
                         .when_some(action.on_click.clone(), |el, handler| {
                             el.on_click(move |_click_event, window, cx| handler(window, cx))
+                        }),
+                )
+            })
+            .when(self.show_dismiss, |this| {
+                let handle = self.this_handle.clone();
+                this.child(
+                    IconButton::new("dismiss", IconName::Close)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .tooltip(Tooltip::text("Dismiss"))
+                        .on_click(move |_click_event, _window, cx| {
+                            handle.update(cx, |_, cx| {
+                                cx.emit(DismissEvent);
+                            });
                         }),
                 )
             })
@@ -146,6 +175,9 @@ impl Component for StatusToast {
         let action_example = StatusToast::new("Update ready to install", cx, |this, _cx| {
             this.action("Restart", |_, _| {})
         });
+
+        let dismiss_button_example =
+            StatusToast::new("Dismiss Button", cx, |this, _| this.dismiss_button(true));
 
         let icon_example = StatusToast::new(
             "Nathan Sobo accepted your contact request",
@@ -193,6 +225,10 @@ impl Component for StatusToast {
                                 div().child(action_example).into_any_element(),
                             ),
                             single_example("Icon", div().child(icon_example).into_any_element()),
+                            single_example(
+                                "Dismiss Button",
+                                div().child(dismiss_button_example).into_any_element(),
+                            ),
                         ],
                     ),
                     example_group_with_title(

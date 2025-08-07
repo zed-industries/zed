@@ -164,6 +164,11 @@ impl ButtonCommon for IconButton {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.base = self.base.layer(elevation);
         self
@@ -178,7 +183,8 @@ impl VisibleOnHover for IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    #[allow(refining_impl_trait)]
+    fn render(self, window: &mut Window, cx: &mut App) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;

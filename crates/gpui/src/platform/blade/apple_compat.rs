@@ -29,14 +29,14 @@ pub unsafe fn new_renderer(
     }
 
     impl rwh::HasWindowHandle for RawWindow {
-        fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+        fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
             let view = NonNull::new(self.view).unwrap();
             let handle = rwh::AppKitWindowHandle::new(view);
             Ok(unsafe { rwh::WindowHandle::borrow_raw(handle.into()) })
         }
     }
     impl rwh::HasDisplayHandle for RawWindow {
-        fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+        fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
             let handle = rwh::AppKitDisplayHandle::new();
             Ok(unsafe { rwh::DisplayHandle::borrow_raw(handle.into()) })
         }

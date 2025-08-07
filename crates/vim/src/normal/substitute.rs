@@ -1,4 +1,4 @@
-use editor::{Editor, movement};
+use editor::{Editor, SelectionEffects, movement};
 use gpui::{Context, Window, actions};
 use language::Point;
 
@@ -7,7 +7,15 @@ use crate::{
     motion::{Motion, MotionKind},
 };
 
-actions!(vim, [Substitute, SubstituteLine]);
+actions!(
+    vim,
+    [
+        /// Substitutes characters in the current selection.
+        Substitute,
+        /// Substitutes the entire line.
+        SubstituteLine
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
@@ -41,7 +49,7 @@ impl Vim {
             editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let text_layout_details = editor.text_layout_details(window);
-                editor.change_selections(None, window, cx, |s| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                     s.move_with(|map, selection| {
                         if selection.start == selection.end {
                             Motion::Right.expand_selection(

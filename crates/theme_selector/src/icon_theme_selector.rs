@@ -40,7 +40,10 @@ impl IconThemeSelector {
 
 impl Render for IconThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("IconThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -327,6 +330,7 @@ impl PickerDelegate for IconThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::IconThemes),
+                                    id: None,
                                 }),
                                 cx,
                             );

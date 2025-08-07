@@ -1,6 +1,6 @@
 use collections::HashMap;
-use git::status::GitSummary;
-use std::{ops::Deref, path::Path};
+use git::{repository::RepoPath, status::GitSummary};
+use std::{collections::BTreeMap, ops::Deref, path::Path};
 use sum_tree::Cursor;
 use text::Bias;
 use worktree::{Entry, PathProgress, PathTarget, Traversal};
@@ -11,7 +11,7 @@ use super::{RepositoryId, RepositorySnapshot, StatusEntry};
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
-    repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
+    repo_root_to_snapshot: BTreeMap<&'a Path, &'a RepositorySnapshot>,
     repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
 }
 
@@ -20,14 +20,44 @@ impl<'a> GitTraversal<'a> {
         repo_snapshots: &'a HashMap<RepositoryId, RepositorySnapshot>,
         traversal: Traversal<'a>,
     ) -> GitTraversal<'a> {
+        let repo_root_to_snapshot = repo_snapshots
+            .values()
+            .map(|snapshot| (&*snapshot.work_directory_abs_path, snapshot))
+            .collect();
         let mut this = GitTraversal {
             traversal,
-            repo_snapshots,
             current_entry_summary: None,
             repo_location: None,
+            repo_root_to_snapshot,
         };
         this.synchronize_statuses(true);
         this
+    }
+
+    fn repo_root_for_path(&self, path: &Path) -> Option<(&'a RepositorySnapshot, RepoPath)> {
+        // We might need to perform a range search multiple times, as there may be a nested repository inbetween
+        // the target and our path. E.g:
+        // /our_root_repo/
+        //   .git/
+        //   other_repo/
+        //     .git/
+        //   our_query.txt
+        let mut query = path.ancestors();
+        while let Some(query) = query.next() {
+            let (_, snapshot) = self
+                .repo_root_to_snapshot
+                .range(Path::new("")..=query)
+                .last()?;
+
+            let stripped = snapshot
+                .abs_path_to_repo_path(path)
+                .map(|repo_path| (*snapshot, repo_path));
+            if stripped.is_some() {
+                return stripped;
+            }
+        }
+
+        None
     }
 
     fn synchronize_statuses(&mut self, reset: bool) {
@@ -42,15 +72,7 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Some((repo, repo_path)) = self
-            .repo_snapshots
-            .values()
-            .filter_map(|repo_snapshot| {
-                let repo_path = repo_snapshot.abs_path_to_repo_path(&abs_path)?;
-                Some((repo_snapshot, repo_path))
-            })
-            .max_by_key(|(repo, _)| repo.work_directory_abs_path.clone())
-        else {
+        let Some((repo, repo_path)) = self.repo_root_for_path(&abs_path) else {
             self.repo_location = None;
             return;
         };
@@ -72,14 +94,13 @@ impl<'a> GitTraversal<'a> {
 
         if entry.is_dir() {
             let mut statuses = statuses.clone();
-            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &());
-            let summary =
-                statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left, &());
+            statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left);
+            let summary = statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left);
 
             self.current_entry_summary = Some(summary);
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
-            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
+            if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left) {
                 // TODO: Investigate statuses.item() being None here.
                 self.current_entry_summary = statuses.item().map(|item| item.status.into());
             } else {

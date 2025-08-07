@@ -329,13 +329,7 @@ pub struct ResponseEvent {
 pub struct Usage {
     pub completion_tokens: u64,
     pub prompt_tokens: u64,
-    pub prompt_tokens_details: PromptTokensDetails,
     pub total_tokens: u64,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -435,12 +429,15 @@ pub fn copilot_chat_config_dir() -> &'static PathBuf {
     static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
     COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
-        if cfg!(target_os = "windows") {
-            home_dir().join("AppData").join("Local")
+        let config_dir = if cfg!(target_os = "windows") {
+            dirs::data_local_dir().expect("failed to determine LocalAppData directory")
         } else {
-            home_dir().join(".config")
-        }
-        .join("github-copilot")
+            std::env::var("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| home_dir().join(".config"))
+        };
+
+        config_dir.join("github-copilot")
     })
 }
 
@@ -542,6 +539,7 @@ impl CopilotChat {
 
     pub async fn stream_completion(
         request: Request,
+        is_user_initiated: bool,
         mut cx: AsyncApp,
     ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
         let this = cx
@@ -576,7 +574,14 @@ impl CopilotChat {
         };
 
         let api_url = configuration.api_url_from_endpoint(&token.api_endpoint);
-        stream_completion(client.clone(), token.api_key, api_url.into(), request).await
+        stream_completion(
+            client.clone(),
+            token.api_key,
+            api_url.into(),
+            request,
+            is_user_initiated,
+        )
+        .await
     }
 
     pub fn set_configuration(
@@ -711,17 +716,20 @@ async fn stream_completion(
     api_key: String,
     completion_url: Arc<str>,
     request: Request,
+    is_user_initiated: bool,
 ) -> Result<BoxStream<'static, Result<ResponseEvent>>> {
-    let is_vision_request = request.messages.last().map_or(false, |message| match message {
-        ChatMessage::User { content }
-        | ChatMessage::Assistant { content, .. }
-        | ChatMessage::Tool { content, .. } => {
-            matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
-        }
-        _ => false,
-    });
+    let is_vision_request = request.messages.iter().any(|message| match message {
+      ChatMessage::User { content }
+      | ChatMessage::Assistant { content, .. }
+      | ChatMessage::Tool { content, .. } => {
+          matches!(content, ChatMessageContent::Multipart(parts) if parts.iter().any(|part| matches!(part, ChatMessagePart::Image { .. })))
+      }
+      _ => false,
+  });
 
-    let request_builder = HttpRequest::builder()
+    let request_initiator = if is_user_initiated { "user" } else { "agent" };
+
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(completion_url.as_ref())
         .header(
@@ -734,7 +742,12 @@ async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .header("Copilot-Integration-Id", "vscode-chat")
-        .header("Copilot-Vision-Request", is_vision_request.to_string());
+        .header("X-Initiator", request_initiator);
+
+    if is_vision_request {
+        request_builder =
+            request_builder.header("Copilot-Vision-Request", is_vision_request.to_string());
+    }
 
     let is_streaming = request.stream;
 

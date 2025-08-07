@@ -88,6 +88,8 @@ impl DebugAdapter for ExtensionDapAdapter {
         delegate: &Arc<dyn DapDelegate>,
         config: &DebugTaskDefinition,
         user_installed_path: Option<PathBuf>,
+        // TODO support user args in the extension API
+        _user_args: Option<Vec<String>>,
         _cx: &mut AsyncApp,
     ) -> Result<DebugAdapterBinary> {
         self.extension

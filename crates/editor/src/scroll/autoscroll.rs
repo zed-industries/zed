@@ -1,6 +1,6 @@
 use crate::{
     DisplayRow, Editor, EditorMode, LineWithInvisibles, RowExt, SelectionEffects,
-    display_map::ToDisplayPoint,
+    display_map::ToDisplayPoint, scroll::WasScrolled,
 };
 use gpui::{Bounds, Context, Pixels, Window, px};
 use language::Point;
@@ -99,19 +99,21 @@ impl AutoscrollStrategy {
     }
 }
 
+pub(crate) struct NeedsHorizontalAutoscroll(pub(crate) bool);
+
 impl Editor {
     pub fn autoscroll_request(&self) -> Option<Autoscroll> {
         self.scroll_manager.autoscroll_request()
     }
 
-    pub fn autoscroll_vertically(
+    pub(crate) fn autoscroll_vertically(
         &mut self,
         bounds: Bounds<Pixels>,
         line_height: Pixels,
         max_scroll_top: f32,
         window: &mut Window,
         cx: &mut Context<Editor>,
-    ) -> bool {
+    ) -> (NeedsHorizontalAutoscroll, WasScrolled) {
         let viewport_height = bounds.size.height;
         let visible_lines = viewport_height / line_height;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -129,12 +131,14 @@ impl Editor {
             scroll_position.y = max_scroll_top;
         }
 
-        if original_y != scroll_position.y {
-            self.set_scroll_position(scroll_position, window, cx);
-        }
+        let editor_was_scrolled = if original_y != scroll_position.y {
+            self.set_scroll_position(scroll_position, window, cx)
+        } else {
+            WasScrolled(false)
+        };
 
         let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
-            return false;
+            return (NeedsHorizontalAutoscroll(false), editor_was_scrolled);
         };
 
         let mut target_top;
@@ -212,7 +216,7 @@ impl Editor {
             target_bottom = target_top + 1.;
         }
 
-        match strategy {
+        let was_autoscrolled = match strategy {
             AutoscrollStrategy::Fit | AutoscrollStrategy::Newest => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 let target_top = (target_top - margin).max(0.0);
@@ -225,39 +229,42 @@ impl Editor {
 
                 if needs_scroll_up && !needs_scroll_down {
                     scroll_position.y = target_top;
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
-                }
-                if !needs_scroll_up && needs_scroll_down {
+                } else if !needs_scroll_up && needs_scroll_down {
                     scroll_position.y = target_bottom - visible_lines;
-                    self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                }
+
+                if needs_scroll_up ^ needs_scroll_down {
+                    self.set_scroll_position_internal(scroll_position, local, true, window, cx)
+                } else {
+                    WasScrolled(false)
                 }
             }
             AutoscrollStrategy::Center => {
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Focused => {
                 let margin = margin.min(self.scroll_manager.vertical_scroll_margin);
                 scroll_position.y = (target_top - margin).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Top => {
                 scroll_position.y = (target_top).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::Bottom => {
                 scroll_position.y = (target_bottom - visible_lines).max(0.0);
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::TopRelative(lines) => {
                 scroll_position.y = target_top - lines as f32;
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
             AutoscrollStrategy::BottomRelative(lines) => {
                 scroll_position.y = target_bottom + lines as f32;
-                self.set_scroll_position_internal(scroll_position, local, true, window, cx);
+                self.set_scroll_position_internal(scroll_position, local, true, window, cx)
             }
-        }
+        };
 
         self.scroll_manager.last_autoscroll = Some((
             self.scroll_manager.anchor.offset,
@@ -266,7 +273,8 @@ impl Editor {
             strategy,
         ));
 
-        true
+        let was_scrolled = WasScrolled(editor_was_scrolled.0 || was_autoscrolled.0);
+        (NeedsHorizontalAutoscroll(true), was_scrolled)
     }
 
     pub(crate) fn autoscroll_horizontally(
@@ -274,12 +282,14 @@ impl Editor {
         start_row: DisplayRow,
         viewport_width: Pixels,
         scroll_width: Pixels,
-        max_glyph_width: Pixels,
+        em_advance: Pixels,
         layouts: &[LineWithInvisibles],
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> bool {
+    ) -> Option<gpui::Point<f32>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
+        let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
 
         let mut target_left;
         let mut target_right;
@@ -295,16 +305,17 @@ impl Editor {
                 if head.row() >= start_row
                     && head.row() < DisplayRow(start_row.0 + layouts.len() as u32)
                 {
-                    let start_column = head.column().saturating_sub(3);
-                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                    let start_column = head.column();
+                    let end_column = cmp::min(display_map.line_len(head.row()), head.column());
                     target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize),
+                            .x_for_index(start_column as usize)
+                            + self.gutter_dimensions.margin,
                     );
                     target_right = target_right.max(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(end_column as usize)
-                            + max_glyph_width,
+                            + em_advance,
                     );
                 }
             }
@@ -316,20 +327,26 @@ impl Editor {
         target_right = target_right.min(scroll_width);
 
         if target_right - target_left > viewport_width {
-            return false;
+            return None;
         }
 
-        let scroll_left = self.scroll_manager.anchor.offset.x * max_glyph_width;
+        let scroll_left = self.scroll_manager.anchor.offset.x * em_advance;
         let scroll_right = scroll_left + viewport_width;
 
-        if target_left < scroll_left {
-            self.scroll_manager.anchor.offset.x = target_left / max_glyph_width;
-            true
+        let was_scrolled = if target_left < scroll_left {
+            scroll_position.x = target_left / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx)
         } else if target_right > scroll_right {
-            self.scroll_manager.anchor.offset.x = (target_right - viewport_width) / max_glyph_width;
-            true
+            scroll_position.x = (target_right - viewport_width) / em_advance;
+            self.set_scroll_position_internal(scroll_position, true, true, window, cx)
         } else {
-            false
+            WasScrolled(false)
+        };
+
+        if was_scrolled.0 {
+            Some(scroll_position)
+        } else {
+            None
         }
     }
 

@@ -25,7 +25,7 @@ async-trait.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
-gpui = { workspace = true, features = ["x11", "wayland"] }
+gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
 image.workspace = true
@@ -39,13 +39,13 @@ tokio-tungstenite.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
-[target.'cfg(not(all(target_os = "windows", target_env = "gnu")))'.dependencies]
-libwebrtc = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "80bb8f4c9112789f7c24cc98d8423010977806a6", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+[target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
+libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
     "__rustls-tls"
 ] }
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies]
 scap.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

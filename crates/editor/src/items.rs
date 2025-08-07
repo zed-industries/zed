@@ -778,7 +778,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, true, cx);
+        self.push_to_nav_history(selection.head(), None, true, false, cx);
     }
 
     fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -813,7 +813,13 @@ impl Item for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.report_editor_event("Editor Saved", None, cx);
+        // Add meta data tracking # of auto saves
+        if options.autosave {
+            self.report_editor_event("Editor Autosaved", None, cx);
+        } else {
+            self.report_editor_event("Editor Saved", None, cx);
+        }
+
         let buffers = self.buffer().clone().read(cx).all_buffers();
         let buffers = buffers
             .into_iter()
@@ -1220,7 +1226,20 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: None,
                 ..
-            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+            } => window.spawn(cx, async move |cx| {
+                let buffer = project
+                    .update(cx, |project, cx| project.create_buffer(cx))?
+                    .await?;
+
+                cx.update(|window, cx| {
+                    cx.new(|cx| {
+                        let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
+
+                        editor.read_metadata_from_db(item_id, workspace_id, window, cx);
+                        editor
+                    })
+                })
+            }),
         }
     }
 
@@ -1352,7 +1371,7 @@ impl ProjectItem for Editor {
                         cx,
                     );
                     if !restoration_data.selections.is_empty() {
-                        editor.change_selections(None, window, cx, |s| {
+                        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                             s.select_ranges(clip_ranges(&restoration_data.selections, &snapshot));
                         });
                     }
@@ -1521,7 +1540,7 @@ impl SearchableItem for Editor {
     fn query_suggestion(&mut self, window: &mut Window, cx: &mut Context<Self>) -> String {
         let setting = EditorSettings::get_global(cx).seed_search_query_from_cursor;
         let snapshot = &self.snapshot(window, cx).buffer_snapshot;
-        let selection = self.selections.newest::<usize>(cx);
+        let selection = self.selections.newest_adjusted(cx);
 
         match setting {
             SeedQuerySetting::Never => String::new(),
@@ -1558,7 +1577,7 @@ impl SearchableItem for Editor {
     ) {
         self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
-        self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+        self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range]);
         })
     }
@@ -1570,7 +1589,7 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) {
         self.unfold_ranges(matches, false, false, cx);
-        self.change_selections(None, window, cx, |s| {
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges(matches.iter().cloned())
         });
     }
@@ -1607,23 +1626,9 @@ impl SearchableItem for Editor {
         let text = self.buffer.read(cx);
         let text = text.snapshot(cx);
         let mut edits = vec![];
-        let mut last_point: Option<Point> = None;
 
         for m in matches {
-            let point = m.start.to_point(&text);
             let text = text.text_for_range(m.clone()).collect::<Vec<_>>();
-
-            // Check if the row for the current match is different from the last
-            // match. If that's not the case and we're still replacing matches
-            // in the same row/line, skip this match if the `one_match_per_line`
-            // option is enabled.
-            if last_point.is_none() {
-                last_point = Some(point);
-            } else if last_point.is_some() && point.row != last_point.unwrap().row {
-                last_point = Some(point);
-            } else if query.one_match_per_line().is_some_and(|enabled| enabled) {
-                continue;
-            }
 
             let text: Cow<_> = if text.len() == 1 {
                 text.first().cloned().unwrap().into()
@@ -2104,6 +2109,39 @@ mod tests {
             deserialized.update(cx, |editor, cx| {
                 assert_eq!(editor.text(cx), "fn main() {}");
                 assert!(editor.has_conflict(cx)); // The editor should have a conflict
+            });
+        }
+
+        // Test case 5: Deserialize with no path, no content, no language, and no old mtime (new, empty, unsaved buffer)
+        {
+            let project = Project::test(fs.clone(), [path!("/file.rs").as_ref()], cx).await;
+            let (workspace, cx) =
+                cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+            let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
+
+            let item_id = 10000 as ItemId;
+            let serialized_editor = SerializedEditor {
+                abs_path: None,
+                contents: None,
+                language: None,
+                mtime: None,
+            };
+
+            DB.save_serialized_editor(item_id, workspace_id, serialized_editor)
+                .await
+                .unwrap();
+
+            let deserialized =
+                deserialize_editor(item_id, workspace_id, workspace, project, cx).await;
+
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "");
+                assert!(!editor.is_dirty(cx));
+                assert!(!editor.has_conflict(cx));
+
+                let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
+                assert!(buffer.file().is_none());
             });
         }
     }

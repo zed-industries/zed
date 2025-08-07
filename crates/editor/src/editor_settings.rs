@@ -1,3 +1,6 @@
+use core::num;
+use std::num::NonZeroU32;
+
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -49,7 +52,7 @@ pub struct EditorSettings {
     #[serde(default)]
     pub diagnostics_max_severity: Option<DiagnosticSeverity>,
     pub inline_code_actions: bool,
-    pub drag_and_drop_selection: bool,
+    pub drag_and_drop_selection: DragAndDropSelection,
     pub lsp_document_colors: DocumentColorsRenderMode,
 }
 
@@ -150,6 +153,7 @@ pub struct Minimap {
     pub thumb: MinimapThumb,
     pub thumb_border: MinimapThumbBorder,
     pub current_line_highlight: Option<CurrentLineHighlight>,
+    pub max_width_columns: num::NonZeroU32,
 }
 
 impl Minimap {
@@ -271,6 +275,26 @@ pub struct ScrollbarAxes {
     pub vertical: bool,
 }
 
+/// Whether to allow drag and drop text selection in buffer.
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct DragAndDropSelection {
+    /// When true, enables drag and drop text selection in buffer.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// The delay in milliseconds that must elapse before drag and drop is allowed. Otherwise, a new text selection is created.
+    ///
+    /// Default: 300
+    #[serde(default = "default_drag_and_drop_selection_delay_ms")]
+    pub delay: u64,
+}
+
+fn default_drag_and_drop_selection_delay_ms() -> u64 {
+    300
+}
+
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
@@ -371,10 +395,11 @@ pub enum SnippetSortOrder {
     Inline,
     /// Place snippets at the bottom of the completion list
     Bottom,
+    /// Do not show snippets in the completion list
+    None,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[schemars(deny_unknown_fields)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -533,10 +558,8 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub inline_code_actions: Option<bool>,
 
-    /// Whether to allow drag and drop text selection in buffer.
-    ///
-    /// Default: true
-    pub drag_and_drop_selection: Option<bool>,
+    /// Drag and drop related settings
+    pub drag_and_drop_selection: Option<DragAndDropSelection>,
 
     /// How to render LSP `textDocument/documentColor` colors in the editor.
     ///
@@ -632,6 +655,11 @@ pub struct MinimapContent {
     ///
     /// Default: inherits editor line highlights setting
     pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+
+    /// Maximum number of columns to display in the minimap.
+    ///
+    /// Default: 80
+    pub max_width_columns: Option<num::NonZeroU32>,
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
@@ -854,6 +882,8 @@ impl Settings for EditorSettings {
         let mut minimap = MinimapContent::default();
         let minimap_enabled = vscode.read_bool("editor.minimap.enabled").unwrap_or(true);
         let autohide = vscode.read_bool("editor.minimap.autohide");
+        let mut max_width_columns: Option<u32> = None;
+        vscode.u32_setting("editor.minimap.maxColumn", &mut max_width_columns);
         if minimap_enabled {
             if let Some(false) = autohide {
                 minimap.show = Some(ShowMinimap::Always);
@@ -862,6 +892,9 @@ impl Settings for EditorSettings {
             }
         } else {
             minimap.show = Some(ShowMinimap::Never);
+        }
+        if let Some(max_width_columns) = max_width_columns {
+            minimap.max_width_columns = NonZeroU32::new(max_width_columns);
         }
 
         vscode.enum_setting(

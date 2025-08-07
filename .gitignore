@@ -12,6 +12,7 @@
 .flatpak-builder
 .idea
 .netrc
+*.pyc
 .pytest_cache
 .swiftpm
 .swiftpm/config/registries.json

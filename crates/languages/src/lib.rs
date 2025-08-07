@@ -1,4 +1,5 @@
 use anyhow::Context as _;
+use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{App, UpdateGlobal};
 use node_runtime::NodeRuntime;
 use python::PyprojectTomlManifestProvider;
@@ -11,19 +12,23 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
-use crate::json::JsonTaskProvider;
+use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
 
 mod bash;
 mod c;
 mod css;
+mod github_download;
 mod go;
 mod json;
+mod package_json;
 mod python;
 mod rust;
 mod tailwind;
 mod typescript;
 mod vtsls;
 mod yaml;
+
+pub(crate) use package_json::{PackageJson, PackageJsonData};
 
 #[derive(RustEmbed)]
 #[folder = "src/"]
@@ -48,6 +53,12 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
             Some(tree_sitter_gitcommit::LANGUAGE.into()),
         ))
     });
+
+struct BasedPyrightFeatureFlag;
+
+impl FeatureFlag for BasedPyrightFeatureFlag {
+    const NAME: &'static str = "basedpyright";
+}
 
 pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
@@ -85,6 +96,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PythonLspAdapter::new(node.clone()));
+    let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider::default());
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -209,6 +221,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             name: "gitcommit",
             ..Default::default()
         },
+        LanguageInfo {
+            name: "zed-keybind-context",
+            ..Default::default()
+        },
     ];
 
     for registration in built_in_languages {
@@ -220,6 +236,20 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
             registration.toolchain,
         );
     }
+
+    let mut basedpyright_lsp_adapter = Some(basedpyright_lsp_adapter);
+    cx.observe_flag::<BasedPyrightFeatureFlag, _>({
+        let languages = languages.clone();
+        move |enabled, _| {
+            if enabled {
+                if let Some(adapter) = basedpyright_lsp_adapter.take() {
+                    languages
+                        .register_available_lsp_adapter(adapter.name(), move || adapter.clone());
+                }
+            }
+        }
+    })
+    .detach();
 
     // Register globally available language servers.
     //
@@ -266,6 +296,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         "Astro",
         "CSS",
         "ERB",
+        "HTML/ERB",
         "HEEX",
         "HTML",
         "JavaScript",

@@ -1,28 +1,28 @@
-use std::ops::Range;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
+use crate::{
+    context::{
+        AgentContextHandle, AgentContextKey, ContextId, ContextKind, DirectoryContextHandle,
+        FetchedUrlContext, FileContextHandle, ImageContext, RulesContextHandle,
+        SelectionContextHandle, SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
+    },
+    thread::{MessageId, Thread, ThreadId},
+    thread_store::ThreadStore,
+};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_context_editor::AssistantContext;
+use assistant_context::AssistantContext;
 use collections::{HashSet, IndexSet};
 use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
 use language::{Buffer, File as _};
 use language_model::LanguageModelImage;
-use project::image_store::is_image_file;
-use project::{Project, ProjectItem, ProjectPath, Symbol};
+use project::{Project, ProjectItem, ProjectPath, Symbol, image_store::is_image_file};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast as _;
-use text::{Anchor, OffsetRangeExt};
-
-use crate::ThreadStore;
-use crate::context::{
-    AgentContextHandle, AgentContextKey, ContextId, DirectoryContextHandle, FetchedUrlContext,
-    FileContextHandle, ImageContext, RulesContextHandle, SelectionContextHandle,
-    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
-use crate::context_strip::SuggestedContext;
-use crate::thread::{MessageId, Thread, ThreadId};
+use text::{Anchor, OffsetRangeExt};
 
 pub struct ContextStore {
     project: WeakEntity<Project>,
@@ -558,6 +558,49 @@ impl ContextStore {
 
     pub fn thread_ids(&self) -> &HashSet<ThreadId> {
         &self.context_thread_ids
+    }
+}
+
+#[derive(Clone)]
+pub enum SuggestedContext {
+    File {
+        name: SharedString,
+        icon_path: Option<SharedString>,
+        buffer: WeakEntity<Buffer>,
+    },
+    Thread {
+        name: SharedString,
+        thread: WeakEntity<Thread>,
+    },
+    TextThread {
+        name: SharedString,
+        context: WeakEntity<AssistantContext>,
+    },
+}
+
+impl SuggestedContext {
+    pub fn name(&self) -> &SharedString {
+        match self {
+            Self::File { name, .. } => name,
+            Self::Thread { name, .. } => name,
+            Self::TextThread { name, .. } => name,
+        }
+    }
+
+    pub fn icon_path(&self) -> Option<SharedString> {
+        match self {
+            Self::File { icon_path, .. } => icon_path.clone(),
+            Self::Thread { .. } => None,
+            Self::TextThread { .. } => None,
+        }
+    }
+
+    pub fn kind(&self) -> ContextKind {
+        match self {
+            Self::File { .. } => ContextKind::File,
+            Self::Thread { .. } => ContextKind::Thread,
+            Self::TextThread { .. } => ContextKind::TextThread,
+        }
     }
 }
 

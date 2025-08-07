@@ -15,11 +15,11 @@ use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use buffer_diff::DiffHunkStatus;
+use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use futures::{FutureExt as _, StreamExt, channel::mpsc, select_biased};
 use gpui::{App, AppContext, AsyncApp, Entity};
 use language_model::{LanguageModel, Role, StopReason};
-use zed_llm_client::CompletionIntent;
 
 pub const THREAD_EVENT_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 
@@ -100,7 +100,7 @@ impl ExampleContext {
     pub fn new(
         meta: ExampleMetadata,
         log_prefix: String,
-        agent_thread: Entity<agent::Thread>,
+        agent_thread: Entity<Thread>,
         model: Arc<dyn LanguageModel>,
         app: AsyncApp,
     ) -> Self {
@@ -420,6 +420,13 @@ impl AppContext for ExampleContext {
         T: 'static,
     {
         self.app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<gpui::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.app.as_mut(handle)
     }
 
     fn read_entity<T, R>(

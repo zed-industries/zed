@@ -22,12 +22,13 @@ mod visual;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, ToPoint,
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
+    ToPoint,
     movement::{self, FindRange},
 };
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
-    Render, Subscription, Task, WeakEntity, Window, actions, impl_actions,
+    Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -52,65 +53,79 @@ use crate::state::ReplayableAction;
 
 /// Number is used to manage vim's count. Pushing a digit
 /// multiplies the current value by 10 and adds the digit.
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct Number(usize);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 struct SelectRegister(String);
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushObject {
     around: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindForward {
     before: bool,
+    multiline: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushFindBackward {
     after: bool,
+    multiline: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneak {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushSneakBackward {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
-struct PushAddSurrounds {}
+struct PushAddSurrounds;
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushChangeSurrounds {
     target: Option<Object>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushJump {
     line: bool,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushDigraph {
     first_char: Option<char>,
 }
 
-#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
 struct PushLiteral {
     prefix: Option<String>,
@@ -119,71 +134,103 @@ struct PushLiteral {
 actions!(
     vim,
     [
+        /// Switches to normal mode.
         SwitchToNormalMode,
+        /// Switches to insert mode.
         SwitchToInsertMode,
+        /// Switches to replace mode.
         SwitchToReplaceMode,
+        /// Switches to visual mode.
         SwitchToVisualMode,
+        /// Switches to visual line mode.
         SwitchToVisualLineMode,
+        /// Switches to visual block mode.
         SwitchToVisualBlockMode,
+        /// Switches to Helix-style normal mode.
         SwitchToHelixNormalMode,
+        /// Clears any pending operators.
         ClearOperators,
+        /// Clears the exchange register.
         ClearExchange,
+        /// Inserts a tab character.
         Tab,
+        /// Inserts a newline.
         Enter,
+        /// Selects inner text object.
         InnerObject,
+        /// Maximizes the current pane.
         MaximizePane,
+        /// Opens the default keymap file.
         OpenDefaultKeymap,
+        /// Resets all pane sizes to default.
         ResetPaneSizes,
+        /// Resizes the pane to the right.
         ResizePaneRight,
+        /// Resizes the pane to the left.
         ResizePaneLeft,
+        /// Resizes the pane upward.
         ResizePaneUp,
+        /// Resizes the pane downward.
         ResizePaneDown,
+        /// Starts a change operation.
         PushChange,
+        /// Starts a delete operation.
         PushDelete,
+        /// Exchanges text regions.
         Exchange,
+        /// Starts a yank operation.
         PushYank,
+        /// Starts a replace operation.
         PushReplace,
+        /// Deletes surrounding characters.
         PushDeleteSurrounds,
+        /// Sets a mark at the current position.
         PushMark,
+        /// Toggles the marks view.
         ToggleMarksView,
+        /// Starts a forced motion.
         PushForcedMotion,
+        /// Starts an indent operation.
         PushIndent,
+        /// Starts an outdent operation.
         PushOutdent,
+        /// Starts an auto-indent operation.
         PushAutoIndent,
+        /// Starts a rewrap operation.
         PushRewrap,
+        /// Starts a shell command operation.
         PushShellCommand,
+        /// Converts to lowercase.
         PushLowercase,
+        /// Converts to uppercase.
         PushUppercase,
+        /// Toggles case.
         PushOppositeCase,
+        /// Applies ROT13 encoding.
         PushRot13,
+        /// Applies ROT47 encoding.
         PushRot47,
+        /// Toggles the registers view.
         ToggleRegistersView,
+        /// Selects a register.
         PushRegister,
+        /// Starts recording to a register.
         PushRecordRegister,
+        /// Replays a register.
         PushReplayRegister,
+        /// Replaces with register contents.
         PushReplaceWithRegister,
+        /// Toggles comments.
         PushToggleComments,
     ]
 );
 
 // in the workspace namespace so it's not filtered out when vim is disabled.
-actions!(workspace, [ToggleVimMode,]);
-
-impl_actions!(
-    vim,
+actions!(
+    workspace,
     [
-        Number,
-        SelectRegister,
-        PushObject,
-        PushFindForward,
-        PushFindBackward,
-        PushSneak,
-        PushSneakBackward,
-        PushAddSurrounds,
-        PushChangeSurrounds,
-        PushJump,
-        PushDigraph,
-        PushLiteral
+        /// Toggles Vim mode on or off.
+        ToggleVimMode,
     ]
 );
 
@@ -328,6 +375,7 @@ pub(crate) struct Vim {
     pub(crate) current_tx: Option<TransactionId>,
     pub(crate) current_anchor: Option<Selection<Anchor>>,
     pub(crate) undo_modes: HashMap<TransactionId, Mode>,
+    pub(crate) undo_last_line_tx: Option<TransactionId>,
 
     selected_register: Option<char>,
     pub search: SearchState,
@@ -375,6 +423,7 @@ impl Vim {
 
             stored_visual_mode: None,
             current_tx: None,
+            undo_last_line_tx: None,
             current_anchor: None,
             undo_modes: HashMap::default(),
 
@@ -506,6 +555,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindForward {
                         before: action.before,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -516,6 +566,7 @@ impl Vim {
                 vim.push_operator(
                     Operator::FindBackward {
                         after: action.after,
+                        multiline: action.multiline,
                     },
                     window,
                     cx,
@@ -696,7 +747,7 @@ impl Vim {
             Vim::action(
                 editor,
                 cx,
-                |vim, action: &editor::AcceptEditPrediction, window, cx| {
+                |vim, action: &editor::actions::AcceptEditPrediction, window, cx| {
                     vim.update_editor(window, cx, |_, editor, window, cx| {
                         editor.accept_edit_prediction(action, window, cx);
                     });
@@ -965,7 +1016,7 @@ impl Vim {
                 }
             }
 
-            editor.change_selections(None, window, cx, |s| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                 // we cheat with visual block mode and use multiple cursors.
                 // the cost of this cheat is we need to convert back to a single
                 // cursor whenever vim would.
@@ -1165,7 +1216,7 @@ impl Vim {
             } else {
                 self.update_editor(window, cx, |_, editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
                         })
@@ -1440,27 +1491,29 @@ impl Vim {
             Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
                 self.update_editor(window, cx, |vim, editor, window, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
-                    editor.change_selections(None, window, cx, |s| match original_mode {
-                        Some(Mode::VisualLine) => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.prev_line_boundary(selection.start.to_point(map)).1,
-                                    SelectionGoal::None,
-                                )
-                            });
-                        }
-                        Some(Mode::VisualBlock) => {
-                            let mut first = s.first_anchor();
-                            first.collapse_to(first.start, first.goal);
-                            s.select_anchors(vec![first]);
-                        }
-                        _ => {
-                            s.move_with(|map, selection| {
-                                selection.collapse_to(
-                                    map.clip_at_line_end(selection.start),
-                                    selection.goal,
-                                );
-                            });
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                        match original_mode {
+                            Some(Mode::VisualLine) => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.prev_line_boundary(selection.start.to_point(map)).1,
+                                        SelectionGoal::None,
+                                    )
+                                });
+                            }
+                            Some(Mode::VisualBlock) => {
+                                let mut first = s.first_anchor();
+                                first.collapse_to(first.start, first.goal);
+                                s.select_anchors(vec![first]);
+                            }
+                            _ => {
+                                s.move_with(|map, selection| {
+                                    selection.collapse_to(
+                                        map.clip_at_line_end(selection.start),
+                                        selection.goal,
+                                    );
+                                });
+                            }
                         }
                     });
                 });
@@ -1468,7 +1521,7 @@ impl Vim {
             }
             Mode::Normal => {
                 self.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.change_selections(None, window, cx, |s| {
+                    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
                         s.move_with(|map, selection| {
                             selection
                                 .collapse_to(map.clip_at_line_end(selection.end), selection.goal)
@@ -1519,11 +1572,11 @@ impl Vim {
         }
 
         match self.active_operator() {
-            Some(Operator::FindForward { before }) => {
+            Some(Operator::FindForward { before, multiline }) => {
                 let find = Motion::FindForward {
                     before,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1533,11 +1586,11 @@ impl Vim {
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, window, cx)
             }
-            Some(Operator::FindBackward { after }) => {
+            Some(Operator::FindBackward { after, multiline }) => {
                 let find = Motion::FindBackward {
                     after,
                     char: text.chars().next().unwrap(),
-                    mode: if VimSettings::get_global(cx).use_multiline_find {
+                    mode: if multiline {
                         FindRange::MultiLine
                     } else {
                         FindRange::SingleLine
@@ -1586,6 +1639,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
+                Mode::HelixNormal => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {
@@ -1687,11 +1741,11 @@ impl Vim {
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
 
-            let hide_inline_completions = match vim.mode {
+            let hide_edit_predictions = match vim.mode {
                 Mode::Insert | Mode::Replace => false,
                 _ => true,
             };
-            editor.set_inline_completions_hidden_for_vim_mode(hide_inline_completions, window, cx);
+            editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
     }
@@ -1735,7 +1789,6 @@ struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
     pub use_system_clipboard: UseSystemClipboard,
-    pub use_multiline_find: bool,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
@@ -1747,7 +1800,6 @@ struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
     pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_multiline_find: Option<bool>,
     pub use_smartcase_find: Option<bool>,
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
@@ -1799,9 +1851,6 @@ impl Settings for VimSettings {
                 .ok_or_else(Self::missing_default)?,
             use_system_clipboard: settings
                 .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_multiline_find: settings
-                .use_multiline_find
                 .ok_or_else(Self::missing_default)?,
             use_smartcase_find: settings
                 .use_smartcase_find

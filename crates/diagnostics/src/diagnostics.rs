@@ -12,7 +12,6 @@ use diagnostic_renderer::DiagnosticBlock;
 use editor::{
     DEFAULT_MULTIBUFFER_CONTEXT, Editor, EditorEvent, ExcerptRange, MultiBuffer, PathKey,
     display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId},
-    scroll::Autoscroll,
 };
 use futures::future::join_all;
 use gpui::{
@@ -49,7 +48,14 @@ use workspace::{
 
 actions!(
     diagnostics,
-    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+    [
+        /// Opens the project diagnostics view.
+        Deploy,
+        /// Toggles the display of warning-level diagnostics.
+        ToggleWarnings,
+        /// Toggles automatic refresh of diagnostics.
+        ToggleDiagnosticsRefresh
+    ]
 );
 
 #[derive(Default)]
@@ -74,6 +80,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
+    diagnostic_summary_update: Task<()>,
     _subscription: Subscription,
 }
 
@@ -173,7 +180,16 @@ impl ProjectDiagnosticsEditor {
                     path,
                 } => {
                     this.paths_to_update.insert(path.clone());
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    let project = project.clone();
+                    this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                        })
+                        .log_err();
+                    });
                     cx.emit(EditorEvent::TitleChanged);
 
                     if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
@@ -270,6 +286,7 @@ impl ProjectDiagnosticsEditor {
                 cancel_task: None,
                 diagnostic_sources: Arc::new(Vec::new()),
             },
+            diagnostic_summary_update: Task::ready(()),
             _subscription: project_event_subscription,
         };
         this.update_all_diagnostics(true, window, cx);
@@ -626,7 +643,7 @@ impl ProjectDiagnosticsEditor {
                     if let Some(anchor_range) = anchor_ranges.first() {
                         let range_to_select = anchor_range.start..anchor_range.start;
                         this.editor.update(cx, |editor, cx| {
-                            editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
+                            editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_anchor_ranges([range_to_select]);
                             })
                         });
@@ -650,7 +667,6 @@ impl ProjectDiagnosticsEditor {
                                     block.render_block(editor.clone(), bcx)
                                 }),
                                 priority: 1,
-                                render_in_minimap: false,
                             }
                         });
                 let block_ids = this.editor.update(cx, |editor, cx| {

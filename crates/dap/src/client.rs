@@ -108,7 +108,9 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
         self.transport_delegate
-            .add_pending_request(sequence_id, callback_tx);
+            .pending_requests
+            .lock()
+            .insert(sequence_id, callback_tx)?;
 
         log::debug!(
             "Client {} send `{}` request with sequence_id: {}",
@@ -163,8 +165,10 @@ impl DebugAdapterClient {
         self.sequence_count.fetch_add(1, Ordering::Relaxed)
     }
 
-    pub async fn shutdown(&self) -> Result<()> {
-        self.transport_delegate.shutdown().await
+    pub fn kill(&self) {
+        log::debug!("Killing DAP process");
+        self.transport_delegate.transport.lock().kill();
+        self.transport_delegate.pending_requests.lock().shutdown();
     }
 
     pub fn has_adapter_logs(&self) -> bool {
@@ -179,11 +183,34 @@ impl DebugAdapterClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn on_request<R: dap_types::requests::Request, F>(&self, handler: F)
+    pub fn on_request<R: dap_types::requests::Request, F>(&self, mut handler: F)
     where
         F: 'static
             + Send
             + FnMut(u64, R::Arguments) -> Result<R::Response, dap_types::ErrorResponse>,
+    {
+        use crate::transport::RequestHandling;
+
+        self.transport_delegate
+            .transport
+            .lock()
+            .as_fake()
+            .on_request::<R, _>(move |seq, request| {
+                RequestHandling::Respond(handler(seq, request))
+            });
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn on_request_ext<R: dap_types::requests::Request, F>(&self, handler: F)
+    where
+        F: 'static
+            + Send
+            + FnMut(
+                u64,
+                R::Arguments,
+            ) -> crate::transport::RequestHandling<
+                Result<R::Response, dap_types::ErrorResponse>,
+            >,
     {
         self.transport_delegate
             .transport
@@ -268,7 +295,7 @@ mod tests {
                     request: dap_types::StartDebuggingRequestArgumentsRequest::Launch,
                 },
             },
-            Box::new(|_| panic!("Did not expect to hit this code path")),
+            Box::new(|_| {}),
             &mut cx.to_async(),
         )
         .await
@@ -315,8 +342,6 @@ mod tests {
             },
             response
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -368,8 +393,6 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 
     #[gpui::test]
@@ -433,7 +456,5 @@ mod tests {
             called_event_handler.load(std::sync::atomic::Ordering::SeqCst),
             "Event handler was not called"
         );
-
-        client.shutdown().await.unwrap();
     }
 }

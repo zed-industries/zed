@@ -1,17 +1,27 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
+use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
+use cloud_llm_client::{
+    EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+    MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME, MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME, UsageLimit,
+};
 use collections::{HashMap, HashSet, hash_map::Entry};
+use derive_more::Deref;
 use feature_flags::FeatureFlagAppExt;
 use futures::{Future, StreamExt, channel::mpsc};
 use gpui::{
     App, AsyncApp, Context, Entity, EventEmitter, SharedString, SharedUri, Task, WeakEntity,
 };
+use http_client::http::{HeaderMap, HeaderValue};
 use postage::{sink::Sink, watch};
 use rpc::proto::{RequestMessage, UsersResponse};
-use std::sync::{Arc, Weak};
+use std::{
+    str::FromStr as _,
+    sync::{Arc, Weak},
+};
 use text::ReplicaId;
-use util::{TryFutureExt as _, maybe};
+use util::{ResultExt, TryFutureExt as _};
 
 pub type UserId = u64;
 
@@ -46,7 +56,7 @@ pub struct ParticipantIndex(pub u32);
 #[derive(Default, Debug)]
 pub struct User {
     pub id: UserId,
-    pub github_login: String,
+    pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -98,21 +108,14 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<String, u64>,
+    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
-    current_plan: Option<proto::Plan>,
-    subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    trial_started_at: Option<DateTime<Utc>>,
-    model_request_usage_amount: Option<u32>,
-    model_request_usage_limit: Option<proto::UsageLimit>,
-    edit_predictions_usage_amount: Option<u32>,
-    edit_predictions_usage_limit: Option<proto::UsageLimit>,
-    is_usage_based_billing_enabled: Option<bool>,
-    account_too_young: Option<bool>,
-    has_overdue_invoices: Option<bool>,
+    model_request_usage: Option<ModelRequestUsage>,
+    edit_prediction_usage: Option<EditPredictionUsage>,
+    plan_info: Option<PlanInfo>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    accepted_tos_at: Option<Option<DateTime<Utc>>>,
+    accepted_tos_at: Option<Option<cloud_api_client::Timestamp>>,
     contacts: Vec<Arc<Contact>>,
     incoming_contact_requests: Vec<Arc<User>>,
     outgoing_contact_requests: Vec<Arc<User>>,
@@ -138,6 +141,7 @@ pub enum Event {
     ShowContacts,
     ParticipantIndicesChanged,
     PrivateUserInfoUpdated,
+    PlanUpdated,
 }
 
 #[derive(Clone, Copy)]
@@ -155,6 +159,18 @@ enum UpdateContacts {
     Clear(postage::barrier::Sender),
 }
 
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct ModelRequestUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy, Deref)]
+pub struct EditPredictionUsage(pub RequestUsage);
+
+#[derive(Debug, Clone, Copy)]
+pub struct RequestUsage {
+    pub limit: UsageLimit,
+    pub amount: i32,
+}
+
 impl UserStore {
     pub fn new(client: Arc<Client>, cx: &Context<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
@@ -169,16 +185,9 @@ impl UserStore {
             users: Default::default(),
             by_github_login: Default::default(),
             current_user: current_user_rx,
-            current_plan: None,
-            subscription_period: None,
-            trial_started_at: None,
-            model_request_usage_amount: None,
-            model_request_usage_limit: None,
-            edit_predictions_usage_amount: None,
-            edit_predictions_usage_limit: None,
-            is_usage_based_billing_enabled: None,
-            account_too_young: None,
-            has_overdue_invoices: None,
+            plan_info: None,
+            model_request_usage: None,
+            edit_prediction_usage: None,
             accepted_tos_at: None,
             contacts: Default::default(),
             incoming_contact_requests: Default::default(),
@@ -208,53 +217,30 @@ impl UserStore {
                         return Ok(());
                     };
                     match status {
-                        Status::Connected { .. } => {
+                        Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let fetch_user = if let Ok(fetch_user) =
-                                    this.update(cx, |this, cx| this.get_user(user_id, cx).log_err())
-                                {
-                                    fetch_user
-                                } else {
-                                    break;
-                                };
-                                let fetch_private_user_info =
-                                    client.request(proto::GetPrivateUserInfo {}).log_err();
-                                let (user, info) =
-                                    futures::join!(fetch_user, fetch_private_user_info);
-
+                                let response = client.cloud_client().get_authenticated_user().await;
+                                let mut current_user = None;
                                 cx.update(|cx| {
-                                    if let Some(info) = info {
-                                        let staff =
-                                            info.staff && !*feature_flags::ZED_DISABLE_STAFF;
-                                        cx.update_flags(staff, info.flags);
-                                        client.telemetry.set_authenticated_user_info(
-                                            Some(info.metrics_id.clone()),
-                                            staff,
-                                        );
-
+                                    if let Some(response) = response.log_err() {
+                                        let user = Arc::new(User {
+                                            id: user_id,
+                                            github_login: response.user.github_login.clone().into(),
+                                            avatar_uri: response.user.avatar_url.clone().into(),
+                                            name: response.user.name.clone(),
+                                        });
+                                        current_user = Some(user.clone());
                                         this.update(cx, |this, cx| {
-                                            let accepted_tos_at = {
-                                                #[cfg(debug_assertions)]
-                                                if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok()
-                                                {
-                                                    None
-                                                } else {
-                                                    info.accepted_tos_at
-                                                }
-
-                                                #[cfg(not(debug_assertions))]
-                                                info.accepted_tos_at
-                                            };
-
-                                            this.set_current_user_accepted_tos_at(accepted_tos_at);
-                                            cx.emit(Event::PrivateUserInfoUpdated);
+                                            this.by_github_login
+                                                .insert(user.github_login.clone(), user_id);
+                                            this.users.insert(user_id, user);
+                                            this.update_authenticated_user(response, cx)
                                         })
                                     } else {
                                         anyhow::Ok(())
                                     }
                                 })??;
-
-                                current_user_tx.send(user).await.ok();
+                                current_user_tx.send(current_user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -335,36 +321,22 @@ impl UserStore {
 
     async fn handle_update_plan(
         this: Entity<Self>,
-        message: TypedEnvelope<proto::UpdateUserPlan>,
+        _message: TypedEnvelope<proto::UpdateUserPlan>,
         mut cx: AsyncApp,
     ) -> Result<()> {
+        let client = this
+            .read_with(&cx, |this, _| this.client.upgrade())?
+            .context("client was dropped")?;
+
+        let response = client
+            .cloud_client()
+            .get_authenticated_user()
+            .await
+            .context("failed to fetch authenticated user")?;
+
         this.update(&mut cx, |this, cx| {
-            this.current_plan = Some(message.payload.plan());
-            this.subscription_period = maybe!({
-                let period = message.payload.subscription_period?;
-                let started_at = DateTime::from_timestamp(period.started_at as i64, 0)?;
-                let ended_at = DateTime::from_timestamp(period.ended_at as i64, 0)?;
-
-                Some((started_at, ended_at))
-            });
-            this.trial_started_at = message
-                .payload
-                .trial_started_at
-                .and_then(|trial_started_at| DateTime::from_timestamp(trial_started_at as i64, 0));
-            this.is_usage_based_billing_enabled = message.payload.is_usage_based_billing_enabled;
-            this.account_too_young = message.payload.account_too_young;
-            this.has_overdue_invoices = message.payload.has_overdue_invoices;
-
-            if let Some(usage) = message.payload.usage {
-                this.model_request_usage_amount = Some(usage.model_requests_usage_amount);
-                this.model_request_usage_limit = usage.model_requests_usage_limit;
-                this.edit_predictions_usage_amount = Some(usage.edit_predictions_usage_amount);
-                this.edit_predictions_usage_limit = usage.edit_predictions_usage_limit;
-            }
-
-            cx.notify();
-        })?;
-        Ok(())
+            this.update_authenticated_user(response, cx);
+        })
     }
 
     fn update_contacts(&mut self, message: UpdateContacts, cx: &Context<Self>) -> Task<Result<()>> {
@@ -723,55 +695,131 @@ impl UserStore {
         self.current_user.borrow().clone()
     }
 
-    pub fn current_plan(&self) -> Option<proto::Plan> {
-        self.current_plan
+    pub fn plan(&self) -> Option<cloud_llm_client::Plan> {
+        #[cfg(debug_assertions)]
+        if let Ok(plan) = std::env::var("ZED_SIMULATE_PLAN").as_ref() {
+            return match plan.as_str() {
+                "free" => Some(cloud_llm_client::Plan::ZedFree),
+                "trial" => Some(cloud_llm_client::Plan::ZedProTrial),
+                "pro" => Some(cloud_llm_client::Plan::ZedPro),
+                _ => {
+                    panic!("ZED_SIMULATE_PLAN must be one of 'free', 'trial', or 'pro'");
+                }
+            };
+        }
+
+        self.plan_info.as_ref().map(|info| info.plan)
     }
 
     pub fn subscription_period(&self) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
-        self.subscription_period
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.subscription_period)
+            .map(|subscription_period| {
+                (
+                    subscription_period.started_at.0,
+                    subscription_period.ended_at.0,
+                )
+            })
     }
 
     pub fn trial_started_at(&self) -> Option<DateTime<Utc>> {
-        self.trial_started_at
+        self.plan_info
+            .as_ref()
+            .and_then(|plan| plan.trial_started_at)
+            .map(|trial_started_at| trial_started_at.0)
     }
 
-    pub fn usage_based_billing_enabled(&self) -> Option<bool> {
-        self.is_usage_based_billing_enabled
+    /// Returns whether the user's account is too new to use the service.
+    pub fn account_too_young(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_account_too_young)
+            .unwrap_or_default()
     }
 
-    pub fn model_request_usage_amount(&self) -> Option<u32> {
-        self.model_request_usage_amount
+    /// Returns whether the current user has overdue invoices and usage should be blocked.
+    pub fn has_overdue_invoices(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.has_overdue_invoices)
+            .unwrap_or_default()
     }
 
-    pub fn model_request_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.model_request_usage_limit.clone()
+    pub fn is_usage_based_billing_enabled(&self) -> bool {
+        self.plan_info
+            .as_ref()
+            .map(|plan| plan.is_usage_based_billing_enabled)
+            .unwrap_or_default()
     }
 
-    pub fn edit_predictions_usage_amount(&self) -> Option<u32> {
-        self.edit_predictions_usage_amount
+    pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        self.model_request_usage
     }
 
-    pub fn edit_predictions_usage_limit(&self) -> Option<proto::UsageLimit> {
-        self.edit_predictions_usage_limit.clone()
+    pub fn update_model_request_usage(&mut self, usage: ModelRequestUsage, cx: &mut Context<Self>) {
+        self.model_request_usage = Some(usage);
+        cx.notify();
+    }
+
+    pub fn edit_prediction_usage(&self) -> Option<EditPredictionUsage> {
+        self.edit_prediction_usage
+    }
+
+    pub fn update_edit_prediction_usage(
+        &mut self,
+        usage: EditPredictionUsage,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_prediction_usage = Some(usage);
+        cx.notify();
+    }
+
+    fn update_authenticated_user(
+        &mut self,
+        response: GetAuthenticatedUserResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let staff = response.user.is_staff && !*feature_flags::ZED_DISABLE_STAFF;
+        cx.update_flags(staff, response.feature_flags);
+        if let Some(client) = self.client.upgrade() {
+            client
+                .telemetry
+                .set_authenticated_user_info(Some(response.user.metrics_id.clone()), staff);
+        }
+
+        let accepted_tos_at = {
+            #[cfg(debug_assertions)]
+            if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok() {
+                None
+            } else {
+                response.user.accepted_tos_at
+            }
+
+            #[cfg(not(debug_assertions))]
+            response.user.accepted_tos_at
+        };
+
+        self.accepted_tos_at = Some(accepted_tos_at);
+        self.model_request_usage = Some(ModelRequestUsage(RequestUsage {
+            limit: response.plan.usage.model_requests.limit,
+            amount: response.plan.usage.model_requests.used as i32,
+        }));
+        self.edit_prediction_usage = Some(EditPredictionUsage(RequestUsage {
+            limit: response.plan.usage.edit_predictions.limit,
+            amount: response.plan.usage.edit_predictions.used as i32,
+        }));
+        self.plan_info = Some(response.plan);
+        cx.emit(Event::PrivateUserInfoUpdated);
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {
         self.current_user.clone()
     }
 
-    /// Returns whether the user's account is too new to use the service.
-    pub fn account_too_young(&self) -> bool {
-        self.account_too_young.unwrap_or(false)
-    }
-
-    /// Returns whether the current user has overdue invoices and usage should be blocked.
-    pub fn has_overdue_invoices(&self) -> bool {
-        self.has_overdue_invoices.unwrap_or(false)
-    }
-
-    pub fn current_user_has_accepted_terms(&self) -> Option<bool> {
+    pub fn has_accepted_terms_of_service(&self) -> bool {
         self.accepted_tos_at
-            .map(|accepted_tos_at| accepted_tos_at.is_some())
+            .map_or(false, |accepted_tos_at| accepted_tos_at.is_some())
     }
 
     pub fn accept_terms_of_service(&self, cx: &Context<Self>) -> Task<Result<()>> {
@@ -783,21 +831,16 @@ impl UserStore {
         cx.spawn(async move |this, cx| -> anyhow::Result<()> {
             let client = client.upgrade().context("client not found")?;
             let response = client
-                .request(proto::AcceptTermsOfService {})
+                .cloud_client()
+                .accept_terms_of_service()
                 .await
                 .context("error accepting tos")?;
             this.update(cx, |this, cx| {
-                this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                this.accepted_tos_at = Some(response.user.accepted_tos_at);
                 cx.emit(Event::PrivateUserInfoUpdated);
             })?;
             Ok(())
         })
-    }
-
-    fn set_current_user_accepted_tos_at(&mut self, accepted_tos_at: Option<u64>) {
-        self.accepted_tos_at = Some(
-            accepted_tos_at.and_then(|timestamp| DateTime::from_timestamp(timestamp as i64, 0)),
-        );
     }
 
     fn load_users(
@@ -858,7 +901,7 @@ impl UserStore {
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
             if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login.into());
+                ret.insert(id, github_login);
             } else {
                 missing_user_ids.push(id)
             }
@@ -879,7 +922,7 @@ impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             id: message.id,
-            github_login: message.github_login,
+            github_login: message.github_login.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })
@@ -915,5 +958,65 @@ impl Collaborator {
             committer_name: message.committer_name,
             committer_email: message.committer_email,
         })
+    }
+}
+
+impl RequestUsage {
+    pub fn over_limit(&self) -> bool {
+        match self.limit {
+            UsageLimit::Limited(limit) => self.amount >= limit,
+            UsageLimit::Unlimited => false,
+        }
+    }
+
+    pub fn from_proto(amount: u32, limit: proto::UsageLimit) -> Option<Self> {
+        let limit = match limit.variant? {
+            proto::usage_limit::Variant::Limited(limited) => {
+                UsageLimit::Limited(limited.limit as i32)
+            }
+            proto::usage_limit::Variant::Unlimited(_) => UsageLimit::Unlimited,
+        };
+        Some(RequestUsage {
+            limit,
+            amount: amount as i32,
+        })
+    }
+
+    fn from_headers(
+        limit_name: &str,
+        amount_name: &str,
+        headers: &HeaderMap<HeaderValue>,
+    ) -> Result<Self> {
+        let limit = headers
+            .get(limit_name)
+            .with_context(|| format!("missing {limit_name:?} header"))?;
+        let limit = UsageLimit::from_str(limit.to_str()?)?;
+
+        let amount = headers
+            .get(amount_name)
+            .with_context(|| format!("missing {amount_name:?} header"))?;
+        let amount = amount.to_str()?.parse::<i32>()?;
+
+        Ok(Self { limit, amount })
+    }
+}
+
+impl ModelRequestUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            MODEL_REQUESTS_USAGE_LIMIT_HEADER_NAME,
+            MODEL_REQUESTS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
+    }
+}
+
+impl EditPredictionUsage {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+        Ok(Self(RequestUsage::from_headers(
+            EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
+            EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME,
+            headers,
+        )?))
     }
 }

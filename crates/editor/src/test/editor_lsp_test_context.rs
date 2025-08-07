@@ -14,7 +14,8 @@ use futures::Future;
 use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
-    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries, point_to_lsp,
+    BlockCommentConfig, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+    point_to_lsp,
 };
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;
@@ -269,7 +270,12 @@ impl EditorLspTestContext {
                     path_suffixes: vec!["html".into()],
                     ..Default::default()
                 },
-                block_comment: Some(("<!-- ".into(), " -->".into())),
+                block_comment: Some(BlockCommentConfig {
+                    start: "<!--".into(),
+                    prefix: "".into(),
+                    end: "-->".into(),
+                    tab_size: 0,
+                }),
                 completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
@@ -351,7 +357,7 @@ impl EditorLspTestContext {
         T: 'static + request::Request,
         T::Params: 'static + Send,
         F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
-        Fut: 'static + Send + Future<Output = Result<T::Result>>,
+        Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();
         self.lsp.set_request_handler::<T, _, _>(move |params, cx| {

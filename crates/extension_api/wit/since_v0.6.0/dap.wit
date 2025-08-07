@@ -33,7 +33,7 @@ interface dap {
     }
 
     /// Debug Config is the "highest-level" configuration for a debug session.
-    /// It comes from a new session modal UI; thus, it is essentially debug-adapter-agnostic.
+    /// It comes from a new process modal UI; thus, it is essentially debug-adapter-agnostic.
     /// It is expected of the extension to translate this generic configuration into something that can be debugged by the adapter (debug scenario).
     record debug-config {
         /// Name of the debug task

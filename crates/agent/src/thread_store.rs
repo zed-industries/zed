@@ -1,22 +1,25 @@
-use std::cell::{Ref, RefCell};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
-
+use crate::{
+    context_server_tool::ContextServerTool,
+    thread::{
+        DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
+    },
+};
 use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ToolId, ToolWorkingSet};
+use assistant_tool::{Tool, ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::ContextServerId;
-use futures::channel::{mpsc, oneshot};
-use futures::future::{self, BoxFuture, Shared};
-use futures::{FutureExt as _, StreamExt as _};
+use futures::{
+    FutureExt as _, StreamExt as _,
+    channel::{mpsc, oneshot},
+    future::{self, BoxFuture, Shared},
+};
 use gpui::{
     App, BackgroundExecutor, Context, Entity, EventEmitter, Global, ReadGlobal, SharedString,
-    Subscription, Task, prelude::*,
+    Subscription, Task, Window, prelude::*,
 };
-
+use indoc::indoc;
 use language_model::{LanguageModelToolResultContent, LanguageModelToolUseId, Role, TokenUsage};
 use project::context_server_store::{ContextServerStatus, ContextServerStore};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
@@ -25,19 +28,21 @@ use prompt_store::{
     UserRulesContext, WorktreeContext,
 };
 use serde::{Deserialize, Serialize};
-use ui::Window;
-use util::ResultExt as _;
-
-use crate::context_server_tool::ContextServerTool;
-use crate::thread::{
-    DetailedSummaryState, ExceededWindowError, MessageId, ProjectSnapshot, Thread, ThreadId,
-};
-use indoc::indoc;
 use sqlez::{
     bindable::{Bind, Column},
     connection::Connection,
     statement::Statement,
 };
+use std::{
+    cell::{Ref, RefCell},
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
+use util::ResultExt as _;
+
+pub static ZED_STATELESS: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -69,7 +74,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 8] = [
+const RULES_FILE_NAMES: [&'static str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -78,6 +83,7 @@ const RULES_FILE_NAMES: [&'static str; 8] = [
     "CLAUDE.md",
     "AGENT.md",
     "AGENTS.md",
+    "GEMINI.md",
 ];
 
 pub fn init(cx: &mut App) {
@@ -94,7 +100,7 @@ impl SharedProjectContext {
     }
 }
 
-pub type TextThreadStore = assistant_context_editor::ContextStore;
+pub type TextThreadStore = assistant_context::ContextStore;
 
 pub struct ThreadStore {
     project: Entity<Project>,
@@ -534,8 +540,8 @@ impl ThreadStore {
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
                         if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
-                            tool_working_set.update(cx, |tool_working_set, _| {
-                                tool_working_set.remove(&tool_ids);
+                            tool_working_set.update(cx, |tool_working_set, cx| {
+                                tool_working_set.remove(&tool_ids, cx);
                             });
                         }
                     }
@@ -566,19 +572,17 @@ impl ThreadStore {
                     .log_err()
                 {
                     let tool_ids = tool_working_set
-                        .update(cx, |tool_working_set, _| {
-                            response
-                                .tools
-                                .into_iter()
-                                .map(|tool| {
-                                    log::info!("registering context server tool: {:?}", tool.name);
-                                    tool_working_set.insert(Arc::new(ContextServerTool::new(
+                        .update(cx, |tool_working_set, cx| {
+                            tool_working_set.extend(
+                                response.tools.into_iter().map(|tool| {
+                                    Arc::new(ContextServerTool::new(
                                         context_server_store.clone(),
                                         server.id(),
                                         tool,
-                                    )))
-                                })
-                                .collect::<Vec<_>>()
+                                    )) as Arc<dyn Tool>
+                                }),
+                                cx,
+                            )
                         })
                         .log_err();
 
@@ -729,7 +733,7 @@ pub enum SerializedMessageSegment {
         signature: Option<String>,
     },
     RedactedThinking {
-        data: Vec<u8>,
+        data: String,
     },
 }
 
@@ -873,7 +877,11 @@ impl ThreadsDatabase {
 
         let needs_migration_from_heed = mdb_path.exists();
 
-        let connection = Connection::open_file(&sqlite_path.to_string_lossy());
+        let connection = if *ZED_STATELESS {
+            Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else {
+            Connection::open_file(&sqlite_path.to_string_lossy())
+        };
 
         connection.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS threads (

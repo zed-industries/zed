@@ -1,4 +1,4 @@
-use editor::{Bias, Editor, scroll::Autoscroll, styled_runs_for_code_label};
+use editor::{Bias, Editor, SelectionEffects, scroll::Autoscroll, styled_runs_for_code_label};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, Context, DismissEvent, Entity, FontWeight, ParentElement, StyledText, Task, WeakEntity,
@@ -136,9 +136,12 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                         workspace.open_project_item::<Editor>(pane, buffer, true, true, window, cx);
 
                     editor.update(cx, |editor, cx| {
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_ranges([position..position])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges([position..position]),
+                        );
                     });
                 })?;
                 anyhow::Ok(())

@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail};
 use futures::{Stream, StreamExt, channel::oneshot};
+use rand::{SeedableRng, rngs::StdRng};
 use std::{cell::RefCell, future::Future, ops::Deref, rc::Rc, sync::Arc, time::Duration};
 
 /// A TestAppContext is provided to tests created with `#[gpui::test]`, it provides
@@ -61,6 +62,13 @@ impl AppContext for TestAppContext {
     ) -> Self::Result<R> {
         let mut app = self.app.borrow_mut();
         app.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, _: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        panic!("Cannot use as_mut with a test app context. Try calling update() first")
     }
 
     fn read_entity<T, R>(
@@ -132,6 +140,12 @@ impl TestAppContext {
             fn_name,
             on_quit: Rc::new(RefCell::new(Vec::default())),
         }
+    }
+
+    /// Create a single TestAppContext, for non-multi-client tests
+    pub fn single() -> Self {
+        let dispatcher = TestDispatcher::new(StdRng::from_entropy());
+        Self::build(dispatcher, None)
     }
 
     /// The name of the test function that created this `TestAppContext`
@@ -912,6 +926,13 @@ impl AppContext for VisualTestContext {
         T: 'static,
     {
         self.cx.update_entity(handle, update)
+    }
+
+    fn as_mut<'a, T>(&'a mut self, handle: &Entity<T>) -> Self::Result<super::GpuiBorrow<'a, T>>
+    where
+        T: 'static,
+    {
+        self.cx.as_mut(handle)
     }
 
     fn read_entity<T, R>(

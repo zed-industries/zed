@@ -105,6 +105,24 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
                 .map_or(false, |model| model.focus_handle(cx).is_focused(window))
         })
     }
+
+    pub fn refresh_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut App,
+        new_menu_builder: Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>>>,
+    ) {
+        let show_menu = if let Some(state) = self.0.borrow_mut().as_mut() {
+            state.menu_builder = new_menu_builder;
+            state.menu.borrow().is_some()
+        } else {
+            false
+        };
+
+        if show_menu {
+            self.show(window, cx);
+        }
+    }
 }
 
 pub struct PopoverMenu<M: ManagedView> {

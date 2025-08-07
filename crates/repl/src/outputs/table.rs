@@ -106,7 +106,9 @@ impl TableView {
 
         for field in table.schema.fields.iter() {
             runs[0].len = field.name.len();
-            let mut width = text_system.layout_line(&field.name, font_size, &runs).width;
+            let mut width = text_system
+                .layout_line(&field.name, font_size, &runs, None)
+                .width;
 
             let Some(data) = table.data.as_ref() else {
                 widths.push(width);
@@ -118,7 +120,7 @@ impl TableView {
                 runs[0].len = content.len();
                 let cell_width = window
                     .text_system()
-                    .layout_line(&content, font_size, &runs)
+                    .layout_line(&content, font_size, &runs, None)
                     .width;
 
                 width = width.max(cell_width)

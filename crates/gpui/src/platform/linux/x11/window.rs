@@ -288,7 +288,7 @@ pub(crate) struct X11WindowStatePtr {
 }
 
 impl rwh::HasWindowHandle for RawWindow {
-    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         let Some(non_zero) = NonZeroU32::new(self.window_id) else {
             log::error!("RawWindow.window_id zero when getting window handle.");
             return Err(rwh::HandleError::Unavailable);
@@ -299,7 +299,7 @@ impl rwh::HasWindowHandle for RawWindow {
     }
 }
 impl rwh::HasDisplayHandle for RawWindow {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         let Some(non_zero) = NonNull::new(self.connection) else {
             log::error!("Null RawWindow.connection when getting display handle.");
             return Err(rwh::HandleError::Unavailable);
@@ -310,14 +310,21 @@ impl rwh::HasDisplayHandle for RawWindow {
 }
 
 impl rwh::HasWindowHandle for X11Window {
-    fn window_handle(&self) -> Result<rwh::WindowHandle, rwh::HandleError> {
+    fn window_handle(&self) -> Result<rwh::WindowHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
 }
 impl rwh::HasDisplayHandle for X11Window {
-    fn display_handle(&self) -> Result<rwh::DisplayHandle, rwh::HandleError> {
+    fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         unimplemented!()
     }
+}
+
+pub(crate) fn xcb_flush(xcb: &XCBConnection) {
+    xcb.flush()
+        .map_err(handle_connection_error)
+        .context("X11 flush failed")
+        .log_err();
 }
 
 pub(crate) fn check_reply<E, F, C>(
@@ -597,7 +604,7 @@ impl X11WindowState {
                 ),
             )?;
 
-            xcb.flush()?;
+            xcb_flush(&xcb);
 
             let renderer = {
                 let raw_window = RawWindow {
@@ -657,7 +664,7 @@ impl X11WindowState {
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
             )?;
-            xcb.flush()?;
+            xcb_flush(&xcb);
         }
 
         setup_result
@@ -669,26 +676,6 @@ impl X11WindowState {
             width: size.width.into(),
             height: size.height.into(),
         }
-    }
-}
-
-/// A handle to an X11 window which destroys it on Drop.
-pub struct X11WindowHandle {
-    id: xproto::Window,
-    xcb: Rc<XCBConnection>,
-}
-
-impl Drop for X11WindowHandle {
-    fn drop(&mut self) {
-        maybe!({
-            check_reply(
-                || "X11 DestroyWindow failed while dropping X11WindowHandle.",
-                self.xcb.destroy_window(self.id),
-            )?;
-            self.xcb.flush()?;
-            anyhow::Ok(())
-        })
-        .log_err();
     }
 }
 
@@ -704,7 +691,7 @@ impl Drop for X11Window {
                 || "X11 DestroyWindow failure.",
                 self.0.xcb.destroy_window(self.0.x_window),
             )?;
-            self.0.xcb.flush()?;
+            xcb_flush(&self.0.xcb);
 
             anyhow::Ok(())
         })
@@ -799,7 +786,9 @@ impl X11Window {
                 xproto::EventMask::SUBSTRUCTURE_REDIRECT | xproto::EventMask::SUBSTRUCTURE_NOTIFY,
                 message,
             ),
-        )
+        )?;
+        xcb_flush(&self.0.xcb);
+        Ok(())
     }
 
     fn get_root_position(
@@ -852,15 +841,8 @@ impl X11Window {
             ),
         )?;
 
-        self.flush()
-    }
-
-    fn flush(&self) -> anyhow::Result<()> {
-        self.0
-            .xcb
-            .flush()
-            .map_err(handle_connection_error)
-            .context("X11 flush failed")
+        xcb_flush(&self.0.xcb);
+        Ok(())
     }
 }
 
@@ -980,14 +962,17 @@ impl X11WindowStatePtr {
             }
         }
         if let PlatformInput::KeyDown(event) = input {
-            let mut state = self.state.borrow_mut();
-            if let Some(mut input_handler) = state.input_handler.take() {
-                if let Some(key_char) = &event.keystroke.key_char {
-                    drop(state);
-                    input_handler.replace_text_in_range(None, key_char);
-                    state = self.state.borrow_mut();
+            // only allow shift modifier when inserting text
+            if event.keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
+                let mut state = self.state.borrow_mut();
+                if let Some(mut input_handler) = state.input_handler.take() {
+                    if let Some(key_char) = &event.keystroke.key_char {
+                        drop(state);
+                        input_handler.replace_text_in_range(None, key_char);
+                        state = self.state.borrow_mut();
+                    }
+                    state.input_handler = Some(input_handler);
                 }
-                state.input_handler = Some(input_handler);
             }
         }
     }
@@ -1198,7 +1183,7 @@ impl PlatformWindow for X11Window {
             ),
         )
         .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn scale_factor(&self) -> f32 {
@@ -1289,7 +1274,7 @@ impl PlatformWindow for X11Window {
                 xproto::Time::CURRENT_TIME,
             )
             .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn is_active(&self) -> bool {
@@ -1324,7 +1309,7 @@ impl PlatformWindow for X11Window {
             ),
         )
         .log_err();
-        self.flush().log_err();
+        xcb_flush(&self.0.xcb);
     }
 
     fn set_app_id(&mut self, app_id: &str) {

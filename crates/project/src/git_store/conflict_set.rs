@@ -565,7 +565,7 @@ mod tests {
             conflict_set.snapshot().conflicts[0].clone()
         });
         cx.update(|cx| {
-            conflict.resolve(buffer.clone(), &[conflict.theirs.clone()], cx);
+            conflict.resolve(buffer.clone(), std::slice::from_ref(&conflict.theirs), cx);
         });
 
         cx.run_until_parked();

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
-use editor::Editor;
 use editor::scroll::Autoscroll;
+use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,13 @@ use std::{
 };
 use workspace::{AppState, OpenVisible, Workspace};
 
-actions!(journal, [NewJournalEntry]);
+actions!(
+    journal,
+    [
+        /// Creates a new journal entry for today.
+        NewJournalEntry
+    ]
+);
 
 /// Settings specific to journaling
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -168,9 +174,12 @@ pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut Ap
                 if let Some(editor) = item.downcast::<Editor>().map(|editor| editor.downgrade()) {
                     editor.update_in(cx, |editor, window, cx| {
                         let len = editor.buffer().read(cx).len(cx);
-                        editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
-                            s.select_ranges([len..len])
-                        });
+                        editor.change_selections(
+                            SelectionEffects::scroll(Autoscroll::center()),
+                            window,
+                            cx,
+                            |s| s.select_ranges([len..len]),
+                        );
                         if len > 0 {
                             editor.insert("\n\n", window, cx);
                         }

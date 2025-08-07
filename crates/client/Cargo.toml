@@ -17,26 +17,25 @@ test-support = ["clock/test-support", "collections/test-support", "gpui/test-sup
 
 [dependencies]
 anyhow.workspace = true
-async-recursion = "0.3"
 async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
 base64.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clock.workspace = true
+cloud_api_client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 credentials_provider.workspace = true
+derive_more.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
-# Don't update `hickory-resolver`, it has a bug that causes it to not resolve DNS queries correctly.
-# See https://github.com/hickory-dns/hickory-dns/issues/3048
-hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 http_client.workspace = true
 http_client_tls.workspace = true
 httparse = "1.10"
 log.workspace = true
-paths.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 postage.workspace = true
 rand.workspace = true
 regex.workspace = true
@@ -48,18 +47,18 @@ serde_json.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
 tiny_http.workspace = true
 tokio-socks = { version = "0.5.2", default-features = false, features = ["futures-io"] }
+tokio.workspace = true
 url.workspace = true
 util.workspace = true
-worktree.workspace = true
-telemetry.workspace = true
-tokio.workspace = true
 workspace-hack.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }

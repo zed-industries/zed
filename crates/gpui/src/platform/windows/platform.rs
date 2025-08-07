@@ -28,13 +28,12 @@ use windows::{
     core::*,
 };
 
-use crate::{platform::blade::BladeContext, *};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
     raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
     // The below members will never change throughout the entire lifecycle of the app.
-    gpu_context: BladeContext,
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
@@ -42,8 +41,10 @@ pub(crate) struct WindowsPlatform {
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
+    drop_target_helper: IDropTargetHelper,
     validation_number: usize,
     main_thread_id_win32: u32,
+    disable_direct_composition: bool,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -93,33 +94,41 @@ impl WindowsPlatform {
             main_thread_id_win32,
             validation_number,
         ));
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
+        let directx_devices = DirectXDevices::new(disable_direct_composition)
+            .context("Unable to init directx devices.")?;
         let bitmap_factory = ManuallyDrop::new(unsafe {
             CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating bitmap factory.")?
         });
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&bitmap_factory)
+            DirectWriteTextSystem::new(&directx_devices, &bitmap_factory)
                 .context("Error creating DirectWriteTextSystem")?,
         );
+        let drop_target_helper: IDropTargetHelper = unsafe {
+            CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
+                .context("Error creating drop target helper.")?
+        };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
         let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
             state,
             raw_window_handles,
-            gpu_context,
             icon,
             main_receiver,
             background_executor,
             foreground_executor,
             text_system,
+            disable_direct_composition,
             windows_version,
             bitmap_factory,
+            drop_target_helper,
             validation_number,
             main_thread_id_win32,
         })
@@ -135,12 +144,12 @@ impl WindowsPlatform {
         }
     }
 
-    pub fn try_get_windows_inner_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
+    pub fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         self.raw_window_handles
             .read()
             .iter()
             .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .and_then(|hwnd| window_from_hwnd(*hwnd))
     }
 
     #[inline]
@@ -177,9 +186,11 @@ impl WindowsPlatform {
             executor: self.foreground_executor.clone(),
             current_cursor: self.state.borrow().current_cursor,
             windows_version: self.windows_version,
+            drop_target_helper: self.drop_target_helper.clone(),
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
             main_thread_id_win32: self.main_thread_id_win32,
+            disable_direct_composition: self.disable_direct_composition,
         }
     }
 
@@ -295,6 +306,18 @@ impl WindowsPlatform {
             .log_err()
             .unwrap_or_default()
     }
+
+    fn find_current_active_window(&self) -> Option<HWND> {
+        let active_window_hwnd = unsafe { GetActiveWindow() };
+        if active_window_hwnd.is_invalid() {
+            return None;
+        }
+        self.raw_window_handles
+            .read()
+            .iter()
+            .find(|&&hwnd| hwnd == active_window_hwnd)
+            .copied()
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -324,27 +347,11 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
-        begin_vsync(*vsync_event);
-        'a: loop {
-            let wait_result = unsafe {
-                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
-            };
-
-            match wait_result {
-                // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => self.redraw_all(),
-                // Windows thread messages are posted
-                WAIT_EVENT(1) => {
-                    if self.handle_events() {
-                        break 'a;
-                    }
-                }
-                _ => {
-                    log::error!("Something went wrong while waiting {:?}", wait_result);
-                    break;
-                }
+        loop {
+            if self.handle_events() {
+                break;
             }
+            self.redraw_all();
         }
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
@@ -413,21 +420,21 @@ impl Platform for WindowsPlatform {
         WindowsDisplay::primary_monitor().map(|display| Rc::new(display) as Rc<dyn PlatformDisplay>)
     }
 
+    #[cfg(feature = "screen-capture")]
     fn is_screen_capture_supported(&self) -> bool {
-        false
+        true
     }
 
+    #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
-        let (mut tx, rx) = oneshot::channel();
-        tx.send(Err(anyhow!("screen capture not implemented"))).ok();
-        rx
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
+        crate::platform::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.try_get_windows_inner_from_hwnd(active_window_hwnd)
+        self.window_from_hwnd(active_window_hwnd)
             .map(|inner| inner.handle)
     }
 
@@ -436,12 +443,7 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.generate_creation_info(),
-            &self.gpu_context,
-        )?;
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
         self.raw_window_handles.write().push(handle);
 
@@ -473,9 +475,10 @@ impl Platform for WindowsPlatform {
         options: PathPromptOptions,
     ) -> Receiver<Result<Option<Vec<PathBuf>>>> {
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_open_dialog(options));
+                let _ = tx.send(file_open_dialog(options, window));
             })
             .detach();
 
@@ -485,9 +488,10 @@ impl Platform for WindowsPlatform {
     fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
         let (tx, rx) = oneshot::channel();
+        let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory));
+                let _ = tx.send(file_save_dialog(directory, window));
             })
             .detach();
 
@@ -714,9 +718,11 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) executor: ForegroundExecutor,
     pub(crate) current_cursor: Option<HCURSOR>,
     pub(crate) windows_version: WindowsVersion,
+    pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
     pub(crate) main_thread_id_win32: u32,
+    pub(crate) disable_direct_composition: bool,
 }
 
 fn open_target(target: &str) {
@@ -754,7 +760,10 @@ fn open_target_in_explorer(target: &str) {
     }
 }
 
-fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> {
+fn file_open_dialog(
+    options: PathPromptOptions,
+    window: Option<HWND>,
+) -> Result<Option<Vec<PathBuf>>> {
     let folder_dialog: IFileOpenDialog =
         unsafe { CoCreateInstance(&FileOpenDialog, None, CLSCTX_ALL)? };
 
@@ -768,7 +777,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
-        if folder_dialog.Show(None).is_err() {
+        if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }
@@ -790,7 +799,7 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
+fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
@@ -806,7 +815,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
             pszName: windows::core::w!("All files"),
             pszSpec: windows::core::w!("*.*"),
         }])?;
-        if dialog.Show(None).is_err() {
+        if dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
         }
@@ -819,16 +828,6 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
         string
     };
     Ok(Some(PathBuf::from(file_path_string)))
-}
-
-fn begin_vsync(vsync_event: HANDLE) {
-    let event: SafeHandle = vsync_event.into();
-    std::thread::spawn(move || unsafe {
-        loop {
-            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(*event).log_err();
-        }
-    });
 }
 
 fn load_icon() -> Result<HICON> {

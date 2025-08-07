@@ -5,7 +5,7 @@ use std::{rc::Rc, sync::LazyLock};
 
 pub use crate::rust_analyzer_ext::expand_macro_recursively;
 use crate::{
-    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer,
+    DisplayPoint, Editor, EditorMode, FoldPlaceholder, MultiBuffer, SelectionEffects,
     display_map::{
         Block, BlockPlacement, CustomBlockId, DisplayMap, DisplayRow, DisplaySnapshot,
         ToDisplayPoint,
@@ -93,7 +93,9 @@ pub fn select_ranges(
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(editor.text(cx), unmarked_text);
-    editor.change_selections(None, window, cx, |s| s.select_ranges(text_ranges));
+    editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+        s.select_ranges(text_ranges)
+    });
 }
 
 #[track_caller]
