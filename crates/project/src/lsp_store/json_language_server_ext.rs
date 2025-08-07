@@ -44,10 +44,21 @@ pub fn register_requests(_lsp_store: WeakEntity<LspStore>, language_server: &Lan
                 schema_handling_impl.0.clone()
             });
             let mut cx = cx.clone();
-            async move {
+            let logger = zlog::scoped!("json-schema");
+            let uri = params.clone().pop();
+            let resolution = async move {
+                let uri = uri.context("No URI")?;
                 let handler = handler.context("No schema handler registered")?;
-                let uri = params.pop().context("No URI")?;
                 handler.handle_schema_request(uri, &mut cx)
+            };
+            async move {
+                zlog::trace!(logger => "Handling schema request for {:?}", &params);
+                let result = resolution.await;
+                match &result {
+                    Ok(content) => {zlog::trace!(logger => "Schema request resolved with {}B schema", content.len());},
+                    Err(err) => {zlog::warn!(logger => "Schema request failed: {}", err);},
+                }
+                result
             }
         })
         .detach();
