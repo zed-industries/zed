@@ -503,7 +503,7 @@ pub struct InlineBlameSettings {
 }
 
 fn default_inline_blame_padding() -> u32 {
-    6
+    7
 }
 
 impl Default for InlineBlameSettings {
