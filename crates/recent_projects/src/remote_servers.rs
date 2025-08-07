@@ -8,6 +8,7 @@ use crate::{
 use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::{FutureExt, channel::oneshot, future::Shared, select};
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, PromptLevel, ScrollHandle, Subscription, Task, WeakEntity, Window,
@@ -34,7 +35,7 @@ use std::{
 };
 use ui::{
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    Section, Tooltip, WithScrollbar, HighlightedLabel, prelude::*,
 };
 use util::{
     ResultExt,
@@ -48,13 +49,15 @@ use workspace::{
 
 pub struct RemoteServerProjects {
     mode: Mode,
-    focus_handle: FocusHandle,
     workspace: WeakEntity<Workspace>,
     retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
+    search_editor: Entity<Editor>,
+    filtered_servers: Vec<(RemoteEntry, Vec<StringMatch>, f64)>,
     _subscription: Subscription,
+    _search_subscription: Subscription,
 }
 
 struct CreateRemoteServer {
@@ -365,7 +368,6 @@ impl RemoteServerProjects {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
         let mut read_ssh_config = SshSettings::get_global(cx).read_ssh_config;
         let ssh_config_updates = if read_ssh_config {
             spawn_ssh_config_watch(fs.clone(), cx)
@@ -377,6 +379,26 @@ impl RemoteServerProjects {
         base_style.refine(&gpui::TextStyleRefinement {
             color: Some(cx.theme().colors().editor_foreground),
             ..Default::default()
+        });
+
+        let search_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Search remote servers and projects...", window, cx);
+            editor
+        });
+
+        // Set up search editor change listener to update filtering
+        let search_editor_subscription = cx.subscribe(
+            &search_editor,
+            |_this, _editor, _event: &editor::EditorEvent, cx| {
+                cx.notify();
+            },
+        );
+
+        // Focus the search editor initially
+        let search_editor_for_focus = search_editor.clone();
+        cx.defer_in(window, move |_, window, cx| {
+            search_editor_for_focus.focus_handle(cx).focus(window);
         });
 
         let _subscription =
@@ -393,16 +415,156 @@ impl RemoteServerProjects {
                 }
             });
 
-        Self {
+        let mut this = Self {
             mode: Mode::default_mode(&BTreeSet::new(), cx),
-            focus_handle,
             workspace,
             retained_connections: Vec::new(),
             ssh_config_updates,
             ssh_config_servers: BTreeSet::new(),
             create_new_window,
+            search_editor,
+            filtered_servers: Vec::new(),
             _subscription,
+            _search_subscription: search_editor_subscription,
+        };
+
+        this.update_filtered_servers("", cx);
+        this
+    }
+
+    fn update_filtered_servers(&mut self, query: &str, cx: &mut Context<Self>) {
+        let ssh_settings = SshSettings::get_global(cx);
+        let read_ssh_config = ssh_settings.read_ssh_config;
+
+        let mut servers: Vec<RemoteEntry> = ssh_settings
+            .ssh_connections()
+            .map(|connection| {
+                let open_folder = NavigableEntry::new(&ScrollHandle::new(), cx);
+                let configure = NavigableEntry::new(&ScrollHandle::new(), cx);
+                let projects = connection
+                    .projects
+                    .iter()
+                    .map(|project| {
+                        (
+                            NavigableEntry::new(&ScrollHandle::new(), cx),
+                            project.clone(),
+                        )
+                    })
+                    .collect();
+                RemoteEntry::Project {
+                    open_folder,
+                    configure,
+                    projects,
+                    connection,
+                }
+            })
+            .collect();
+
+        if read_ssh_config {
+            let mut extra_servers_from_config = self.ssh_config_servers.clone();
+            for server in &servers {
+                if let RemoteEntry::Project { connection, .. } = server {
+                    extra_servers_from_config.remove(&connection.host);
+                }
+            }
+            servers.extend(extra_servers_from_config.into_iter().map(|host| {
+                RemoteEntry::SshConfig {
+                    open_folder: NavigableEntry::new(&ScrollHandle::new(), cx),
+                    host,
+                }
+            }));
         }
+
+        if query.trim().is_empty() {
+            self.filtered_servers = servers
+                .into_iter()
+                .map(|server| (server, Vec::new(), 0.0))
+                .collect();
+            return;
+        }
+
+        let query = query.trim();
+        let smart_case = query.chars().any(|c| c.is_uppercase());
+
+        // Instead of matching entire servers, we need to match individual projects within servers
+        let mut filtered_servers = Vec::new();
+
+        for server in servers {
+            match &server {
+                RemoteEntry::Project { connection, .. } => {
+                    // Filter projects within this server
+                    let mut matching_projects = Vec::new();
+
+                    for project in &connection.projects {
+                        let project_paths = project.paths.join(",");
+                        let search_string = format!("{}:{}", connection.host, project_paths);
+
+                        // Create candidate for this specific project
+                        let candidate = StringMatchCandidate::new(0, &search_string);
+                        let matches = smol::block_on(fuzzy::match_strings(
+                            &[candidate],
+                            query,
+                            smart_case,
+                            true,
+                            1,
+                            &Default::default(),
+                            cx.background_executor().clone(),
+                        ));
+
+                        if !matches.is_empty() {
+                            matching_projects.push((
+                                NavigableEntry::new(&ScrollHandle::new(), cx),
+                                project.clone(),
+                                matches[0].clone(), // Store the match for highlighting
+                            ));
+                        }
+                    }
+
+                    // If any projects match, include the server with only matching projects
+                    if !matching_projects.is_empty() {
+                        // Sort projects by their individual match scores (higher scores first)
+                        matching_projects.sort_by(|a, b| b.2.score.partial_cmp(&a.2.score).unwrap_or(std::cmp::Ordering::Equal));
+                        
+                        let server_matches: Vec<StringMatch> = matching_projects.iter().map(|(_, _, m)| m.clone()).collect();
+                        let projects_without_matches: Vec<(NavigableEntry, SshProject)> = matching_projects.into_iter().map(|(nav, proj, _)| (nav, proj)).collect();
+                        
+                        // Calculate average score for this server
+                        let avg_score = server_matches.iter().map(|m| m.score).sum::<f64>() / server_matches.len() as f64;
+                        
+                        let filtered_server = RemoteEntry::Project {
+                            open_folder: NavigableEntry::new(&ScrollHandle::new(), cx),
+                            configure: NavigableEntry::new(&ScrollHandle::new(), cx),
+                            projects: projects_without_matches,
+                            connection: connection.clone(),
+                        };
+                        filtered_servers.push((filtered_server, server_matches, avg_score));
+                    }
+                }
+                RemoteEntry::SshConfig { host, .. } => {
+                    let search_string = host.to_string();
+
+                    let candidate = StringMatchCandidate::new(0, &search_string);
+                    let matches = smol::block_on(fuzzy::match_strings(
+                        &[candidate],
+                        query,
+                        smart_case,
+                        true,
+                        1,
+                        &Default::default(),
+                        cx.background_executor().clone(),
+                    ));
+
+                    if !matches.is_empty() {
+                        filtered_servers.push((server, matches.clone(), matches[0].score));
+                    }
+                }
+            }
+        }
+
+        // Sort by match score (higher scores first)
+        filtered_servers.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+        self.filtered_servers = filtered_servers;
     }
 
     pub fn project_picker(
@@ -484,7 +646,10 @@ impl RemoteServerProjects {
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                        this.focus_handle(cx).focus(window);
+                        let search_editor = this.search_editor.clone();
+                        cx.defer_in(window, move |_, window, cx| {
+                            search_editor.focus_handle(cx).focus(window);
+                        });
                         cx.notify()
                     })
                     .log_err(),
@@ -528,7 +693,10 @@ impl RemoteServerProjects {
             connection,
             entries: std::array::from_fn(|_| NavigableEntry::focusable(cx)),
         });
-        self.focus_handle(cx).focus(window);
+        let search_editor = self.search_editor.clone();
+        cx.defer_in(window, move |_, window, cx| {
+            search_editor.focus_handle(cx).focus(window);
+        });
         cx.notify();
     }
 
@@ -668,7 +836,10 @@ impl RemoteServerProjects {
                     }
                 });
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
-                self.focus_handle.focus(window);
+                let search_editor = self.search_editor.clone();
+                cx.defer_in(window, move |_, window, cx| {
+                    search_editor.focus_handle(cx).focus(window);
+                });
             }
         }
     }
@@ -688,7 +859,10 @@ impl RemoteServerProjects {
             }
             _ => {
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
-                self.focus_handle(cx).focus(window);
+                let search_editor = self.search_editor.clone();
+                cx.defer_in(window, move |_, window, cx| {
+                    search_editor.focus_handle(cx).focus(window);
+                });
                 cx.notify();
             }
         }
@@ -698,6 +872,7 @@ impl RemoteServerProjects {
         &mut self,
         ix: usize,
         ssh_server: RemoteEntry,
+        matches: &[StringMatch],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -723,7 +898,8 @@ impl RemoteServerProjects {
                         div().max_w_96().overflow_hidden().text_ellipsis().child(
                             Label::new(main_label)
                                 .size(LabelSize::Small)
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .into_any_element()
                         ),
                     )
                     .children(
@@ -741,11 +917,14 @@ impl RemoteServerProjects {
                 } => List::new()
                     .empty_message("No projects.")
                     .children(projects.iter().enumerate().map(|(pix, p)| {
+                        let project_match = matches.get(pix);
+                        
                         v_flex().gap_0p5().child(self.render_ssh_project(
                             ix,
                             ssh_server.clone(),
                             pix,
                             p,
+                            project_match,
                             window,
                             cx,
                         ))
@@ -863,6 +1042,7 @@ impl RemoteServerProjects {
         server: RemoteEntry,
         ix: usize,
         (navigation, project): &(NavigableEntry, SshProject),
+        string_match: Option<&StringMatch>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -948,7 +1128,38 @@ impl RemoteServerProjects {
                             .color(Color::Muted)
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(project.paths.join(", ")))
+                    .child(
+                        if let Some(string_match) = string_match {
+                            // Extract positions that correspond to the project paths part
+                            let project_text = project.paths.join(", ");
+                            let search_string = &string_match.string;
+                            
+                            // Find where the project paths start in the search string (after "host:")
+                            if let Some(colon_pos) = search_string.find(':') {
+                                let project_start = colon_pos + 1;
+                                let project_positions: Vec<usize> = string_match.positions
+                                    .iter()
+                                    .filter_map(|&pos| {
+                                        if pos >= project_start {
+                                            Some(pos - project_start)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                
+                                if !project_positions.is_empty() {
+                                    HighlightedLabel::new(project_text, project_positions).into_any_element()
+                                } else {
+                                    Label::new(project_text).into_any_element()
+                                }
+                            } else {
+                                Label::new(project_text).into_any_element()
+                            }
+                        } else {
+                            Label::new(project.paths.join(", ")).into_any_element()
+                        }
+                    )
                     .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                         let secondary_confirm = e.modifiers().platform;
                         callback(this, secondary_confirm, window, cx)
@@ -1326,7 +1537,10 @@ impl RemoteServerProjects {
                                 .track_focus(&entries[3].focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
                                     this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
-                                    cx.focus_self(window);
+                                    let search_editor = this.search_editor.clone();
+                                    cx.defer_in(window, move |_, window, cx| {
+                                        search_editor.focus_handle(cx).focus(window);
+                                    });
                                     cx.notify();
                                 }))
                                 .child(
@@ -1343,7 +1557,10 @@ impl RemoteServerProjects {
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.mode =
                                                 Mode::default_mode(&this.ssh_config_servers, cx);
-                                            cx.focus_self(window);
+                                            let search_editor = this.search_editor.clone();
+                                            cx.defer_in(window, move |_, window, cx| {
+                                                search_editor.focus_handle(cx).focus(window);
+                                            });
                                             cx.notify()
                                         })),
                                 )
@@ -1447,6 +1664,11 @@ impl RemoteServerProjects {
             }
         }
 
+        // Update filtered servers when query changes
+        let current_query = self.search_editor.read(cx).text(cx);
+        self.update_filtered_servers(&current_query, cx);
+        let filtered_servers = self.filtered_servers.clone();
+
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
@@ -1479,7 +1701,6 @@ impl RemoteServerProjects {
 
         let mut modal_section = Navigable::new(
             v_flex()
-                .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
                 .track_scroll(&state.scroll_handle)
@@ -1491,22 +1712,28 @@ impl RemoteServerProjects {
                             v_flex()
                                 .child(
                                     div().px_3().child(
-                                        Label::new("No remote servers registered yet.")
-                                            .color(Color::Muted),
+                                        Label::new(if current_query.trim().is_empty() {
+                                            "No remote servers registered yet."
+                                        } else {
+                                            "No matching servers found."
+                                        })
+                                        .color(Color::Muted),
                                     ),
                                 )
                                 .into_any_element(),
                         )
-                        .children(state.servers.iter().enumerate().map(|(ix, connection)| {
-                            self.render_ssh_connection(ix, connection.clone(), window, cx)
-                                .into_any_element()
-                        })),
+                        .children(filtered_servers.iter().enumerate().map(
+                            |(ix, (server, matches, _score))| {
+                                self.render_ssh_connection(ix, server.clone(), matches, window, cx)
+                                    .into_any_element()
+                            },
+                        )),
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone());
+        .entry(state.add_new_server);
 
-        for server in &state.servers {
+        for (server, _, _) in &filtered_servers {
             match server {
                 RemoteEntry::Project {
                     open_folder,
@@ -1539,19 +1766,17 @@ impl RemoteServerProjects {
                 window.keystroke_text_for(&menu::Confirm),
             )
         };
-        let placeholder_text = Arc::from(format!(
+        let _placeholder_text: Arc<str> = Arc::from(format!(
             "{reuse_window} reuses this window, {create_window} opens a new one",
         ));
+
+        // Set up search editor change listener
+        let search_editor = self.search_editor.clone();
 
         Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall))
-                    .child(
-                        Label::new(placeholder_text)
-                            .color(Color::Muted)
-                            .size(LabelSize::XSmall),
-                    ),
+                    .child(Headline::new("Remote Projects").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(
@@ -1560,6 +1785,14 @@ impl RemoteServerProjects {
                         .size_full()
                         .relative()
                         .child(ListSeparator)
+                        .child(
+                            div()
+                                .p_2()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .track_focus(&search_editor.focus_handle(cx))
+                                .child(search_editor),
+                        )
                         .child(
                             canvas(
                                 |bounds, window, cx| {
@@ -1682,7 +1915,9 @@ impl Focusable for RemoteServerProjects {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.mode {
             Mode::ProjectPicker(picker) => picker.focus_handle(cx),
-            _ => self.focus_handle.clone(),
+            Mode::CreateRemoteServer(state) => state.address_editor.focus_handle(cx),
+            Mode::EditNickname(state) => state.editor.focus_handle(cx),
+            _ => self.search_editor.focus_handle(cx),
         }
     }
 }
@@ -1694,11 +1929,18 @@ impl Render for RemoteServerProjects {
         div()
             .elevation_3(cx)
             .w(rems(34.))
-            .key_context("RemoteServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .capture_any_mouse_down(cx.listener(|this, _, window, cx| {
-                this.focus_handle(cx).focus(window);
+                // Focus the appropriate element based on mode
+                match &this.mode {
+                    Mode::Default(_) => {
+                        this.search_editor.focus_handle(cx).focus(window);
+                    }
+                    _ => {
+                        this.focus_handle(cx).focus(window);
+                    }
+                }
             }))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if matches!(this.mode, Mode::Default(_)) {
