@@ -152,53 +152,53 @@ impl ActiveToolchain {
                 })
                 .ok()?
                 .await;
-            if let Some(toolchain) = selected_toolchain {
-                Some(toolchain)
-            } else {
-                let project = workspace
-                    .read_with(cx, |this, _| this.project().clone())
+            if selected_toolchain.is_some() {
+                return selected_toolchain;
+            }
+
+            let project = workspace
+                .read_with(cx, |this, _| this.project().clone())
+                .ok()?;
+            let (toolchains, relative_path) = cx
+                .update(|_, cx| {
+                    project.read(cx).available_toolchains(
+                        ProjectPath {
+                            worktree_id,
+                            path: relative_path.clone(),
+                        },
+                        language_name,
+                        cx,
+                    )
+                })
+                .ok()?
+                .await?;
+            if let Some(toolchain) = toolchains.toolchains.first() {
+                // Since we don't have a selected toolchain, pick one for user here.
+                workspace::WORKSPACE_DB
+                    .set_toolchain(
+                        workspace_id,
+                        worktree_id,
+                        relative_path.to_string_lossy().into_owned(),
+                        toolchain.clone(),
+                    )
+                    .await
                     .ok()?;
-                let (toolchains, relative_path) = cx
-                    .update(|_, cx| {
-                        project.read(cx).available_toolchains(
+                project
+                    .update(cx, |this, cx| {
+                        this.activate_toolchain(
                             ProjectPath {
                                 worktree_id,
-                                path: relative_path.clone(),
+                                path: relative_path,
                             },
-                            language_name,
+                            toolchain.clone(),
                             cx,
                         )
                     })
                     .ok()?
-                    .await?;
-                if let Some(toolchain) = toolchains.toolchains.first() {
-                    // Since we don't have a selected toolchain, pick one for user here.
-                    workspace::WORKSPACE_DB
-                        .set_toolchain(
-                            workspace_id,
-                            worktree_id,
-                            relative_path.to_string_lossy().into_owned(),
-                            toolchain.clone(),
-                        )
-                        .await
-                        .ok()?;
-                    project
-                        .update(cx, |this, cx| {
-                            this.activate_toolchain(
-                                ProjectPath {
-                                    worktree_id,
-                                    path: relative_path,
-                                },
-                                toolchain.clone(),
-                                cx,
-                            )
-                        })
-                        .ok()?
-                        .await;
-                }
-
-                toolchains.toolchains.first().cloned()
+                    .await;
             }
+
+            toolchains.toolchains.first().cloned()
         })
     }
 }

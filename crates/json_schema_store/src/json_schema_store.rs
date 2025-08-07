@@ -22,8 +22,8 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new(|_: &mut extension::ExtensionEvents, _, cx| {
-        cx.subscribe(&cx.entity(), |_, _, evt, cx| {
+    if let Some(extension_events) = extension::ExtensionEvents::try_global(cx) {
+        cx.subscribe(&extension_events, |_, evt, cx| {
             match evt {
                 extension::Event::ExtensionInstalled(_)
                 | extension::Event::ExtensionUninstalled(_)
@@ -35,6 +35,12 @@ pub fn init(cx: &mut App) {
             });
         })
         .detach();
+    }
+
+    cx.observe_global::<dap::DapRegistry>(|cx| {
+        cx.update_global::<SchemaStore, _>(|schema_store, cx| {
+            schema_store.notify_schema_changed("zed://schemas/debug_tasks", cx);
+        });
     })
     .detach();
 }
