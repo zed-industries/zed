@@ -1274,7 +1274,7 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 ```json
 "status_bar": {
-  "show_active_language_button": true,
+  "active_language_button": true,
 },
 ```
 

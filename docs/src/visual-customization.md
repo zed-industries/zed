@@ -311,7 +311,7 @@ TBD: Centered layout related settings
     // Show/hide a button that displays the active buffer's language.
     // Clicking the button brings up the language selector.
     // Defaults to true.
-    "show_active_language_button": true,
+    "active_language_button": true,
   },
 ```
 

@@ -40,14 +40,14 @@ impl ActiveBufferLanguage {
 
 impl Render for ActiveBufferLanguage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let div = div();
         if !EditorSettings::get_global(cx)
             .status_bar
-            .show_active_language_button
+            .active_language_button
         {
-            return div;
+            return div();
         }
-        div.when_some(self.active_language.as_ref(), |el, active_language| {
+
+        div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()
             } else {

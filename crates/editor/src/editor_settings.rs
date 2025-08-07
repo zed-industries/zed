@@ -131,7 +131,7 @@ pub struct StatusBar {
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
-    pub show_active_language_button: bool,
+    pub active_language_button: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -427,7 +427,7 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300
     pub hover_popover_delay: Option<u64>,
-    /// Statusbar related settings
+    /// Status bar related settings
     pub status_bar: Option<StatusBarContent>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
@@ -558,13 +558,13 @@ pub struct EditorSettingsContent {
     pub lsp_document_colors: Option<DocumentColorsRenderMode>,
 }
 
-// StatusBar related settings
+// Status bar related settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusBarContent {
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
-    pub show_active_language_button: Option<bool>,
+    pub active_language_button: Option<bool>,
 }
 
 // Toolbar related settings
