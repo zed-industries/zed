@@ -6,6 +6,7 @@ use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use editor::{Bias, MultiBuffer, PathKey};
+use futures::future::{Fuse, FusedFuture};
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use itertools::Itertools;
@@ -572,7 +573,7 @@ pub struct AcpThread {
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
     shared_buffers: HashMap<Entity<Buffer>, BufferSnapshot>,
-    send_task: Option<Task<()>>,
+    send_task: Option<Fuse<Task<()>>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
 }
@@ -662,7 +663,11 @@ impl AcpThread {
     }
 
     pub fn status(&self) -> ThreadStatus {
-        if self.send_task.is_some() {
+        if self
+            .send_task
+            .as_ref()
+            .map_or(false, |t| !t.is_terminated())
+        {
             if self.waiting_for_tool_confirmation() {
                 ThreadStatus::WaitingForToolConfirmation
             } else {
@@ -1037,28 +1042,31 @@ impl AcpThread {
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
-        self.send_task = Some(cx.spawn(async move |this, cx| {
-            async {
-                cancel_task.await;
+        self.send_task = Some(
+            cx.spawn(async move |this, cx| {
+                async {
+                    cancel_task.await;
 
-                let result = this
-                    .update(cx, |this, cx| {
-                        this.connection.prompt(
-                            acp::PromptRequest {
-                                prompt: message,
-                                session_id: this.session_id.clone(),
-                            },
-                            cx,
-                        )
-                    })?
-                    .await;
-                tx.send(result).log_err();
-                this.update(cx, |this, _cx| this.send_task.take())?;
-                anyhow::Ok(())
-            }
-            .await
-            .log_err();
-        }));
+                    let result = this
+                        .update(cx, |this, cx| {
+                            this.connection.prompt(
+                                acp::PromptRequest {
+                                    prompt: message,
+                                    session_id: this.session_id.clone(),
+                                },
+                                cx,
+                            )
+                        })?
+                        .await;
+
+                    tx.send(result).log_err();
+                    anyhow::Ok(())
+                }
+                .await
+                .log_err();
+            })
+            .fuse(),
+        );
 
         cx.spawn(async move |this, cx| match rx.await {
             Ok(Err(e)) => {
