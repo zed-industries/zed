@@ -2962,6 +2962,7 @@ mod tests {
             content: vec!["hi".into()],
             locations: vec![],
             raw_input: None,
+            raw_output: None,
         };
         let connection = StubAgentConnection::new(vec![acp::SessionUpdate::ToolCall(tool_call)])
             .with_permission_requests(HashMap::from_iter([(
