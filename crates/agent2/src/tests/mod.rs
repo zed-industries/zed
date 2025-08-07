@@ -476,6 +476,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     // Create a project for new_thread
     let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
+    fake_fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
 
