@@ -390,11 +390,11 @@ jobs:
         with:
           clean: false
 
-      - name: Configure Go and Rust cache
-        uses: namespacelabs/nscloud-cache-action@v1
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
-          cache: |
-            rust
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # cache-provider: "buildjet"
 
       - name: Install Clang & Mold
         run: ./script/remote-server && ./script/install-mold 2.34.0
