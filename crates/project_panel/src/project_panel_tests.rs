@@ -5888,17 +5888,17 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
             .id()
     });
 
+    let expected_entries = [
+        SelectedEntry {
+            worktree_id,
+            entry_id: file1_entry_id,
+        },
+        SelectedEntry {
+            worktree_id,
+            entry_id: file2_entry_id,
+        },
+    ];
     panel.update(cx, |panel, _cx| {
-        let expected_entries = [
-            SelectedEntry {
-                worktree_id,
-                entry_id: file1_entry_id,
-            },
-            SelectedEntry {
-                worktree_id,
-                entry_id: file2_entry_id,
-            },
-        ];
         assert_eq!(
             &panel.marked_entries, &expected_entries,
             "Should keep marked entries after comparison"
@@ -5912,16 +5912,6 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     });
 
     panel.update(cx, |panel, _cx| {
-        let expected_entries = [
-            SelectedEntry {
-                worktree_id,
-                entry_id: file1_entry_id,
-            },
-            SelectedEntry {
-                worktree_id,
-                entry_id: file2_entry_id,
-            },
-        ];
         assert_eq!(
             &panel.marked_entries, &expected_entries,
             "Marked entries should persist after focusing back on the project panel"
