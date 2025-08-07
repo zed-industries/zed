@@ -68,17 +68,20 @@ mod tests {
     /// Helper function to parse XML-like structure and test tab navigation
     ///
     /// The XML structure should define elements with tab-index and actual (expected order) values.
-    /// Elements like tab-group and focus-trap are parsed as regular elements with their own tab-index.
-    /// All elements are treated as flat - there is no nesting concept in TabHandles.
     ///
-    /// Example:
+    /// Currently only supports flat elements:
     /// ```
     /// <tab-index=0 actual=0>
     /// <tab-index=1 actual=1>
-    /// <tab-group tab-index=2 actual=2>
-    /// <tab-index=0 actual=3>
-    /// <focus-trap tab-index=3 actual=4>
-    /// <tab-index=0 actual=5>
+    /// <tab-index=2 actual=2>
+    /// ```
+    ///
+    /// Future support (not yet implemented) for nested structures:
+    /// ```
+    /// <tab-group tab-index=2>
+    ///     <tab-index=0 actual=3>  // Would be at position 2.0
+    ///     <tab-index=1 actual=4>  // Would be at position 2.1
+    /// </tab-group>
     /// ```
     fn check(xml: &str) {
         let focus_map = Arc::new(FocusMap::default());
@@ -100,16 +103,25 @@ mod tests {
             }
 
             // Enable tab_stop by default unless it's explicitly disabled
-            handle = handle.tab_stop(element.tab_stop.unwrap_or(true));
+            // Container elements (tab-group, focus-trap) should not be tab stops themselves
+            let should_be_tab_stop = if element.is_container {
+                false
+            } else {
+                element.tab_stop.unwrap_or(true)
+            };
+            handle = handle.tab_stop(should_be_tab_stop);
 
             // Store the handle
             all_handles.push(handle.clone());
             tab_handles.insert(&handle);
 
             // Track handles by their actual position
-            if let Some(actual) = element.actual {
-                if actual_to_handle.insert(actual, handle).is_some() {
-                    panic!("Duplicate actual value: {}", actual);
+            // Skip container elements as they don't participate in tab order directly
+            if !element.is_container {
+                if let Some(actual) = element.actual {
+                    if actual_to_handle.insert(actual, handle).is_some() {
+                        panic!("Duplicate actual value: {}", actual);
+                    }
                 }
             }
         }
@@ -185,6 +197,7 @@ mod tests {
             tab_index: Option<isize>,
             actual: Option<usize>,
             tab_stop: Option<bool>,
+            is_container: bool, // For tab-group and focus-trap
         }
 
         fn parse_xml_structure(xml: &str) -> Vec<ParsedElement> {
@@ -203,6 +216,7 @@ mod tests {
                         tab_index: None,
                         actual: None,
                         tab_stop: None,
+                        is_container: false,
                     };
 
                     // Remove < and > brackets
@@ -244,10 +258,17 @@ mod tests {
                         }
                     }
 
-                    // Special handling for focus-trap and tab-group
-                    if element.element_type == "focus-trap" {
-                        // Focus traps might have special behavior
-                        // For now, treat them as regular elements
+                    // Mark tab-group and focus-trap as containers
+                    if element.element_type == "tab-group" || element.element_type == "focus-trap" {
+                        element.is_container = true;
+                        // Container elements should not have 'actual' values themselves
+                        // Only their children should have actual values
+                        if element.actual.is_some() {
+                            panic!(
+                                "Container element '{}' should not have an 'actual' attribute",
+                                element.element_type
+                            );
+                        }
                     }
 
                     elements.push(element);
@@ -289,47 +310,92 @@ mod tests {
     }
 
     #[test]
-    fn test_with_nested_structures() {
-        // Note: tab-group and focus-trap are parsed as regular elements
-        // since TabHandles treats all elements as flat (no nesting concept)
-        // Elements with same tab_index are kept in insertion order
+    fn test_check_helper_with_nested_structures() {
+        // TODO: These tests define the expected structure for tab-group and focus-trap
+        // but the grouping logic is not yet implemented. For now, we only test
+        // flat elements that will work with the current implementation.
 
-        // Test with elements that look like tab groups (but are just regular elements)
-        // Order: tab_index=0 (first two), tab_index=1 (next two), tab_index=2, tab_index=3
+        // Test flat elements only (grouping not yet implemented)
         let xml = r#"
             <tab-index=0 actual=0>
-            <tab-index=1 actual=2>
-            <tab-group tab-index=2>
-                <tab-index=0 actual=1>
-                <tab-index=1 actual=3>
-            </tab-group>
-            <tab-index=3 actual=5>
+            <tab-index=1 actual=1>
+            <tab-index=2 actual=2>
+            <tab-index=3 actual=3>
         "#;
         check(xml);
 
-        // Test with elements that look like focus traps (but are just regular elements)
-        // Order: tab_index=0 (first two), tab_index=1 (next two), tab_index=2
+        // Another flat test
         let xml2 = r#"
             <tab-index=0 actual=0>
-            <focus-trap tab-index=1 actual=2>
             <tab-index=0 actual=1>
-            <tab-index=1 actual=3>
-            <tab-index=2 actual=4>
+            <tab-index=1 actual=2>
+            <tab-index=2 actual=3>
         "#;
         check(xml2);
 
-        // Test mixed element types (all treated as flat)
-        // Order: tab_index=0 (all three), tab_index=1 (next two), tab_index=2 (last two)
-        let xml3 = r#"
+        // Future test structure (not yet implemented):
+        // <tab-group tab-index=2>
+        //     <tab-index=0 actual=X>  // This would be at global position 2.0
+        //     <tab-index=1 actual=Y>  // This would be at global position 2.1
+        // </tab-group>
+        //
+        // <focus-trap tab-index=1>
+        //     <tab-index=0 actual=X>  // Navigation trapped within this group
+        //     <tab-index=1 actual=Y>
+        // </focus-trap>
+    }
+
+    #[test]
+    #[ignore = "Tab-group and focus-trap functionality not yet implemented"]
+    fn test_tab_group_functionality() {
+        // This test defines the expected behavior for tab-group
+        // Tab-group should create a nested tab context where inner elements
+        // have tab indices relative to the group
+        let xml = r#"
             <tab-index=0 actual=0>
-            <tab-group tab-index=1 actual=3>
-            <tab-index=0 actual=1>
-            <focus-trap tab-index=1 actual=4>
-            <tab-index=0 actual=2>
-            <tab-index=2 actual=5>
-            <tab-index=2 actual=6>
+            <tab-index=1 actual=1>
+            <tab-group tab-index=2>
+                <tab-index=0 actual=2>
+                <tab-index=1 actual=3>
+            </tab-group>
+            <tab-index=3 actual=4>
         "#;
-        check(xml3);
+        check(xml);
+    }
+
+    #[test]
+    #[ignore = "Tab-group and focus-trap functionality not yet implemented"]
+    fn test_focus_trap_functionality() {
+        // This test defines the expected behavior for focus-trap
+        // Focus-trap should trap navigation within its boundaries
+        let xml = r#"
+            <tab-index=0 actual=0>
+            <focus-trap tab-index=1>
+                <tab-index=0 actual=1>
+                <tab-index=1 actual=2>
+            </focus-trap>
+            <tab-index=2 actual=3>
+        "#;
+        check(xml);
+    }
+
+    #[test]
+    #[ignore = "Tab-group and focus-trap functionality not yet implemented"]
+    fn test_nested_groups_and_traps() {
+        // This test defines the expected behavior for nested structures
+        let xml = r#"
+            <tab-index=0 actual=0>
+            <tab-group tab-index=1>
+                <tab-index=0 actual=1>
+                <focus-trap tab-index=1>
+                    <tab-index=0 actual=2>
+                    <tab-index=1 actual=3>
+                </focus-trap>
+                <tab-index=2 actual=4>
+            </tab-group>
+            <tab-index=2 actual=5>
+        "#;
+        check(xml);
     }
 
     #[test]
