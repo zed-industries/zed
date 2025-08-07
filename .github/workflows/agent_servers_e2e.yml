@@ -1,0 +1,122 @@
+name: Agent Servers E2E Tests
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+
+  push:
+    branches:
+      - as-e2e-ci
+
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - "crates/agent_servers/**"
+      - "crates/acp_thread/**"
+      - ".github/workflows/agent_servers_e2e.yml"
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  # GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+jobs:
+  e2e-tests:
+    name: Run Agent Servers E2E Tests
+    if: github.repository_owner == 'zed-industries'
+    timeout-minutes: 10
+    runs-on:
+      - ubuntu-latest
+
+    steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      # - name: Checkout gemini-cli repo
+      #   uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      #   with:
+      #     repository: zed-industries/gemini-cli
+      #     ref: migrate-acp
+      #     path: gemini-cli
+      #     clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "buildjet"
+
+      - name: Install Linux dependencies
+        run: ./script/linux
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "18"
+
+      - name: Install Claude Code CLI
+        shell: bash -euxo pipefail {0}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          # Verify installation
+          which claude || echo "Claude CLI not found in PATH"
+          # Skip authentication if API key is not set (tests may use mock)
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "Anthropic API key is configured"
+          fi
+
+      # - name: Install and setup Gemini CLI
+      #   shell: bash -euxo pipefail {0}
+      #   run: |
+      #     # Also install dependencies for local gemini-cli repo
+      #     pushd gemini-cli
+      #     npm install
+      #     npm run build
+      #     popd
+
+      #     # Verify installations
+      #     which gemini || echo "Gemini CLI not found in PATH"
+      #     # Skip authentication if API key is not set (tests may use mock)
+      #     if [ -n "$GEMINI_API_KEY" ]; then
+      #       echo "Gemini API key is configured"
+      #     fi
+
+      - name: Limit target directory size
+        shell: bash -euxo pipefail {0}
+        run: script/clear-target-dir-if-larger-than 100
+
+      - name: Run E2E tests
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo nextest run \
+            --package agent_servers \
+            --features e2e \
+            --no-fail-fast \
+            claude
+
+      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
+      # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
+      # to clean up the config file, I’ve included the cleanup code here as a precaution.
+      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
