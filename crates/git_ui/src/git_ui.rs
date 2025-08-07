@@ -601,8 +601,6 @@ mod remote_button {
                         .action("Push", git::Push.boxed_clone())
                         .action("Push To", git::PushTo.boxed_clone())
                         .action("Force Push", git::ForcePush.boxed_clone())
-                        .separator()
-                        .action("Rename Branch", git::RenameBranch.boxed_clone())
                 }))
             })
             .anchor(Corner::TopRight)
