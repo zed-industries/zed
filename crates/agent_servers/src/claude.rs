@@ -263,7 +263,7 @@ impl AgentConnection for ClaudeAgentConnection {
         let cancellation_state = session.cancellation_state.clone();
         cx.foreground_executor().spawn(async move {
             let result = rx.await??;
-            *cancellation_state.borrow_mut() = CancellationState::None;
+            cancellation_state.replace(CancellationState::None);
             Ok(result)
         })
     }
@@ -277,9 +277,11 @@ impl AgentConnection for ClaudeAgentConnection {
 
         let request_id = new_request_id();
 
-        *session.cancellation_state.borrow_mut() = CancellationState::Requested {
-            request_id: request_id.clone(),
-        };
+        session
+            .cancellation_state
+            .replace(CancellationState::Requested {
+                request_id: request_id.clone(),
+            });
 
         session
             .outgoing_tx

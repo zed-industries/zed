@@ -1,0 +1,118 @@
+name: Agent Servers E2E Tests
+
+on:
+  schedule:
+    # Run once a day at 2:00 AM UTC
+    - cron: "0 2 * * *"
+
+  push:
+    branches:
+      - main
+      - "v[0-9]+.[0-9]+.x"
+    paths:
+      - "crates/agent_servers/**"
+      - "crates/acp_thread/**"
+      - ".github/workflows/agent_servers_e2e.yml"
+
+  pull_request:
+    branches:
+      - "**"
+    paths:
+      - "crates/agent_servers/**"
+      - "crates/acp_thread/**"
+      - ".github/workflows/agent_servers_e2e.yml"
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}-${{ github.ref_name == 'main' && github.sha || 'anysha' }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+jobs:
+  e2e-tests:
+    name: Run Agent Servers E2E Tests
+    if: github.repository_owner == 'zed-industries'
+    timeout-minutes: 60
+    runs-on:
+      - buildjet-16vcpu-ubuntu-2204
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Checkout gemini-cli repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          repository: zed-industries/gemini-cli
+          ref: migrate-acp
+          path: gemini-cli
+          clean: false
+
+      - name: Install Rust
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo install cargo-nextest --locked
+
+      - name: Install Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "18"
+
+      - name: Install Claude Code CLI
+        shell: bash -euxo pipefail {0}
+        run: |
+          npm install -g @anthropic-ai/claude-code
+          # Verify installation
+          which claude || echo "Claude CLI not found in PATH"
+          # Skip authentication if API key is not set (tests may use mock)
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "Anthropic API key is configured"
+          fi
+
+      - name: Install and setup Gemini CLI
+        shell: bash -euxo pipefail {0}
+        run: |
+          # Install globally for potential fallback
+          npm install -g @google/gemini-cli
+
+          # Also install dependencies for local gemini-cli repo
+          cd gemini-cli/packages/cli
+          npm install
+          cd -
+
+          # Verify installations
+          which gemini || echo "Gemini CLI not found in PATH"
+          # Skip authentication if API key is not set (tests may use mock)
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "Gemini API key is configured"
+          fi
+
+      - name: Limit target directory size
+        shell: bash -euxo pipefail {0}
+        run: script/clear-target-dir-if-larger-than 100
+
+      - name: Run E2E tests
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo nextest run \
+            --package agent_servers \
+            --features e2e \
+            --no-fail-fast
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            target/nextest/default/*.xml
+          retention-days: 7
