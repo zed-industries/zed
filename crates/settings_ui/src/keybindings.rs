@@ -21,10 +21,9 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use project::Project;
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ButtonLike, ContextMenu, DecoratedIcon,
-    IconButtonShape, IconDecoration, IconDecorationKind, Indicator, Modal, ModalFooter,
-    ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _, Tooltip, Window,
-    prelude::*,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
+    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
+    Styled as _, Tooltip, Window, prelude::*,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
