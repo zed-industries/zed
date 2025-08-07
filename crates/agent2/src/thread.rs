@@ -125,7 +125,7 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    _action_log: Entity<ActionLog>,
+    action_log: Entity<ActionLog>,
 }
 
 impl Thread {
@@ -145,7 +145,7 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
-            _action_log: action_log,
+            action_log,
         }
     }
 
@@ -313,6 +313,10 @@ impl Thread {
             }
         }));
         events_rx
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
     }
 
     pub fn build_system_message(&self) -> AgentMessage {
@@ -922,5 +926,30 @@ impl ToolCallEventStream {
     ) -> impl use<> + Future<Output = Result<()>> {
         self.stream
             .authorize_tool_call(&self.tool_use_id, title, kind, input)
+    }
+}
+
+#[cfg(test)]
+pub struct TestToolCallEventStream {
+    stream: ToolCallEventStream,
+    _events_rx: mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+}
+
+#[cfg(test)]
+impl TestToolCallEventStream {
+    pub fn new() -> Self {
+        let (events_tx, events_rx) =
+            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+
+        let stream = ToolCallEventStream::new("test".into(), AgentResponseEventStream(events_tx));
+
+        Self {
+            stream,
+            _events_rx: events_rx,
+        }
+    }
+
+    pub fn stream(&self) -> ToolCallEventStream {
+        self.stream.clone()
     }
 }
