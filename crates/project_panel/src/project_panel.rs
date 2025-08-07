@@ -445,13 +445,13 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
-                    let should_clear = this
+                    let is_active_item_file_diff_view = this
                         .workspace
                         .upgrade()
                         .and_then(|ws| ws.read(cx).active_item(cx))
-                        .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_none())
-                        .unwrap_or(true);
-                    if should_clear {
+                        .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
+                        .unwrap_or(false);
+                    if !is_active_item_file_diff_view {
                         this.marked_entries.clear();
                     }
                 }
@@ -4864,6 +4864,15 @@ impl ProjectPanel {
                 .map_or(true, |entry| entry.is_ignored && !entry.is_always_included)
         {
             anyhow::bail!("can't reveal an ignored entry in the project panel");
+        }
+        let is_active_item_file_diff_view = self
+            .workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).active_item(cx))
+            .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
+            .unwrap_or(false);
+        if is_active_item_file_diff_view {
+            return Ok(());
         }
 
         let worktree_id = worktree.id();
