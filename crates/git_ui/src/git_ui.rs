@@ -315,22 +315,12 @@ impl Render for RenameBranchModal {
                     .w_full()
                     .gap_1p5()
                     .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
-                    .child(Headline::new("Rename Branch").size(HeadlineSize::XSmall)),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .pb_3()
-                    .w_full()
                     .child(
-                        div()
-                            .mb_2()
-                            .text_sm()
-                            .text_color(cx.theme().colors().text_muted)
-                            .child(format!("Current: {}", self.current_branch)),
-                    )
-                    .child(self.editor.clone()),
+                        Headline::new(format!("Rename Branch ({})", self.current_branch))
+                            .size(HeadlineSize::XSmall),
+                    ),
             )
+            .child(div().px_3().pb_3().w_full().child(self.editor.clone()))
     }
 }
 
