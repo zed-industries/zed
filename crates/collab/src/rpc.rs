@@ -761,7 +761,8 @@ impl Server {
             login=field::Empty,
             impersonator=field::Empty,
             user_agent=field::Empty,
-            geoip_country_code=field::Empty
+            geoip_country_code=field::Empty,
+            release_channel=field::Empty,
         );
         principal.update_span(&span);
         if let Some(user_agent) = user_agent {
