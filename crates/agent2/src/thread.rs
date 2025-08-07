@@ -434,22 +434,9 @@ impl Thread {
         event_stream: &AgentResponseEventStream,
         cx: &mut Context<Self>,
     ) -> Option<Task<LanguageModelToolResult>> {
-        let Some(tool) = self.tools.get(tool_use.name.as_ref()).cloned() else {
-            if tool_use.is_input_complete {
-                let content = format!("No tool named {} exists", tool_use.name);
-                return Some(Task::ready(LanguageModelToolResult {
-                    content: LanguageModelToolResultContent::Text(Arc::from(content)),
-                    tool_use_id: tool_use.id,
-                    tool_name: tool_use.name,
-                    is_error: true,
-                    output: None,
-                }));
-            } else {
-                return None;
-            }
-        };
-
         cx.notify();
+
+        let tool = self.tools.get(tool_use.name.as_ref()).cloned();
 
         self.pending_tool_uses
             .insert(tool_use.id.clone(), tool_use.clone());
@@ -468,8 +455,15 @@ impl Thread {
                 true
             }
         });
+
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use, tool.kind());
+            event_stream.send_tool_call(
+                &tool_use,
+                // todo! add default
+                tool.as_ref()
+                    .map(|t| t.kind())
+                    .unwrap_or(acp::ToolKind::Other),
+            );
             last_message
                 .content
                 .push(MessageContent::ToolUse(tool_use.clone()));
@@ -486,6 +480,17 @@ impl Thread {
         if !tool_use.is_input_complete {
             return None;
         }
+
+        let Some(tool) = tool else {
+            let content = format!("No tool named {} exists", tool_use.name);
+            return Some(Task::ready(LanguageModelToolResult {
+                content: LanguageModelToolResultContent::Text(Arc::from(content)),
+                tool_use_id: tool_use.id,
+                tool_name: tool_use.name,
+                is_error: true,
+                output: None,
+            }));
+        };
 
         let tool_result = self.run_tool(tool, tool_use.clone(), event_stream.clone(), cx);
         Some(cx.foreground_executor().spawn(async move {

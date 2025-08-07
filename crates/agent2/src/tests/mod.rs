@@ -286,6 +286,63 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     );
 }
 
+#[gpui::test]
+async fn test_tool_hallucination(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "abc", cx));
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: "nonexistent_tool".into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(tool_call.title, "nonexistent_tool");
+    assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+}
+
+async fn expect_tool_call(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCall {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
+async fn expect_tool_call_update(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCallUpdate {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCallUpdate(tool_call_update) => return tool_call_update,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
 async fn next_tool_call_authorization(
     events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
 ) -> ToolCallAuthorization {
