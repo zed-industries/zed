@@ -61,7 +61,7 @@ jobs:
       - style
       - tests
     runs-on:
-      - namespace-profile-32x64-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -94,7 +94,7 @@ jobs:
     needs:
       - publish
     runs-on:
-      - namespace-profile-32x64-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
 
     steps:
       - name: Checkout repo
