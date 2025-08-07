@@ -20,7 +20,7 @@ pub fn init(cx: &mut App) {
         cx,
     );
 
-    cx.observe_new(|l, _, cx| {
+    cx.observe_new(|_, _, cx| {
         let lsp_store = cx.weak_entity();
         cx.global_mut::<SchemaStore>().lsp_stores.push(lsp_store);
     })
@@ -112,6 +112,12 @@ fn resolve_schema_request(
             root_schema_from_action_schema(schema, &mut generator).to_value()
         }
         "tasks" => task::TaskTemplates::generate_json_schema(),
+        "debug_tasks" => {
+            let adapter_schemas = cx.read_global::<dap::DapRegistry, _>(|dap_registry, _| {
+                dap_registry.adapters_schema()
+            })?;
+            task::DebugTaskFile::generate_json_schema(&adapter_schemas)
+        }
         "package_json" => package_json_schema(),
         "tsconfig" => tsconfig_schema(),
         "zed_inspector_style" => {
@@ -129,7 +135,7 @@ fn resolve_schema_request(
     Ok(schema)
 }
 
-pub fn all_schema_file_associations(cx: &mut App) -> Vec<serde_json::Value> {
+pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
     let mut file_associations = serde_json::json!([
         {
             "fileMatch": [
@@ -151,6 +157,13 @@ pub fn all_schema_file_associations(cx: &mut App) -> Vec<serde_json::Value> {
         },
         {
             "fileMatch": [
+                schema_file_match(paths::debug_scenarios_file()),
+                paths::local_debug_file_relative_path()
+            ],
+            "url": "zed://schemas/debug_tasks",
+        },
+        {
+            "fileMatch": [
                 schema_file_match(
                     paths::snippets_dir()
                         .join("*.json")
@@ -168,32 +181,33 @@ pub fn all_schema_file_associations(cx: &mut App) -> Vec<serde_json::Value> {
             "url": "zed://schemas/package_json"
         },
     ]);
+
+    #[cfg(debug_assertions)]
+    {
+        file_associations
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "fileMatch": [
+                    "zed-inspector-style.json"
+                ],
+                "url": "zed://schemas/zed_inspector_style"
+            }));
+    }
+
     file_associations.as_array_mut().unwrap().extend(
-        // PERF: use all_action_schemas() and don't include action schemas with no arguments
-        cx.all_action_names()
-            .into_iter()
-            .map(|&name| {
-                let normalized_name = normalize_action_name(name);
-                let file_name = normalized_action_name_to_file_name(normalized_name.clone());
-                serde_json::json!({
-                    "fileMatch": [file_name],
-                    "url": format!("zed://schemas/action/{}", normalized_name)
-                })
+        // ?PERF: use all_action_schemas() and don't include action schemas with no arguments
+        cx.all_action_names().into_iter().map(|&name| {
+            let normalized_name = normalize_action_name(name);
+            let file_name = normalized_action_name_to_file_name(normalized_name.clone());
+            serde_json::json!({
+                "fileMatch": [file_name],
+                "url": format!("zed://schemas/action/{}", normalized_name)
             })
-            .chain([
-                #[cfg(debug_assertions)]
-                {
-                    serde_json::json!({
-                        "fileMatch": [
-                            "zed-inspector-style.json"
-                        ],
-                        "url": "zed://schemas/zed_inspector_style"
-                    })
-                },
-            ]),
+        }),
     );
 
-    std::mem::take(file_associations.as_array_mut().unwrap())
+    file_associations
 }
 
 fn all_action_schemas(

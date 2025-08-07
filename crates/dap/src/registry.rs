@@ -64,7 +64,7 @@ impl DapRegistry {
             .and_then(|adapter| adapter.adapter_language_name())
     }
 
-    pub async fn adapters_schema(&self) -> task::AdapterSchemas {
+    pub fn adapters_schema(&self) -> task::AdapterSchemas {
         let mut schemas = AdapterSchemas(vec![]);
 
         let adapters = self.0.read().adapters.clone();

@@ -3,7 +3,6 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use dap::DapRegistry;
 use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
@@ -28,7 +27,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::PackageJsonData;
@@ -144,24 +143,8 @@ impl JsonLspAdapter {
         }
     }
 
-    fn get_workspace_config(adapter_schemas: AdapterSchemas, cx: &mut App) -> Value {
-        let debug_tasks = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
-
-        #[allow(unused_mut)]
-        let mut schemas = serde_json::json!([
-            {
-                "fileMatch": [
-                    schema_file_match(paths::debug_scenarios_file()),
-                    paths::local_debug_file_relative_path()
-                ],
-                "schema": debug_tasks,
-            },
-        ]);
-
-        schemas
-            .as_array_mut()
-            .unwrap()
-            .extend(json_schema_store::all_schema_file_associations(cx));
+    fn get_workspace_config(cx: &mut App) -> Value {
+        let schemas = json_schema_store::all_schema_file_associations(cx);
 
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
@@ -187,12 +170,7 @@ impl JsonLspAdapter {
         }
         let mut writer = self.workspace_config.write().await;
 
-        let adapter_schemas = cx
-            .read_global::<DapRegistry, _>(|dap_registry, _| dap_registry.to_owned())?
-            .adapters_schema()
-            .await;
-
-        let config = cx.update(|cx| Self::get_workspace_config(adapter_schemas, cx))?;
+        let config = cx.update(|cx| Self::get_workspace_config(cx))?;
         writer.replace(config.clone());
         return Ok(config);
     }
@@ -332,10 +310,6 @@ impl LspAdapter for JsonLspAdapter {
     fn is_primary_zed_json_schema_adapter(&self) -> bool {
         true
     }
-
-    async fn clear_zed_json_schema_cache(&self) {
-        self.workspace_config.write().await.take();
-    }
 }
 
 async fn get_cached_server_binary(
@@ -366,15 +340,6 @@ async fn get_cached_server_binary(
     })
     .await
     .log_err()
-}
-
-#[inline]
-fn schema_file_match(path: &Path) -> String {
-    path.strip_prefix(path.parent().unwrap().parent().unwrap())
-        .unwrap()
-        .display()
-        .to_string()
-        .replace('\\', "/")
 }
 
 pub struct NodeVersionAdapter;

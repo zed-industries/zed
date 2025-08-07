@@ -8911,6 +8911,7 @@ name = "json_schema_store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dap",
  "extension",
  "gpui",
  "paths",

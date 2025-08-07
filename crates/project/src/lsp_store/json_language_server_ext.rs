@@ -43,12 +43,12 @@ impl lsp::notification::Notification for SchemaContentsChanged {
 }
 
 pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: &String, cx: &App) {
-    lsp_store.read_with(cx, |lsp_store, _| {
+    let servers = lsp_store.read_with(cx, |lsp_store, _| {
+        let mut servers = Vec::new();
         let Some(local) = lsp_store.as_local() else {
-            return;
+            return servers;
         };
 
-        let mut servers = Vec::new();
         for states in local.language_servers.values() {
             let json_server = match states {
                 super::LanguageServerState::Running {
@@ -59,13 +59,13 @@ pub fn notify_schema_changed(lsp_store: Entity<LspStore>, uri: &String, cx: &App
 
             servers.push(json_server);
         }
-
-        for server in servers {
-            zlog::trace!(LOGGER => "Notifying server {:?} of schema change for URI: {:?}", server.server_id(), &uri);
-            // TODO: handle errors
-            server.notify::<SchemaContentsChanged>(uri).ok();
-        }
+        servers
     });
+    for server in servers {
+        zlog::trace!(LOGGER => "Notifying server {:?} of schema change for URI: {:?}", server.server_id(), &uri);
+        // TODO: handle errors
+        server.notify::<SchemaContentsChanged>(uri).ok();
+    }
 }
 
 pub fn register_requests(lsp_store: WeakEntity<LspStore>, language_server: &LanguageServer) {
