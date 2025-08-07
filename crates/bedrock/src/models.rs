@@ -359,14 +359,12 @@ impl Model {
     pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
-            Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeOpus4
-            | Model::ClaudeOpus4Thinking
+            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Model::ClaudeOpus4_1Thinking => 128_000,
+            | Self::ClaudeOpus4_1Thinking => 32_000,
             Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
