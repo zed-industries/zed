@@ -606,7 +606,7 @@ impl BladeRenderer {
                     xy_position: v.xy_position,
                     st_position: v.st_position,
                     color: path.color,
-                    bounds: path.bounds.intersect(&path.content_mask.bounds),
+                    bounds: path.clipped_bounds(),
                 }));
             }
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
@@ -735,13 +735,13 @@ impl BladeRenderer {
                         paths
                             .iter()
                             .map(|path| PathSprite {
-                                bounds: path.bounds,
+                                bounds: path.clipped_bounds(),
                             })
                             .collect()
                     } else {
-                        let mut bounds = first_path.bounds;
+                        let mut bounds = first_path.clipped_bounds();
                         for path in paths.iter().skip(1) {
-                            bounds = bounds.union(&path.bounds);
+                            bounds = bounds.union(&path.clipped_bounds());
                         }
                         vec![PathSprite { bounds }]
                     };

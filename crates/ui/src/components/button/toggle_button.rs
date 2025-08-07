@@ -121,6 +121,11 @@ impl ButtonCommon for ToggleButton {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.base = self.base.layer(elevation);
         self
@@ -407,6 +412,7 @@ where
     size: ToggleButtonGroupSize,
     button_width: Rems,
     selected_index: usize,
+    tab_index: Option<isize>,
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
@@ -418,6 +424,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
             size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
+            tab_index: None,
         }
     }
 }
@@ -431,6 +438,7 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
             size: ToggleButtonGroupSize::Default,
             button_width: rems_from_px(100.),
             selected_index: 0,
+            tab_index: None,
         }
     }
 }
@@ -455,6 +463,15 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> ToggleButtonGroup<T
         self.selected_index = index;
         self
     }
+
+    /// Sets the tab index for the toggle button group.
+    /// The tab index is set to the initial value provided, then the
+    /// value is incremented by the number of buttons in the group.
+    pub fn tab_index(mut self, tab_index: &mut isize) -> Self {
+        self.tab_index = Some(*tab_index);
+        *tab_index += (COLS * ROWS) as isize;
+        self
+    }
 }
 
 impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
@@ -474,6 +491,9 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
                     let entry_index = row_index * COLS + col_index;
 
                     ButtonLike::new((self.group_name, entry_index))
+                        .when_some(self.tab_index, |this, tab_index| {
+                            this.tab_index(tab_index + entry_index as isize)
+                        })
                         .when(entry_index == self.selected_index || selected, |this| {
                             this.toggle_state(true)
                                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))

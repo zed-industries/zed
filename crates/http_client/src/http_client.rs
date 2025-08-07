@@ -7,7 +7,10 @@ use derive_more::Deref;
 use http::HeaderValue;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 
-use futures::future::BoxFuture;
+use futures::{
+    FutureExt as _,
+    future::{self, BoxFuture},
+};
 use http::request::Builder;
 use parking_lot::Mutex;
 #[cfg(feature = "test-support")]
@@ -89,6 +92,14 @@ pub trait HttpClient: 'static + Send + Sync {
     fn as_fake(&self) -> &FakeHttpClient {
         panic!("called as_fake on {}", type_name::<Self>())
     }
+
+    fn send_multipart_form<'a>(
+        &'a self,
+        _url: &str,
+        _request: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+        future::ready(Err(anyhow!("not implemented"))).boxed()
+    }
 }
 
 /// An [`HttpClient`] that may have a proxy.
@@ -140,31 +151,13 @@ impl HttpClient for HttpClientWithProxy {
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
     }
-}
 
-impl HttpClient for Arc<HttpClientWithProxy> {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send(req)
-    }
-
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        self.client.user_agent()
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
-    #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> &FakeHttpClient {
-        self.client.as_fake()
+    fn send_multipart_form<'a>(
+        &'a self,
+        url: &str,
+        form: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+        self.client.send_multipart_form(url, form)
     }
 }
 
@@ -275,32 +268,6 @@ impl HttpClientWithUrl {
     }
 }
 
-impl HttpClient for Arc<HttpClientWithUrl> {
-    fn send(
-        &self,
-        req: Request<AsyncBody>,
-    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        self.client.send(req)
-    }
-
-    fn user_agent(&self) -> Option<&HeaderValue> {
-        self.client.user_agent()
-    }
-
-    fn proxy(&self) -> Option<&Url> {
-        self.client.proxy.as_ref()
-    }
-
-    fn type_name(&self) -> &'static str {
-        self.client.type_name()
-    }
-
-    #[cfg(feature = "test-support")]
-    fn as_fake(&self) -> &FakeHttpClient {
-        self.client.as_fake()
-    }
-}
-
 impl HttpClient for HttpClientWithUrl {
     fn send(
         &self,
@@ -324,6 +291,14 @@ impl HttpClient for HttpClientWithUrl {
     #[cfg(feature = "test-support")]
     fn as_fake(&self) -> &FakeHttpClient {
         self.client.as_fake()
+    }
+
+    fn send_multipart_form<'a>(
+        &'a self,
+        url: &str,
+        request: reqwest::multipart::Form,
+    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+        self.client.send_multipart_form(url, request)
     }
 }
 

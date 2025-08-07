@@ -107,6 +107,7 @@ struct ComponentPreview {
     active_thread: Option<Entity<ActiveThread>>,
     reset_key: usize,
     component_list: ListState,
+    entries: Vec<PreviewEntry>,
     component_map: HashMap<ComponentId, ComponentMetadata>,
     components: Vec<ComponentMetadata>,
     cursor_index: usize,
@@ -172,17 +173,6 @@ impl ComponentPreview {
             sorted_components.len(),
             gpui::ListAlignment::Top,
             px(1500.0),
-            {
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    this.update(cx, |this, cx| {
-                        let component = this.get_component(ix);
-                        this.render_preview(&component, window, cx)
-                            .into_any_element()
-                    })
-                    .unwrap()
-                }
-            },
         );
 
         let mut component_preview = Self {
@@ -190,6 +180,7 @@ impl ComponentPreview {
             active_thread: None,
             reset_key: 0,
             component_list,
+            entries: Vec::new(),
             component_map: component_registry.component_map(),
             components: sorted_components,
             cursor_index: selected_index,
@@ -274,10 +265,6 @@ impl ComponentPreview {
             cx.emit(ItemEvent::UpdateTab);
         }
         cx.notify();
-    }
-
-    fn get_component(&self, ix: usize) -> ComponentMetadata {
-        self.components[ix].clone()
     }
 
     fn filtered_components(&self) -> Vec<ComponentMetadata> {
@@ -420,7 +407,6 @@ impl ComponentPreview {
     fn update_component_list(&mut self, cx: &mut Context<Self>) {
         let entries = self.scope_ordered_entries();
         let new_len = entries.len();
-        let weak_entity = cx.entity().downgrade();
 
         if new_len > 0 {
             self.nav_scroll_handle
@@ -446,56 +432,9 @@ impl ComponentPreview {
             }
         }
 
-        self.component_list = ListState::new(
-            filtered_components.len(),
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            {
-                let components = filtered_components.clone();
-                let this = cx.entity().downgrade();
-                move |ix, window: &mut Window, cx: &mut App| {
-                    if ix >= components.len() {
-                        return div().w_full().h_0().into_any_element();
-                    }
+        self.component_list = ListState::new(new_len, gpui::ListAlignment::Top, px(1500.0));
+        self.entries = entries;
 
-                    this.update(cx, |this, cx| {
-                        let component = &components[ix];
-                        this.render_preview(component, window, cx)
-                            .into_any_element()
-                    })
-                    .unwrap()
-                }
-            },
-        );
-
-        let new_list = ListState::new(
-            new_len,
-            gpui::ListAlignment::Top,
-            px(1500.0),
-            move |ix, window, cx| {
-                if ix >= entries.len() {
-                    return div().w_full().h_0().into_any_element();
-                }
-
-                let entry = &entries[ix];
-
-                weak_entity
-                    .update(cx, |this, cx| match entry {
-                        PreviewEntry::Component(component, _) => this
-                            .render_preview(component, window, cx)
-                            .into_any_element(),
-                        PreviewEntry::SectionHeader(shared_string) => this
-                            .render_scope_header(ix, shared_string.clone(), window, cx)
-                            .into_any_element(),
-                        PreviewEntry::AllComponents => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::ActiveThread => div().w_full().h_0().into_any_element(),
-                        PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
-                    })
-                    .unwrap()
-            },
-        );
-
-        self.component_list = new_list;
         cx.emit(ItemEvent::UpdateTab);
     }
 
@@ -672,10 +611,35 @@ impl ComponentPreview {
                         .child(format!("No components matching '{}'.", self.filter_text))
                         .into_any_element()
                 } else {
-                    list(self.component_list.clone())
-                        .flex_grow()
-                        .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                        .into_any_element()
+                    list(
+                        self.component_list.clone(),
+                        cx.processor(|this, ix, window, cx| {
+                            if ix >= this.entries.len() {
+                                return div().w_full().h_0().into_any_element();
+                            }
+
+                            let entry = &this.entries[ix];
+
+                            match entry {
+                                PreviewEntry::Component(component, _) => this
+                                    .render_preview(component, window, cx)
+                                    .into_any_element(),
+                                PreviewEntry::SectionHeader(shared_string) => this
+                                    .render_scope_header(ix, shared_string.clone(), window, cx)
+                                    .into_any_element(),
+                                PreviewEntry::AllComponents => {
+                                    div().w_full().h_0().into_any_element()
+                                }
+                                PreviewEntry::ActiveThread => {
+                                    div().w_full().h_0().into_any_element()
+                                }
+                                PreviewEntry::Separator => div().w_full().h_0().into_any_element(),
+                            }
+                        }),
+                    )
+                    .flex_grow()
+                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                    .into_any_element()
                 },
             )
     }

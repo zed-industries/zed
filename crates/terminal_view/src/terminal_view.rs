@@ -1591,7 +1591,7 @@ impl Item for TerminalView {
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
-                    IconName::Play,
+                    IconName::PlayOutlined,
                     Color::Disabled,
                     TerminalView::rerun_button(&terminal_task),
                 ),

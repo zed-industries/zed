@@ -2351,9 +2351,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2364,9 +2364,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2377,9 +2377,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 

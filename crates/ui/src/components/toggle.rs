@@ -2,10 +2,10 @@ use gpui::{
     AnyElement, AnyView, ClickEvent, ElementId, Hsla, IntoElement, Styled, Window, div, hsla,
     prelude::*,
 };
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use crate::utils::is_light;
-use crate::{Color, Icon, IconName, ToggleState};
+use crate::{Color, Icon, IconName, ToggleState, Tooltip};
 use crate::{ElevationIndex, KeyBinding, prelude::*};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
@@ -424,6 +424,7 @@ pub struct Switch {
     label: Option<SharedString>,
     key_binding: Option<KeyBinding>,
     color: SwitchColor,
+    tab_index: Option<isize>,
 }
 
 impl Switch {
@@ -437,6 +438,7 @@ impl Switch {
             label: None,
             key_binding: None,
             color: SwitchColor::default(),
+            tab_index: None,
         }
     }
 
@@ -472,6 +474,11 @@ impl Switch {
         self.key_binding = key_binding.into();
         self
     }
+
+    pub fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.tab_index = Some(tab_index.into());
+        self
+    }
 }
 
 impl RenderOnce for Switch {
@@ -497,29 +504,46 @@ impl RenderOnce for Switch {
 
         let group_id = format!("switch_group_{:?}", self.id);
 
-        let switch = h_flex()
-            .w(DynamicSpacing::Base32.rems(cx))
-            .h(DynamicSpacing::Base20.rems(cx))
-            .group(group_id.clone())
+        let switch = div()
+            .id((self.id.clone(), "switch"))
+            .p(px(1.0))
+            .border_2()
+            .border_color(cx.theme().colors().border_transparent)
+            .rounded_full()
+            .when_some(
+                self.tab_index.filter(|_| !self.disabled),
+                |this, tab_index| {
+                    this.tab_index(tab_index).focus(|mut style| {
+                        style.border_color = Some(cx.theme().colors().border_focused);
+                        style
+                    })
+                },
+            )
             .child(
                 h_flex()
-                    .when(is_on, |on| on.justify_end())
-                    .when(!is_on, |off| off.justify_start())
-                    .size_full()
-                    .rounded_full()
-                    .px(DynamicSpacing::Base02.px(cx))
-                    .bg(bg_color)
-                    .when(!self.disabled, |this| {
-                        this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
-                    })
-                    .border_1()
-                    .border_color(border_color)
+                    .w(DynamicSpacing::Base32.rems(cx))
+                    .h(DynamicSpacing::Base20.rems(cx))
+                    .group(group_id.clone())
                     .child(
-                        div()
-                            .size(DynamicSpacing::Base12.rems(cx))
+                        h_flex()
+                            .when(is_on, |on| on.justify_end())
+                            .when(!is_on, |off| off.justify_start())
+                            .size_full()
                             .rounded_full()
-                            .bg(thumb_color)
-                            .opacity(thumb_opacity),
+                            .px(DynamicSpacing::Base02.px(cx))
+                            .bg(bg_color)
+                            .when(!self.disabled, |this| {
+                                this.group_hover(group_id.clone(), |el| el.bg(bg_hover_color))
+                            })
+                            .border_1()
+                            .border_color(border_color)
+                            .child(
+                                div()
+                                    .size(DynamicSpacing::Base12.rems(cx))
+                                    .rounded_full()
+                                    .bg(thumb_color)
+                                    .opacity(thumb_opacity),
+                            ),
                     ),
             );
 
@@ -571,6 +595,8 @@ pub struct SwitchField {
     on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut App) + 'static>,
     disabled: bool,
     color: SwitchColor,
+    tooltip: Option<Rc<dyn Fn(&mut Window, &mut App) -> AnyView>>,
+    tab_index: Option<isize>,
 }
 
 impl SwitchField {
@@ -589,6 +615,8 @@ impl SwitchField {
             on_click: Arc::new(on_click),
             disabled: false,
             color: SwitchColor::Accent,
+            tooltip: None,
+            tab_index: None,
         }
     }
 
@@ -608,12 +636,38 @@ impl SwitchField {
         self.color = color;
         self
     }
+
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Rc::new(tooltip));
+        self
+    }
+
+    pub fn tab_index(mut self, tab_index: isize) -> Self {
+        self.tab_index = Some(tab_index);
+        self
+    }
 }
 
 impl RenderOnce for SwitchField {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let tooltip = self.tooltip.map(|tooltip_fn| {
+            h_flex()
+                .gap_0p5()
+                .child(Label::new(self.label.clone()))
+                .child(
+                    IconButton::new("tooltip_button", IconName::Info)
+                        .icon_size(IconSize::XSmall)
+                        .icon_color(Color::Muted)
+                        .shape(crate::IconButtonShape::Square)
+                        .tooltip({
+                            let tooltip = tooltip_fn.clone();
+                            move |window, cx| tooltip(window, cx)
+                        }),
+                )
+        });
+
         h_flex()
-            .id(SharedString::from(format!("{}-container", self.id)))
+            .id((self.id.clone(), "container"))
             .when(!self.disabled, |this| {
                 this.hover(|this| this.cursor_pointer())
             })
@@ -621,28 +675,36 @@ impl RenderOnce for SwitchField {
             .gap_4()
             .justify_between()
             .flex_wrap()
-            .child(match &self.description {
-                Some(description) => v_flex()
+            .child(match (&self.description, tooltip) {
+                (Some(description), Some(tooltip)) => v_flex()
+                    .gap_0p5()
+                    .max_w_5_6()
+                    .child(tooltip)
+                    .child(Label::new(description.clone()).color(Color::Muted))
+                    .into_any_element(),
+                (Some(description), None) => v_flex()
                     .gap_0p5()
                     .max_w_5_6()
                     .child(Label::new(self.label.clone()))
                     .child(Label::new(description.clone()).color(Color::Muted))
                     .into_any_element(),
-                None => Label::new(self.label.clone()).into_any_element(),
+                (None, Some(tooltip)) => tooltip.into_any_element(),
+                (None, None) => Label::new(self.label.clone()).into_any_element(),
             })
             .child(
-                Switch::new(
-                    SharedString::from(format!("{}-switch", self.id)),
-                    self.toggle_state,
-                )
-                .color(self.color)
-                .disabled(self.disabled)
-                .on_click({
-                    let on_click = self.on_click.clone();
-                    move |state, window, cx| {
-                        (on_click)(state, window, cx);
-                    }
-                }),
+                Switch::new((self.id.clone(), "switch"), self.toggle_state)
+                    .color(self.color)
+                    .disabled(self.disabled)
+                    .when_some(
+                        self.tab_index.filter(|_| !self.disabled),
+                        |this, tab_index| this.tab_index(tab_index),
+                    )
+                    .on_click({
+                        let on_click = self.on_click.clone();
+                        move |state, window, cx| {
+                            (on_click)(state, window, cx);
+                        }
+                    }),
             )
             .when(!self.disabled, |this| {
                 this.on_click({
@@ -753,6 +815,35 @@ impl Component for SwitchField {
                             )
                             .into_any_element(),
                         )],
+                    ),
+                    example_group_with_title(
+                        "With Tooltip",
+                        vec![
+                            single_example(
+                                "Tooltip with Description",
+                                SwitchField::new(
+                                    "switch_field_tooltip_with_desc",
+                                    "Nice Feature",
+                                    Some("Enable advanced configuration options.".into()),
+                                    ToggleState::Unselected,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("This is content for this tooltip!"))
+                                .into_any_element(),
+                            ),
+                            single_example(
+                                "Tooltip without Description",
+                                SwitchField::new(
+                                    "switch_field_tooltip_no_desc",
+                                    "Nice Feature",
+                                    None,
+                                    ToggleState::Selected,
+                                    |_, _, _| {},
+                                )
+                                .tooltip(Tooltip::text("This is content for this tooltip!"))
+                                .into_any_element(),
+                            ),
+                        ],
                     ),
                 ])
                 .into_any_element(),

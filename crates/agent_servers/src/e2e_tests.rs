@@ -150,7 +150,7 @@ pub async fn test_tool_call(server: impl AgentServer + 'static, cx: &mut TestApp
     drop(tempdir);
 }
 
-pub async fn test_tool_call_with_confirmation(
+pub async fn test_tool_call_with_permission(
     server: impl AgentServer + 'static,
     allow_option_id: acp::PermissionOptionId,
     cx: &mut TestAppContext,
@@ -311,6 +311,27 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
     });
 }
 
+pub async fn test_thread_drop(server: impl AgentServer + 'static, cx: &mut TestAppContext) {
+    let fs = init_test(cx).await;
+    let project = Project::test(fs, [], cx).await;
+    let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
+
+    thread
+        .update(cx, |thread, cx| thread.send_raw("Hello from test!", cx))
+        .await
+        .unwrap();
+
+    thread.read_with(cx, |thread, _| {
+        assert!(thread.entries().len() >= 2, "Expected at least 2 entries");
+    });
+
+    let weak_thread = thread.downgrade();
+    drop(thread);
+
+    cx.executor().run_until_parked();
+    assert!(!weak_thread.is_upgradable());
+}
+
 #[macro_export]
 macro_rules! common_e2e_tests {
     ($server:expr, allow_option_id = $allow_option_id:expr) => {
@@ -337,8 +358,8 @@ macro_rules! common_e2e_tests {
 
             #[::gpui::test]
             #[cfg_attr(not(feature = "e2e"), ignore)]
-            async fn tool_call_with_confirmation(cx: &mut ::gpui::TestAppContext) {
-                $crate::e2e_tests::test_tool_call_with_confirmation(
+            async fn tool_call_with_permission(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_tool_call_with_permission(
                     $server,
                     ::agent_client_protocol::PermissionOptionId($allow_option_id.into()),
                     cx,
@@ -350,6 +371,12 @@ macro_rules! common_e2e_tests {
             #[cfg_attr(not(feature = "e2e"), ignore)]
             async fn cancel(cx: &mut ::gpui::TestAppContext) {
                 $crate::e2e_tests::test_cancel($server, cx).await;
+            }
+
+            #[::gpui::test]
+            #[cfg_attr(not(feature = "e2e"), ignore)]
+            async fn thread_drop(cx: &mut ::gpui::TestAppContext) {
+                $crate::e2e_tests::test_thread_drop($server, cx).await;
             }
         }
     };
@@ -374,9 +401,6 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
                 }),
                 gemini: Some(AgentServerSettings {
                     command: crate::gemini::tests::local_command(),
-                }),
-                codex: Some(AgentServerSettings {
-                    command: crate::codex::tests::local_command(),
                 }),
             },
             cx,

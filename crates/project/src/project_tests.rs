@@ -1697,7 +1697,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             name: "the-language-server",
             disk_based_diagnostics_sources: vec!["disk".into()],
             disk_based_diagnostics_progress_token: Some(progress_token.into()),
-            ..Default::default()
+            ..FakeLspAdapter::default()
         },
     );
 
@@ -1709,6 +1709,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         })
         .await
         .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
     // Simulate diagnostics starting to update.
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.start_progress(progress_token).await;
@@ -1735,6 +1736,14 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     );
     assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     fake_server.start_progress(progress_token).await;
+    assert_eq!(
+        events.next().await.unwrap(),
+        Event::LanguageServerBufferRegistered {
+            server_id: LanguageServerId(1),
+            buffer_id,
+            buffer_abs_path: PathBuf::from(path!("/dir/a.rs")),
+        }
+    );
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {

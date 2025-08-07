@@ -384,7 +384,9 @@
       "enter": "agent::Chat",
       "up": "agent::PreviousHistoryMessage",
       "down": "agent::NextHistoryMessage",
-      "shift-ctrl-r": "agent::OpenAgentDiff"
+      "shift-ctrl-r": "agent::OpenAgentDiff",
+      "cmd-shift-y": "agent::KeepAll",
+      "cmd-shift-n": "agent::RejectAll"
     }
   },
   {
@@ -1277,7 +1279,8 @@
     "bindings": {
       "cmd-1": "onboarding::ActivateBasicsPage",
       "cmd-2": "onboarding::ActivateEditingPage",
-      "cmd-3": "onboarding::ActivateAISetupPage"
+      "cmd-3": "onboarding::ActivateAISetupPage",
+      "cmd-escape": "onboarding::Finish"
     }
   }
 ]
