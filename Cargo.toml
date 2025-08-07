@@ -651,6 +651,9 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
+# We can switch back to the published version once https://github.com/infinitefield/yawc/pull/16 is merged and a new
+# version is released.
+yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
