@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use windows::Win32::{Foundation::HANDLE, UI::WindowsAndMessaging::HCURSOR};
+use windows::Win32::UI::WindowsAndMessaging::HCURSOR;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SafeCursor {
