@@ -3,6 +3,7 @@ mod websocket;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
+use cloud_api_types::websocket_protocol::{PROTOCOL_VERSION, PROTOCOL_VERSION_HEADER_NAME};
 pub use cloud_api_types::*;
 use futures::AsyncReadExt as _;
 use gpui::{App, Task};
@@ -112,7 +113,7 @@ impl CloudApiClient {
                 .with_request(
                     request::Builder::new()
                         .header("Authorization", authorization_header)
-                        .header("x-zed-protocol-version", "0"),
+                        .header(PROTOCOL_VERSION_HEADER_NAME, PROTOCOL_VERSION.to_string()),
                 )
                 .await?;
 

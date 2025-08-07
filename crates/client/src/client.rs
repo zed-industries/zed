@@ -14,6 +14,7 @@ use async_tungstenite::tungstenite::{
 };
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
+use cloud_api_client::websocket_protocol::MessageToClient;
 use credentials_provider::CredentialsProvider;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
@@ -933,6 +934,32 @@ impl Client {
         }
     }
 
+    /// Establishes a WebSocket connection with Cloud for receiving updates from the server.
+    async fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) -> Result<()> {
+        let connect_task = cx.update({
+            let cloud_client = self.cloud_client.clone();
+            move |cx| cloud_client.connect(cx)
+        })??;
+        let connection = connect_task.await?;
+
+        let (mut messages, task) = cx.update(|cx| connection.spawn(cx))?;
+        task.detach();
+
+        cx.spawn({
+            let this = self.clone();
+            async move |cx| {
+                while let Some(message) = messages.next().await {
+                    if let Some(message) = message.log_err() {
+                        this.handle_message_to_client(message, cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
+        Ok(())
+    }
+
     /// Performs a sign-in and also connects to Collab.
     ///
     /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
@@ -944,17 +971,7 @@ impl Client {
     ) -> Result<()> {
         let credentials = self.sign_in(try_provider, cx).await?;
 
-        let cloud_client = self.cloud_client.clone();
-        if let Ok(connect_task) = cx.update(|cx| cloud_client.connect(cx)) {
-            match connect_task?.await {
-                Ok(connection) => {
-                    println!("Connected to Cloud WebSocket!");
-
-                    cx.update(|cx| connection.spawn(cx))?.detach();
-                }
-                Err(err) => println!("Failed to connect to Cloud WebSocket: {}", err),
-            }
-        };
+        self.connect_to_cloud(cx).await.log_err();
 
         let connect_result = match self.connect_with_credentials(credentials, cx).await {
             ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
@@ -1631,6 +1648,12 @@ impl Client {
             self.peer
                 .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
                 .log_err();
+        }
+    }
+
+    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, _cx: &AsyncApp) {
+        match message {
+            MessageToClient::UserUpdated => {}
         }
     }
 
