@@ -88,7 +88,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                     h_flex()
                         .gap_2()
                         .justify_between()
-                        .child(Label::new("Any use or storage of your data is with your explicit, single-use, opt-in consent."))
+                        .child(Label::new("Privacy is the default for Zed"))
                         .child(
                             h_flex().gap_1().child(privacy_badge()).child(
                                 Button::new("learn_more", "Learn More")
@@ -109,7 +109,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                 )
                 .child(
                     Label::new(
-                        "Zed’s AI tools are designed to respect your content and your consent.",
+                        "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
                     )
                     .size(LabelSize::Small)
                     .color(Color::Muted),
@@ -407,7 +407,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out, like most of our competitors. ";
+        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(
@@ -418,7 +418,7 @@ impl Render for AiPrivacyTooltip {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("Privacy is the default for Zed")),
+                    .child(Label::new("Privacy First")),
             )
             .child(
                 div().max_w_64().child(
