@@ -95,7 +95,7 @@ impl AgentTool for ReadFileTool {
         cx: &mut App,
     ) -> Task<Result<String>> {
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path))).into();
+            return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
         };
 
         // Error out if this path is either excluded or private in global settings
@@ -104,16 +104,14 @@ impl AgentTool for ReadFileTool {
             return Task::ready(Err(anyhow!(
                 "Cannot read file because its path matches the global `file_scan_exclusions` setting: {}",
                 &input.path
-            )))
-            .into();
+            )));
         }
 
         if global_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
                 "Cannot read file because its path matches the global `private_files` setting: {}",
                 &input.path
-            )))
-            .into();
+            )));
         }
 
         // Error out if this path is either excluded or private in worktree settings
@@ -122,16 +120,14 @@ impl AgentTool for ReadFileTool {
             return Task::ready(Err(anyhow!(
                 "Cannot read file because its path matches the worktree `file_scan_exclusions` setting: {}",
                 &input.path
-            )))
-            .into();
+            )));
         }
 
         if worktree_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
                 "Cannot read file because its path matches the worktree `private_files` setting: {}",
                 &input.path
-            )))
-            .into();
+            )));
         }
 
         let file_path = input.path.clone();
@@ -226,13 +222,9 @@ impl AgentTool for ReadFileTool {
                     let lines = text.split('\n').skip(start_row as usize);
                     if let Some(end) = input.end_line {
                         let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        itertools::intersperse(lines.take(count as usize), "\n")
-                            .collect::<String>()
-                            .into()
+                        itertools::intersperse(lines.take(count as usize), "\n").collect::<String>()
                     } else {
-                        itertools::intersperse(lines, "\n")
-                            .collect::<String>()
-                            .into()
+                        itertools::intersperse(lines, "\n").collect::<String>()
                     }
                 })?;
 
@@ -265,7 +257,7 @@ impl AgentTool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result.into())
+                    Ok(result)
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
