@@ -782,10 +782,10 @@ mod tests {
         );
 
         // Test thinking models have different friendly IDs but same request IDs
-        assert_eq!(Model::ClaudeSonnet4.id(), "claude-4-sonnet");
+        assert_eq!(Model::ClaudeSonnet4.id(), "claude-sonnet-4");
         assert_eq!(
             Model::ClaudeSonnet4Thinking.id(),
-            "claude-4-sonnet-thinking"
+            "claude-sonnet-4-thinking"
         );
         assert_eq!(
             Model::ClaudeSonnet4.request_id(),
