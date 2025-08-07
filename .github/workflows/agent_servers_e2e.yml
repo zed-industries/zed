@@ -35,7 +35,7 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     timeout-minutes: 20
     runs-on:
-      - ubuntu-latest
+      - buildjet-16vcpu-ubuntu-2204
 
     steps:
       - name: Add Rust to the PATH
