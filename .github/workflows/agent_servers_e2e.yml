@@ -104,6 +104,11 @@ jobs:
         shell: bash -euxo pipefail {0}
         run: script/clear-target-dir-if-larger-than 100
 
+      - name: Install nextest
+        shell: bash -euxo pipefail {0}
+        run: |
+          cargo install cargo-nextest --locked
+
       - name: Run E2E tests
         shell: bash -euxo pipefail {0}
         run: |
