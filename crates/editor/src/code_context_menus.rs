@@ -1057,9 +1057,9 @@ impl CompletionsMenu {
         enum MatchTier<'a> {
             WordStartMatch {
                 sort_exact: Reverse<i32>,
-                sort_positions: Vec<usize>,
                 sort_snippet: Reverse<i32>,
                 sort_score: Reverse<OrderedFloat<f64>>,
+                sort_positions: Vec<usize>,
                 sort_text: Option<&'a str>,
                 sort_kind: usize,
                 sort_label: &'a str,
@@ -1074,6 +1074,20 @@ impl CompletionsMenu {
             .and_then(|q| q.chars().next())
             .and_then(|c| c.to_lowercase().next());
 
+        if snippet_sort_order == SnippetSortOrder::None {
+            matches.retain(|string_match| {
+                let completion = &completions[string_match.candidate_id];
+
+                let is_snippet = matches!(
+                    &completion.source,
+                    CompletionSource::Lsp { lsp_completion, .. }
+                    if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
+                );
+
+                !is_snippet
+            });
+        }
+
         matches.sort_unstable_by_key(|string_match| {
             let completion = &completions[string_match.candidate_id];
 
@@ -1083,11 +1097,10 @@ impl CompletionsMenu {
                 if lsp_completion.kind == Some(CompletionItemKind::SNIPPET)
             );
 
-            let sort_text = if let CompletionSource::Lsp { lsp_completion, .. } = &completion.source
-            {
-                lsp_completion.sort_text.as_deref()
-            } else {
-                None
+            let sort_text = match &completion.source {
+                CompletionSource::Lsp { lsp_completion, .. } => lsp_completion.sort_text.as_deref(),
+                CompletionSource::Dap { sort_text } => Some(sort_text.as_str()),
+                _ => None,
             };
 
             let (sort_kind, sort_label) = completion.sort_key();
@@ -1113,6 +1126,7 @@ impl CompletionsMenu {
                     SnippetSortOrder::Top => Reverse(if is_snippet { 1 } else { 0 }),
                     SnippetSortOrder::Bottom => Reverse(if is_snippet { 0 } else { 1 }),
                     SnippetSortOrder::Inline => Reverse(0),
+                    SnippetSortOrder::None => Reverse(0),
                 };
                 let sort_positions = string_match.positions.clone();
                 let sort_exact = Reverse(if Some(completion.label.filter_text()) == query {
@@ -1123,9 +1137,9 @@ impl CompletionsMenu {
 
                 MatchTier::WordStartMatch {
                     sort_exact,
-                    sort_positions,
                     sort_snippet,
                     sort_score,
+                    sort_positions,
                     sort_text,
                     sort_kind,
                     sort_label,
@@ -1370,7 +1384,7 @@ impl CodeActionsMenu {
         }
     }
 
-    fn visible(&self) -> bool {
+    pub fn visible(&self) -> bool {
         !self.actions.is_empty()
     }
 

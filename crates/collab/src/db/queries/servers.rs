@@ -142,6 +142,50 @@ impl Database {
                 }
             }
 
+            loop {
+                let delete_query = Query::delete()
+                    .from_table(project_repository_statuses::Entity)
+                    .and_where(
+                        Expr::tuple([Expr::col((
+                            project_repository_statuses::Entity,
+                            project_repository_statuses::Column::ProjectId,
+                        ))
+                        .into()])
+                        .in_subquery(
+                            Query::select()
+                                .columns([(
+                                    project_repository_statuses::Entity,
+                                    project_repository_statuses::Column::ProjectId,
+                                )])
+                                .from(project_repository_statuses::Entity)
+                                .inner_join(
+                                    project::Entity,
+                                    Expr::col((project::Entity, project::Column::Id)).equals((
+                                        project_repository_statuses::Entity,
+                                        project_repository_statuses::Column::ProjectId,
+                                    )),
+                                )
+                                .and_where(project::Column::HostConnectionServerId.ne(server_id))
+                                .limit(10000)
+                                .to_owned(),
+                        ),
+                    )
+                    .to_owned();
+
+                let statement = Statement::from_sql_and_values(
+                    tx.get_database_backend(),
+                    delete_query
+                        .to_string(sea_orm::sea_query::PostgresQueryBuilder)
+                        .as_str(),
+                    vec![],
+                );
+
+                let result = tx.execute(statement).await?;
+                if result.rows_affected() == 0 {
+                    break;
+                }
+            }
+
             Ok(())
         })
         .await

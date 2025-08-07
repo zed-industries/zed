@@ -8,7 +8,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
+    LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -65,13 +66,14 @@ impl ContextProvider for JsonTaskProvider {
                 .ok()?
                 .await
                 .ok()?;
+            let path = cx.update(|cx| file.abs_path(cx)).ok()?.as_path().into();
 
             let task_templates = if is_package_json {
                 let package_json = serde_json_lenient::from_str::<
                     HashMap<String, serde_json_lenient::Value>,
                 >(&contents.text)
                 .ok()?;
-                let package_json = PackageJsonData::new(file.path.clone(), package_json);
+                let package_json = PackageJsonData::new(path, package_json);
                 let command = package_json.package_manager.unwrap_or("npm").to_owned();
                 package_json
                     .scripts
@@ -229,6 +231,13 @@ impl JsonLspAdapter {
             ))
         }
 
+        schemas
+            .as_array_mut()
+            .unwrap()
+            .extend(cx.all_action_names().into_iter().map(|&name| {
+                project::lsp_store::json_language_server_ext::url_schema_for_action(name)
+            }));
+
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
@@ -260,7 +269,15 @@ impl JsonLspAdapter {
             .await;
 
         let config = cx.update(|cx| {
-            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+            Self::get_workspace_config(
+                self.languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect(),
+                adapter_schemas,
+                cx,
+            )
         })?;
         writer.replace(config.clone());
         return Ok(config);
@@ -269,10 +286,10 @@ impl JsonLspAdapter {
 
 #[cfg(debug_assertions)]
 fn generate_inspector_style_schema() -> serde_json_lenient::Value {
-    let schema = schemars::r#gen::SchemaSettings::draft07()
-        .with(|settings| settings.option_add_null_type = false)
+    let schema = schemars::generate::SchemaSettings::draft2019_09()
+        .with_transform(util::schemars::DefaultDenyUnknownFields)
         .into_generator()
-        .into_root_schema_for::<gpui::StyleRefinement>();
+        .root_schema_for::<gpui::StyleRefinement>();
 
     serde_json_lenient::to_value(schema).unwrap()
 }
@@ -399,10 +416,10 @@ impl LspAdapter for JsonLspAdapter {
         Ok(config)
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         [
-            ("JSON".into(), "json".into()),
-            ("JSONC".into(), "jsonc".into()),
+            (LanguageName::new("JSON"), "json".into()),
+            (LanguageName::new("JSONC"), "jsonc".into()),
         ]
         .into_iter()
         .collect()
@@ -500,6 +517,7 @@ impl LspAdapter for NodeVersionAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 

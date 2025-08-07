@@ -49,7 +49,7 @@ async fn test_purge_old_embeddings(cx: &mut gpui::TestAppContext) {
     db.save_embeddings(model, &embeddings).await.unwrap();
 
     // Reach into the DB and change the retrieved at to be > 60 days
-    db.weak_transaction(|tx| {
+    db.transaction(|tx| {
         let digest = digest.clone();
         async move {
             let sixty_days_ago = OffsetDateTime::now_utc().sub(Duration::days(61));

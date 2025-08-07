@@ -6,11 +6,15 @@ use anyhow::{Result, bail};
 use collections::IndexMap;
 use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
-use schemars::{JsonSchema, schema::Schema};
+use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
+
+pub const SUMMARIZE_THREAD_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -49,7 +53,7 @@ pub struct AgentSettings {
     pub dock: AgentDockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
-    pub default_model: LanguageModelSelection,
+    pub default_model: Option<LanguageModelSelection>,
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub commit_message_model: Option<LanguageModelSelection>,
     pub thread_summary_model: Option<LanguageModelSelection>,
@@ -66,6 +70,9 @@ pub struct AgentSettings {
     pub model_parameters: Vec<LanguageModelParameters>,
     pub preferred_completion_mode: CompletionMode,
     pub enable_feedback: bool,
+    pub expand_edit_card: bool,
+    pub expand_terminal_card: bool,
+    pub use_modifier_to_send: bool,
 }
 
 impl AgentSettings {
@@ -171,6 +178,10 @@ impl AgentSettingsContent {
         self.single_file_review = Some(allow);
     }
 
+    pub fn set_use_modifier_to_send(&mut self, always_use: bool) {
+        self.use_modifier_to_send = Some(always_use);
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId) {
         self.default_profile = Some(profile_id);
     }
@@ -211,7 +222,6 @@ impl AgentSettingsContent {
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
-#[schemars(deny_unknown_fields)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -291,6 +301,18 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     enable_feedback: Option<bool>,
+    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    ///
+    /// Default: true
+    expand_edit_card: Option<bool>,
+    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    ///
+    /// Default: true
+    expand_terminal_card: Option<bool>,
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux) to send messages in the agent panel.
+    ///
+    /// Default: false
+    use_modifier_to_send: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -302,11 +324,11 @@ pub enum CompletionMode {
     Burn,
 }
 
-impl From<CompletionMode> for zed_llm_client::CompletionMode {
+impl From<CompletionMode> for cloud_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
-            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
+            CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
         }
     }
 }
@@ -321,29 +343,27 @@ pub struct LanguageModelSelection {
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
-    fn schema_name() -> String {
+    fn schema_name() -> Cow<'static, str> {
         "LanguageModelProviderSetting".into()
     }
 
-    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> Schema {
-        schemars::schema::SchemaObject {
-            enum_values: Some(vec![
-                "anthropic".into(),
-                "amazon-bedrock".into(),
-                "google".into(),
-                "lmstudio".into(),
-                "ollama".into(),
-                "openai".into(),
-                "zed.dev".into(),
-                "copilot_chat".into(),
-                "deepseek".into(),
-                "openrouter".into(),
-                "mistral".into(),
-                "vercel".into(),
-            ]),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        json_schema!({
+            "enum": [
+                "anthropic",
+                "amazon-bedrock",
+                "google",
+                "lmstudio",
+                "ollama",
+                "openai",
+                "zed.dev",
+                "copilot_chat",
+                "deepseek",
+                "openrouter",
+                "mistral",
+                "vercel"
+            ]
+        })
     }
 }
 
@@ -356,15 +376,6 @@ impl From<String> for LanguageModelProviderSetting {
 impl From<&str> for LanguageModelProviderSetting {
     fn from(provider: &str) -> Self {
         Self(provider.to_string())
-    }
-}
-
-impl Default for LanguageModelSelection {
-    fn default() -> Self {
-        Self {
-            provider: LanguageModelProviderSetting("openai".to_string()),
-            model: "gpt-4".to_string(),
-        }
     }
 }
 
@@ -411,7 +422,10 @@ impl Settings for AgentSettings {
                 &mut settings.default_height,
                 value.default_height.map(Into::into),
             );
-            merge(&mut settings.default_model, value.default_model.clone());
+            settings.default_model = value
+                .default_model
+                .clone()
+                .or(settings.default_model.take());
             settings.inline_assistant_model = value
                 .inline_assistant_model
                 .clone()
@@ -449,6 +463,15 @@ impl Settings for AgentSettings {
                 value.preferred_completion_mode,
             );
             merge(&mut settings.enable_feedback, value.enable_feedback);
+            merge(&mut settings.expand_edit_card, value.expand_edit_card);
+            merge(
+                &mut settings.expand_terminal_card,
+                value.expand_terminal_card,
+            );
+            merge(
+                &mut settings.use_modifier_to_send,
+                value.use_modifier_to_send,
+            );
 
             settings
                 .model_parameters

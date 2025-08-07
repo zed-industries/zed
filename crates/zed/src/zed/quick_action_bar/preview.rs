@@ -7,7 +7,7 @@ use svg_preview::{
     OpenPreview as SvgOpenPreview, OpenPreviewToTheSide as SvgOpenPreviewToTheSide,
     svg_preview_view::SvgPreviewView,
 };
-use ui::{IconButtonShape, Tooltip, prelude::*, text_for_keystroke};
+use ui::{Tooltip, prelude::*, text_for_keystroke};
 use workspace::Workspace;
 
 use super::QuickActionBar;
@@ -66,7 +66,6 @@ impl QuickActionBar {
         };
 
         let button = IconButton::new(button_id, IconName::Eye)
-            .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .tooltip(move |window, cx| {

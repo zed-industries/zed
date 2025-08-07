@@ -46,6 +46,8 @@ extend-exclude = [
     "script/danger/dangerfile.ts",
     # Eval examples for prompts and criteria
     "crates/eval/src/examples/",
+    # File type extensions are not typos
+    "crates/zed/resources/windows/zed.iss",
     # typos-cli doesn't understand our `vˇariable` markup
     "crates/editor/src/hover_links.rs",
     # typos-cli doesn't understand `setis` is intentional test case
@@ -69,6 +71,10 @@ extend-ignore-re = [
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
     "#fof",
     # Stripped version of reserved keyword `type`
-    "typ"
+    "typ",
+    # AMD GPU Services
+    "ags",
+    # AMD GPU Services
+    "AGS"
 ]
 check-filename = true

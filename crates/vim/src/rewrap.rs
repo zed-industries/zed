@@ -4,7 +4,13 @@ use editor::{Bias, Editor, RewrapOptions, SelectionEffects, display_map::ToDispl
 use gpui::{Context, Window, actions};
 use language::SelectionGoal;
 
-actions!(vim, [Rewrap]);
+actions!(
+    vim,
+    [
+        /// Rewraps the selected text to fit within the line width.
+        Rewrap
+    ]
+);
 
 pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &Rewrap, window, cx| {

@@ -39,7 +39,7 @@ pub trait StyledExt: Styled + Sized {
     /// Sets `bg()`, `rounded_lg()`, `border()`, `border_color()`, `shadow()`
     ///
     /// Example Elements: Title Bar, Panel, Tab Bar, Editor
-    fn elevation_1(self, cx: &mut App) -> Self {
+    fn elevation_1(self, cx: &App) -> Self {
         elevated(self, cx, ElevationIndex::Surface)
     }
 

@@ -1,8 +1,8 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
     EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, SelectionEffects,
-    SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
+    SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -200,15 +200,21 @@ pub fn deploy_context_menu(
         });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
+        let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
         ui::ContextMenu::build(window, cx, |menu, _window, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .when(evaluate_selection && has_selections, |builder| {
-                    builder
-                        .action("Evaluate Selection", Box::new(EvaluateSelectedText))
-                        .separator()
+                .when(run_to_cursor, |builder| {
+                    builder.action("Run to Cursor", Box::new(RunToCursor))
                 })
+                .when(evaluate_selection && has_selections, |builder| {
+                    builder.action("Evaluate Selection", Box::new(EvaluateSelectedText))
+                })
+                .when(
+                    run_to_cursor || (evaluate_selection && has_selections),
+                    |builder| builder.separator(),
+                )
                 .action("Go to Definition", Box::new(GoToDefinition))
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
@@ -233,31 +239,25 @@ pub fn deploy_context_menu(
                 .action("Copy and Trim", Box::new(CopyAndTrim))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .map(|builder| {
-                    let reveal_in_finder_label = if cfg!(target_os = "macos") {
+                .action_disabled_when(
+                    !has_reveal_target,
+                    if cfg!(target_os = "macos") {
                         "Reveal in Finder"
                     } else {
                         "Reveal in File Manager"
-                    };
-                    const OPEN_IN_TERMINAL_LABEL: &str = "Open in Terminal";
-                    if has_reveal_target {
-                        builder
-                            .action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    } else {
-                        builder
-                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
-                            .disabled_action(OPEN_IN_TERMINAL_LABEL, Box::new(OpenInTerminal))
-                    }
-                })
-                .map(|builder| {
-                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
-                    if has_git_repo {
-                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    } else {
-                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
-                    }
-                });
+                    },
+                    Box::new(RevealInFileManager),
+                )
+                .action_disabled_when(
+                    !has_reveal_target,
+                    "Open in Terminal",
+                    Box::new(OpenInTerminal),
+                )
+                .action_disabled_when(
+                    !has_git_repo,
+                    "Copy Permalink",
+                    Box::new(CopyPermalinkToLine),
+                );
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

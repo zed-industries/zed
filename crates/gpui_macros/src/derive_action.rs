@@ -14,6 +14,7 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
     let mut no_register = false;
     let mut namespace = None;
     let mut deprecated = None;
+    let mut doc_str: Option<String> = None;
 
     for attr in &input.attrs {
         if attr.path().is_ident("action") {
@@ -74,6 +75,22 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
                 Ok(())
             })
             .unwrap_or_else(|e| panic!("in #[action] attribute: {}", e));
+        } else if attr.path().is_ident("doc") {
+            use syn::{Expr::Lit, ExprLit, Lit::Str, Meta, MetaNameValue};
+            if let Meta::NameValue(MetaNameValue {
+                value:
+                    Lit(ExprLit {
+                        lit: Str(ref lit_str),
+                        ..
+                    }),
+                ..
+            }) = attr.meta
+            {
+                let doc = lit_str.value();
+                let doc_str = doc_str.get_or_insert_default();
+                doc_str.push_str(doc.trim());
+                doc_str.push('\n');
+            }
         }
     }
 
@@ -122,6 +139,13 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
         quote! { None }
     };
 
+    let documentation_fn_body = if let Some(doc) = doc_str {
+        let doc = doc.trim();
+        quote! { Some(#doc) }
+    } else {
+        quote! { None }
+    };
+
     let registration = if no_register {
         quote! {}
     } else {
@@ -159,8 +183,8 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
             }
 
             fn action_json_schema(
-                _generator: &mut gpui::private::schemars::r#gen::SchemaGenerator,
-            ) -> Option<gpui::private::schemars::schema::Schema> {
+                _generator: &mut gpui::private::schemars::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::Schema> {
                 #json_schema_fn_body
             }
 
@@ -170,6 +194,10 @@ pub(crate) fn derive_action(input: TokenStream) -> TokenStream {
 
             fn deprecation_message() -> Option<&'static str> {
                 #deprecation_fn_body
+            }
+
+            fn documentation() -> Option<&'static str> {
+                #documentation_fn_body
             }
         }
     })

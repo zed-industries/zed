@@ -9,7 +9,9 @@ use std::sync::Arc;
 use clap::Parser;
 use dialoguer::FuzzySelect;
 use gpui::{
-    AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions, div, px, size,
+    AnyView, App, Bounds, Context, Render, Window, WindowBounds, WindowOptions,
+    colors::{Colors, GlobalColors},
+    div, px, size,
 };
 use log::LevelFilter;
 use project::Project;
@@ -67,6 +69,8 @@ fn main() {
 
     gpui::Application::new().with_assets(Assets).run(move |cx| {
         load_embedded_fonts(cx).unwrap();
+
+        cx.set_global(GlobalColors(Arc::new(Colors::default())));
 
         let http_client = ReqwestClient::user_agent("zed_storybook").unwrap();
         cx.set_http_client(Arc::new(http_client));

@@ -9,6 +9,7 @@ use crate::{Vim, state::Mode};
 
 const BOOLEAN_PAIRS: &[(&str, &str)] = &[("true", "false"), ("yes", "no"), ("on", "off")];
 
+/// Increments the number under the cursor or toggles boolean values.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]
@@ -17,6 +18,7 @@ struct Increment {
     step: bool,
 }
 
+/// Decrements the number under the cursor or toggles boolean values.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
 #[action(namespace = vim)]
 #[serde(deny_unknown_fields)]

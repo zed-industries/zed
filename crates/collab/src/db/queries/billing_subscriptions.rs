@@ -35,7 +35,7 @@ impl Database {
         &self,
         params: &CreateBillingSubscriptionParams,
     ) -> Result<billing_subscription::Model> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             let id = billing_subscription::Entity::insert(billing_subscription::ActiveModel {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 kind: ActiveValue::set(params.kind),
@@ -64,7 +64,7 @@ impl Database {
         id: BillingSubscriptionId,
         params: &UpdateBillingSubscriptionParams,
     ) -> Result<()> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             billing_subscription::Entity::update(billing_subscription::ActiveModel {
                 id: ActiveValue::set(id),
                 billing_customer_id: params.billing_customer_id.clone(),
@@ -85,25 +85,12 @@ impl Database {
         .await
     }
 
-    /// Returns the billing subscription with the specified ID.
-    pub async fn get_billing_subscription_by_id(
-        &self,
-        id: BillingSubscriptionId,
-    ) -> Result<Option<billing_subscription::Model>> {
-        self.weak_transaction(|tx| async move {
-            Ok(billing_subscription::Entity::find_by_id(id)
-                .one(&*tx)
-                .await?)
-        })
-        .await
-    }
-
     /// Returns the billing subscription with the specified Stripe subscription ID.
     pub async fn get_billing_subscription_by_stripe_subscription_id(
         &self,
         stripe_subscription_id: &str,
     ) -> Result<Option<billing_subscription::Model>> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             Ok(billing_subscription::Entity::find()
                 .filter(
                     billing_subscription::Column::StripeSubscriptionId.eq(stripe_subscription_id),
@@ -118,7 +105,7 @@ impl Database {
         &self,
         user_id: UserId,
     ) -> Result<Option<billing_subscription::Model>> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             Ok(billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(billing_customer::Column::UserId.eq(user_id))
@@ -143,92 +130,6 @@ impl Database {
         .await
     }
 
-    /// Returns all of the billing subscriptions for the user with the specified ID.
-    ///
-    /// Note that this returns the subscriptions regardless of their status.
-    /// If you're wanting to check if a use has an active billing subscription,
-    /// use `get_active_billing_subscriptions` instead.
-    pub async fn get_billing_subscriptions(
-        &self,
-        user_id: UserId,
-    ) -> Result<Vec<billing_subscription::Model>> {
-        self.weak_transaction(|tx| async move {
-            let subscriptions = billing_subscription::Entity::find()
-                .inner_join(billing_customer::Entity)
-                .filter(billing_customer::Column::UserId.eq(user_id))
-                .order_by_asc(billing_subscription::Column::Id)
-                .all(&*tx)
-                .await?;
-
-            Ok(subscriptions)
-        })
-        .await
-    }
-
-    pub async fn get_active_billing_subscriptions(
-        &self,
-        user_ids: HashSet<UserId>,
-    ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
-        self.weak_transaction(|tx| {
-            let user_ids = user_ids.clone();
-            async move {
-                let mut rows = billing_subscription::Entity::find()
-                    .inner_join(billing_customer::Entity)
-                    .select_also(billing_customer::Entity)
-                    .filter(billing_customer::Column::UserId.is_in(user_ids))
-                    .filter(
-                        billing_subscription::Column::StripeSubscriptionStatus
-                            .eq(StripeSubscriptionStatus::Active),
-                    )
-                    .filter(billing_subscription::Column::Kind.is_null())
-                    .order_by_asc(billing_subscription::Column::Id)
-                    .stream(&*tx)
-                    .await?;
-
-                let mut subscriptions = HashMap::default();
-                while let Some(row) = rows.next().await {
-                    if let (subscription, Some(customer)) = row? {
-                        subscriptions.insert(customer.user_id, (customer, subscription));
-                    }
-                }
-                Ok(subscriptions)
-            }
-        })
-        .await
-    }
-
-    pub async fn get_active_zed_pro_billing_subscriptions(
-        &self,
-        user_ids: HashSet<UserId>,
-    ) -> Result<HashMap<UserId, (billing_customer::Model, billing_subscription::Model)>> {
-        self.weak_transaction(|tx| {
-            let user_ids = user_ids.clone();
-            async move {
-                let mut rows = billing_subscription::Entity::find()
-                    .inner_join(billing_customer::Entity)
-                    .select_also(billing_customer::Entity)
-                    .filter(billing_customer::Column::UserId.is_in(user_ids))
-                    .filter(
-                        billing_subscription::Column::StripeSubscriptionStatus
-                            .eq(StripeSubscriptionStatus::Active),
-                    )
-                    .filter(billing_subscription::Column::Kind.eq(SubscriptionKind::ZedPro))
-                    .order_by_asc(billing_subscription::Column::Id)
-                    .stream(&*tx)
-                    .await?;
-
-                let mut subscriptions = HashMap::default();
-                while let Some(row) = rows.next().await {
-                    if let (subscription, Some(customer)) = row? {
-                        subscriptions.insert(customer.user_id, (customer, subscription));
-                    }
-                }
-                Ok(subscriptions)
-            }
-        })
-        .await
-    }
-
     /// Returns whether the user has an active billing subscription.
     pub async fn has_active_billing_subscription(&self, user_id: UserId) -> Result<bool> {
         Ok(self.count_active_billing_subscriptions(user_id).await? > 0)
@@ -236,7 +137,7 @@ impl Database {
 
     /// Returns the count of the active billing subscriptions for the user with the specified ID.
     pub async fn count_active_billing_subscriptions(&self, user_id: UserId) -> Result<usize> {
-        self.weak_transaction(|tx| async move {
+        self.transaction(|tx| async move {
             let count = billing_subscription::Entity::find()
                 .inner_join(billing_customer::Entity)
                 .filter(

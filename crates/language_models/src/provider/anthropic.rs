@@ -33,8 +33,8 @@ use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 
-const PROVIDER_ID: &str = language_model::ANTHROPIC_PROVIDER_ID;
-const PROVIDER_NAME: &str = "Anthropic";
+const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
+const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AnthropicSettings {
@@ -218,11 +218,11 @@ impl LanguageModelProviderState for AnthropicLanguageModelProvider {
 
 impl LanguageModelProvider for AnthropicLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
@@ -403,7 +403,11 @@ impl AnthropicModel {
         };
 
         async move {
-            let api_key = api_key.context("Missing Anthropic API Key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request =
                 anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
             request.await.map_err(Into::into)
@@ -422,11 +426,11 @@ impl LanguageModel for AnthropicModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -528,6 +532,11 @@ pub fn into_anthropic(
                     .into_iter()
                     .filter_map(|content| match content {
                         MessageContent::Text(text) => {
+                            let text = if text.chars().last().map_or(false, |c| c.is_whitespace()) {
+                                text.trim_end().to_string()
+                            } else {
+                                text
+                            };
                             if !text.is_empty() {
                                 Some(anthropic::RequestContent::Text {
                                     text,
@@ -654,7 +663,9 @@ pub fn into_anthropic(
         } else {
             Some(anthropic::StringOrContents::String(system_message))
         },
-        thinking: if let AnthropicModelMode::Thinking { budget_tokens } = mode {
+        thinking: if request.thinking_allowed
+            && let AnthropicModelMode::Thinking { budget_tokens } = mode
+        {
             Some(anthropic::Thinking::Enabled { budget_tokens })
         } else {
             None
@@ -801,12 +812,14 @@ impl AnthropicEventMapper {
                                 raw_input: tool_use.input_json.clone(),
                             },
                         )),
-                        Err(json_parse_err) => Err(LanguageModelCompletionError::BadInputJson {
-                            id: tool_use.id.into(),
-                            tool_name: tool_use.name.into(),
-                            raw_input: input_json.into(),
-                            json_parse_error: json_parse_err.to_string(),
-                        }),
+                        Err(json_parse_err) => {
+                            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                                id: tool_use.id.into(),
+                                tool_name: tool_use.name.into(),
+                                raw_input: input_json.into(),
+                                json_parse_error: json_parse_err.to_string(),
+                            })
+                        }
                     };
 
                     vec![event_result]
@@ -999,7 +1012,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Anthropic, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with Anthropic, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(
@@ -1097,6 +1110,7 @@ mod tests {
             temperature: None,
             tools: vec![],
             tool_choice: None,
+            thinking_allowed: true,
         };
 
         let anthropic_request = into_anthropic(

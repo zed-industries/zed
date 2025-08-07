@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -180,7 +181,7 @@ impl ConfigurationSource {
 }
 
 fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)>) -> String {
-    let (name, path, args, env) = match existing {
+    let (name, command, args, env) = match existing {
         Some((id, cmd)) => {
             let args = serde_json::to_string(&cmd.args).unwrap();
             let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
@@ -188,7 +189,7 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         }
         None => (
             "some-mcp-server".to_string(),
-            "".to_string(),
+            PathBuf::new(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -198,16 +199,15 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         r#"{{
   /// The name of your MCP server
   "{name}": {{
-    "command": {{
-      /// The path to the executable
-      "path": "{path}",
-      /// The arguments to pass to the executable
-      "args": {args},
-      /// The environment variables to set for the executable
-      "env": {env}
-    }}
+    /// The command which runs the MCP server
+    "command": "{}",
+    /// The arguments to pass to the MCP server
+    "args": {args},
+    /// The environment variables to set
+    "env": {env}
   }}
-}}"#
+}}"#,
+        command.display()
     )
 }
 
@@ -381,6 +381,14 @@ impl ConfigureContextServerModal {
         };
 
         self.state = State::Waiting;
+
+        let existing_server = self.context_server_store.read(cx).get_running_server(&id);
+        if existing_server.is_some() {
+            self.context_server_store.update(cx, |store, cx| {
+                store.stop_server(&id, cx).log_err();
+            });
+        }
+
         let wait_for_context_server_task =
             wait_for_context_server(&self.context_server_store, id.clone(), cx);
         cx.spawn({
@@ -401,13 +409,21 @@ impl ConfigureContextServerModal {
         })
         .detach();
 
-        // When we write the settings to the file, the context server will be restarted.
-        workspace.update(cx, |workspace, cx| {
-            let fs = workspace.app_state().fs.clone();
-            update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
-                project_settings.context_servers.insert(id.0, settings);
+        let settings_changed =
+            ProjectSettings::get_global(cx).context_servers.get(&id.0) != Some(&settings);
+
+        if settings_changed {
+            // When we write the settings to the file, the context server will be restarted.
+            workspace.update(cx, |workspace, cx| {
+                let fs = workspace.app_state().fs.clone();
+                update_settings_file::<ProjectSettings>(fs.clone(), cx, |project_settings, _| {
+                    project_settings.context_servers.insert(id.0, settings);
+                });
             });
-        });
+        } else if let Some(existing_server) = existing_server {
+            self.context_server_store
+                .update(cx, |store, cx| store.start_server(existing_server, cx));
+        }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut Context<Self>) {
@@ -439,8 +455,7 @@ fn parse_input(text: &str) -> Result<(ContextServerId, ContextServerCommand)> {
     let object = value.as_object().context("Expected object")?;
     anyhow::ensure!(object.len() == 1, "Expected exactly one key-value pair");
     let (context_server_name, value) = object.into_iter().next().unwrap();
-    let command = value.get("command").context("Expected command")?;
-    let command: ContextServerCommand = serde_json::from_value(command.clone())?;
+    let command: ContextServerCommand = serde_json::from_value(value.clone())?;
     Ok((ContextServerId(context_server_name.clone().into()), command))
 }
 
@@ -727,7 +742,9 @@ fn wait_for_context_server(
     });
 
     cx.spawn(async move |_cx| {
-        let result = rx.await.unwrap();
+        let result = rx
+            .await
+            .map_err(|_| Arc::from("Context server store was dropped"))?;
         drop(subscription);
         result
     })

@@ -2,6 +2,7 @@ use crate::{
     thread::{MessageId, PromptId, ThreadId},
     thread_store::SerializedMessage,
 };
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_tool::{
     AnyToolCard, Tool, ToolResultContent, ToolResultOutput, ToolUseStatus, ToolWorkingSet,
@@ -11,8 +12,9 @@ use futures::{FutureExt as _, future::Shared};
 use gpui::{App, Entity, SharedString, Task, Window};
 use icons::IconName;
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRequest, LanguageModelToolResult,
-    LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, Role,
+    ConfiguredModel, LanguageModel, LanguageModelExt, LanguageModelRequest,
+    LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolUse,
+    LanguageModelToolUseId, Role,
 };
 use project::Project;
 use std::sync::Arc;
@@ -163,7 +165,12 @@ impl ToolUseState {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn tool_uses_for_message(&self, id: MessageId, cx: &App) -> Vec<ToolUse> {
+    pub fn tool_uses_for_message(
+        &self,
+        id: MessageId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Vec<ToolUse> {
         let Some(tool_uses_for_message) = &self.tool_uses_by_assistant_message.get(&id) else {
             return Vec::new();
         };
@@ -209,7 +216,10 @@ impl ToolUseState {
 
             let (icon, needs_confirmation) =
                 if let Some(tool) = self.tools.read(cx).tool(&tool_use.name, cx) {
-                    (tool.icon(), tool.needs_confirmation(&tool_use.input, cx))
+                    (
+                        tool.icon(),
+                        tool.needs_confirmation(&tool_use.input, project, cx),
+                    )
                 } else {
                     (IconName::Cog, false)
                 };
@@ -400,6 +410,7 @@ impl ToolUseState {
         tool_name: Arc<str>,
         output: Result<ToolResultOutput>,
         configured_model: Option<&ConfiguredModel>,
+        completion_mode: CompletionMode,
     ) -> Option<PendingToolUse> {
         let metadata = self.tool_use_metadata_by_id.remove(&tool_use_id);
 
@@ -426,7 +437,10 @@ impl ToolUseState {
 
                 // Protect from overly large output
                 let tool_output_limit = configured_model
-                    .map(|model| model.model.max_token_count() as usize * BYTES_PER_TOKEN_ESTIMATE)
+                    .map(|model| {
+                        model.model.max_token_count_for_mode(completion_mode.into()) as usize
+                            * BYTES_PER_TOKEN_ESTIMATE
+                    })
                     .unwrap_or(usize::MAX);
 
                 let content = match tool_result {
