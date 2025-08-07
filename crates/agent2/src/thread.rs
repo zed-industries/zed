@@ -125,7 +125,7 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    action_log: Entity<ActionLog>,
+    _action_log: Entity<ActionLog>,
 }
 
 impl Thread {
@@ -145,7 +145,7 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
-            action_log,
+            _action_log: action_log,
         }
     }
 
