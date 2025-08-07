@@ -23,8 +23,8 @@ impl AgentTool for EchoTool {
         acp::ToolKind::Other
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
+    fn initial_title(&self, _: Self::Input) -> SharedString {
+        "Echo".into()
     }
 
     fn run(
@@ -53,12 +53,12 @@ impl AgentTool for DelayTool {
         "delay".into()
     }
 
-    fn kind(&self) -> acp::ToolKind {
-        acp::ToolKind::Other
+    fn initial_title(&self, input: Self::Input) -> SharedString {
+        format!("Delay {}ms", input.ms).into()
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
     }
 
     fn run(
@@ -93,21 +93,21 @@ impl AgentTool for ToolRequiringPermission {
         acp::ToolKind::Other
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        true
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This tool requires permission".into()
     }
 
     fn run(
         self: Arc<Self>,
-        _input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>>
-    where
-        Self: Sized,
-    {
-        cx.foreground_executor()
-            .spawn(async move { Ok("Allowed".to_string()) })
+    ) -> Task<Result<String>> {
+        let auth_check = self.authorize(input, event_stream);
+        cx.foreground_executor().spawn(async move {
+            auth_check.await?;
+            Ok("Allowed".to_string())
+        })
     }
 }
 
@@ -127,8 +127,8 @@ impl AgentTool for InfiniteTool {
         acp::ToolKind::Other
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This is the tool that never ends... it just goes on and on my friends!".into()
     }
 
     fn run(
@@ -177,8 +177,8 @@ impl AgentTool for WordListTool {
         acp::ToolKind::Other
     }
 
-    fn needs_authorization(&self, _input: Self::Input, _cx: &App) -> bool {
-        false
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "List of random words".into()
     }
 
     fn run(

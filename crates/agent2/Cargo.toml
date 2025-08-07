@@ -14,8 +14,8 @@ workspace = true
 [dependencies]
 acp_thread.workspace = true
 agent-client-protocol.workspace = true
-agent_settings.workspace = true
 agent_servers.workspace = true
+agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
@@ -26,6 +26,7 @@ futures.workspace = true
 gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
 indoc.workspace = true
+itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
@@ -59,3 +60,4 @@ project = { workspace = true, "features" = ["test-support"] }
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
 worktree = { workspace = true, "features" = ["test-support"] }
+pretty_assertions.workspace = true
