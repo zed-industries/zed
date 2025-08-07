@@ -20,7 +20,7 @@ pub fn init(cx: &mut App) {
         cx,
     );
 
-    cx.observe_new(|_, _, cx| {
+    cx.observe_new(|l, _, cx| {
         let lsp_store = cx.weak_entity();
         cx.global_mut::<SchemaStore>().lsp_stores.push(lsp_store);
     })

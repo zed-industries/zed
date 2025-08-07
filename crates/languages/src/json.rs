@@ -8,14 +8,13 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
-    LspAdapter, LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageToolchainStore, LocalFile as _, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
-use settings::{SettingsJsonSchemaParams, SettingsStore};
 use smol::{
     fs::{self},
     io::BufReader,
@@ -132,26 +131,20 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct JsonLspAdapter {
     node: NodeRuntime,
-    languages: Arc<LanguageRegistry>,
     workspace_config: RwLock<Option<Value>>,
 }
 
 impl JsonLspAdapter {
     const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
-    pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         Self {
             node,
-            languages,
             workspace_config: Default::default(),
         }
     }
 
-    fn get_workspace_config(
-        language_names: Vec<String>,
-        adapter_schemas: AdapterSchemas,
-        cx: &mut App,
-    ) -> Value {
+    fn get_workspace_config(adapter_schemas: AdapterSchemas, cx: &mut App) -> Value {
         let debug_tasks = task::DebugTaskFile::generate_json_schema(&adapter_schemas);
 
         #[allow(unused_mut)]
@@ -199,17 +192,7 @@ impl JsonLspAdapter {
             .adapters_schema()
             .await;
 
-        let config = cx.update(|cx| {
-            Self::get_workspace_config(
-                self.languages
-                    .language_names()
-                    .into_iter()
-                    .map(|name| name.to_string())
-                    .collect(),
-                adapter_schemas,
-                cx,
-            )
-        })?;
+        let config = cx.update(|cx| Self::get_workspace_config(adapter_schemas, cx))?;
         writer.replace(config.clone());
         return Ok(config);
     }

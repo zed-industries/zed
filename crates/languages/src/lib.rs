@@ -91,7 +91,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
     let go_context_provider = Arc::new(go::GoContextProvider);
     let go_lsp_adapter = Arc::new(go::GoLspAdapter);
     let json_context_provider = Arc::new(JsonTaskProvider);
-    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
+    let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
     let python_context_provider = Arc::new(python::PythonContextProvider);

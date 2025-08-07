@@ -1,7 +1,6 @@
 use collections::HashMap;
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
-use serde_json_lenient::Value;
 use std::borrow::Cow;
 use util::schemars::DefaultDenyUnknownFields;
 
