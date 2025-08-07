@@ -17,7 +17,6 @@ use serde_json::{Value, json};
 use smol::{
     fs::{self},
     io::BufReader,
-    lock::RwLock,
 };
 use std::{
     any::Any,
@@ -130,49 +129,13 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct JsonLspAdapter {
     node: NodeRuntime,
-    workspace_config: RwLock<Option<Value>>,
 }
 
 impl JsonLspAdapter {
     const PACKAGE_NAME: &str = "vscode-langservers-extracted";
 
     pub fn new(node: NodeRuntime) -> Self {
-        Self {
-            node,
-            workspace_config: Default::default(),
-        }
-    }
-
-    fn get_workspace_config(cx: &mut App) -> Value {
-        let schemas = json_schema_store::all_schema_file_associations(cx);
-
-        // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
-        // `Server Info`
-        serde_json::json!({
-            "json": {
-                "format": {
-                    "enable": true,
-                },
-                "validate": {
-                    "enable": true,
-                },
-                "schemas": schemas
-            }
-        })
-    }
-
-    async fn get_or_init_workspace_config(&self, cx: &mut AsyncApp) -> Result<Value> {
-        {
-            let reader = self.workspace_config.read().await;
-            if let Some(config) = reader.as_ref() {
-                return Ok(config.clone());
-            }
-        }
-        let mut writer = self.workspace_config.write().await;
-
-        let config = cx.update(|cx| Self::get_workspace_config(cx))?;
-        writer.replace(config.clone());
-        return Ok(config);
+        Self { node }
     }
 }
 
@@ -284,8 +247,23 @@ impl LspAdapter for JsonLspAdapter {
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let mut config = self.get_or_init_workspace_config(cx).await?;
+        let mut config = cx.update(|cx| {
+            let schemas = json_schema_store::all_schema_file_associations(cx);
 
+            // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
+            // `Server Info`
+            serde_json::json!({
+                "json": {
+                    "format": {
+                        "enable": true,
+                    },
+                    "validate": {
+                        "enable": true,
+                    },
+                    "schemas": schemas
+                }
+            })
+        })?;
         let project_options = cx.update(|cx| {
             language_server_settings(delegate.as_ref(), &self.name(), cx)
                 .and_then(|s| s.settings.clone())

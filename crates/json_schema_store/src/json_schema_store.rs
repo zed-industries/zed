@@ -1,13 +1,9 @@
 //! # json_schema_store
-use std::{str::FromStr, sync::OnceLock};
+use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
 use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
 use project::LspStore;
-use schemars::{Schema, SchemaGenerator};
-use std::collections::HashMap;
-
-static ALL_ACTION_SCHEMAS: OnceLock<HashMap<&'static str, Option<Schema>>> = OnceLock::new();
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
@@ -106,9 +102,11 @@ fn resolve_schema_request(
             let action_name = denormalize_action_name(normalized_action_name);
             let mut generator = settings::KeymapFile::action_schema_generator();
             let schema = cx
-                .update(|cx| all_action_schemas(&mut generator, cx))?
-                .get(action_name.as_str())
-                .and_then(Option::clone);
+                // PERF: cx.action_schema_by_name(action_name, &mut generator)
+                .update(|cx| cx.action_schemas(&mut generator))?
+                .into_iter()
+                .find_map(|(name, schema)| (name == action_name).then_some(schema))
+                .flatten();
             root_schema_from_action_schema(schema, &mut generator).to_value()
         }
         "tasks" => task::TaskTemplates::generate_json_schema(),
@@ -208,16 +206,6 @@ pub fn all_schema_file_associations(cx: &mut App) -> serde_json::Value {
     );
 
     file_associations
-}
-
-fn all_action_schemas(
-    generator: &mut SchemaGenerator,
-    cx: &mut App,
-) -> &'static HashMap<&'static str, Option<Schema>> {
-    ALL_ACTION_SCHEMAS.get_or_init(|| {
-        let all_schemas = HashMap::from_iter(cx.action_schemas(generator));
-        all_schemas
-    })
 }
 
 fn tsconfig_schema() -> serde_json::Value {
