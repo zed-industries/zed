@@ -96,10 +96,20 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
-        /// Renames the current branch.
-        RenameBranch,
     ]
 );
+
+/// Renames a git branch.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = git)]
+#[serde(deny_unknown_fields)]
+pub struct RenameBranch {
+    /// The branch to rename.
+    ///
+    /// Default: the current branch.
+    #[serde(default)]
+    pub branch: Option<String>,
+}
 
 /// Restores a file to its last committed state, discarding local changes.
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
