@@ -610,10 +610,10 @@ impl MistralEventMapper {
                 mistral::MessageContentDelta::Parts(parts) => {
                     for part in parts {
                         match part {
-                            &mistral::MessagePart::Text { ref text } => {
+                            mistral::MessagePart::Text { text } => {
                                 events.push(Ok(LanguageModelCompletionEvent::Text(text.clone())));
                             }
-                            &mistral::MessagePart::Thinking { ref thinking } => {
+                            mistral::MessagePart::Thinking { thinking } => {
                                 for tp in thinking.iter().cloned() {
                                     match tp {
                                         mistral::ThinkingPart::Text { text } => {
@@ -627,7 +627,7 @@ impl MistralEventMapper {
                                     }
                                 }
                             }
-                            &mistral::MessagePart::ImageUrl { .. } => {
+                            mistral::MessagePart::ImageUrl { .. } => {
                                 // We currently don't emit a separate event for images in responses.
                             }
                         }
