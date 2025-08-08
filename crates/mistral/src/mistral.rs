@@ -288,7 +288,9 @@ pub enum ToolChoice {
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum RequestMessage {
     Assistant {
-        content: Option<String>,
+        #[serde(flatten)]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<MessageContent>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
@@ -297,7 +299,8 @@ pub enum RequestMessage {
         content: MessageContent,
     },
     System {
-        content: String,
+        #[serde(flatten)]
+        content: MessageContent,
     },
     Tool {
         content: String,
@@ -305,7 +308,7 @@ pub enum RequestMessage {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(untagged)]
 pub enum MessageContent {
     #[serde(rename = "content")]
@@ -346,11 +349,21 @@ impl MessageContent {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MessagePart {
     Text { text: String },
     ImageUrl { image_url: String },
+    Thinking { thinking: Vec<ThinkingPart> },
+}
+
+// Backwards-compatibility alias for provider code that refers to ContentPart
+pub type ContentPart = MessagePart;
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkingPart {
+    Text { text: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -418,22 +431,30 @@ pub struct StreamChoice {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StreamDelta {
     pub role: Option<Role>,
-    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<MessageContentDelta>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
+#[serde(untagged)]
+pub enum MessageContentDelta {
+    Text(String),
+    Parts(Vec<MessagePart>),
+}
+
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct ToolCallChunk {
     pub index: usize,
     pub id: Option<String>,
     pub function: Option<FunctionChunk>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Clone)]
 pub struct FunctionChunk {
     pub name: Option<String>,
     pub arguments: Option<String>,

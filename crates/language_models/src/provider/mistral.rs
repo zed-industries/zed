@@ -406,8 +406,9 @@ pub fn into_mistral(
                             });
                         }
                         MessageContent::Thinking { text, .. } => {
-                            message_content
-                                .push_part(mistral::MessagePart::Text { text: text.clone() });
+                            message_content.push_part(mistral::MessagePart::Thinking {
+                                thinking: vec![mistral::ThinkingPart::Text { text: text.clone() }],
+                            });
                         }
                         MessageContent::RedactedThinking(_) => {}
                         MessageContent::ToolUse(_) => {
@@ -437,9 +438,23 @@ pub fn into_mistral(
             Role::Assistant => {
                 for content in &message.content {
                     match content {
-                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        MessageContent::Text(text) => {
                             messages.push(mistral::RequestMessage::Assistant {
-                                content: Some(text.clone()),
+                                content: Some(mistral::MessageContent::Plain {
+                                    content: text.clone(),
+                                }),
+                                tool_calls: Vec::new(),
+                            });
+                        }
+                        MessageContent::Thinking { text, .. } => {
+                            messages.push(mistral::RequestMessage::Assistant {
+                                content: Some(mistral::MessageContent::Multipart {
+                                    content: vec![mistral::MessagePart::Thinking {
+                                        thinking: vec![mistral::ThinkingPart::Text {
+                                            text: text.clone(),
+                                        }],
+                                    }],
+                                }),
                                 tool_calls: Vec::new(),
                             });
                         }
@@ -477,9 +492,22 @@ pub fn into_mistral(
             Role::System => {
                 for content in &message.content {
                     match content {
-                        MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
+                        MessageContent::Text(text) => {
                             messages.push(mistral::RequestMessage::System {
-                                content: text.clone(),
+                                content: mistral::MessageContent::Plain {
+                                    content: text.clone(),
+                                },
+                            });
+                        }
+                        MessageContent::Thinking { text, .. } => {
+                            messages.push(mistral::RequestMessage::System {
+                                content: mistral::MessageContent::Multipart {
+                                    content: vec![mistral::MessagePart::Thinking {
+                                        thinking: vec![mistral::ThinkingPart::Text {
+                                            text: text.clone(),
+                                        }],
+                                    }],
+                                },
                             });
                         }
                         MessageContent::RedactedThinking(_) => {}
@@ -494,34 +522,36 @@ pub fn into_mistral(
         }
     }
 
-    // The Mistral API requires that tool messages be followed by assistant messages,
-    // not user messages. When we have a tool->user sequence in the conversation,
-    // we need to insert a placeholder assistant message to maintain proper conversation
-    // flow and prevent API errors. This is a Mistral-specific requirement that differs
-    // from other language model APIs.
-    let messages = {
-        let mut fixed_messages = Vec::with_capacity(messages.len());
-        let mut messages_iter = messages.into_iter().peekable();
+    // // The Mistral API requires that tool messages be followed by assistant messages,
+    // // not user messages. When we have a tool->user sequence in the conversation,
+    // // we need to insert a placeholder assistant message to maintain proper conversation
+    // // flow and prevent API errors. This is a Mistral-specific requirement that differs
+    // // from other language model APIs.
+    // let messages = {
+    //     let mut fixed_messages = Vec::with_capacity(messages.len());
+    //     let mut messages_iter = messages.into_iter().peekable();
 
-        while let Some(message) = messages_iter.next() {
-            let is_tool_message = matches!(message, mistral::RequestMessage::Tool { .. });
-            fixed_messages.push(message);
+    //     while let Some(message) = messages_iter.next() {
+    //         let is_tool_message = matches!(message, mistral::RequestMessage::Tool { .. });
+    //         fixed_messages.push(message);
 
-            // Insert assistant message between tool and user messages
-            if is_tool_message {
-                if let Some(next_msg) = messages_iter.peek() {
-                    if matches!(next_msg, mistral::RequestMessage::User { .. }) {
-                        fixed_messages.push(mistral::RequestMessage::Assistant {
-                            content: Some(" ".to_string()),
-                            tool_calls: Vec::new(),
-                        });
-                    }
-                }
-            }
-        }
+    //         // Insert assistant message between tool and user messages
+    //         if is_tool_message {
+    //             if let Some(next_msg) = messages_iter.peek() {
+    //                 if matches!(next_msg, mistral::RequestMessage::User { .. }) {
+    //                     fixed_messages.push(mistral::RequestMessage::Assistant {
+    //                         content: Some(mistral::MessageContent::Plain {
+    //                             content: " ".to_string(),
+    //                         }),
+    //                         tool_calls: Vec::new(),
+    //                     });
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        fixed_messages
-    };
+    //     fixed_messages
+    // };
 
     mistral::Request {
         model,
@@ -562,87 +592,13 @@ pub fn into_mistral(
 
 pub struct MistralEventMapper {
     tool_calls_by_index: HashMap<usize, RawToolCall>,
-    content_buffer: String,
 }
 
 impl MistralEventMapper {
     pub fn new() -> Self {
         Self {
             tool_calls_by_index: HashMap::default(),
-            content_buffer: String::new(),
         }
-    }
-
-    fn parse_content(
-        &mut self,
-        content: &str,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        self.content_buffer.push_str(content);
-        let mut events = Vec::new();
-
-        while let Some(think_start) = self.content_buffer.find("<think>") {
-            if think_start > 0 {
-                let text_before = &self.content_buffer[..think_start];
-                if !text_before.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Text(
-                        text_before.to_string(),
-                    )));
-                }
-            }
-
-            if let Some(think_end_start) = self.content_buffer[think_start..].find("</think>") {
-                let think_content_start = think_start + "<think>".len();
-                let think_content_end = think_start + think_end_start;
-                let think_end = think_content_end + "</think>".len();
-
-                let thinking_content = &self.content_buffer[think_content_start..think_content_end];
-                if !thinking_content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                        text: thinking_content.to_string(),
-                        signature: None,
-                    }));
-                }
-
-                self.content_buffer.drain(..think_end);
-            } else {
-                break;
-            }
-        }
-
-        events
-    }
-
-    fn flush_remaining_content(
-        &mut self,
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-
-        if !self.content_buffer.is_empty() {
-            if let Some(think_start) = self.content_buffer.find("<think>") {
-                if think_start > 0 {
-                    let text_before = &self.content_buffer[..think_start];
-                    events.push(Ok(LanguageModelCompletionEvent::Text(
-                        text_before.to_string(),
-                    )));
-                }
-
-                let remaining_thinking = &self.content_buffer[think_start + "<think>".len()..];
-                if !remaining_thinking.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                        text: remaining_thinking.to_string(),
-                        signature: None,
-                    }));
-                }
-            } else {
-                events.push(Ok(LanguageModelCompletionEvent::Text(
-                    self.content_buffer.clone(),
-                )));
-            }
-
-            self.content_buffer.clear();
-        }
-
-        events
     }
 
     pub fn map_stream(
@@ -669,9 +625,38 @@ impl MistralEventMapper {
         };
 
         let mut events = Vec::new();
-
-        if let Some(content) = choice.delta.content.clone() {
-            events.extend(self.parse_content(&content));
+        if let Some(content) = choice.delta.content.as_ref() {
+            match content {
+                mistral::MessageContentDelta::Text(text) => {
+                    events.push(Ok(LanguageModelCompletionEvent::Text(text.clone())));
+                }
+                mistral::MessageContentDelta::Parts(parts) => {
+                    for part in parts {
+                        match part {
+                            &mistral::MessagePart::Text { ref text } => {
+                                events.push(Ok(LanguageModelCompletionEvent::Text(text.clone())));
+                            }
+                            &mistral::MessagePart::Thinking { ref thinking } => {
+                                for tp in thinking.iter().cloned() {
+                                    match tp {
+                                        mistral::ThinkingPart::Text { text } => {
+                                            events.push(Ok(
+                                                LanguageModelCompletionEvent::Thinking {
+                                                    text,
+                                                    signature: None,
+                                                },
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            &mistral::MessagePart::ImageUrl { .. } => {
+                                // We currently don't emit a separate event for images in responses.
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
@@ -704,7 +689,6 @@ impl MistralEventMapper {
         }
 
         if let Some(finish_reason) = choice.finish_reason.as_deref() {
-            events.extend(self.flush_remaining_content());
             match finish_reason {
                 "stop" => {
                     events.push(Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)));
@@ -883,7 +867,7 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with Mistral, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with Mistral, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
@@ -1040,115 +1024,6 @@ mod tests {
                 &content[1],
                 mistral::MessagePart::ImageUrl { image_url } if image_url.starts_with("data:image/png;base64,")
             ));
-        }
-    }
-
-    #[test]
-    fn test_content_parsing_with_thinking_blocks() {
-        let mut mapper = MistralEventMapper::new();
-
-        let events = mapper.parse_content("Hello <think>This is thinking</think> world");
-        assert_eq!(events.len(), 2);
-
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, "Hello "),
-            _ => panic!("Expected text event"),
-        }
-
-        match &events[1] {
-            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
-                assert_eq!(text, "This is thinking")
-            }
-            _ => panic!("Expected thinking event"),
-        }
-
-        let events = mapper.flush_remaining_content();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, " world"),
-            _ => panic!("Expected text event"),
-        }
-    }
-
-    #[test]
-    fn test_content_parsing_incomplete_thinking() {
-        let mut mapper = MistralEventMapper::new();
-
-        let events = mapper.parse_content("Start <think>incomplete");
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, "Start "),
-            _ => panic!("Expected text event"),
-        }
-
-        let events = mapper.parse_content(" thinking</think> end");
-        assert_eq!(events.len(), 2);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, "Start "),
-            _ => panic!("Expected text event"),
-        }
-        match &events[1] {
-            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => {
-                assert_eq!(text, "incomplete thinking")
-            }
-            _ => panic!("Expected thinking event"),
-        }
-
-        let events = mapper.flush_remaining_content();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, " end"),
-            _ => panic!("Expected text event"),
-        }
-    }
-
-    #[test]
-    fn test_content_parsing_no_thinking() {
-        let mut mapper = MistralEventMapper::new();
-
-        let events = mapper.parse_content("Just normal text");
-        assert_eq!(events.len(), 0);
-
-        let events = mapper.flush_remaining_content();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, "Just normal text"),
-            _ => panic!("Expected text event"),
-        }
-    }
-
-    #[test]
-    fn test_content_parsing_multiple_thinking_blocks() {
-        let mut mapper = MistralEventMapper::new();
-
-        let events = mapper.parse_content("A <think>first</think> B <think>second</think> C");
-        assert_eq!(events.len(), 4);
-
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, "A "),
-            _ => panic!("Expected text event"),
-        }
-
-        match &events[1] {
-            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => assert_eq!(text, "first"),
-            _ => panic!("Expected thinking event"),
-        }
-
-        match &events[2] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, " B "),
-            _ => panic!("Expected text event"),
-        }
-
-        match &events[3] {
-            Ok(LanguageModelCompletionEvent::Thinking { text, .. }) => assert_eq!(text, "second"),
-            _ => panic!("Expected thinking event"),
-        }
-
-        let events = mapper.flush_remaining_content();
-        assert_eq!(events.len(), 1);
-        match &events[0] {
-            Ok(LanguageModelCompletionEvent::Text(text)) => assert_eq!(text, " C"),
-            _ => panic!("Expected text event"),
         }
     }
 }
