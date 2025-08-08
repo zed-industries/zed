@@ -8030,12 +8030,20 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         needs_horizontal_autoscroll,
                     ) = self.editor.update(cx, |editor, cx| {
-                        let autoscroll_request = editor.autoscroll_request();
+                        let autoscroll_request = editor.scroll_manager.take_autoscroll_request();
+
                         let autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();
 
                         let (needs_horizontal_autoscroll, was_scrolled) = editor
-                            .autoscroll_vertically(bounds, line_height, max_scroll_top, window, cx);
+                            .autoscroll_vertically(
+                                bounds,
+                                line_height,
+                                max_scroll_top,
+                                autoscroll_request,
+                                window,
+                                cx,
+                            );
                         if was_scrolled.0 {
                             snapshot = editor.snapshot(window, cx);
                         }
@@ -8425,7 +8433,11 @@ impl Element for EditorElement {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
                             self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
+                                editor.resize_blocks(
+                                    resized_blocks,
+                                    autoscroll_request.map(|(autoscroll, _)| autoscroll),
+                                    cx,
+                                )
                             });
                             return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
                         }
@@ -8470,6 +8482,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                autoscroll_request,
                                 window,
                                 cx,
                             )
