@@ -526,6 +526,11 @@ jobs:
         with:
           node-version: "18"
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
@@ -611,6 +616,11 @@ jobs:
       - name: Install Linux dependencies
         run: ./script/linux && ./script/install-mold 2.34.0
 
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
+
       - name: Determine version and release channel
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -663,6 +673,11 @@ jobs:
 
       - name: Install Linux dependencies
         run: ./script/linux
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Determine version and release channel
         if: startsWith(github.ref, 'refs/tags/v')
@@ -788,6 +803,11 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Setup Sentry CLI
+        uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b #v2
+        with:
+          token: ${{ SECRETS.SENTRY_AUTH_TOKEN }}
 
       - name: Determine version and release channel
         working-directory: ${{ env.ZED_WORKSPACE }}
