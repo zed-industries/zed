@@ -13,6 +13,7 @@ pub struct XimHandler {
     pub im_id: u16,
     pub ic_id: u16,
     pub connected: bool,
+    pub ready: bool,
     pub window: xproto::Window,
     pub last_callback_event: Option<XimCallbackEvent>,
 }
@@ -23,6 +24,7 @@ impl XimHandler {
             im_id: Default::default(),
             ic_id: Default::default(),
             connected: false,
+            ready: false,
             window: Default::default(),
             last_callback_event: None,
         }
@@ -42,17 +44,14 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
 
     fn handle_get_im_values(
         &mut self,
-        client: &mut C,
-        input_method_id: u16,
+        _client: &mut C,
+        _input_method_id: u16,
         _attributes: AHashMap<AttributeName, Vec<u8>>,
     ) -> Result<(), ClientError> {
-        let ic_attributes = client
-            .build_ic_attributes()
-            .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
-            .push(AttributeName::ClientWindow, self.window)
-            .push(AttributeName::FocusWindow, self.window)
-            .build();
-        client.create_ic(input_method_id, ic_attributes)
+        // IM is ready, but we don't know the real window yet.
+        // Defer IC creation to client.enable_ime().
+        self.ready = true;
+        Ok(())
     }
 
     fn handle_create_ic(

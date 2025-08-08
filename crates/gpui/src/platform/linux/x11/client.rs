@@ -655,6 +655,20 @@ impl X11Client {
                 state.restore_xim(ximc, xim_handler);
                 drop(state);
 
+                // Create IC when IME becomes ready while we already have focus
+                {
+                    let s = self.0.borrow();
+                    let need_enable = s
+                        .xim_handler
+                        .as_ref()
+                        .map(|h| h.ready && !h.connected && s.keyboard_focused_window.is_some())
+                        .unwrap_or(false);
+                    drop(s);
+                    if need_enable {
+                        self.enable_ime();
+                    }
+                }
+
                 if let Some(event) = xim_callback_event {
                     self.handle_xim_callback_event(event);
                 }
@@ -682,22 +696,25 @@ impl X11Client {
         let Some((mut ximc, mut xim_handler)) = state.take_xim() else {
             return;
         };
+
+        let window_id = state.keyboard_focused_window;
+        if window_id.is_none() {
+            // no focus -> nothing to bind to; put XIM back and bail
+            state.restore_xim(ximc, xim_handler);
+            return;
+        }
+        let window_id = window_id.unwrap();
+        // ensure handler.window is the actual focused window
+        xim_handler.window = window_id;
+
         let mut ic_attributes = ximc
             .build_ic_attributes()
             .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
             .push(AttributeName::ClientWindow, xim_handler.window)
             .push(AttributeName::FocusWindow, xim_handler.window);
 
-        let window_id = state.keyboard_focused_window;
         drop(state);
-        if let Some(window_id) = window_id {
-            let Some(window) = self.get_window(window_id) else {
-                log::error!("Failed to get window for IME positioning");
-                let mut state = self.0.borrow_mut();
-                state.ximc = Some(ximc);
-                state.xim_handler = Some(xim_handler);
-                return;
-            };
+        if let Some(window) = self.get_window(window_id) {
             if let Some(area) = window.get_ime_area() {
                 ic_attributes =
                     ic_attributes.nested_list(xim::AttributeName::PreeditAttributes, |b| {
@@ -710,9 +727,17 @@ impl X11Client {
                         );
                     });
             }
+        } else {
+            log::error!("Failed to get window for IME positioning");
         }
-        ximc.create_ic(xim_handler.im_id, ic_attributes.build())
-            .ok();
+
+        // if we already have an IC, just rebind its window/spot; else create it
+        if xim_handler.connected {
+            let _ = ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes.build());
+        } else {
+            let _ = ximc.create_ic(xim_handler.im_id, ic_attributes.build());
+        }
+
         let mut state = self.0.borrow_mut();
         state.restore_xim(ximc, xim_handler);
     }
