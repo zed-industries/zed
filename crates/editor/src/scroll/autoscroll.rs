@@ -285,9 +285,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Point<f32>> {
-        let Some((_, local)) = autoscroll_request else {
-            return None;
-        };
+        let (_, local) = autoscroll_request?;
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
