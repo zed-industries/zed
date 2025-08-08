@@ -154,7 +154,7 @@ impl BufferDiffSnapshot {
         BufferDiffSnapshot {
             inner: BufferDiffInner {
                 base_text: language::Buffer::build_empty_snapshot(cx),
-                hunks: SumTree::new(buffer),
+                hunks: SumTree::new(),
                 pending_hunks: SumTree::new(buffer),
                 base_text_exists: false,
             },
