@@ -1094,7 +1094,7 @@ impl AcpThreadView {
                 status: acp::ToolCallStatus::Failed,
                 ..
             } => Some(
-                Icon::new(IconName::X)
+                Icon::new(IconName::Close)
                     .color(Color::Error)
                     .size(IconSize::Small)
                     .into_any_element(),
@@ -1351,10 +1351,10 @@ impl AcpThreadView {
                             this.icon(IconName::CheckDouble).icon_color(Color::Success)
                         }
                         acp::PermissionOptionKind::RejectOnce => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                         acp::PermissionOptionKind::RejectAlways => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                     })
                     .icon_position(IconPosition::Start)
@@ -2118,7 +2118,7 @@ impl AcpThreadView {
                             .hover(|this| this.opacity(1.0))
                             .child(
                                 IconButton::new("toggle-height", expand_icon)
-                                    .icon_size(IconSize::XSmall)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip({
                                         let focus_handle = focus_handle.clone();
@@ -2168,7 +2168,7 @@ impl AcpThreadView {
                 }))
                 .into_any_element()
         } else {
-            IconButton::new("stop-generation", IconName::StopFilled)
+            IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
                 .style(ButtonStyle::Tinted(ui::TintColor::Error))
                 .tooltip(move |window, cx| {
@@ -2537,7 +2537,7 @@ impl AcpThreadView {
     }
 
     fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -2548,7 +2548,7 @@ impl AcpThreadView {
                 }
             }));
 
-        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUpAlt)
+        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
@@ -2560,6 +2560,7 @@ impl AcpThreadView {
             .w_full()
             .mr_1()
             .pb_2()
+            .gap_1()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))

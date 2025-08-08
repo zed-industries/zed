@@ -95,7 +95,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                                     .style(ButtonStyle::Outlined)
                                     .label_size(LabelSize::Small)
                                     .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .on_click(|_, _, cx| {
                                         cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
