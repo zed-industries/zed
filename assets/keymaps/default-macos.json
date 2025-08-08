@@ -1289,6 +1289,7 @@
       "cmd-2": "onboarding::ActivateEditingPage",
       "cmd-3": "onboarding::ActivateAISetupPage",
       "cmd-escape": "onboarding::Finish",
+      "alt-tab": "onboarding::SignIn",
       "alt-shift-a": "onboarding::OpenAccount"
     }
   }
