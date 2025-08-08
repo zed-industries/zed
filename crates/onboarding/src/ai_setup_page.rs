@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ai_onboarding::AiUpsellCard;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
@@ -87,7 +87,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
                                 .on_click(|_, _, cx| {
-                                    cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
+                                    cx.open_url(&zed_urls::ai_privacy_and_security(cx))
                                 })
                                 .tab_index({
                                     *tab_index += 1;
