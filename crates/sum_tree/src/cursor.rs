@@ -322,7 +322,10 @@ where
                         if entry.index < child_summaries.len() {
                             let index = child_summaries[entry.index..]
                                 .partition_point(|item| filter_node(item).is_lt());
-                            entry.index += index;
+                            if index < child_summaries.len() - entry.index {
+                                entry.index += index;
+                            }
+
                             let position = Some(entry.index)
                                 .filter(|index| *index < child_summaries.len())
                                 .unwrap_or(child_summaries.len());
@@ -332,10 +335,12 @@ where
                                 self.position.add_summary(summary, self.cx);
                             }
                         }
+                        dbg!((entry.index, child_trees.len()));
 
                         child_trees.get(entry.index)
                     }
                     Node::Leaf { item_summaries, .. } => {
+                        dbg!("Ayo");
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
                             entry.index += 1;
@@ -343,22 +348,24 @@ where
                             self.position.add_summary(item_summary, self.cx);
                         }
 
-                        loop {
-                            if entry.index < item_summaries.len() {
-                                let index = item_summaries[entry.index..]
-                                    .partition_point(|item| filter_node(item).is_lt());
+                        if entry.index < item_summaries.len() {
+                            let index = item_summaries[entry.index..]
+                                .partition_point(|item| filter_node(item).is_lt());
+                            if index < item_summaries.len() - entry.index {
                                 entry.index += index;
-                                let position = Some(entry.index)
-                                    .filter(|index| *index < item_summaries.len())
-                                    .unwrap_or(item_summaries.len());
-
-                                if let Some(summary) = item_summaries.get(position) {
-                                    entry.position.add_summary(summary, self.cx);
-                                    self.position.add_summary(summary, self.cx);
-                                }
-                            } else {
-                                break None;
                             }
+                            entry.index += index;
+                            let position = Some(entry.index)
+                                .filter(|index| *index < item_summaries.len())
+                                .unwrap_or(item_summaries.len());
+
+                            if let Some(summary) = item_summaries.get(position) {
+                                entry.position.add_summary(summary, self.cx);
+                                self.position.add_summary(summary, self.cx);
+                            }
+                            return;
+                        } else {
+                            None
                         }
                     }
                 }

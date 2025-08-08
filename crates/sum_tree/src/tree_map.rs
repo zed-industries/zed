@@ -406,7 +406,7 @@ mod tests {
         map.insert("baa", 3);
         map.insert("baaab", 4);
         map.insert("c", 5);
-
+        dbg!(&map);
         let result = map
             .iter_from(&"ba")
             .take_while(|(key, _)| key.starts_with("ba"))
