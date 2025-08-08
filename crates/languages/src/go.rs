@@ -948,6 +948,17 @@ mod tests {
                 },
             }
 
+            notATableTest := []struct{
+                name string
+            }{
+                {
+                    name: "some string",
+                },
+                {
+                    name: "some other string",
+                },
+            }
+
             for _, tc := range testCases {
                 t.Run(tc.name, func(t *testing.T) {
                     // test code here
@@ -1001,6 +1012,56 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_go_table_test_slice_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        func Example() {
+            _ = "some random string"
+
+            notATableTest := []struct{
+                name string
+            }{
+                {
+                    name: "some string",
+                },
+                {
+                    name: "some other string",
+                },
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            !tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
     fn test_go_table_test_map_detection(cx: &mut TestAppContext) {
         let language = language("go", tree_sitter_go::LANGUAGE.into());
 
@@ -1023,6 +1084,17 @@ mod tests {
           		"test success": {
          			someStr: "bar",
          			fail:    false,
+          		},
+           	}
+
+           	notATableTest := map[string]struct {
+          		someStr string
+           	}{
+          		"some string": {
+         			someStr: "foo",
+          		},
+          		"some other string": {
+         			someStr: "bar",
           		},
            	}
 
@@ -1075,6 +1147,56 @@ mod tests {
             go_table_test_count == 2,
             "Should find exactly 2 go-table-test-case, found: {}",
             go_table_test_count
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_map_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        func Example() {
+            _ = "some random string"
+
+           	notATableTest := map[string]struct {
+          		someStr string
+           	}{
+          		"some string": {
+         			someStr: "foo",
+          		},
+          		"some other string": {
+         			someStr: "bar",
+          		},
+           	}
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            !tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
         );
     }
 
