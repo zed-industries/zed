@@ -172,6 +172,12 @@ pub fn main() {
 
     let args = Args::parse();
 
+    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
+    if let Some(socket) = &args.crash_handler {
+        crashes::crash_server(socket.as_path());
+        return;
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
@@ -264,6 +270,9 @@ pub fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
 
+    app.background_executor()
+        .spawn(crashes::init(session_id.clone()))
+        .detach();
     reliability::init_panic_hook(
         app_version,
         app_commit_sha.clone(),
@@ -1125,6 +1134,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::config_dir(),
         paths::extensions_dir(),
         paths::languages_dir(),
+        paths::debug_adapters_dir(),
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
@@ -1183,6 +1193,11 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     nc: Option<String>,
+
+    /// Used for recording minidumps on crashes by having Zed run a separate
+    /// process communicating over a socket.
+    #[arg(long, hide = true)]
+    crash_handler: Option<PathBuf>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]

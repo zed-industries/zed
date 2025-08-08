@@ -126,29 +126,7 @@ impl NotebookEditor {
         let cell_count = cell_order.len();
 
         let this = cx.entity();
-        let cell_list = ListState::new(
-            cell_count,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, window, cx| {
-                notebook_handle
-                    .upgrade()
-                    .and_then(|notebook_handle| {
-                        notebook_handle.update(cx, |notebook, cx| {
-                            notebook
-                                .cell_order
-                                .get(ix)
-                                .and_then(|cell_id| notebook.cell_map.get(cell_id))
-                                .map(|cell| {
-                                    notebook
-                                        .render_cell(ix, cell, window, cx)
-                                        .into_any_element()
-                                })
-                        })
-                    })
-                    .unwrap_or_else(|| div().into_any())
-            },
-        );
+        let cell_list = ListState::new(cell_count, gpui::ListAlignment::Top, px(1000.));
 
         Self {
             project,
@@ -544,7 +522,19 @@ impl Render for NotebookEditor {
                     .flex_1()
                     .size_full()
                     .overflow_y_scroll()
-                    .child(list(self.cell_list.clone()).size_full()),
+                    .child(list(
+                        self.cell_list.clone(),
+                        cx.processor(|this, ix, window, cx| {
+                            this.cell_order
+                                .get(ix)
+                                .and_then(|cell_id| this.cell_map.get(cell_id))
+                                .map(|cell| {
+                                    this.render_cell(ix, cell, window, cx).into_any_element()
+                                })
+                                .unwrap_or_else(|| div().into_any())
+                        }),
+                    ))
+                    .size_full(),
             )
             .child(self.render_notebook_controls(window, cx))
     }

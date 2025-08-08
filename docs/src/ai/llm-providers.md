@@ -14,25 +14,25 @@ You can add your API key to a given provider either via the Agent Panel's settin
 
 Here's all the supported LLM providers for which you can use your own API keys:
 
-| Provider                                        | Tool Use Supported                                                                                                                                                          |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Amazon Bedrock](#amazon-bedrock)               | Depends on the model                                                                                                                                                        |
-| [Anthropic](#anthropic)                         | ✅                                                                                                                                                                          |
-| [DeepSeek](#deepseek)                           | ✅                                                                                                                                                                          |
-| [GitHub Copilot Chat](#github-copilot-chat)     | For some models ([link](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198)) |
-| [Google AI](#google-ai)                         | ✅                                                                                                                                                                          |
-| [LM Studio](#lmstudio)                          | ✅                                                                                                                                                                          |
-| [Mistral](#mistral)                             | ✅                                                                                                                                                                          |
-| [Ollama](#ollama)                               | ✅                                                                                                                                                                          |
-| [OpenAI](#openai)                               | ✅                                                                                                                                                                          |
-| [OpenAI API Compatible](#openai-api-compatible) | ✅                                                                                                                                                                          |
-| [OpenRouter](#openrouter)                       | ✅                                                                                                                                                                          |
-| [Vercel](#vercel-v0)                            | ✅                                                                                                                                                                          |
-| [xAI](#xai)                                     | ✅                                                                                                                                                                          |
+| Provider                                        |
+| ----------------------------------------------- |
+| [Amazon Bedrock](#amazon-bedrock)               |
+| [Anthropic](#anthropic)                         |
+| [DeepSeek](#deepseek)                           |
+| [GitHub Copilot Chat](#github-copilot-chat)     |
+| [Google AI](#google-ai)                         |
+| [LM Studio](#lmstudio)                          |
+| [Mistral](#mistral)                             |
+| [Ollama](#ollama)                               |
+| [OpenAI](#openai)                               |
+| [OpenAI API Compatible](#openai-api-compatible) |
+| [OpenRouter](#openrouter)                       |
+| [Vercel](#vercel-v0)                            |
+| [xAI](#xai)                                     |
 
 ### Amazon Bedrock {#amazon-bedrock}
 
-> ✅ Supports tool use with models that support streaming tool use.
+> Supports tool use with models that support streaming tool use.
 > More details can be found in the [Amazon Bedrock's Tool Use documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html).
 
 To use Amazon Bedrock's models, an AWS authentication is required.
@@ -107,8 +107,6 @@ For the most up-to-date supported regions and models, refer to the [Supported Mo
 
 ### Anthropic {#anthropic}
 
-> ✅ Supports tool use
-
 You can use Anthropic models by choosing them via the model dropdown in the Agent Panel.
 
 1. Sign up for Anthropic and [create an API key](https://console.anthropic.com/settings/keys)
@@ -165,8 +163,6 @@ You can configure a model to use [extended thinking](https://docs.anthropic.com/
 
 ### DeepSeek {#deepseek}
 
-> ✅ Supports tool use
-
 1. Visit the DeepSeek platform and [create an API key](https://platform.deepseek.com/api_keys)
 2. Open the settings view (`agent: open settings`) and go to the DeepSeek section
 3. Enter your DeepSeek API key
@@ -208,9 +204,6 @@ You can also modify the `api_url` to use a custom endpoint if needed.
 
 ### GitHub Copilot Chat {#github-copilot-chat}
 
-> ✅ Supports tool use in some cases.
-> Visit [the Copilot Chat code](https://github.com/zed-industries/zed/blob/9e0330ba7d848755c9734bf456c716bddf0973f3/crates/language_models/src/provider/copilot_chat.rs#L189-L198) for the supported subset.
-
 You can use GitHub Copilot Chat with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
 1. Open the settings view (`agent: open settings`) and go to the GitHub Copilot Chat section
@@ -223,8 +216,6 @@ Alternatively, you can provide an OAuth token via the `GH_COPILOT_TOKEN` environ
 To use Copilot Enterprise with Zed (for both agent and completions), you must configure your enterprise endpoint as described in [Configuring GitHub Copilot Enterprise](./edit-prediction.md#github-copilot-enterprise).
 
 ### Google AI {#google-ai}
-
-> ✅ Supports tool use
 
 You can use Gemini models with the Zed agent by choosing it via the model dropdown in the Agent Panel.
 
@@ -266,8 +257,6 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### LM Studio {#lmstudio}
 
-> ✅ Supports tool use
-
 1. Download and install [the latest version of LM Studio](https://lmstudio.ai/download)
 2. In the app press `cmd/ctrl-shift-m` and download at least one model (e.g., qwen2.5-coder-7b). Alternatively, you can get models via the LM Studio CLI:
 
@@ -284,8 +273,6 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
 
 ### Mistral {#mistral}
-
-> ✅ Supports tool use
 
 1. Visit the Mistral platform and [create an API key](https://console.mistral.ai/api-keys/)
 2. Open the configuration view (`agent: open settings`) and navigate to the Mistral section
@@ -325,8 +312,6 @@ If you wish to use alternate models or customize their parameters, you can do so
 Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### Ollama {#ollama}
-
-> ✅ Supports tool use
 
 Download and install Ollama from [ollama.com/download](https://ollama.com/download) (Linux or macOS) and ensure it's running with `ollama --version`.
 
@@ -394,8 +379,6 @@ The `supports_images` option enables the model's vision capabilities, allowing i
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in Zed.
 
 ### OpenAI {#openai}
-
-> ✅ Supports tool use
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
 2. Make sure that your OpenAI account has credits
@@ -473,8 +456,6 @@ So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your 
 
 ### OpenRouter {#openrouter}
 
-> ✅ Supports tool use
-
 OpenRouter provides access to multiple AI models through a single API. It supports tool use for compatible models.
 
 1. Visit [OpenRouter](https://openrouter.ai) and create an account
@@ -531,8 +512,6 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 
 ### Vercel v0 {#vercel-v0}
 
-> ✅ Supports tool use
-
 [Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.
 It supports text and image inputs and provides fast streaming responses.
 
@@ -544,8 +523,6 @@ Once you have it, paste it directly into the Vercel provider section in the pane
 You should then find it as `v0-1.5-md` in the model dropdown in the Agent Panel.
 
 ### xAI {#xai}
-
-> ✅ Supports tool use
 
 Zed has first-class support for [xAI](https://x.ai/) models. You can use your own API key to access Grok models.
 

@@ -1,4 +1,5 @@
 use agent_client_protocol::{self as acp, Agent as _};
+use anyhow::anyhow;
 use collections::HashMap;
 use futures::channel::oneshot;
 use project::Project;
@@ -18,7 +19,6 @@ pub struct AcpConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     auth_methods: Vec<acp::AuthMethod>,
     _io_task: Task<Result<()>>,
-    _child: smol::process::Child,
 }
 
 pub struct AcpSession {
@@ -46,6 +46,7 @@ impl AcpConnection {
 
         let stdout = child.stdout.take().expect("Failed to take stdout");
         let stdin = child.stdin.take().expect("Failed to take stdin");
+        log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
 
@@ -61,6 +62,23 @@ impl AcpConnection {
         });
 
         let io_task = cx.background_spawn(io_task);
+
+        cx.spawn({
+            let sessions = sessions.clone();
+            async move |cx| {
+                let status = child.status().await?;
+
+                for session in sessions.borrow().values() {
+                    session
+                        .thread
+                        .update(cx, |thread, cx| thread.emit_server_exited(status, cx))
+                        .ok();
+                }
+
+                anyhow::Ok(())
+            }
+        })
+        .detach();
 
         let response = connection
             .initialize(acp::InitializeRequest {
@@ -83,7 +101,6 @@ impl AcpConnection {
             connection: connection.into(),
             server_name,
             sessions,
-            _child: child,
             _io_task: io_task,
         })
     }
@@ -105,11 +122,16 @@ impl AgentConnection for AcpConnection {
                     mcp_servers: vec![],
                     cwd,
                 })
-                .await?;
+                .await
+                .map_err(|err| {
+                    if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
+                        anyhow!(AuthRequired)
+                    } else {
+                        anyhow!(err)
+                    }
+                })?;
 
-            let Some(session_id) = response.session_id else {
-                anyhow::bail!(AuthRequired);
-            };
+            let session_id = response.session_id;
 
             let thread = cx.new(|cx| {
                 AcpThread::new(
@@ -147,19 +169,25 @@ impl AgentConnection for AcpConnection {
         })
     }
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let conn = self.connection.clone();
-        cx.foreground_executor()
-            .spawn(async move { Ok(conn.prompt(params).await?) })
+        cx.foreground_executor().spawn(async move {
+            let response = conn.prompt(params).await?;
+            Ok(response)
+        })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
         let conn = self.connection.clone();
-        let params = acp::CancelledNotification {
+        let params = acp::CancelNotification {
             session_id: session_id.clone(),
         };
         cx.foreground_executor()
-            .spawn(async move { conn.cancelled(params).await })
+            .spawn(async move { conn.cancel(params).await })
             .detach();
     }
 }
@@ -182,7 +210,7 @@ impl acp::Client for ClientDelegate {
             .context("Failed to get session")?
             .thread
             .update(cx, |thread, cx| {
-                thread.request_tool_call_permission(arguments.tool_call, arguments.options, cx)
+                thread.request_tool_call_authorization(arguments.tool_call, arguments.options, cx)
             })?;
 
         let result = rx.await;

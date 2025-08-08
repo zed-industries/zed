@@ -246,6 +246,8 @@ pub struct RepositorySnapshot {
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
     pub merge: MergeDetails,
+    pub remote_origin_url: Option<String>,
+    pub remote_upstream_url: Option<String>,
 }
 
 type JobId = u64;
@@ -2692,6 +2694,8 @@ impl RepositorySnapshot {
             head_commit: None,
             scan_id: 0,
             merge: Default::default(),
+            remote_origin_url: None,
+            remote_upstream_url: None,
         }
     }
 
@@ -4837,6 +4841,10 @@ async fn compute_snapshot(
         None => None,
     };
 
+    // Used by edit prediction data collection
+    let remote_origin_url = backend.remote_url("origin");
+    let remote_upstream_url = backend.remote_url("upstream");
+
     let snapshot = RepositorySnapshot {
         id,
         statuses_by_path,
@@ -4845,6 +4853,8 @@ async fn compute_snapshot(
         branch,
         head_commit,
         merge: merge_details,
+        remote_origin_url,
+        remote_upstream_url,
     };
 
     Ok((snapshot, events))
