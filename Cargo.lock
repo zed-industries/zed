@@ -12653,6 +12653,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "telemetry",
  "theme",
  "ui",
  "util",
