@@ -1211,7 +1211,7 @@ pub fn gather_context(
     let local_lsp_store =
         project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
     let diagnostic_groups: Vec<(String, serde_json::Value)> =
-        if let Some(local_lsp_store) = local_lsp_store {
+        if can_collect_data && let Some(local_lsp_store) = local_lsp_store {
             snapshot
                 .diagnostic_groups(None)
                 .into_iter()
@@ -1245,7 +1245,11 @@ pub fn gather_context(
                 MAX_CONTEXT_TOKENS,
             );
             let input_events = make_events_prompt();
-            let input_outline = prompt_for_outline(&snapshot);
+            let input_outline = if can_collect_data {
+                prompt_for_outline(&snapshot)
+            } else {
+                String::new()
+            };
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
             let body = PredictEditsBody {
