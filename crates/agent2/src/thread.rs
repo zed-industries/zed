@@ -920,10 +920,7 @@ pub struct ToolCallEventStream {
 
 impl ToolCallEventStream {
     #[cfg(test)]
-    pub fn test() -> (
-        Self,
-        mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-    ) {
+    pub fn test() -> (Self, ToolCallEventStreamReceiver) {
         let (events_tx, events_rx) =
             mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
 
@@ -939,7 +936,7 @@ impl ToolCallEventStream {
             AgentResponseEventStream(events_tx),
         );
 
-        (stream, events_rx)
+        (stream, ToolCallEventStreamReceiver(events_rx))
     }
 
     fn new(
@@ -973,5 +970,38 @@ impl ToolCallEventStream {
             self.kind.clone(),
             self.input.clone(),
         )
+    }
+}
+
+#[cfg(test)]
+pub struct ToolCallEventStreamReceiver(
+    mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+);
+
+#[cfg(test)]
+impl ToolCallEventStreamReceiver {
+    pub async fn expect_tool_authorization(&mut self) -> ToolCallAuthorization {
+        let event = self.0.next().await;
+        if let Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth))) = event {
+            auth
+        } else {
+            panic!("Expected ToolCallAuthorization but got: {:?}", event);
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for ToolCallEventStreamReceiver {
+    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for ToolCallEventStreamReceiver {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
