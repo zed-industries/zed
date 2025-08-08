@@ -16,7 +16,11 @@ use worktree::ChildEntriesOptions;
 /// Matches the most common license locations, with US and UK English spelling.
 const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
-        "^ (?: license | licence) (?: [\\-._] (?: isc | mit | upl))? (?: \\.txt | \\.md)? $",
+        "^ \
+        (?: license | licence) \
+        (?: [\\-._] (?: apache | isc | mit | upl))? \
+        (?: \\.txt | \\.md)? \
+        $",
     )
     .ignore_whitespace(true)
     .case_insensitive(true)
@@ -25,9 +29,9 @@ const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| 
 });
 
 fn is_license_eligible_for_data_collection(license: &str) -> bool {
-    // TODO: Include more licenses later (namely, Apache)
     const LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         [
+            include_str!("license_detection/apache.regex"),
             include_str!("license_detection/isc.regex"),
             include_str!("license_detection/mit.regex"),
             include_str!("license_detection/upl.regex"),
@@ -142,9 +146,8 @@ impl LicenseDetectionWatcher {
             return None;
         };
         let metadata = fs.metadata(&abs_path).await.log_err()??;
-        // If the license file is >5kb it's unlikely to match any eligible license. This avoids the
-        // potential for reading very large files into memory.
-        if metadata.len > 5120 {
+        // If the license file is >32kb it's unlikely to legitimately match any eligible license.
+        if metadata.len > 32768 {
             return None;
         }
         let text = fs.load(&abs_path).await.log_err()?;
@@ -424,6 +427,64 @@ mod tests {
     }
 
     #[test]
+    fn test_apache_positive_detection() {
+        let license = include_str!("license_detection/apache-text");
+        assert!(is_license_eligible_for_data_collection(license));
+
+        let license_with_appendix = format!(
+            r#"{license}
+
+            END OF TERMS AND CONDITIONS
+
+            APPENDIX: How to apply the Apache License to your work.
+
+               To apply the Apache License to your work, attach the following
+               boilerplate notice, with the fields enclosed by brackets "[]"
+               replaced with your own identifying information. (Don't include
+               the brackets!)  The text should be enclosed in the appropriate
+               comment syntax for the file format. We also recommend that a
+               file or class name and description of purpose be included on the
+               same "printed page" as the copyright notice for easier
+               identification within third-party archives.
+
+            Copyright [yyyy] [name of copyright owner]
+
+            Licensed under the Apache License, Version 2.0 (the "License");
+            you may not use this file except in compliance with the License.
+            You may obtain a copy of the License at
+
+                http://www.apache.org/licenses/LICENSE-2.0
+
+            Unless required by applicable law or agreed to in writing, software
+            distributed under the License is distributed on an "AS IS" BASIS,
+            WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+            See the License for the specific language governing permissions and
+            limitations under the License."#
+        );
+        assert!(is_license_eligible_for_data_collection(
+            &license_with_appendix
+        ));
+
+        // Sometimes people fill in the appendix with copyright info.
+        let license_with_copyright = license_with_appendix.replace(
+            "Copyright [yyyy] [name of copyright owner]",
+            "Copyright 2025 John Doe",
+        );
+        assert!(license_with_copyright != license_with_appendix);
+        assert!(is_license_eligible_for_data_collection(
+            &license_with_copyright
+        ));
+    }
+
+    #[test]
+    fn test_apache_negative_detection() {
+        let license = include_str!("license_detection/apache-text");
+        assert!(!is_license_eligible_for_data_collection(&format!(
+            "{license}\n\nThe terms in this license are only enforceable if P!=NP."
+        )));
+    }
+
+    #[test]
     fn test_license_file_name_regex() {
         // Test basic license file names
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE"));
@@ -438,6 +499,7 @@ mod tests {
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENCE.md"));
 
         // Test with specific license types
+        assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE-APACHE"));
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE-MIT"));
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE.MIT"));
         assert!(LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE_MIT"));
@@ -461,7 +523,6 @@ mod tests {
         // Test non-matching patterns
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"COPYING"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE.html"));
-        assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE-APACHE"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"MYLICENSE"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"src/LICENSE"));
         assert!(!LICENSE_FILE_NAME_REGEX.is_match(b"LICENSE.old"));
