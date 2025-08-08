@@ -272,7 +272,7 @@ impl CommitModal {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu({

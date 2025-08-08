@@ -164,7 +164,7 @@ impl Component for Indicator {
                             ),
                             single_example(
                                 "Error",
-                                Indicator::icon(Icon::new(IconName::X))
+                                Indicator::icon(Icon::new(IconName::Close))
                                     .color(Color::Error)
                                     .into_any_element(),
                             ),

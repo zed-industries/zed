@@ -681,7 +681,7 @@ impl BreakpointList {
                 }),
             )
             .child(
-                IconButton::new("remove-breakpoint-breakpoint-list", IconName::X)
+                IconButton::new("remove-breakpoint-breakpoint-list", IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .icon_color(ui::Color::Error)
                     .when_some(remove_breakpoint_tooltip, |this, tooltip| {
@@ -1439,7 +1439,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
-                            IconName::ScrollText,
+                            IconName::Notepad,
                         )
                         .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
