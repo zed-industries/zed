@@ -565,9 +565,13 @@ impl Item for Onboarding {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        self.workspace
-            .update(cx, |workspace, cx| Onboarding::new(workspace, cx))
-            .ok()
+        Some(cx.new(|cx| Onboarding {
+            workspace: self.workspace.clone(),
+            user_store: self.user_store.clone(),
+            selected_page: self.selected_page,
+            focus_handle: cx.focus_handle(),
+            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        }))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
@@ -690,7 +694,7 @@ pub async fn handle_import_vscode_settings(
                     "Failed to import settings. See log for details",
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::X).color(Color::Error))
+                        this.icon(ToastIcon::new(IconName::Close).color(Color::Error))
                             .action("Open Log", |window, cx| {
                                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
                             })

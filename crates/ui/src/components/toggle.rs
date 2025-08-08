@@ -659,10 +659,12 @@ impl RenderOnce for SwitchField {
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .shape(crate::IconButtonShape::Square)
+                        .style(ButtonStyle::Transparent)
                         .tooltip({
                             let tooltip = tooltip_fn.clone();
                             move |window, cx| tooltip(window, cx)
-                        }),
+                        })
+                        .on_click(|_, _, _| {}), // Intentional empty on click handler so that clicking on the info tooltip icon doesn't trigger the switch toggle
                 )
         });
 

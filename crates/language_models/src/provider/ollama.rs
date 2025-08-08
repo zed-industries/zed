@@ -631,7 +631,7 @@ impl Render for ConfigurationView {
                                             Button::new("ollama-site", "Ollama")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
@@ -644,7 +644,7 @@ impl Render for ConfigurationView {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
@@ -657,7 +657,7 @@ impl Render for ConfigurationView {
                                     Button::new("view-models", "View All Models")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
+                                        .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
@@ -681,7 +681,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_ollama_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::PlayOutlined)
+                                        .icon(IconName::PlayFilled)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
                                         })),

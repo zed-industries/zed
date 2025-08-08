@@ -357,7 +357,7 @@ impl RenderOnce for SshConnectionHeader {
             .rounded_t_sm()
             .w_full()
             .gap_1p5()
-            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+            .child(Icon::new(IconName::Server).size(IconSize::Small))
             .child(
                 h_flex()
                     .gap_1()
