@@ -14,6 +14,7 @@ pub struct EchoTool;
 
 impl AgentTool for EchoTool {
     type Input = EchoToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "echo".into()
@@ -48,6 +49,7 @@ pub struct DelayTool;
 
 impl AgentTool for DelayTool {
     type Input = DelayToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "delay".into()
@@ -84,6 +86,7 @@ pub struct ToolRequiringPermission;
 
 impl AgentTool for ToolRequiringPermission {
     type Input = ToolRequiringPermissionInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "tool_requiring_permission".into()
@@ -99,14 +102,11 @@ impl AgentTool for ToolRequiringPermission {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        _input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>>
-    where
-        Self: Sized,
-    {
-        let auth_check = self.authorize(input, event_stream);
+    ) -> Task<Result<String>> {
+        let auth_check = event_stream.authorize("Authorize?".into());
         cx.foreground_executor().spawn(async move {
             auth_check.await?;
             Ok("Allowed".to_string())
@@ -121,6 +121,7 @@ pub struct InfiniteTool;
 
 impl AgentTool for InfiniteTool {
     type Input = InfiniteToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "infinite".into()
@@ -171,17 +172,18 @@ pub struct WordListTool;
 
 impl AgentTool for WordListTool {
     type Input = WordListInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "word_list".into()
     }
 
-    fn initial_title(&self, _input: Self::Input) -> SharedString {
-        "List of random words".into()
-    }
-
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "List of random words".into()
     }
 
     fn run(

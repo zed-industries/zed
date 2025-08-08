@@ -1,18 +1,17 @@
 mod connection;
+mod diff;
+
 pub use connection::*;
+pub use diff::*;
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
-use buffer_diff::BufferDiff;
-use editor::{Bias, MultiBuffer, PathKey};
+use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use itertools::Itertools;
-use language::{
-    Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
-    text_diff,
-};
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, text_diff};
 use markdown::Markdown;
 use project::{AgentLocation, Project};
 use std::collections::HashMap;
@@ -140,7 +139,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
+    pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         if let AgentThreadEntry::ToolCall(call) = self {
             itertools::Either::Left(call.diffs())
         } else {
@@ -249,7 +248,7 @@ impl ToolCall {
         }
     }
 
-    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
+    pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
             ToolCallContent::ContentBlock { .. } => None,
             ToolCallContent::Diff { diff } => Some(diff),
@@ -389,7 +388,7 @@ impl ContentBlock {
 #[derive(Debug)]
 pub enum ToolCallContent {
     ContentBlock { content: ContentBlock },
-    Diff { diff: Diff },
+    Diff { diff: Entity<Diff> },
 }
 
 impl ToolCallContent {
@@ -403,7 +402,7 @@ impl ToolCallContent {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
-                diff: Diff::from_acp(diff, language_registry, cx),
+                diff: cx.new(|cx| Diff::from_acp(diff, language_registry, cx)),
             },
         }
     }
@@ -411,105 +410,8 @@ impl ToolCallContent {
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
-            Self::Diff { diff } => diff.to_markdown(cx),
+            Self::Diff { diff } => diff.read(cx).to_markdown(cx),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct Diff {
-    pub multibuffer: Entity<MultiBuffer>,
-    pub path: PathBuf,
-    _task: Task<Result<()>>,
-}
-
-impl Diff {
-    pub fn from_acp(
-        diff: acp::Diff,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let acp::Diff {
-            path,
-            old_text,
-            new_text,
-        } = diff;
-
-        let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
-
-        let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
-        let old_buffer = cx.new(|cx| Buffer::local(old_text.unwrap_or("".into()), cx));
-        let new_buffer_snapshot = new_buffer.read(cx).text_snapshot();
-        let buffer_diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
-
-        let task = cx.spawn({
-            let multibuffer = multibuffer.clone();
-            let path = path.clone();
-            async move |cx| {
-                let language = language_registry
-                    .language_for_file_path(&path)
-                    .await
-                    .log_err();
-
-                new_buffer.update(cx, |buffer, cx| buffer.set_language(language.clone(), cx))?;
-
-                let old_buffer_snapshot = old_buffer.update(cx, |buffer, cx| {
-                    buffer.set_language(language, cx);
-                    buffer.snapshot()
-                })?;
-
-                buffer_diff
-                    .update(cx, |diff, cx| {
-                        diff.set_base_text(
-                            old_buffer_snapshot,
-                            Some(language_registry),
-                            new_buffer_snapshot,
-                            cx,
-                        )
-                    })?
-                    .await?;
-
-                multibuffer
-                    .update(cx, |multibuffer, cx| {
-                        let hunk_ranges = {
-                            let buffer = new_buffer.read(cx);
-                            let diff = buffer_diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
-                                .collect::<Vec<_>>()
-                        };
-
-                        multibuffer.set_excerpts_for_path(
-                            PathKey::for_buffer(&new_buffer, cx),
-                            new_buffer.clone(),
-                            hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                            cx,
-                        );
-                        multibuffer.add_diff(buffer_diff, cx);
-                    })
-                    .log_err();
-
-                anyhow::Ok(())
-            }
-        });
-
-        Self {
-            multibuffer,
-            path,
-            _task: task,
-        }
-    }
-
-    fn to_markdown(&self, cx: &App) -> String {
-        let buffer_text = self
-            .multibuffer
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .map(|buffer| buffer.read(cx).text())
-            .join("\n");
-        format!("Diff: {}\n```\n{}\n```\n", self.path.display(), buffer_text)
     }
 }
 
@@ -820,6 +722,21 @@ impl AcpThread {
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
+        Ok(())
+    }
+
+    pub fn set_tool_call_diff(
+        &mut self,
+        tool_call_id: &acp::ToolCallId,
+        diff: Entity<Diff>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let (ix, current_call) = self
+            .tool_call_mut(tool_call_id)
+            .context("Tool call not found")?;
+        current_call.content.clear();
+        current_call.content.push(ToolCallContent::Diff { diff });
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
     }
 
