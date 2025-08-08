@@ -662,6 +662,10 @@ impl Pane {
         }
     }
 
+    pub fn get_diagnostics(&self, project_path: &ProjectPath) -> Option<&DiagnosticSeverity> {
+        self.diagnostics.get(project_path)
+    }
+
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let tab_bar_settings = TabBarSettings::get_global(cx);
         let new_max_tabs = WorkspaceSettings::get_global(cx).max_tabs;
