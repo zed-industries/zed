@@ -99,11 +99,11 @@ impl AgentTool for ToolRequiringPermission {
 
     fn run(
         self: Arc<Self>,
-        input: Self::Input,
+        _input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let auth_check = self.authorize(input, event_stream);
+        let auth_check = event_stream.authorize("Authorize?");
         cx.foreground_executor().spawn(async move {
             auth_check.await?;
             Ok("Allowed".to_string())
