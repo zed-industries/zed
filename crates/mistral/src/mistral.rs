@@ -86,6 +86,7 @@ pub enum Model {
         max_completion_tokens: Option<u64>,
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
+        supports_thinking: Option<bool>,
     },
 }
 
@@ -212,6 +213,16 @@ impl Model {
             Self::Custom {
                 supports_images, ..
             } => supports_images.unwrap_or(false),
+        }
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Self::MagistralMediumLatest | Self::MagistralSmallLatest => true,
+            Self::Custom {
+                supports_thinking, ..
+            } => supports_thinking.unwrap_or(false),
+            _ => false,
         }
     }
 }
