@@ -176,9 +176,9 @@ impl Model {
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
-            Self::Five => 272_000,
-            Self::FiveMini => 272_000,
-            Self::FiveNano => 272_000,
+            Self::Five => 400_000,
+            Self::FiveMini => 400_000,
+            Self::FiveNano => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
