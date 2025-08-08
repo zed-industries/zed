@@ -1187,7 +1187,8 @@
       "ctrl-2": "onboarding::ActivateEditingPage",
       "ctrl-3": "onboarding::ActivateAISetupPage",
       "ctrl-escape": "onboarding::Finish",
-      "alt-tab": "onboarding::SignIn"
+      "alt-tab": "onboarding::SignIn",
+      "alt-shift-a": "onboarding::OpenAccount"
     }
   }
 ]
