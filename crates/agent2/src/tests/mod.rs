@@ -1,5 +1,4 @@
 use super::*;
-use crate::templates::Templates;
 use acp_thread::AgentConnection;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;

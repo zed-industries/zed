@@ -1,4 +1,4 @@
-use crate::templates::{SystemPromptTemplate, Template, Templates};
+use crate::{SystemPromptTemplate, Template, Templates};
 use acp_thread::Diff;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
@@ -133,12 +133,13 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
+    project: Entity<Project>,
     action_log: Entity<ActionLog>,
 }
 
 impl Thread {
     pub fn new(
-        _project: Entity<Project>,
+        project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
@@ -153,8 +154,17 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
+            project,
             action_log,
         }
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
     }
 
     pub fn set_mode(&mut self, mode: CompletionMode) {
@@ -321,10 +331,6 @@ impl Thread {
             }
         }));
         events_rx
-    }
-
-    pub fn action_log(&self) -> &Entity<ActionLog> {
-        &self.action_log
     }
 
     pub fn build_system_message(&self) -> AgentMessage {
@@ -901,6 +907,29 @@ pub struct ToolCallEventStream {
 }
 
 impl ToolCallEventStream {
+    #[cfg(test)]
+    pub fn test() -> (
+        Self,
+        mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+    ) {
+        let (events_tx, events_rx) =
+            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+
+        let stream = ToolCallEventStream::new(
+            &LanguageModelToolUse {
+                id: "test_id".into(),
+                name: "test_tool".into(),
+                raw_input: String::new(),
+                input: serde_json::Value::Null,
+                is_input_complete: true,
+            },
+            acp::ToolKind::Other,
+            AgentResponseEventStream(events_tx),
+        );
+
+        (stream, events_rx)
+    }
+
     fn new(
         tool_use: &LanguageModelToolUse,
         kind: acp::ToolKind,
@@ -932,40 +961,5 @@ impl ToolCallEventStream {
             self.kind.clone(),
             self.input.clone(),
         )
-    }
-}
-
-#[cfg(test)]
-pub struct TestToolCallEventStream {
-    stream: ToolCallEventStream,
-    _events_rx: mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
-}
-
-#[cfg(test)]
-impl TestToolCallEventStream {
-    pub fn new() -> Self {
-        let (events_tx, events_rx) =
-            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
-
-        let stream = ToolCallEventStream::new(
-            &LanguageModelToolUse {
-                id: "test_id".into(),
-                name: "test_tool".into(),
-                raw_input: String::new(),
-                input: serde_json::Value::Null,
-                is_input_complete: true,
-            },
-            acp::ToolKind::Other,
-            AgentResponseEventStream(events_tx),
-        );
-
-        Self {
-            stream,
-            _events_rx: events_rx,
-        }
-    }
-
-    pub fn stream(&self) -> ToolCallEventStream {
-        self.stream.clone()
     }
 }

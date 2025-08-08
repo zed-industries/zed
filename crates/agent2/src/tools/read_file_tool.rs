@@ -285,8 +285,6 @@ impl AgentTool for ReadFileTool {
 
 #[cfg(test)]
 mod test {
-    use crate::TestToolCallEventStream;
-
     use super::*;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
@@ -304,7 +302,7 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
+        let (event_stream, _) = ToolCallEventStream::test();
 
         let result = cx
             .update(|cx| {
@@ -313,7 +311,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream.stream(), cx)
+                tool.run(input, event_stream, cx)
             })
             .await;
         assert_eq!(
@@ -321,6 +319,7 @@ mod test {
             "root/nonexistent_file.txt not found"
         );
     }
+
     #[gpui::test]
     async fn test_read_small_file(cx: &mut TestAppContext) {
         init_test(cx);
@@ -336,7 +335,6 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -344,7 +342,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream.stream(), cx)
+                tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "This is a small file content");
@@ -367,7 +365,6 @@ mod test {
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
         let content = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -375,7 +372,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await
             .unwrap();
@@ -399,7 +396,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream.stream(), cx)
+                tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         let content = result.unwrap();
@@ -438,7 +435,6 @@ mod test {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
@@ -446,7 +442,7 @@ mod test {
                     start_line: Some(2),
                     end_line: Some(4),
                 };
-                tool.run(input, event_stream.stream(), cx)
+                tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
@@ -467,7 +463,6 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
 
         // start_line of 0 should be treated as 1
         let result = cx
@@ -477,7 +472,7 @@ mod test {
                     start_line: Some(0),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1\nLine 2");
@@ -490,7 +485,7 @@ mod test {
                     start_line: Some(1),
                     end_line: Some(0),
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "Line 1");
@@ -503,7 +498,7 @@ mod test {
                     start_line: Some(3),
                     end_line: Some(2),
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert_eq!(result.unwrap(), "Line 3");
@@ -612,7 +607,6 @@ mod test {
         let project = Project::test(fs.clone(), [path!("/project_root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let event_stream = TestToolCallEventStream::new();
 
         // Reading a file outside the project worktree should fail
         let result = cx
@@ -622,7 +616,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -638,7 +632,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -654,7 +648,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -669,7 +663,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -685,7 +679,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -700,7 +694,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -715,7 +709,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -731,7 +725,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
@@ -745,7 +739,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.run(input, event_stream.stream(), cx)
+                tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
         assert!(
@@ -826,7 +820,6 @@ mod test {
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project.clone(), action_log.clone()));
-        let event_stream = TestToolCallEventStream::new();
 
         // Test reading allowed files in worktree1
         let result = cx
@@ -836,7 +829,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await
             .unwrap();
@@ -851,7 +844,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
 
@@ -872,7 +865,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
 
@@ -893,7 +886,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await
             .unwrap();
@@ -911,7 +904,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
 
@@ -932,7 +925,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
 
@@ -954,7 +947,7 @@ mod test {
                     start_line: None,
                     end_line: None,
                 };
-                tool.clone().run(input, event_stream.stream(), cx)
+                tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
 
