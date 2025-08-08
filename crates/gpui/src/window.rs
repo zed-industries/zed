@@ -79,11 +79,13 @@ pub enum DispatchPhase {
 
 impl DispatchPhase {
     /// Returns true if this represents the "bubble" phase.
+    #[inline]
     pub fn bubble(self) -> bool {
         self == DispatchPhase::Bubble
     }
 
     /// Returns true if this represents the "capture" phase.
+    #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
     }
@@ -4244,6 +4246,25 @@ impl Window {
         self.next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+
+    /// Register an action listener on the window for the next frame if the condition is true.
+    /// The type of action is determined by the first parameter of the given listener.
+    /// When the next frame is rendered the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action_when(
+        &mut self,
+        condition: bool,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        if condition {
+            self.next_frame
+                .dispatch_tree
+                .on_action(action_type, Rc::new(listener));
+        }
     }
 
     /// Read information about the GPU backing this window.

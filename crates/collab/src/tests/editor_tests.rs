@@ -24,10 +24,7 @@ use language::{
 };
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
-    lsp_store::{
-        lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
-        rust_analyzer_ext::RUST_ANALYZER_NAME,
-    },
+    lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
     project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
@@ -3104,9 +3101,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
     let inline_blame_off_settings = Some(InlineBlameSettings {
         enabled: false,
-        delay_ms: None,
-        min_column: None,
-        show_commit_summary: false,
+        ..Default::default()
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -3786,11 +3781,18 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_b.update(editor::init);
 
     client_a.language_registry().add(rust_lang());
-    client_b.language_registry().add(rust_lang());
     let mut fake_language_servers = client_a.language_registry().register_fake_lsp(
         "Rust",
         FakeLspAdapter {
-            name: RUST_ANALYZER_NAME,
+            name: "rust-analyzer",
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-analyzer",
             ..FakeLspAdapter::default()
         },
     );

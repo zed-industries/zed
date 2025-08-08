@@ -14,7 +14,9 @@ use async_tungstenite::tungstenite::{
 };
 use clock::SystemClock;
 use cloud_api_client::CloudApiClient;
+use cloud_api_client::websocket_protocol::MessageToClient;
 use credentials_provider::CredentialsProvider;
+use feature_flags::FeatureFlagAppExt as _;
 use futures::{
     AsyncReadExt, FutureExt, SinkExt, Stream, StreamExt, TryFutureExt as _, TryStreamExt,
     channel::oneshot, future::BoxFuture,
@@ -191,6 +193,8 @@ pub fn init(client: &Arc<Client>, cx: &mut App) {
     });
 }
 
+pub type MessageToClientHandler = Box<dyn Fn(&MessageToClient, &mut App) + Send + Sync + 'static>;
+
 struct GlobalClient(Arc<Client>);
 
 impl Global for GlobalClient {}
@@ -204,6 +208,7 @@ pub struct Client {
     credentials_provider: ClientCredentialsProvider,
     state: RwLock<ClientState>,
     handler_set: parking_lot::Mutex<ProtoMessageHandlerSet>,
+    message_to_client_handlers: parking_lot::Mutex<Vec<MessageToClientHandler>>,
 
     #[allow(clippy::type_complexity)]
     #[cfg(any(test, feature = "test-support"))]
@@ -553,6 +558,7 @@ impl Client {
             credentials_provider: ClientCredentialsProvider::new(cx),
             state: Default::default(),
             handler_set: Default::default(),
+            message_to_client_handlers: parking_lot::Mutex::new(Vec::new()),
 
             #[cfg(any(test, feature = "test-support"))]
             authenticate: Default::default(),
@@ -933,23 +939,77 @@ impl Client {
         }
     }
 
-    /// Performs a sign-in and also connects to Collab.
+    /// Establishes a WebSocket connection with Cloud for receiving updates from the server.
+    async fn connect_to_cloud(self: &Arc<Self>, cx: &AsyncApp) -> Result<()> {
+        let connect_task = cx.update({
+            let cloud_client = self.cloud_client.clone();
+            move |cx| cloud_client.connect(cx)
+        })??;
+        let connection = connect_task.await?;
+
+        let (mut messages, task) = cx.update(|cx| connection.spawn(cx))?;
+        task.detach();
+
+        cx.spawn({
+            let this = self.clone();
+            async move |cx| {
+                while let Some(message) = messages.next().await {
+                    if let Some(message) = message.log_err() {
+                        this.handle_message_to_client(message, cx);
+                    }
+                }
+            }
+        })
+        .detach();
+
+        Ok(())
+    }
+
+    /// Performs a sign-in and also (optionally) connects to Collab.
     ///
-    /// This is called in places where we *don't* need to connect in the future. We will replace these calls with calls
-    /// to `sign_in` when we're ready to remove auto-connection to Collab.
+    /// Only Zed staff automatically connect to Collab.
     pub async fn sign_in_with_optional_connect(
         self: &Arc<Self>,
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<()> {
+        let (is_staff_tx, is_staff_rx) = oneshot::channel::<bool>();
+        let mut is_staff_tx = Some(is_staff_tx);
+        cx.update(|cx| {
+            cx.on_flags_ready(move |state, _cx| {
+                if let Some(is_staff_tx) = is_staff_tx.take() {
+                    is_staff_tx.send(state.is_staff).log_err();
+                }
+            })
+            .detach();
+        })
+        .log_err();
+
         let credentials = self.sign_in(try_provider, cx).await?;
 
-        let connect_result = match self.connect_with_credentials(credentials, cx).await {
-            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
-            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
-            ConnectionResult::Result(result) => result.context("client auth and connect"),
-        };
-        connect_result.log_err();
+        self.connect_to_cloud(cx).await.log_err();
+
+        cx.update(move |cx| {
+            cx.spawn({
+                let client = self.clone();
+                async move |cx| {
+                    let is_staff = is_staff_rx.await?;
+                    if is_staff {
+                        match client.connect_with_credentials(credentials, cx).await {
+                            ConnectionResult::Timeout => Err(anyhow!("connection timed out")),
+                            ConnectionResult::ConnectionReset => Err(anyhow!("connection reset")),
+                            ConnectionResult::Result(result) => {
+                                result.context("client auth and connect")
+                            }
+                        }
+                    } else {
+                        Ok(())
+                    }
+                }
+            })
+            .detach_and_log_err(cx);
+        })
+        .log_err();
 
         Ok(())
     }
@@ -1620,6 +1680,24 @@ impl Client {
                 .respond_with_unhandled_message(sender_id.into(), request_id, type_name)
                 .log_err();
         }
+    }
+
+    pub fn add_message_to_client_handler(
+        self: &Arc<Client>,
+        handler: impl Fn(&MessageToClient, &mut App) + Send + Sync + 'static,
+    ) {
+        self.message_to_client_handlers
+            .lock()
+            .push(Box::new(handler));
+    }
+
+    fn handle_message_to_client(self: &Arc<Client>, message: MessageToClient, cx: &AsyncApp) {
+        cx.update(|cx| {
+            for handler in self.message_to_client_handlers.lock().iter() {
+                handler(&message, cx);
+            }
+        })
+        .ok();
     }
 
     pub fn telemetry(&self) -> &Arc<Telemetry> {

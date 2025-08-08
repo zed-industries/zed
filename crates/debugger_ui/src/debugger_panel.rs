@@ -300,7 +300,7 @@ impl DebugPanel {
         });
 
         session.update(cx, |session, _| match &mut session.mode {
-            SessionState::Building(state_task) => {
+            SessionState::Booting(state_task) => {
                 *state_task = Some(boot_task);
             }
             SessionState::Running(_) => {

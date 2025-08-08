@@ -73,11 +73,10 @@ use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
     Task, WeakEntity, Window,
 };
-use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    Transaction, Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
+    Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -113,7 +112,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -306,7 +305,7 @@ pub enum Event {
         language_server_id: LanguageServerId,
     },
     DiagnosticsUpdated {
-        path: ProjectPath,
+        paths: Vec<ProjectPath>,
         language_server_id: LanguageServerId,
     },
     RemoteIdChanged(Option<u64>),
@@ -668,10 +667,10 @@ pub enum ResolveState {
 }
 
 impl InlayHint {
-    pub fn text(&self) -> String {
+    pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => s.to_owned(),
-            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &part.value).join(""),
+            InlayHintLabel::String(s) => Rope::from(s),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
     }
 }
@@ -2896,18 +2895,17 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LspStoreEvent::DiagnosticsUpdated {
-                language_server_id,
-                path,
-            } => cx.emit(Event::DiagnosticsUpdated {
-                path: path.clone(),
-                language_server_id: *language_server_id,
-            }),
-            LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
-                Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
+            LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
+                cx.emit(Event::DiagnosticsUpdated {
+                    paths: paths.clone(),
+                    language_server_id: *server_id,
+                })
+            }
+            LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => cx.emit(
+                Event::LanguageServerAdded(*server_id, name.clone(), *worktree_id),
             ),
-            LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerRemoved(*language_server_id))
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
@@ -3827,27 +3825,6 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
-        })
-    }
-
-    pub fn update_diagnostics(
-        &mut self,
-        language_server_id: LanguageServerId,
-        source_kind: DiagnosticSourceKind,
-        result_id: Option<String>,
-        params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: &[String],
-        cx: &mut Context<Self>,
-    ) -> Result<(), anyhow::Error> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(
-                language_server_id,
-                params,
-                result_id,
-                source_kind,
-                disk_based_sources,
-                cx,
-            )
         })
     }
 
@@ -5002,63 +4979,53 @@ impl Project {
     }
 
     pub fn any_language_server_supports_inlay_hints(&self, buffer: &Buffer, cx: &mut App) -> bool {
-        self.lsp_store.update(cx, |this, cx| {
-            this.language_servers_for_local_buffer(buffer, cx)
-                .any(
-                    |(_, server)| match server.capabilities().inlay_hint_provider {
-                        Some(lsp::OneOf::Left(enabled)) => enabled,
-                        Some(lsp::OneOf::Right(_)) => true,
-                        None => false,
-                    },
-                )
+        let Some(language) = buffer.language().cloned() else {
+            return false;
+        };
+        self.lsp_store.update(cx, |lsp_store, _| {
+            let relevant_language_servers = lsp_store
+                .languages
+                .lsp_adapters(&language.name())
+                .into_iter()
+                .map(|lsp_adapter| lsp_adapter.name())
+                .collect::<HashSet<_>>();
+            lsp_store
+                .language_server_statuses()
+                .filter_map(|(server_id, server_status)| {
+                    relevant_language_servers
+                        .contains(&server_status.name)
+                        .then_some(server_id)
+                })
+                .filter_map(|server_id| lsp_store.lsp_server_capabilities.get(&server_id))
+                .any(InlayHints::check_capabilities)
         })
     }
 
     pub fn language_server_id_for_name(
         &self,
         buffer: &Buffer,
-        name: &str,
-        cx: &mut App,
-    ) -> Task<Option<LanguageServerId>> {
-        if self.is_local() {
-            Task::ready(self.lsp_store.update(cx, |lsp_store, cx| {
-                lsp_store
-                    .language_servers_for_local_buffer(buffer, cx)
-                    .find_map(|(adapter, server)| {
-                        if adapter.name.0 == name {
-                            Some(server.server_id())
-                        } else {
-                            None
-                        }
-                    })
-            }))
-        } else if let Some(project_id) = self.remote_id() {
-            let request = self.client.request(proto::LanguageServerIdForName {
-                project_id,
-                buffer_id: buffer.remote_id().to_proto(),
-                name: name.to_string(),
-            });
-            cx.background_spawn(async move {
-                let response = request.await.log_err()?;
-                response.server_id.map(LanguageServerId::from_proto)
-            })
-        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-            let request =
-                ssh_client
-                    .read(cx)
-                    .proto_client()
-                    .request(proto::LanguageServerIdForName {
-                        project_id: SSH_PROJECT_ID,
-                        buffer_id: buffer.remote_id().to_proto(),
-                        name: name.to_string(),
-                    });
-            cx.background_spawn(async move {
-                let response = request.await.log_err()?;
-                response.server_id.map(LanguageServerId::from_proto)
-            })
-        } else {
-            Task::ready(None)
+        name: &LanguageServerName,
+        cx: &App,
+    ) -> Option<LanguageServerId> {
+        let language = buffer.language()?;
+        let relevant_language_servers = self
+            .languages
+            .lsp_adapters(&language.name())
+            .into_iter()
+            .map(|lsp_adapter| lsp_adapter.name())
+            .collect::<HashSet<_>>();
+        if !relevant_language_servers.contains(name) {
+            return None;
         }
+        self.language_server_statuses(cx)
+            .filter(|(_, server_status)| relevant_language_servers.contains(&server_status.name))
+            .find_map(|(server_id, server_status)| {
+                if &server_status.name == name {
+                    Some(server_id)
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn has_language_servers_for(&self, buffer: &Buffer, cx: &mut App) -> bool {

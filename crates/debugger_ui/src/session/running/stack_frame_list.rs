@@ -70,13 +70,7 @@ impl StackFrameList {
                 _ => {}
             });
 
-        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.), {
-            let this = cx.weak_entity();
-            move |ix, _window, cx| {
-                this.update(cx, |this, cx| this.render_entry(ix, cx))
-                    .unwrap_or(div().into_any())
-            }
-        });
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
         let scrollbar_state = ScrollbarState::new(list_state.clone());
 
         let mut this = Self {
@@ -708,11 +702,14 @@ impl StackFrameList {
         self.activate_selected_entry(window, cx);
     }
 
-    fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .p_1()
-            .size_full()
-            .child(list(self.list_state.clone()).size_full())
+    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().p_1().size_full().child(
+            list(
+                self.list_state.clone(),
+                cx.processor(|this, ix, _window, cx| this.render_entry(ix, cx)),
+            )
+            .size_full(),
+        )
     }
 }
 

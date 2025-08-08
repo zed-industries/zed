@@ -1654,7 +1654,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1666,7 +1665,6 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window_handle,
                     cx,
                 )
             })
@@ -1802,7 +1800,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let window_handle = window.window_handle();
         window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
@@ -1826,7 +1823,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), cx)
                 })?
                 .await?;
             cx.update(|window, cx| {
