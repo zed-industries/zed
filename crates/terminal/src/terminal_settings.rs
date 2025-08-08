@@ -95,12 +95,14 @@ pub enum VenvSettings {
         /// to the current working directory. We recommend overriding this
         /// in your project's settings, rather than globally.
         activate_script: Option<ActivateScript>,
+        venv_name: Option<String>,
         directories: Option<Vec<PathBuf>>,
     },
 }
 
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
+    pub venv_name: &'a str,
     pub directories: &'a [PathBuf],
 }
 
@@ -110,16 +112,18 @@ impl VenvSettings {
             VenvSettings::Off => None,
             VenvSettings::On {
                 activate_script,
+                venv_name,
                 directories,
             } => Some(VenvSettingsContent {
                 activate_script: activate_script.unwrap_or(ActivateScript::Default),
+                venv_name: venv_name.as_deref().unwrap_or(""),
                 directories: directories.as_deref().unwrap_or(&[]),
             }),
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
     #[default]
@@ -128,6 +132,7 @@ pub enum ActivateScript {
     Fish,
     Nushell,
     PowerShell,
+    Pyenv,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -243,7 +248,7 @@ pub struct TerminalSettingsContent {
     /// - 75: Minimum for body text
     /// - 90: Preferred for body text
     ///
-    /// Default: 0 (no adjustment)
+    /// Default: 45
     pub minimum_contrast: Option<f32>,
 }
 

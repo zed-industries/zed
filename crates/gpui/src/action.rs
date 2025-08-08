@@ -403,12 +403,10 @@ impl ActionRegistry {
 /// Useful for transforming the list of available actions into a
 /// format suited for static analysis such as in validating keymaps, or
 /// generating documentation.
-pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
-    let mut actions = Vec::new();
-    for builder in inventory::iter::<MacroActionBuilder> {
-        actions.push(builder.0());
-    }
-    actions
+pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroActionData> {
+    inventory::iter::<MacroActionBuilder>
+        .into_iter()
+        .map(|builder| builder.0())
 }
 
 mod no_action {

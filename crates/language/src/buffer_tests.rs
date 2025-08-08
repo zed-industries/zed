@@ -2273,7 +2273,12 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             LanguageConfig {
                 name: "JavaScript".into(),
                 line_comments: vec!["// ".into()],
-                block_comment: Some(("/*".into(), "*/".into())),
+                block_comment: Some(BlockCommentConfig {
+                    start: "/*".into(),
+                    end: "*/".into(),
+                    prefix: "* ".into(),
+                    tab_size: 1,
+                }),
                 brackets: BracketPairConfig {
                     pairs: vec![
                         BracketPair {
@@ -2300,7 +2305,12 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
                     "element".into(),
                     LanguageConfigOverride {
                         line_comments: Override::Remove { remove: true },
-                        block_comment: Override::Set(("{/*".into(), "*/}".into())),
+                        block_comment: Override::Set(BlockCommentConfig {
+                            start: "{/*".into(),
+                            prefix: "".into(),
+                            end: "*/}".into(),
+                            tab_size: 0,
+                        }),
                         ..Default::default()
                     },
                 )]
@@ -2338,9 +2348,15 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
         let config = snapshot.language_scope_at(0).unwrap();
         assert_eq!(config.line_comment_prefixes(), &[Arc::from("// ")]);
         assert_eq!(
-            config.block_comment_delimiters(),
-            Some((&"/*".into(), &"*/".into()))
+            config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
         );
+
         // Both bracket pairs are enabled
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2360,8 +2376,13 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .unwrap();
         assert_eq!(string_config.line_comment_prefixes(), &[Arc::from("// ")]);
         assert_eq!(
-            string_config.block_comment_delimiters(),
-            Some((&"/*".into(), &"*/".into()))
+            string_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
         );
         // Second bracket pair is disabled
         assert_eq!(
@@ -2391,8 +2412,13 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             .unwrap();
         assert_eq!(tag_config.line_comment_prefixes(), &[Arc::from("// ")]);
         assert_eq!(
-            tag_config.block_comment_delimiters(),
-            Some((&"/*".into(), &"*/".into()))
+            tag_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
         );
         assert_eq!(
             tag_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
@@ -2408,8 +2434,13 @@ fn test_language_scope_at_with_javascript(cx: &mut App) {
             &[Arc::from("// ")]
         );
         assert_eq!(
-            expression_in_element_config.block_comment_delimiters(),
-            Some((&"/*".into(), &"*/".into()))
+            expression_in_element_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "/*".into(),
+                prefix: "* ".into(),
+                end: "*/".into(),
+                tab_size: 1,
+            })
         );
         assert_eq!(
             expression_in_element_config
@@ -2528,13 +2559,18 @@ fn test_language_scope_at_with_combined_injections(cx: &mut App) {
         let html_config = snapshot.language_scope_at(Point::new(2, 4)).unwrap();
         assert_eq!(html_config.line_comment_prefixes(), &[]);
         assert_eq!(
-            html_config.block_comment_delimiters(),
-            Some((&"<!--".into(), &"-->".into()))
+            html_config.block_comment(),
+            Some(&BlockCommentConfig {
+                start: "<!--".into(),
+                end: "-->".into(),
+                prefix: "".into(),
+                tab_size: 0,
+            })
         );
 
         let ruby_config = snapshot.language_scope_at(Point::new(3, 12)).unwrap();
         assert_eq!(ruby_config.line_comment_prefixes(), &[Arc::from("# ")]);
-        assert_eq!(ruby_config.block_comment_delimiters(), None);
+        assert_eq!(ruby_config.block_comment(), None);
 
         buffer
     });
@@ -3490,7 +3526,12 @@ fn html_lang() -> Language {
     Language::new(
         LanguageConfig {
             name: LanguageName::new("HTML"),
-            block_comment: Some(("<!--".into(), "-->".into())),
+            block_comment: Some(BlockCommentConfig {
+                start: "<!--".into(),
+                prefix: "".into(),
+                end: "-->".into(),
+                tab_size: 0,
+            }),
             ..Default::default()
         },
         Some(tree_sitter_html::LANGUAGE.into()),
@@ -3521,7 +3562,12 @@ fn erb_lang() -> Language {
                 path_suffixes: vec!["erb".to_string()],
                 ..Default::default()
             },
-            block_comment: Some(("<%#".into(), "%>".into())),
+            block_comment: Some(BlockCommentConfig {
+                start: "<%#".into(),
+                prefix: "".into(),
+                end: "%>".into(),
+                tab_size: 0,
+            }),
             ..Default::default()
         },
         Some(tree_sitter_embedded_template::LANGUAGE.into()),

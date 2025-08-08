@@ -326,6 +326,79 @@ impl DiagnosticSeverity {
     }
 }
 
+/// Determines the severity of the diagnostic that should be moved to.
+#[derive(PartialEq, PartialOrd, Clone, Copy, Debug, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDiagnosticSeverity {
+    /// Errors
+    Error = 3,
+    /// Warnings
+    Warning = 2,
+    /// Information
+    Information = 1,
+    /// Hints
+    Hint = 0,
+}
+
+impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
+    fn from(severity: lsp::DiagnosticSeverity) -> Self {
+        match severity {
+            lsp::DiagnosticSeverity::ERROR => Self::Error,
+            lsp::DiagnosticSeverity::WARNING => Self::Warning,
+            lsp::DiagnosticSeverity::INFORMATION => Self::Information,
+            lsp::DiagnosticSeverity::HINT => Self::Hint,
+            _ => Self::Error,
+        }
+    }
+}
+
+impl GoToDiagnosticSeverity {
+    pub fn min() -> Self {
+        Self::Hint
+    }
+
+    pub fn max() -> Self {
+        Self::Error
+    }
+}
+
+/// Allows filtering diagnostics that should be moved to.
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum GoToDiagnosticSeverityFilter {
+    /// Move to diagnostics of a specific severity.
+    Only(GoToDiagnosticSeverity),
+
+    /// Specify a range of severities to include.
+    Range {
+        /// Minimum severity to move to. Defaults no "error".
+        #[serde(default = "GoToDiagnosticSeverity::min")]
+        min: GoToDiagnosticSeverity,
+        /// Maximum severity to move to. Defaults to "hint".
+        #[serde(default = "GoToDiagnosticSeverity::max")]
+        max: GoToDiagnosticSeverity,
+    },
+}
+
+impl Default for GoToDiagnosticSeverityFilter {
+    fn default() -> Self {
+        Self::Range {
+            min: GoToDiagnosticSeverity::min(),
+            max: GoToDiagnosticSeverity::max(),
+        }
+    }
+}
+
+impl GoToDiagnosticSeverityFilter {
+    pub fn matches(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        let severity: GoToDiagnosticSeverity = severity.into();
+        match self {
+            Self::Only(target) => *target == severity,
+            Self::Range { min, max } => severity >= *min && severity <= *max,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
@@ -508,7 +581,7 @@ impl Settings for ProjectSettings {
 
         #[derive(Deserialize)]
         struct VsCodeContextServerCommand {
-            command: String,
+            command: PathBuf,
             args: Option<Vec<String>>,
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type

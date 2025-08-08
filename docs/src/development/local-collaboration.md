@@ -1,18 +1,96 @@
 # Local Collaboration
 
-First, make sure you've installed Zed's backend dependencies for your platform:
+1. Ensure you have access to our cloud infrastructure. If you don't have access, you can't collaborate locally at this time.
 
-- [macOS](./macos.md#backend-dependencies)
-- [Linux](./linux.md#backend-dependencies)
-- [Windows](./windows.md#backend-dependencies)
+2. Make sure you've installed Zed's dependencies for your platform:
+
+- [macOS](#macos)
+- [Linux](#linux)
+- [Windows](#backend-windows)
 
 Note that `collab` can be compiled only with MSVC toolchain on Windows
+
+3. Clone down our cloud repository and follow the instructions in the cloud README
+
+4. Setup the local database for your platform:
+
+- [macOS & Linux](#database-unix)
+- [Windows](#database-windows)
+
+5. Run collab:
+
+- [macOS & Linux](#run-collab-unix)
+- [Windows](#run-collab-windows)
+
+## Backend Dependencies
+
+If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
+
+- PostgreSQL
+- LiveKit
+- Foreman
+
+You can install these dependencies natively or run them under Docker.
+
+### macOS
+
+1. Install [Postgres.app](https://postgresapp.com) or [postgresql via homebrew](https://formulae.brew.sh/formula/postgresql@15):
+
+   ```sh
+   brew install postgresql@15
+   ```
+
+2. Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
+
+   ```sh
+   brew install livekit foreman
+   ```
+
+- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
+
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
+
+### Linux
+
+1. Install [Postgres](https://www.postgresql.org/download/linux/)
+
+   ```sh
+   sudo apt-get install postgresql postgresql        # Ubuntu/Debian
+   sudo pacman -S postgresql                         # Arch Linux
+   sudo dnf install postgresql postgresql-server     # RHEL/Fedora
+   sudo zypper install postgresql postgresql-server  # OpenSUSE
+   ```
+
+2. Install [Livekit](https://github.com/livekit/livekit-cli)
+
+   ```sh
+   curl -sSL https://get.livekit.io/cli | bash
+   ```
+
+3. Install [Foreman](https://theforeman.org/manuals/3.15/quickstart_guide.html)
+
+### Windows {#backend-windows}
+
+> This section is still in development. The instructions are not yet complete.
+
+- Install [Postgres](https://www.postgresql.org/download/windows/)
+- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
+
+Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose.
+
+### Docker {#Docker}
+
+If you have docker or podman available, you can run the backend dependencies inside containers with Docker Compose:
+
+```sh
+docker compose up -d
+```
 
 ## Database setup
 
 Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
 
-### On macOS and Linux
+### On macOS and Linux {#database-unix}
 
 ```sh
 script/bootstrap
@@ -35,7 +113,7 @@ To use a different set of admin users, you can create your own version of that j
 }
 ```
 
-### On Windows
+### On Windows {#database-windows}
 
 ```powershell
 .\script\bootstrap.ps1
@@ -43,7 +121,7 @@ To use a different set of admin users, you can create your own version of that j
 
 ## Testing collaborative features locally
 
-### On macOS and Linux
+### On macOS and Linux {#run-collab-unix}
 
 Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
 
@@ -53,10 +131,14 @@ foreman start
 docker compose up
 ```
 
-Alternatively, if you're not testing voice and screenshare, you can just run `collab`, and not the `livekit` dev server:
+Alternatively, if you're not testing voice and screenshare, you can just run `collab` and `cloud`, and not the `livekit` dev server:
 
 ```sh
 cargo run -p collab -- serve all
+```
+
+```sh
+cd ../cloud; cargo make dev
 ```
 
 In a new terminal, run two or more instances of Zed.
@@ -67,7 +149,7 @@ script/zed-local -3
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
 
-### On Windows
+### On Windows {#run-collab-windows}
 
 Since `foreman` is not available on Windows, you can run the following commands in separate terminals:
 
@@ -87,6 +169,12 @@ Otherwise,
 .\path\to\livekit-serve.exe --dev
 ```
 
+You'll also need to start the cloud server:
+
+```powershell
+cd ..\cloud; cargo make dev
+```
+
 In a new terminal, run two or more instances of Zed.
 
 ```powershell
@@ -97,7 +185,10 @@ Note that this requires `node.exe` to be in your `PATH`.
 
 ## Running a local collab server
 
-If you want to run your own version of the zed collaboration service, you can, but note that this is still under development, and there is no good support for authentication nor extensions.
+> [!NOTE]
+> Because of recent changes to our authentication system, Zed will not be able to authenticate itself with, and therefore use, a local collab server.
+
+If you want to run your own version of the zed collaboration service, you can, but note that this is still under development, and there is no support for authentication nor extensions.
 
 Configuration is done through environment variables. By default it will read the configuration from [`.env.toml`](https://github.com/zed-industries/zed/blob/main/crates/collab/.env.toml) and you should use that as a guide for setting this up.
 

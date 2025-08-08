@@ -59,5 +59,11 @@ services:
     depends_on:
       - postgres
 
+  stripe-mock:
+    image: stripe/stripe-mock:v0.178.0
+    ports:
+      - 12111:12111
+      - 12112:12112
+
 volumes:
   postgres_data:
