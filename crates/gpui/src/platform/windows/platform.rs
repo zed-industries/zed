@@ -32,7 +32,7 @@ use crate::*;
 
 pub(crate) struct WindowsPlatform {
     state: RefCell<WindowsPlatformState>,
-    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
@@ -114,7 +114,7 @@ impl WindowsPlatform {
         };
         let icon = load_icon().unwrap_or_default();
         let state = RefCell::new(WindowsPlatformState::new());
-        let raw_window_handles = RwLock::new(SmallVec::new());
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
@@ -137,9 +137,14 @@ impl WindowsPlatform {
     fn redraw_all(&self) {
         for handle in self.raw_window_handles.read().iter() {
             unsafe {
-                RedrawWindow(Some(*handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
-                    .ok()
-                    .log_err();
+                RedrawWindow(
+                    Some(handle.as_raw()),
+                    None,
+                    None,
+                    RDW_INVALIDATE | RDW_UPDATENOW,
+                )
+                .ok()
+                .log_err();
             }
         }
     }
@@ -148,8 +153,8 @@ impl WindowsPlatform {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| window_from_hwnd(*hwnd))
+            .find(|entry| entry.as_raw() == hwnd)
+            .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
     }
 
     #[inline]
@@ -158,7 +163,7 @@ impl WindowsPlatform {
             .read()
             .iter()
             .for_each(|handle| unsafe {
-                PostMessageW(Some(*handle), message, wparam, lparam).log_err();
+                PostMessageW(Some(handle.as_raw()), message, wparam, lparam).log_err();
             });
     }
 
@@ -166,7 +171,7 @@ impl WindowsPlatform {
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
-            .position(|handle| *handle == target_window)
+            .position(|handle| handle.as_raw() == target_window)
             .unwrap();
         lock.remove(index);
 
@@ -315,8 +320,8 @@ impl WindowsPlatform {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|&&hwnd| hwnd == active_window_hwnd)
-            .copied()
+            .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
+            .map(|hwnd| hwnd.as_raw())
     }
 }
 
@@ -445,7 +450,7 @@ impl Platform for WindowsPlatform {
     ) -> Result<Box<dyn PlatformWindow>> {
         let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
-        self.raw_window_handles.write().push(handle);
+        self.raw_window_handles.write().push(handle.into());
 
         Ok(Box::new(window))
     }
