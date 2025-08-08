@@ -24,6 +24,7 @@ env:
   DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
   DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
   ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
+  ZED_MINIDUMP_ENDPOINT: ${{ secrets.ZED_SENTRY_MINIDUMP_ENDPOINT }}
 
 jobs:
   job_spec:
@@ -136,7 +137,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - buildjet-8vcpu-ubuntu-2204
+      - namespace-profile-8x16-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -167,7 +168,7 @@ jobs:
     needs: [job_spec]
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-8vcpu-ubuntu-2204
+      - namespace-profile-4x8-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -220,7 +221,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       (needs.job_spec.outputs.run_tests == 'true' || needs.job_spec.outputs.run_docs == 'true')
     runs-on:
-      - buildjet-8vcpu-ubuntu-2204
+      - namespace-profile-8x16-ubuntu-2204
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -327,7 +328,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -341,7 +342,7 @@ jobs:
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-provider: "buildjet"
+          # cache-provider: "buildjet"
 
       - name: Install Linux dependencies
         run: ./script/linux
@@ -379,7 +380,7 @@ jobs:
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
-      - buildjet-8vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -393,7 +394,7 @@ jobs:
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-          cache-provider: "buildjet"
+          # cache-provider: "buildjet"
 
       - name: Install Clang & Mold
         run: ./script/remote-server && ./script/install-mold 2.34.0
@@ -510,8 +511,8 @@ jobs:
     runs-on:
       - self-mini-macos
     if: |
-      startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [macos_tests]
     env:
       MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -596,10 +597,10 @@ jobs:
     timeout-minutes: 60
     name: Linux x86_x64 release bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004 # ubuntu 20.04 for minimal glibc
+      - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     if: |
-      startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [linux_tests]
     steps:
       - name: Checkout repo
@@ -649,7 +650,7 @@ jobs:
     timeout-minutes: 60
     name: Linux arm64 release bundle
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204-arm
+      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     if: |
       startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling')
@@ -702,10 +703,8 @@ jobs:
     timeout-minutes: 60
     runs-on: github-8vcpu-ubuntu-2404
     if: |
-      false && (
-      startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
-      )
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [linux_tests]
     name: Build Zed on FreeBSD
     steps:

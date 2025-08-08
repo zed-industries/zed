@@ -405,8 +405,8 @@ mod tests {
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let terminal = project
-            .update_in(cx, |project, window, cx| {
-                project.create_terminal(TerminalKind::Shell(None), window.window_handle(), cx)
+            .update(cx, |project, cx| {
+                project.create_terminal(TerminalKind::Shell(None), cx)
             })
             .await
             .expect("Failed to create a terminal");

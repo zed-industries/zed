@@ -276,25 +276,25 @@ impl RenderOnce for DropdownMenuTrigger {
             .gap_2()
             .justify_between()
             .rounded_sm()
-            .bg(style.bg)
-            .hover(|s| s.bg(cx.theme().colors().element_hover))
+            .map(|this| {
+                if self.full_width {
+                    this.w_full()
+                } else {
+                    this.flex_none().w_auto()
+                }
+            })
             .when(is_outlined, |this| {
                 this.border_1()
                     .border_color(cx.theme().colors().border)
                     .overflow_hidden()
             })
-            .map(|el| {
-                if self.full_width {
-                    el.w_full()
-                } else {
-                    el.flex_none().w_auto()
-                }
-            })
-            .map(|el| {
+            .map(|this| {
                 if disabled {
-                    el.cursor_not_allowed()
+                    this.cursor_not_allowed()
+                        .bg(cx.theme().colors().element_disabled)
                 } else {
-                    el.cursor_pointer()
+                    this.bg(style.bg)
+                        .hover(|s| s.bg(cx.theme().colors().element_hover))
                 }
             })
             .child(match self.label {

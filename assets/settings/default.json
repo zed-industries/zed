@@ -596,6 +596,8 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
+    // Whether the project panel should open on startup.
+    "starts_open": true,
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
@@ -1171,6 +1173,9 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // The amount of padding between the end of the source line and the start
+      // of the inline blame in units of em widths.
+      "padding": 7,
       // Whether or not to display the git commit summary on the same line.
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
@@ -1205,7 +1210,18 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json"
+    ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.
@@ -1232,6 +1248,11 @@
     // 1. hour12
     // 2. hour24
     "hour_format": "hour12"
+  },
+  // Status bar-related settings.
+  "status_bar": {
+    // Whether to show the active language button in the status bar.
+    "active_language_button": true
   },
   // Settings specific to the terminal
   "terminal": {

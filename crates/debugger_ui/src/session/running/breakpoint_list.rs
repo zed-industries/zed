@@ -29,7 +29,6 @@ use ui::{
     Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
     Tooltip, Window, div, h_flex, px, v_flex,
 };
-use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -56,8 +55,6 @@ pub(crate) struct BreakpointList {
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
-    hide_scrollbar_task: Option<Task<()>>,
-    show_scrollbar: bool,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
@@ -103,8 +100,6 @@ impl BreakpointList {
                 worktree_store,
                 scrollbar_state,
                 breakpoints: Default::default(),
-                hide_scrollbar_task: None,
-                show_scrollbar: false,
                 workspace,
                 session,
                 focus_handle,
@@ -565,21 +560,6 @@ impl BreakpointList {
         Ok(())
     }
 
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
     fn render_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_ix = self.selected_ix;
         let focus_handle = self.focus_handle.clone();
@@ -614,43 +594,39 @@ impl BreakpointList {
         .flex_grow()
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.show_scrollbar || self.scrollbar_state.is_dragging()) {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("breakpoint-list-vertical-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("breakpoint-list-vertical-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
+
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let selection_kind = self.selection_kind();
         let focus_handle = self.focus_handle.clone();
@@ -705,7 +681,7 @@ impl BreakpointList {
                 }),
             )
             .child(
-                IconButton::new("remove-breakpoint-breakpoint-list", IconName::X)
+                IconButton::new("remove-breakpoint-breakpoint-list", IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .icon_color(ui::Color::Error)
                     .when_some(remove_breakpoint_tooltip, |this, tooltip| {
@@ -819,15 +795,6 @@ impl Render for BreakpointList {
             .id("breakpoint-list")
             .key_context("BreakpointList")
             .track_focus(&self.focus_handle)
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(window, cx);
-                }
-            }))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
@@ -844,7 +811,7 @@ impl Render for BreakpointList {
                 v_flex()
                     .size_full()
                     .child(self.render_list(cx))
-                    .children(self.render_vertical_scrollbar(cx)),
+                    .child(self.render_vertical_scrollbar(cx)),
             )
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal()).child(
@@ -1472,7 +1439,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
-                            IconName::ScrollText,
+                            IconName::Notepad,
                         )
                         .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))
