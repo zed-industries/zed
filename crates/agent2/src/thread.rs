@@ -925,11 +925,7 @@ impl ToolCallEventStream {
         });
     }
 
-    pub fn authorize<T>(&self, title: T) -> impl use<T> + Future<Output = Result<()>>
-    where
-        T: Into<String>,
-    {
-        let title = title.into();
+    pub fn authorize(&self, title: String) -> impl use<> + Future<Output = Result<()>> {
         self.stream.authorize_tool_call(
             &self.tool_use_id,
             title,

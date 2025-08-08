@@ -12,6 +12,7 @@ use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use smol::stream::StreamExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -98,6 +99,54 @@ impl EditFileTool {
     pub fn new(project: Entity<Project>, thread: Entity<Thread>) -> Self {
         Self { project, thread }
     }
+
+    fn authorize(
+        &self,
+        input: &EditFileToolInput,
+        event_stream: &ToolCallEventStream,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return Task::ready(Ok(()));
+        }
+
+        // If any path component matches the local settings folder, then this could affect
+        // the editor in ways beyond the project source, so prompt.
+        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let path = Path::new(&input.path);
+        if path
+            .components()
+            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
+        {
+            return cx.foreground_executor().spawn(
+                event_stream.authorize(format!("{} (local settings)", input.display_description)),
+            );
+        }
+
+        // It's also possible that the global config dir is configured to be inside the project,
+        // so check for that edge case too.
+        if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
+            if canonical_path.starts_with(paths::config_dir()) {
+                return cx.foreground_executor().spawn(
+                    event_stream
+                        .authorize(format!("{} (global settings)", input.display_description)),
+                );
+            }
+        }
+
+        // Check if path is inside the global config directory
+        // First check if it's already inside project - if not, try to canonicalize
+        let project_path = self.project.read(cx).find_project_path(&input.path, cx);
+
+        // If the path is inside the project, and it's not one of the above edge cases,
+        // then no confirmation is necessary. Otherwise, confirmation is necessary.
+        if project_path.is_some() {
+            Task::ready(Ok(()))
+        } else {
+            cx.foreground_executor()
+                .spawn(event_stream.authorize(input.display_description.clone()))
+        }
+    }
 }
 
 impl AgentTool for EditFileTool {
@@ -112,58 +161,8 @@ impl AgentTool for EditFileTool {
     }
 
     fn initial_title(&self, input: Self::Input) -> SharedString {
-        let path = Path::new(&input.path);
-        let mut description = input.display_description.clone();
-
-        // Add context about why confirmation may be needed
-        let local_settings_folder = paths::local_settings_folder_relative_path();
-        if path
-            .components()
-            .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
-        {
-            description.push_str(" (local settings)");
-        } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-            if canonical_path.starts_with(paths::config_dir()) {
-                description.push_str(" (global settings)");
-            }
-        }
-
-        description.into()
+        input.display_description.into()
     }
-
-    // todo!
-    // fn needs_authorization(&self, input: Self::Input, cx: &App) -> bool {
-    //     if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-    //         return false;
-    //     }
-
-    //     // If any path component matches the local settings folder, then this could affect
-    //     // the editor in ways beyond the project source, so prompt.
-    //     let local_settings_folder = paths::local_settings_folder_relative_path();
-    //     let path = Path::new(&input.path);
-    //     if path
-    //         .components()
-    //         .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
-    //     {
-    //         return true;
-    //     }
-
-    //     // It's also possible that the global config dir is configured to be inside the project,
-    //     // so check for that edge case too.
-    //     if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
-    //         if canonical_path.starts_with(paths::config_dir()) {
-    //             return true;
-    //         }
-    //     }
-
-    //     // Check if path is inside the global config directory
-    //     // First check if it's already inside project - if not, try to canonicalize
-    //     let project_path = self.project.read(cx).find_project_path(&input.path, cx);
-
-    //     // If the path is inside the project, and it's not one of the above edge cases,
-    //     // then no confirmation is necessary. Otherwise, confirmation is necessary.
-    //     project_path.is_none()
-    // }
 
     fn run(
         self: Arc<Self>,
@@ -184,7 +183,10 @@ impl AgentTool for EditFileTool {
         let model = thread.selected_model.clone();
         let action_log = thread.action_log().clone();
 
+        let authorize = self.authorize(&input, &event_stream, cx);
         cx.spawn(async move |cx: &mut AsyncApp| {
+            authorize.await?;
+
             let edit_format = EditFormat::from_model(model.clone())?;
             let edit_agent = EditAgent::new(
                 model,

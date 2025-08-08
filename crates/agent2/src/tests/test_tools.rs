@@ -103,7 +103,7 @@ impl AgentTool for ToolRequiringPermission {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<String>> {
-        let auth_check = event_stream.authorize("Authorize?");
+        let auth_check = event_stream.authorize("Authorize?".into());
         cx.foreground_executor().spawn(async move {
             auth_check.await?;
             Ok("Allowed".to_string())
