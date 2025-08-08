@@ -410,7 +410,7 @@ impl AcpThreadView {
                 }
 
                 if ix < text.len() {
-                    let last_chunk = text[ix..].trim();
+                    let last_chunk = text[ix..].trim_end();
                     if !last_chunk.is_empty() {
                         chunks.push(last_chunk.into());
                     }
