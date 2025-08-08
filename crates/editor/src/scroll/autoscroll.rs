@@ -102,15 +102,12 @@ impl AutoscrollStrategy {
 pub(crate) struct NeedsHorizontalAutoscroll(pub(crate) bool);
 
 impl Editor {
-    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
-        self.scroll_manager.autoscroll_request()
-    }
-
     pub(crate) fn autoscroll_vertically(
         &mut self,
         bounds: Bounds<Pixels>,
         line_height: Pixels,
         max_scroll_top: f32,
+        autoscroll_request: Option<(Autoscroll, bool)>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> (NeedsHorizontalAutoscroll, WasScrolled) {
@@ -137,7 +134,7 @@ impl Editor {
             WasScrolled(false)
         };
 
-        let Some((autoscroll, local)) = self.scroll_manager.autoscroll_request.take() else {
+        let Some((autoscroll, local)) = autoscroll_request else {
             return (NeedsHorizontalAutoscroll(false), editor_was_scrolled);
         };
 
@@ -284,9 +281,12 @@ impl Editor {
         scroll_width: Pixels,
         em_advance: Pixels,
         layouts: &[LineWithInvisibles],
+        autoscroll_request: Option<(Autoscroll, bool)>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Point<f32>> {
+        let (_, local) = autoscroll_request?;
+
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all::<Point>(cx);
         let mut scroll_position = self.scroll_manager.scroll_position(&display_map);
@@ -335,10 +335,10 @@ impl Editor {
 
         let was_scrolled = if target_left < scroll_left {
             scroll_position.x = target_left / em_advance;
-            self.set_scroll_position_internal(scroll_position, true, true, window, cx)
+            self.set_scroll_position_internal(scroll_position, local, true, window, cx)
         } else if target_right > scroll_right {
             scroll_position.x = (target_right - viewport_width) / em_advance;
-            self.set_scroll_position_internal(scroll_position, true, true, window, cx)
+            self.set_scroll_position_internal(scroll_position, local, true, window, cx)
         } else {
             WasScrolled(false)
         };
