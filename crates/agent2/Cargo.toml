@@ -32,6 +32,7 @@ language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
 paths.workspace = true
+portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
 rust-embed.workspace = true
@@ -40,16 +41,19 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+task.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
+which.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
+editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }
 gpui = { workspace = true, "features" = ["test-support"] }
@@ -57,8 +61,11 @@ gpui_tokio.workspace = true
 language = { workspace = true, "features" = ["test-support"] }
 language_model = { workspace = true, "features" = ["test-support"] }
 lsp = { workspace = true, "features" = ["test-support"] }
+pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
+terminal.workspace = true
+theme = { workspace = true, "features" = ["test-support"] }
 worktree = { workspace = true, "features" = ["test-support"] }
-pretty_assertions.workspace = true
+zlog.workspace = true

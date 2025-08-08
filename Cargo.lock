@@ -168,6 +168,7 @@ dependencies = [
  "cloud_llm_client",
  "collections",
  "ctor",
+ "editor",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -182,6 +183,7 @@ dependencies = [
  "log",
  "lsp",
  "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -192,12 +194,17 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
+ "terminal",
+ "theme",
  "ui",
  "util",
  "uuid",
  "watch",
+ "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
