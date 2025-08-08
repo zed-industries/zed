@@ -79,6 +79,14 @@ impl<T> Task<T> {
             Task(TaskState::Spawned(task)) => task.detach(),
         }
     }
+
+    /// Whether the task has run to completion.
+    pub fn is_finished(&self) -> bool {
+        match self {
+            Task(TaskState::Ready(_)) => true,
+            Task(TaskState::Spawned(task)) => task.is_finished(),
+        }
+    }
 }
 
 impl<E, T> Task<Result<T, E>>
