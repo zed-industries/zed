@@ -102,7 +102,7 @@ impl ContextPickerAction {
 
     pub fn icon(&self) -> IconName {
         match self {
-            Self::AddSelections => IconName::Context,
+            Self::AddSelections => IconName::Reader,
         }
     }
 }

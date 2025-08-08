@@ -371,7 +371,7 @@ impl ContextPickerCompletionProvider {
                                                 line_range.end.row + 1
                                             )
                                             .into(),
-                                            IconName::Context.path().into(),
+                                            IconName::Reader.path().into(),
                                             range,
                                             editor.downgrade(),
                                         );

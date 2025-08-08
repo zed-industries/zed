@@ -2931,7 +2931,7 @@ impl CollabPanel {
                                 .visible_on_hover(""),
                         )
                         .child(
-                            IconButton::new("channel_notes", IconName::FileTextOutlined)
+                            IconButton::new("channel_notes", IconName::Reader)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
