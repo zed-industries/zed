@@ -9,6 +9,8 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
+use terminal::Terminal;
+use terminal_view::TerminalView;
 
 use agent_client_protocol as acp;
 use assistant_tool::ActionLog;
@@ -63,6 +65,7 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
+    terminals: HashMap<EntityId, Entity<TerminalView>>,
     message_editor: Entity<Editor>,
     message_set_from_history: Option<BufferSnapshot>,
     _message_editor_subscription: Subscription,
@@ -193,6 +196,7 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
+            terminals: Default::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
@@ -677,6 +681,16 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_diff_multibuffers(entry_ix, window, cx);
+        self.sync_terminals(entry_ix, window, cx);
+    }
+
+    fn sync_diff_multibuffers(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(multibuffers) = self.entry_diff_multibuffers(entry_ix, cx) else {
             return;
         };
@@ -737,6 +751,50 @@ impl AcpThreadView {
                 .diffs()
                 .map(|diff| diff.read(cx).multibuffer().clone()),
         )
+    }
+
+    fn sync_terminals(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(terminals) = self.entry_terminals(entry_ix, cx) else {
+            return;
+        };
+
+        let terminals = terminals.collect::<Vec<_>>();
+
+        for terminal in terminals {
+            if self.terminals.contains_key(&terminal.entity_id()) {
+                return;
+            }
+
+            let terminal_view = cx.new(|cx| {
+                let mut view = TerminalView::new(
+                    terminal.clone(),
+                    self.workspace.clone(),
+                    None,
+                    self.project.downgrade(),
+                    window,
+                    cx,
+                );
+                view.set_embedded_mode(None, cx);
+                view
+            });
+
+            let entity_id = terminal.entity_id();
+            cx.observe_release(&terminal, move |this, _, _| {
+                this.terminals.remove(&entity_id);
+            })
+            .detach();
+
+            self.terminals.insert(entity_id, terminal_view);
+        }
+    }
+
+    fn entry_terminals(
+        &self,
+        entry_ix: usize,
+        cx: &App,
+    ) -> Option<impl Iterator<Item = Entity<Terminal>>> {
+        let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
+        Some(entry.terminals().map(|terminal| terminal.clone()))
     }
 
     fn authenticate(
@@ -1321,6 +1379,7 @@ impl AcpThreadView {
             ToolCallContent::Diff { diff, .. } => {
                 self.render_diff_editor(&diff.read(cx).multibuffer())
             }
+            ToolCallContent::Terminal { terminal } => self.render_terminal(terminal),
         }
     }
 
@@ -1382,6 +1441,19 @@ impl AcpThreadView {
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
+                } else {
+                    Empty.into_any()
+                },
+            )
+            .into_any()
+    }
+
+    fn render_terminal(&self, terminal: &Entity<Terminal>) -> AnyElement {
+        v_flex()
+            .h_72()
+            .child(
+                if let Some(terminal) = self.terminals.get(&terminal.entity_id()) {
+                    terminal.clone().into_any_element()
                 } else {
                     Empty.into_any()
                 },

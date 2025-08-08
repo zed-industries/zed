@@ -27,6 +27,7 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "ui",
  "util",
  "workspace-hack",

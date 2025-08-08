@@ -25,6 +25,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use terminal::Terminal;
 use ui::App;
 use util::ResultExt;
 
@@ -147,6 +148,14 @@ impl AgentThreadEntry {
         }
     }
 
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        if let AgentThreadEntry::ToolCall(call) = self {
+            itertools::Either::Left(call.terminals())
+        } else {
+            itertools::Either::Right(std::iter::empty())
+        }
+    }
+
     pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
         if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
             Some(locations)
@@ -250,8 +259,17 @@ impl ToolCall {
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
-            ToolCallContent::ContentBlock { .. } => None,
             ToolCallContent::Diff { diff } => Some(diff),
+            ToolCallContent::ContentBlock { .. } => None,
+            ToolCallContent::Terminal { .. } => None,
+        })
+    }
+
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        self.content.iter().filter_map(|content| match content {
+            ToolCallContent::Terminal { terminal } => Some(terminal),
+            ToolCallContent::ContentBlock { .. } => None,
+            ToolCallContent::Diff { .. } => None,
         })
     }
 
@@ -389,6 +407,7 @@ impl ContentBlock {
 pub enum ToolCallContent {
     ContentBlock { content: ContentBlock },
     Diff { diff: Entity<Diff> },
+    Terminal { terminal: Entity<Terminal> },
 }
 
 impl ToolCallContent {
@@ -411,6 +430,9 @@ impl ToolCallContent {
         match self {
             Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
             Self::Diff { diff } => diff.read(cx).to_markdown(cx),
+            Self::Terminal { terminal } => {
+                format!("Terminal:\n```\n{}\n```\n", terminal.read(cx).get_content())
+            }
         }
     }
 }
@@ -419,6 +441,7 @@ impl ToolCallContent {
 pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
+    UpdateTerminal(ToolCallUpdateTerminal),
 }
 
 impl ToolCallUpdate {
@@ -426,6 +449,7 @@ impl ToolCallUpdate {
         match self {
             Self::UpdateFields(update) => &update.id,
             Self::UpdateDiff(diff) => &diff.id,
+            Self::UpdateTerminal(terminal) => &terminal.id,
         }
     }
 }
@@ -446,6 +470,18 @@ impl From<ToolCallUpdateDiff> for ToolCallUpdate {
 pub struct ToolCallUpdateDiff {
     pub id: acp::ToolCallId,
     pub diff: Entity<Diff>,
+}
+
+impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
+    fn from(terminal: ToolCallUpdateTerminal) -> Self {
+        Self::UpdateTerminal(terminal)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateTerminal {
+    pub id: acp::ToolCallId,
+    pub terminal: Entity<Terminal>,
 }
 
 #[derive(Debug, Default)]
@@ -761,6 +797,12 @@ impl AcpThread {
                 current_call
                     .content
                     .push(ToolCallContent::Diff { diff: update.diff });
+            }
+            ToolCallUpdate::UpdateTerminal(update) => {
+                current_call.content.clear();
+                current_call.content.push(ToolCallContent::Terminal {
+                    terminal: update.terminal,
+                });
             }
         }
 
