@@ -2088,12 +2088,19 @@ impl GitPanel {
             multiple: false,
         });
 
+        let workspace = self.workspace.clone();
+
         cx.spawn_in(window, async move |this, cx| {
-            let paths = path.await.ok()?.ok()??;
-            let path = paths.first()?.as_path();
+            let mut paths = path.await.ok()?.ok()??;
+            let mut path = paths.pop()?;
+            let repo_name = repo
+                .split(std::path::MAIN_SEPARATOR_STR)
+                .last()?
+                .strip_suffix(".git")?
+                .to_owned();
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
-            let result_toast = match fs.git_clone(&repo, path).await {
+            let result_toast = match fs.git_clone(&repo, path.as_path()).await {
                 Ok(_) => cx.update(|_, cx| {
                     StatusToast::new(
                         format!(
@@ -2104,6 +2111,25 @@ impl GitPanel {
                         cx,
                         |this, _| {
                             this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                .action("Add repo to project", {
+                                    path.push(repo_name);
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace
+                                                    .project()
+                                                    .update(cx, |project, cx| {
+                                                        project.create_worktree(
+                                                            path.as_path(),
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .detach();
+                                            })
+                                            .ok();
+                                    }
+                                })
                                 .dismiss_button(true)
                         },
                     )
