@@ -120,7 +120,7 @@ pub struct ThemeSettings {
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub experimental_theme_overrides: Option<ThemeStyleContent>,
     /// Manual overrides per theme
-    pub theme_overrides: Option<HashMap<String, ThemeStyleContent>>,
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
@@ -434,7 +434,7 @@ pub struct ThemeSettingsContent {
     ///
     /// These values will override the ones on the specified theme
     #[serde(default)]
-    pub theme_overrides: Option<HashMap<String, ThemeStyleContent>>,
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
 }
 
 fn default_font_features() -> Option<FontFeatures> {
@@ -656,19 +656,16 @@ impl ThemeSettings {
 
     /// Applies the theme overrides, if there are any, to the current theme.
     pub fn apply_theme_overrides(&mut self) {
-        if let Some(theme_overrides) = &self.theme_overrides {
-            if let Some(this_theme_overrides) = theme_overrides.get(self.active_theme.name.as_ref())
-            {
-                let mut theme = (*self.active_theme).clone();
-                ThemeSettings::modify_theme(&mut theme, this_theme_overrides);
-                self.active_theme = Arc::new(theme);
-                return;
-            }
-        }
-
+        // Apply the old overrides setting first, so that the new setting can override those.
         if let Some(experimental_theme_overrides) = &self.experimental_theme_overrides {
             let mut theme = (*self.active_theme).clone();
             ThemeSettings::modify_theme(&mut theme, experimental_theme_overrides);
+            self.active_theme = Arc::new(theme);
+        }
+
+        if let Some(theme_overrides) = self.theme_overrides.get(self.active_theme.name.as_ref()) {
+            let mut theme = (*self.active_theme).clone();
+            ThemeSettings::modify_theme(&mut theme, theme_overrides);
             self.active_theme = Arc::new(theme);
         }
     }
@@ -870,7 +867,7 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             experimental_theme_overrides: None,
-            theme_overrides: None,
+            theme_overrides: HashMap::default(),
             icon_theme_selection: defaults.icon_theme.clone(),
             active_icon_theme: defaults
                 .icon_theme
