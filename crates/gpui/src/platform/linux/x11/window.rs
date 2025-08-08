@@ -956,79 +956,111 @@ impl X11WindowStatePtr {
     }
 
     pub fn handle_input(&self, input: PlatformInput) {
+        dbg!("Window: handle_input called", &input);
         if let Some(ref mut fun) = self.callbacks.borrow_mut().input {
-            if !fun(input.clone()).propagate {
+            let result = fun(input.clone());
+            dbg!("Window: input callback result", result.propagate);
+            if !result.propagate {
                 return;
             }
         }
         if let PlatformInput::KeyDown(event) = input {
+            dbg!("Window: handling KeyDown event", &event.keystroke);
             // only allow shift modifier when inserting text
             if event.keystroke.modifiers.is_subset_of(&Modifiers::shift()) {
+                dbg!("Window: modifiers subset of shift, checking for key_char");
                 let mut state = self.state.borrow_mut();
                 if let Some(mut input_handler) = state.input_handler.take() {
                     if let Some(key_char) = &event.keystroke.key_char {
+                        dbg!("Window: inserting key_char directly", key_char);
                         drop(state);
                         input_handler.replace_text_in_range(None, key_char);
                         state = self.state.borrow_mut();
                     }
                     state.input_handler = Some(input_handler);
                 }
+            } else {
+                dbg!("Window: modifiers not subset of shift, ignoring key_char insertion");
             }
         }
     }
 
     pub fn handle_ime_commit(&self, text: String) {
+        dbg!("Window: handle_ime_commit called", &text);
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
+            dbg!("Window: got input handler, calling replace_text_in_range");
             drop(state);
             input_handler.replace_text_in_range(None, &text);
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
+        } else {
+            dbg!("Window: no input handler available for IME commit");
         }
     }
 
     pub fn handle_ime_preedit(&self, text: String) {
+        dbg!("Window: handle_ime_preedit called", &text);
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
+            dbg!("Window: got input handler, calling replace_and_mark_text_in_range");
             drop(state);
             input_handler.replace_and_mark_text_in_range(None, &text, None);
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
+        } else {
+            dbg!("Window: no input handler available for IME preedit");
         }
     }
 
     pub fn handle_ime_unmark(&self) {
+        dbg!("Window: handle_ime_unmark called");
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
+            dbg!("Window: got input handler, calling unmark_text");
             drop(state);
             input_handler.unmark_text();
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
+        } else {
+            dbg!("Window: no input handler available for IME unmark");
         }
     }
 
     pub fn handle_ime_delete(&self) {
+        dbg!("Window: handle_ime_delete called");
         let mut state = self.state.borrow_mut();
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
             if let Some(marked) = input_handler.marked_text_range() {
+                dbg!("Window: found marked text range, deleting", &marked);
                 input_handler.replace_text_in_range(Some(marked), "");
+            } else {
+                dbg!("Window: no marked text range to delete");
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
+        } else {
+            dbg!("Window: no input handler available for IME delete");
         }
     }
 
     pub fn get_ime_area(&self) -> Option<Bounds<Pixels>> {
+        dbg!("Window: get_ime_area called");
         let mut state = self.state.borrow_mut();
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
             if let Some(selection) = input_handler.selected_text_range(true) {
                 bounds = input_handler.bounds_for_range(selection.range);
+                dbg!("Window: got IME area bounds", bounds);
+            } else {
+                dbg!("Window: no selected text range for IME area");
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
+        } else {
+            dbg!("Window: no input handler available for IME area");
         };
         bounds
     }

@@ -31,13 +31,19 @@ impl XimHandler {
 
 impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler {
     fn handle_connect(&mut self, client: &mut C) -> Result<(), ClientError> {
-        client.open("C")
+        dbg!("XIM: handle_connect called");
+        let result = client.open("C");
+        dbg!("XIM: handle_connect result", &result);
+        result
     }
 
     fn handle_open(&mut self, client: &mut C, input_method_id: u16) -> Result<(), ClientError> {
+        dbg!("XIM: handle_open called", input_method_id);
         self.im_id = input_method_id;
 
-        client.get_im_values(input_method_id, &[AttributeName::QueryInputStyle])
+        let result = client.get_im_values(input_method_id, &[AttributeName::QueryInputStyle]);
+        dbg!("XIM: handle_open result", &result);
+        result
     }
 
     fn handle_get_im_values(
@@ -61,8 +67,10 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_method_id: u16,
         input_context_id: u16,
     ) -> Result<(), ClientError> {
+        dbg!("XIM: handle_create_ic called", input_context_id);
         self.connected = true;
         self.ic_id = input_context_id;
+        dbg!("XIM: connection established", self.connected, self.ic_id);
         Ok(())
     }
 
@@ -73,6 +81,7 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_context_id: u16,
         text: &str,
     ) -> Result<(), ClientError> {
+        dbg!("XIM: handle_commit called", text, self.window);
         self.last_callback_event = Some(XimCallbackEvent::XimCommitEvent(
             self.window,
             String::from(text),
@@ -88,21 +97,30 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _flag: xim::ForwardEventFlag,
         xev: C::XEvent,
     ) -> Result<(), ClientError> {
+        dbg!("XIM: handle_forward_event called", xev.response_type);
         match xev.response_type {
             x11rb::protocol::xproto::KEY_PRESS_EVENT => {
+                dbg!("XIM: forwarding key press event");
                 self.last_callback_event = Some(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)));
             }
             x11rb::protocol::xproto::KEY_RELEASE_EVENT => {
+                dbg!("XIM: forwarding key release event");
                 self.last_callback_event =
                     Some(XimCallbackEvent::XimXEvent(Event::KeyRelease(xev)));
             }
-            _ => {}
+            _ => {
+                dbg!("XIM: ignoring event type", xev.response_type);
+            }
         }
         Ok(())
     }
 
     fn handle_close(&mut self, client: &mut C, _input_method_id: u16) -> Result<(), ClientError> {
-        client.disconnect()
+        dbg!("XIM: handle_close called");
+        // self.connected = false;
+        let result = client.disconnect();
+        dbg!("XIM: disconnect result", &result);
+        result
     }
 
     fn handle_preedit_draw(
@@ -117,6 +135,14 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         preedit_string: &str,
         _feedbacks: Vec<xim::Feedback>,
     ) -> Result<(), ClientError> {
+        dbg!(
+            "XIM: handle_preedit_draw called",
+            preedit_string,
+            self.window,
+            _caret,
+            _chg_first,
+            _chg_len
+        );
         // XIMReverse: 1, XIMPrimary: 8, XIMTertiary: 32: selected text
         // XIMUnderline: 2, XIMSecondary: 16: underlined text
         // XIMHighlight: 4: normal text

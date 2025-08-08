@@ -631,42 +631,54 @@ impl X11Client {
             for event in events.into_iter() {
                 let mut state = self.0.borrow_mut();
                 if !state.has_xim() {
+                    dbg!("XIM: no XIM available for key event");
                     drop(state);
                     self.handle_event(event);
                     continue;
                 }
 
                 let Some((mut ximc, mut xim_handler)) = state.take_xim() else {
+                    dbg!("XIM: failed to take XIM for key event");
                     continue;
                 };
                 let xim_connected = xim_handler.connected;
+                dbg!("XIM: processing key event", xim_connected);
                 drop(state);
 
                 let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
-                    Ok(handled) => handled,
+                    Ok(handled) => {
+                        dbg!("XIM: filter_event result", handled);
+                        handled
+                    },
                     Err(err) => {
+                        dbg!("XIM: filter_event error", &err);
                         log::error!("XIMClientError: {}", err);
                         false
                     }
                 };
                 let xim_callback_event = xim_handler.last_callback_event.take();
+                dbg!("XIM: callback event present", xim_callback_event.is_some());
 
                 let mut state = self.0.borrow_mut();
                 state.restore_xim(ximc, xim_handler);
                 drop(state);
 
                 if let Some(event) = xim_callback_event {
+                    dbg!("XIM: handling callback event");
                     self.handle_xim_callback_event(event);
                 }
 
                 if xim_filtered {
+                    dbg!("XIM: event was filtered, not processing further");
                     continue;
                 }
 
                 if xim_connected {
+                    dbg!("XIM: forwarding event to XIM");
                     self.xim_handle_event(event);
                 } else {
                     self.handle_event(event);
+                    dbg!("XIM: not connected, skipping XIM event handling");
                 }
             }
         }
@@ -1273,22 +1285,28 @@ impl X11Client {
     }
 
     fn handle_xim_callback_event(&self, event: XimCallbackEvent) {
+        dbg!("XIM: handle_xim_callback_event called");
         match event {
             XimCallbackEvent::XimXEvent(event) => {
+                dbg!("XIM: handling forwarded X event");
                 self.handle_event(event);
             }
             XimCallbackEvent::XimCommitEvent(window, text) => {
+                dbg!("XIM: handling commit event", window, &text);
                 self.xim_handle_commit(window, text);
             }
             XimCallbackEvent::XimPreeditEvent(window, text) => {
+                dbg!("XIM: handling preedit event", window, &text);
                 self.xim_handle_preedit(window, text);
             }
         };
     }
 
     fn xim_handle_event(&self, event: Event) -> Option<()> {
+        dbg!("XIM: xim_handle_event called");
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
+                dbg!("XIM: handling key press/release event", event.event);
                 let mut state = self.0.borrow_mut();
                 state.pre_key_char_down = Some(Keystroke::from_xkb(
                     &state.xkb,
@@ -1298,19 +1316,25 @@ impl X11Client {
                 let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);
                 xim_handler.window = event.event;
-                ximc.forward_event(
+                dbg!("XIM: forwarding event to XIM server", event.event, xim_handler.im_id, xim_handler.ic_id);
+                let result = ximc.forward_event(
                     xim_handler.im_id,
                     xim_handler.ic_id,
                     xim::ForwardEventFlag::empty(),
                     &event,
-                )
-                .context("X11: Failed to forward XIM event")
-                .log_err();
+                );
+                if let Err(ref error) = result {
+                    dbg!("XIM: forward_event error", error);
+                }
+                result
+                    .context("X11: Failed to forward XIM event")
+                    .log_err();
                 let mut state = self.0.borrow_mut();
                 state.restore_xim(ximc, xim_handler);
                 drop(state);
             }
             event => {
+                dbg!("XIM: forwarding non-key event to normal handler");
                 self.handle_event(event);
             }
         }
@@ -1318,27 +1342,35 @@ impl X11Client {
     }
 
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
+        dbg!("XIM: xim_handle_commit called", window, &text);
         let Some(window) = self.get_window(window) else {
+            dbg!("XIM: bug: Failed to get window for XIM commit", window);
             log::error!("bug: Failed to get window for XIM commit");
             return None;
         };
         let mut state = self.0.borrow_mut();
         let keystroke = state.pre_key_char_down.take();
         state.composing = false;
+        dbg!("XIM: setting composing to false, keystroke present", keystroke.is_some());
         drop(state);
         if let Some(mut keystroke) = keystroke {
             keystroke.key_char = Some(text.clone());
+            dbg!("XIM: calling window.handle_input with keystroke");
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
             }));
+        } else {
+            dbg!("XIM: no keystroke available for commit");
         }
 
         Some(())
     }
 
     fn xim_handle_preedit(&self, window: xproto::Window, text: String) -> Option<()> {
+        dbg!("XIM: xim_handle_preedit called", window, &text);
         let Some(window) = self.get_window(window) else {
+            dbg!("XIM: bug: Failed to get window for XIM preedit", window);
             log::error!("bug: Failed to get window for XIM preedit");
             return None;
         };
@@ -1346,10 +1378,13 @@ impl X11Client {
         let mut state = self.0.borrow_mut();
         let (mut ximc, mut xim_handler) = state.take_xim()?;
         state.composing = !text.is_empty();
+        dbg!("XIM: setting composing state", state.composing);
         drop(state);
+        dbg!("XIM: calling window.handle_ime_preedit");
         window.handle_ime_preedit(text);
 
         if let Some(area) = window.get_ime_area() {
+            dbg!("XIM: got IME area, updating spot location", area);
             let ic_attributes = ximc
                 .build_ic_attributes()
                 .push(
@@ -1368,8 +1403,10 @@ impl X11Client {
                     );
                 })
                 .build();
-            ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes)
-                .ok();
+            let result = ximc.set_ic_values(xim_handler.im_id, xim_handler.ic_id, ic_attributes);
+            dbg!("XIM: set_ic_values result for preedit", result.is_ok());
+        } else {
+            dbg!("XIM: no IME area available");
         }
         let mut state = self.0.borrow_mut();
         state.restore_xim(ximc, xim_handler);
