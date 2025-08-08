@@ -310,7 +310,6 @@ impl AutoUpdater {
         cx.default_global::<GlobalAutoUpdate>().0.clone()
     }
 
-    #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     fn new(
         current_version: SemanticVersion,
         http_client: Arc<HttpClientWithUrl>,
@@ -548,6 +547,8 @@ impl AutoUpdater {
                 )
             })?;
 
+        Self::check_dependencies()?;
+
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
             cx.notify();
@@ -653,6 +654,15 @@ impl AutoUpdater {
         }
     }
 
+    fn check_dependencies() -> Result<()> {
+        #[cfg(not(target_os = "windows"))]
+        anyhow::ensure!(
+            which::which("rsync").is_ok(),
+            "Aborting. Could not find rsync which is required for auto-updates."
+        );
+        Ok(())
+    }
+
     async fn target_path(installer_dir: &InstallerDir) -> Result<PathBuf> {
         let filename = match OS {
             "macos" => anyhow::Ok("Zed.dmg"),
@@ -660,12 +670,6 @@ impl AutoUpdater {
             "windows" => Ok("zed_editor_installer.exe"),
             unsupported_os => anyhow::bail!("not supported: {unsupported_os}"),
         }?;
-
-        #[cfg(not(target_os = "windows"))]
-        anyhow::ensure!(
-            which::which("rsync").is_ok(),
-            "Aborting. Could not find rsync which is required for auto-updates."
-        );
 
         Ok(installer_dir.path().join(filename))
     }
