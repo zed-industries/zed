@@ -20,6 +20,7 @@ pub struct ThinkingTool;
 
 impl AgentTool for ThinkingTool {
     type Input = ThinkingToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "thinking".into()

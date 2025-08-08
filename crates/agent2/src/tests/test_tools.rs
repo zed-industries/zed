@@ -14,6 +14,7 @@ pub struct EchoTool;
 
 impl AgentTool for EchoTool {
     type Input = EchoToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "echo".into()
@@ -48,6 +49,7 @@ pub struct DelayTool;
 
 impl AgentTool for DelayTool {
     type Input = DelayToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "delay".into()
@@ -84,6 +86,7 @@ pub struct ToolRequiringPermission;
 
 impl AgentTool for ToolRequiringPermission {
     type Input = ToolRequiringPermissionInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "tool_requiring_permission".into()
@@ -118,6 +121,7 @@ pub struct InfiniteTool;
 
 impl AgentTool for InfiniteTool {
     type Input = InfiniteToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "infinite".into()
@@ -168,6 +172,7 @@ pub struct WordListTool;
 
 impl AgentTool for WordListTool {
     type Input = WordListInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "word_list".into()

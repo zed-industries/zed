@@ -59,6 +59,7 @@ impl ReadFileTool {
 
 impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
+    type Output = String;
 
     fn name(&self) -> SharedString {
         "read_file".into()

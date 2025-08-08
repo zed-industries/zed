@@ -517,8 +517,8 @@ impl Thread {
                     tool_use_id: tool_use.id,
                     tool_name: tool_use.name,
                     is_error: false,
-                    content: LanguageModelToolResultContent::Text(Arc::from(tool_output)),
-                    output: None,
+                    content: tool_output.llm_output,
+                    output: Some(tool_output.raw_output),
                 },
                 Err(error) => LanguageModelToolResult {
                     tool_use_id: tool_use.id,
@@ -664,6 +664,7 @@ where
     Self: 'static + Sized,
 {
     type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
+    type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
     fn name(&self) -> SharedString;
 
@@ -693,7 +694,7 @@ where
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> Task<Result<Self::Output>>;
 
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
@@ -701,6 +702,11 @@ where
 }
 
 pub struct Erased<T>(T);
+
+pub struct AgentToolOutput {
+    llm_output: LanguageModelToolResultContent,
+    raw_output: serde_json::Value,
+}
 
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
@@ -713,7 +719,7 @@ pub trait AnyAgentTool {
         input: serde_json::Value,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>>;
+    ) -> Task<Result<AgentToolOutput>>;
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -748,12 +754,18 @@ where
         input: serde_json::Value,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
-        let parsed_input: Result<T::Input> = serde_json::from_value(input).map_err(Into::into);
-        match parsed_input {
-            Ok(input) => self.0.clone().run(input, event_stream, cx),
-            Err(error) => Task::ready(Err(anyhow!(error))),
-        }
+    ) -> Task<Result<AgentToolOutput>> {
+        cx.spawn(async move |cx| {
+            let input = serde_json::from_value(input)?;
+            let output = cx
+                .update(|cx| self.0.clone().run(input, event_stream, cx))?
+                .await?;
+            let raw_output = serde_json::to_value(&output)?;
+            Ok(AgentToolOutput {
+                llm_output: output.into(),
+                raw_output,
+            })
+        })
     }
 }
 

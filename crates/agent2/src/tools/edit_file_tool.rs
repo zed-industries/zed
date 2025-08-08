@@ -1,12 +1,13 @@
 use acp_thread::Diff;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
-use assistant_tools::edit_agent::{EditAgent, EditAgentOutputEvent, EditFormat};
+use assistant_tools::edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use indoc::formatdoc;
 use language::language_settings::{self, FormatOnSave};
+use language_model::LanguageModelToolResultContent;
 use paths;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use project::{Project, ProjectPath};
@@ -85,6 +86,31 @@ pub enum EditFileMode {
     Overwrite,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EditFileToolOutput {
+    input_path: PathBuf,
+    project_path: PathBuf,
+    new_text: String,
+    old_text: Arc<String>,
+    diff: String,
+    edit_agent_output: EditAgentOutput,
+}
+
+impl From<EditFileToolOutput> for LanguageModelToolResultContent {
+    fn from(output: EditFileToolOutput) -> Self {
+        if output.diff.is_empty() {
+            "No edits were made.".into()
+        } else {
+            format!(
+                "Edited {}:\n\n```diff\n{}\n```",
+                output.input_path.display(),
+                output.diff
+            )
+            .into()
+        }
+    }
+}
+
 pub struct EditFileTool {
     thread: Entity<Thread>,
 }
@@ -146,6 +172,7 @@ impl EditFileTool {
 
 impl AgentTool for EditFileTool {
     type Input = EditFileToolInput;
+    type Output = EditFileToolOutput;
 
     fn name(&self) -> SharedString {
         "edit_file".into()
@@ -164,7 +191,7 @@ impl AgentTool for EditFileTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<Self::Output>> {
         let project = self.thread.read(cx).project().clone();
         let project_path = match resolve_path(&input, project.clone(), cx) {
             Ok(path) => path,
@@ -259,7 +286,7 @@ impl AgentTool for EditFileTool {
                 })
                 .unwrap_or(false);
 
-            let _ = output.await?;
+            let edit_agent_output = output.await?;
 
             if format_on_save_enabled {
                 action_log.update(cx, |log, cx| {
@@ -287,22 +314,19 @@ impl AgentTool for EditFileTool {
             })?;
 
             let new_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
-            let unified_diff = cx
+            let (new_text, unified_diff) = cx
                 .background_spawn({
                     let new_snapshot = new_snapshot.clone();
                     let old_text = old_text.clone();
                     async move {
                         let new_text = new_snapshot.text();
-                        language::unified_diff(&old_text, &new_text)
+                        let diff = language::unified_diff(&old_text, &new_text);
+                        (new_text, diff)
                     }
                 })
                 .await;
 
-            println!("\n\n{}\n\n", unified_diff);
-
-            diff.update(cx, |diff, cx| {
-                diff.finalize(cx);
-            }).ok();
+            diff.update(cx, |diff, cx| diff.finalize(cx)).ok();
 
             let input_path = input.path.display();
             if unified_diff.is_empty() {
@@ -329,13 +353,16 @@ impl AgentTool for EditFileTool {
                         "}
                     }
                 );
-                Ok("No edits were made.".into())
-            } else {
-                Ok(format!(
-                    "Edited {}:\n\n```diff\n{}\n```",
-                    input_path, unified_diff
-                ))
             }
+
+            Ok(EditFileToolOutput {
+                input_path: input.path,
+                project_path: project_path.path.to_path_buf(),
+                new_text: new_text.clone(),
+                old_text,
+                diff: unified_diff,
+                edit_agent_output,
+            })
         })
     }
 }
