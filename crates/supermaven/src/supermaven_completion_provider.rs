@@ -108,6 +108,14 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn show_completions_in_menu() -> bool {
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
+        true
+    }
+
+    fn supports_jump_to_edit() -> bool {
         false
     }
 
@@ -116,7 +124,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn is_refreshing(&self) -> bool {
-        self.pending_refresh.is_some()
+        self.pending_refresh.is_some() && self.completion_id.is_none()
     }
 
     fn refresh(
@@ -197,6 +205,7 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
+
             Some(completion_from_diff(
                 snapshot,
                 completion_text,

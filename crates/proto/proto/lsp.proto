@@ -525,6 +525,7 @@ message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     DiagnosticSummary summary = 3;
+    repeated DiagnosticSummary more_summaries = 4;
 }
 
 message DiagnosticSummary {

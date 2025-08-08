@@ -31,7 +31,7 @@ use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
-use settings::Settings as _;
+use settings::{Settings as _, SettingsStore};
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
@@ -80,6 +80,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
     _cancel_task: Option<Task<()>>,
+    _subscriptions: [Subscription; 1],
 }
 
 enum ThreadState {
@@ -178,6 +179,8 @@ impl AcpThreadView {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
+        let subscription = cx.observe_global_in::<SettingsStore>(window, Self::settings_changed);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -200,6 +203,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             message_history,
+            _subscriptions: [subscription],
             _cancel_task: None,
         }
     }
@@ -377,6 +381,11 @@ impl AcpThreadView {
             editor.display_map.update(cx, |map, cx| {
                 let snapshot = map.snapshot(cx);
                 for (crease_id, crease) in snapshot.crease_snapshot.creases() {
+                    // Skip creases that have been edited out of the message buffer.
+                    if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+                        continue;
+                    }
+
                     if let Some(project_path) =
                         self.mention_set.lock().path_for_crease_id(crease_id)
                     {
@@ -704,15 +713,7 @@ impl AcpThreadView {
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_expand_all_diff_hunks(cx);
-                editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(
-                        TextSize::Small
-                            .rems(cx)
-                            .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
-                            .into(),
-                    ),
-                    ..Default::default()
-                });
+                editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 editor
             });
             let entity_id = multibuffer.entity_id();
@@ -858,6 +859,7 @@ impl AcpThreadView {
                     .into_any()
             }
             AgentThreadEntry::ToolCall(tool_call) => div()
+                .w_full()
                 .py_1p5()
                 .px_5()
                 .child(self.render_tool_call(index, tool_call, window, cx))
@@ -903,6 +905,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let header_id = SharedString::from(format!("thinking-block-header-{}", entry_ix));
+        let card_header_id = SharedString::from("inner-card-header");
         let key = (entry_ix, chunk_ix);
         let is_open = self.expanded_thinking_blocks.contains(&key);
 
@@ -910,41 +913,53 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id(header_id)
-                    .group("disclosure-header")
+                    .group(&card_header_id)
+                    .relative()
                     .w_full()
-                    .justify_between()
+                    .gap_1p5()
                     .opacity(0.8)
                     .hover(|style| style.opacity(1.))
                     .child(
                         h_flex()
-                            .gap_1p5()
-                            .child(
-                                Icon::new(IconName::ToolBulb)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
+                            .size_4()
+                            .justify_center()
                             .child(
                                 div()
-                                    .text_size(self.tool_name_font_size())
-                                    .child("Thinking"),
+                                    .group_hover(&card_header_id, |s| s.invisible().w_0())
+                                    .child(
+                                        Icon::new(IconName::ToolThink)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .absolute()
+                                    .inset_0()
+                                    .invisible()
+                                    .justify_center()
+                                    .group_hover(&card_header_id, |s| s.visible())
+                                    .child(
+                                        Disclosure::new(("expand", entry_ix), is_open)
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronRight)
+                                            .on_click(cx.listener({
+                                                move |this, _event, _window, cx| {
+                                                    if is_open {
+                                                        this.expanded_thinking_blocks.remove(&key);
+                                                    } else {
+                                                        this.expanded_thinking_blocks.insert(key);
+                                                    }
+                                                    cx.notify();
+                                                }
+                                            })),
+                                    ),
                             ),
                     )
                     .child(
-                        div().visible_on_hover("disclosure-header").child(
-                            Disclosure::new("thinking-disclosure", is_open)
-                                .opened_icon(IconName::ChevronUp)
-                                .closed_icon(IconName::ChevronDown)
-                                .on_click(cx.listener({
-                                    move |this, _event, _window, cx| {
-                                        if is_open {
-                                            this.expanded_thinking_blocks.remove(&key);
-                                        } else {
-                                            this.expanded_thinking_blocks.insert(key);
-                                        }
-                                        cx.notify();
-                                    }
-                                })),
-                        ),
+                        div()
+                            .text_size(self.tool_name_font_size())
+                            .child("Thinking"),
                     )
                     .on_click(cx.listener({
                         move |this, _event, _window, cx| {
@@ -975,6 +990,67 @@ impl AcpThreadView {
             .into_any_element()
     }
 
+    fn render_tool_call_icon(
+        &self,
+        group_name: SharedString,
+        entry_ix: usize,
+        is_collapsible: bool,
+        is_open: bool,
+        tool_call: &ToolCall,
+        cx: &Context<Self>,
+    ) -> Div {
+        let tool_icon = Icon::new(match tool_call.kind {
+            acp::ToolKind::Read => IconName::ToolRead,
+            acp::ToolKind::Edit => IconName::ToolPencil,
+            acp::ToolKind::Delete => IconName::ToolDeleteFile,
+            acp::ToolKind::Move => IconName::ArrowRightLeft,
+            acp::ToolKind::Search => IconName::ToolSearch,
+            acp::ToolKind::Execute => IconName::ToolTerminal,
+            acp::ToolKind::Think => IconName::ToolThink,
+            acp::ToolKind::Fetch => IconName::ToolWeb,
+            acp::ToolKind::Other => IconName::ToolHammer,
+        })
+        .size(IconSize::Small)
+        .color(Color::Muted);
+
+        if is_collapsible {
+            h_flex()
+                .size_4()
+                .justify_center()
+                .child(
+                    div()
+                        .group_hover(&group_name, |s| s.invisible().w_0())
+                        .child(tool_icon),
+                )
+                .child(
+                    h_flex()
+                        .absolute()
+                        .inset_0()
+                        .invisible()
+                        .justify_center()
+                        .group_hover(&group_name, |s| s.visible())
+                        .child(
+                            Disclosure::new(("expand", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronRight)
+                                .on_click(cx.listener({
+                                    let id = tool_call.id.clone();
+                                    move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                        if is_open {
+                                            this.expanded_tool_calls.remove(&id);
+                                        } else {
+                                            this.expanded_tool_calls.insert(id.clone());
+                                        }
+                                        cx.notify();
+                                    }
+                                })),
+                        ),
+                )
+        } else {
+            div().child(tool_icon)
+        }
+    }
+
     fn render_tool_call(
         &self,
         entry_ix: usize,
@@ -982,7 +1058,8 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let header_id = SharedString::from(format!("tool-call-header-{}", entry_ix));
+        let header_id = SharedString::from(format!("outer-tool-call-header-{}", entry_ix));
+        let card_header_id = SharedString::from("inner-tool-call-header");
 
         let status_icon = match &tool_call.status {
             ToolCallStatus::Allowed {
@@ -1031,6 +1108,21 @@ impl AcpThreadView {
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
         let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
 
+        let gradient_color = cx.theme().colors().panel_background;
+        let gradient_overlay = {
+            div()
+                .absolute()
+                .top_0()
+                .right_0()
+                .w_12()
+                .h_full()
+                .bg(linear_gradient(
+                    90.,
+                    linear_color_stop(gradient_color, 1.),
+                    linear_color_stop(gradient_color.opacity(0.2), 0.),
+                ))
+        };
+
         v_flex()
             .when(needs_confirmation, |this| {
                 this.rounded_lg()
@@ -1047,43 +1139,38 @@ impl AcpThreadView {
                     .justify_between()
                     .map(|this| {
                         if needs_confirmation {
-                            this.px_2()
+                            this.pl_2()
+                                .pr_1()
                                 .py_1()
                                 .rounded_t_md()
-                                .bg(self.tool_card_header_bg(cx))
                                 .border_b_1()
                                 .border_color(self.tool_card_border_color(cx))
+                                .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
                         }
                     })
                     .child(
                         h_flex()
-                            .id("tool-call-header")
-                            .overflow_x_scroll()
+                            .group(&card_header_id)
+                            .relative()
+                            .w_full()
                             .map(|this| {
-                                if needs_confirmation {
-                                    this.text_xs()
+                                if tool_call.locations.len() == 1 {
+                                    this.gap_0()
                                 } else {
-                                    this.text_size(self.tool_name_font_size())
+                                    this.gap_1p5()
                                 }
                             })
-                            .gap_1p5()
-                            .child(
-                                Icon::new(match tool_call.kind {
-                                    acp::ToolKind::Read => IconName::ToolRead,
-                                    acp::ToolKind::Edit => IconName::ToolPencil,
-                                    acp::ToolKind::Delete => IconName::ToolDeleteFile,
-                                    acp::ToolKind::Move => IconName::ArrowRightLeft,
-                                    acp::ToolKind::Search => IconName::ToolSearch,
-                                    acp::ToolKind::Execute => IconName::ToolTerminal,
-                                    acp::ToolKind::Think => IconName::ToolBulb,
-                                    acp::ToolKind::Fetch => IconName::ToolWeb,
-                                    acp::ToolKind::Other => IconName::ToolHammer,
-                                })
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                            )
+                            .text_size(self.tool_name_font_size())
+                            .child(self.render_tool_call_icon(
+                                card_header_id,
+                                entry_ix,
+                                is_collapsible,
+                                is_open,
+                                tool_call,
+                                cx,
+                            ))
                             .child(if tool_call.locations.len() == 1 {
                                 let name = tool_call.locations[0]
                                     .path
@@ -1094,13 +1181,11 @@ impl AcpThreadView {
 
                                 h_flex()
                                     .id(("open-tool-call-location", entry_ix))
-                                    .child(name)
                                     .w_full()
                                     .max_w_full()
-                                    .pr_1()
-                                    .gap_0p5()
-                                    .cursor_pointer()
+                                    .px_1p5()
                                     .rounded_sm()
+                                    .overflow_x_scroll()
                                     .opacity(0.8)
                                     .hover(|label| {
                                         label.opacity(1.).bg(cx
@@ -1109,53 +1194,49 @@ impl AcpThreadView {
                                             .element_hover
                                             .opacity(0.5))
                                     })
+                                    .child(name)
                                     .tooltip(Tooltip::text("Jump to File"))
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.open_tool_call_location(entry_ix, 0, window, cx);
                                     }))
                                     .into_any_element()
                             } else {
-                                self.render_markdown(
-                                    tool_call.label.clone(),
-                                    default_markdown_style(needs_confirmation, window, cx),
-                                )
-                                .into_any()
+                                h_flex()
+                                    .id("non-card-label-container")
+                                    .w_full()
+                                    .relative()
+                                    .overflow_hidden()
+                                    .child(
+                                        h_flex()
+                                            .id("non-card-label")
+                                            .pr_8()
+                                            .w_full()
+                                            .overflow_x_scroll()
+                                            .child(self.render_markdown(
+                                                tool_call.label.clone(),
+                                                default_markdown_style(
+                                                    needs_confirmation,
+                                                    window,
+                                                    cx,
+                                                ),
+                                            )),
+                                    )
+                                    .child(gradient_overlay)
+                                    .on_click(cx.listener({
+                                        let id = tool_call.id.clone();
+                                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                            if is_open {
+                                                this.expanded_tool_calls.remove(&id);
+                                            } else {
+                                                this.expanded_tool_calls.insert(id.clone());
+                                            }
+                                            cx.notify();
+                                        }
+                                    }))
+                                    .into_any()
                             }),
                     )
-                    .child(
-                        h_flex()
-                            .gap_0p5()
-                            .when(is_collapsible, |this| {
-                                this.child(
-                                    Disclosure::new(("expand", entry_ix), is_open)
-                                        .opened_icon(IconName::ChevronUp)
-                                        .closed_icon(IconName::ChevronDown)
-                                        .on_click(cx.listener({
-                                            let id = tool_call.id.clone();
-                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                if is_open {
-                                                    this.expanded_tool_calls.remove(&id);
-                                                } else {
-                                                    this.expanded_tool_calls.insert(id.clone());
-                                                }
-                                                cx.notify();
-                                            }
-                                        })),
-                                )
-                            })
-                            .children(status_icon),
-                    )
-                    .on_click(cx.listener({
-                        let id = tool_call.id.clone();
-                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                            if is_open {
-                                this.expanded_tool_calls.remove(&id);
-                            } else {
-                                this.expanded_tool_calls.insert(id.clone());
-                            }
-                            cx.notify();
-                        }
-                    })),
+                    .children(status_icon),
             )
             .when(is_open, |this| {
                 this.child(
@@ -1249,8 +1330,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> Div {
         h_flex()
-            .py_1p5()
-            .px_1p5()
+            .p_1p5()
             .gap_1()
             .justify_end()
             .when(!empty_content, |this| {
@@ -1276,6 +1356,7 @@ impl AcpThreadView {
                     })
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
                     .on_click(cx.listener({
                         let tool_call_id = tool_call_id.clone();
                         let option_id = option.id.clone();
@@ -1525,7 +1606,7 @@ impl AcpThreadView {
                     })
             })
             .when(!changed_buffers.is_empty(), |this| {
-                this.child(Divider::horizontal())
+                this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(self.render_edits_summary(
                         action_log,
                         &changed_buffers,
@@ -1555,6 +1636,7 @@ impl AcpThreadView {
         {
             h_flex()
                 .w_full()
+                .cursor_default()
                 .gap_1()
                 .text_xs()
                 .text_color(cx.theme().colors().text_muted)
@@ -1584,7 +1666,7 @@ impl AcpThreadView {
             let status_label = if stats.pending == 0 {
                 "All Done".to_string()
             } else if stats.completed == 0 {
-                format!("{}", plan.entries.len())
+                format!("{} Tasks", plan.entries.len())
             } else {
                 format!("{}/{}", stats.completed, plan.entries.len())
             };
@@ -1698,7 +1780,6 @@ impl AcpThreadView {
             .child(
                 h_flex()
                     .id("edits-container")
-                    .cursor_pointer()
                     .w_full()
                     .gap_1()
                     .child(Disclosure::new("edits-disclosure", expanded))
@@ -2473,6 +2554,7 @@ impl AcpThreadView {
             }));
 
         h_flex()
+            .w_full()
             .mr_1()
             .pb_2()
             .px(RESPONSE_PADDING_X)
@@ -2515,6 +2597,15 @@ impl AcpThreadView {
             .w(px(12.))
             .cursor_default()
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
+    }
+
+    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        for diff_editor in self.diff_editors.values() {
+            diff_editor.update(cx, |diff_editor, cx| {
+                diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
+                cx.notify();
+            })
+        }
     }
 }
 
@@ -2793,6 +2884,18 @@ fn plan_label_markdown_style(
     }
 }
 
+fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
+    TextStyleRefinement {
+        font_size: Some(
+            TextSize::Small
+                .rems(cx)
+                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .into(),
+        ),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use agent_client_protocol::SessionId;
@@ -2800,8 +2903,12 @@ mod tests {
     use fs::FakeFs;
     use futures::future::try_join_all;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use lsp::{CompletionContext, CompletionTriggerKind};
+    use project::CompletionIntent;
     use rand::Rng;
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     use super::*;
 
@@ -2881,6 +2988,7 @@ mod tests {
             content: vec!["hi".into()],
             locations: vec![],
             raw_input: None,
+            raw_output: None,
         };
         let connection = StubAgentConnection::new(vec![acp::SessionUpdate::ToolCall(tool_call)])
             .with_permission_requests(HashMap::from_iter([(
@@ -2911,6 +3019,109 @@ mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    #[gpui::test]
+    async fn test_crease_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let agent = StubAgentServer::default();
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(agent),
+                    workspace.downgrade(),
+                    project,
+                    Rc::new(RefCell::new(MessageHistory::default())),
+                    1,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        let excerpt_id = message_editor.update(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .excerpt_ids()
+                .into_iter()
+                .next()
+                .unwrap()
+        });
+        let completions = message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello @", window, cx);
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let completion_provider = editor.completion_provider().unwrap();
+            completion_provider.completions(
+                excerpt_id,
+                &buffer,
+                Anchor::MAX,
+                CompletionContext {
+                    trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some("@".into()),
+                },
+                window,
+                cx,
+            )
+        });
+        let [_, completion]: [_; 2] = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let start = snapshot
+                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+                .unwrap();
+            let end = snapshot
+                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
+                .unwrap();
+            editor.edit([(start..end, completion.new_text)], cx);
+            (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Backspace over the inserted crease (and the following space).
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.backspace(&Default::default(), window, cx);
+            editor.backspace(&Default::default(), window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.chat(&Chat, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let content = thread_view.update_in(cx, |thread_view, _window, _cx| {
+            thread_view
+                .message_history
+                .borrow()
+                .items()
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+
+        // We don't send a resource link for the deleted crease.
+        pretty_assertions::assert_matches!(content.as_slice(), [acp::ContentBlock::Text { .. }]);
     }
 
     async fn setup_thread_view(
@@ -3066,7 +3277,7 @@ mod tests {
                 let task = cx.spawn(async move |cx| {
                     if let Some((tool_call, options)) = permission_request {
                         let permission = thread.update(cx, |thread, cx| {
-                            thread.request_tool_call_permission(
+                            thread.request_tool_call_authorization(
                                 tool_call.clone(),
                                 options.clone(),
                                 cx,

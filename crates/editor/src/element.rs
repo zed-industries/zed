@@ -86,8 +86,6 @@ use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
-const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
-
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
 struct LineHighlightSpec {
@@ -357,6 +355,7 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_comments);
         register_action(editor, window, Editor::select_larger_syntax_node);
         register_action(editor, window, Editor::select_smaller_syntax_node);
+        register_action(editor, window, Editor::unwrap_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
         register_action(editor, window, Editor::undo_selection);
@@ -2427,10 +2426,13 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
         let padding = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+            let mut padding = ProjectSettings::get_global(cx)
+                .git
+                .inline_blame
+                .unwrap_or_default()
+                .padding as f32;
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref() {
                 match &edit_prediction.completion {
@@ -2468,7 +2470,7 @@ impl EditorElement {
             let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
                 .inline_blame
-                .and_then(|settings| settings.min_column)
+                .map(|settings| settings.min_column)
                 .map(|col| self.column_pixels(col as usize, window))
                 .unwrap_or(px(0.));
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
@@ -3681,6 +3683,7 @@ impl EditorElement {
                             .id("path header block")
                             .size_full()
                             .justify_between()
+                            .overflow_hidden()
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -8028,12 +8031,20 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         needs_horizontal_autoscroll,
                     ) = self.editor.update(cx, |editor, cx| {
-                        let autoscroll_request = editor.autoscroll_request();
+                        let autoscroll_request = editor.scroll_manager.take_autoscroll_request();
+
                         let autoscroll_containing_element =
                             autoscroll_request.is_some() || editor.has_pending_selection();
 
                         let (needs_horizontal_autoscroll, was_scrolled) = editor
-                            .autoscroll_vertically(bounds, line_height, max_scroll_top, window, cx);
+                            .autoscroll_vertically(
+                                bounds,
+                                line_height,
+                                max_scroll_top,
+                                autoscroll_request,
+                                window,
+                                cx,
+                            );
                         if was_scrolled.0 {
                             snapshot = editor.snapshot(window, cx);
                         }
@@ -8355,7 +8366,13 @@ impl Element for EditorElement {
                                 })
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
-                            let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
+                            let inline_blame_padding = ProjectSettings::get_global(cx)
+                                .git
+                                .inline_blame
+                                .unwrap_or_default()
+                                .padding
+                                as f32
+                                * em_advance;
                             Some(
                                 element
                                     .layout_as_root(AvailableSpace::min_size(), window, cx)
@@ -8423,7 +8440,11 @@ impl Element for EditorElement {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
                             self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
+                                editor.resize_blocks(
+                                    resized_blocks,
+                                    autoscroll_request.map(|(autoscroll, _)| autoscroll),
+                                    cx,
+                                )
                             });
                             return self.prepaint(None, _inspector_id, bounds, &mut (), window, cx);
                         }
@@ -8468,6 +8489,7 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_advance,
                                 &line_layouts,
+                                autoscroll_request,
                                 window,
                                 cx,
                             )

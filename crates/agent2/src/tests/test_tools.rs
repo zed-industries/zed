@@ -19,7 +19,20 @@ impl AgentTool for EchoTool {
         "echo".into()
     }
 
-    fn run(self: Arc<Self>, input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, _: Self::Input) -> SharedString {
+        "Echo".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: Self::Input,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Task<Result<String>> {
         Task::ready(Ok(input.text))
     }
 }
@@ -40,13 +53,63 @@ impl AgentTool for DelayTool {
         "delay".into()
     }
 
-    fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>
+    fn initial_title(&self, input: Self::Input) -> SharedString {
+        format!("Delay {}ms", input.ms).into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: Self::Input,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String>>
     where
         Self: Sized,
     {
         cx.foreground_executor().spawn(async move {
             smol::Timer::after(Duration::from_millis(input.ms)).await;
             Ok("Ding".to_string())
+        })
+    }
+}
+
+#[derive(JsonSchema, Serialize, Deserialize)]
+pub struct ToolRequiringPermissionInput {}
+
+pub struct ToolRequiringPermission;
+
+impl AgentTool for ToolRequiringPermission {
+    type Input = ToolRequiringPermissionInput;
+
+    fn name(&self) -> SharedString {
+        "tool_requiring_permission".into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This tool requires permission".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String>>
+    where
+        Self: Sized,
+    {
+        let auth_check = self.authorize(input, event_stream);
+        cx.foreground_executor().spawn(async move {
+            auth_check.await?;
+            Ok("Allowed".to_string())
         })
     }
 }
@@ -63,7 +126,20 @@ impl AgentTool for InfiniteTool {
         "infinite".into()
     }
 
-    fn run(self: Arc<Self>, _input: Self::Input, cx: &mut App) -> Task<Result<String>> {
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "This is the tool that never ends... it just goes on and on my friends!".into()
+    }
+
+    fn run(
+        self: Arc<Self>,
+        _input: Self::Input,
+        _event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<String>> {
         cx.foreground_executor().spawn(async move {
             future::pending::<()>().await;
             unreachable!()
@@ -100,7 +176,20 @@ impl AgentTool for WordListTool {
         "word_list".into()
     }
 
-    fn run(self: Arc<Self>, _input: Self::Input, _cx: &mut App) -> Task<Result<String>> {
+    fn initial_title(&self, _input: Self::Input) -> SharedString {
+        "List of random words".into()
+    }
+
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Other
+    }
+
+    fn run(
+        self: Arc<Self>,
+        _input: Self::Input,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Task<Result<String>> {
         Task::ready(Ok("ok".to_string()))
     }
 }

@@ -135,7 +135,7 @@ impl acp_old::Client for OldAcpClientDelegate {
         let response = cx
             .update(|cx| {
                 self.thread.borrow().update(cx, |thread, cx| {
-                    thread.request_tool_call_permission(tool_call, acp_options, cx)
+                    thread.request_tool_call_authorization(tool_call, acp_options, cx)
                 })
             })?
             .context("Failed to update thread")?
@@ -280,6 +280,7 @@ fn into_new_tool_call(id: acp::ToolCallId, request: acp_old::PushToolCallParams)
             .map(into_new_tool_call_location)
             .collect(),
         raw_input: None,
+        raw_output: None,
     }
 }
 
