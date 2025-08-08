@@ -52,7 +52,7 @@ impl Vim {
             });
 
             if HelixModeSetting::get_global(cx).0 {
-                self.switch_mode(Mode::HelixNormal, false, window, cx);
+                self.switch_mode(Mode::HelixNormal, true, window, cx);
             } else {
                 self.switch_mode(Mode::Normal, false, window, cx);
             }
