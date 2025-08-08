@@ -1488,7 +1488,10 @@ impl Project {
                 fs.clone(),
                 cx,
             );
-            lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
+            lsp_store.set_language_server_statuses_from_proto(
+                response.payload.language_servers,
+                response.payload.language_server_capabilities,
+            );
             lsp_store
         })?;
 
@@ -2319,7 +2322,10 @@ impl Project {
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
-            lsp_store.set_language_server_statuses_from_proto(message.language_servers)
+            lsp_store.set_language_server_statuses_from_proto(
+                message.language_servers,
+                message.language_server_capabilities,
+            )
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
