@@ -1203,6 +1203,7 @@ mod tests {
                     .separator()
                     .separator()
                     .entry("Last entry", None, |_, _| {})
+                    .header("Last header")
             })
         });
 
@@ -1253,6 +1254,28 @@ mod tests {
                 Some(2),
                 context_menu.selected_index,
                 "Should go back to previous selectable entry (first)"
+            );
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&SelectFirst, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should start from the first selectable entry"
+            );
+
+            context_menu.select_previous(&SelectPrevious, window, cx);
+            assert_eq!(
+                Some(5),
+                context_menu.selected_index,
+                "Should wrap around to last selectable entry"
+            );
+            context_menu.select_next(&SelectNext, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should wrap around to first selectable entry"
             );
         });
     }
