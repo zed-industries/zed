@@ -16,6 +16,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
+use git_ui::file_diff_view::FileDiffView;
 use gpui::{
     Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
     CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
@@ -93,7 +94,7 @@ pub struct ProjectPanel {
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
     selection: Option<SelectedEntry>,
-    marked_entries: BTreeSet<SelectedEntry>,
+    marked_entries: Vec<SelectedEntry>,
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
     filename_editor: Entity<Editor>,
@@ -280,6 +281,8 @@ actions!(
         SelectNextDirectory,
         /// Selects the previous directory.
         SelectPrevDirectory,
+        /// Opens a diff view to compare two marked files.
+        CompareMarkedFiles,
     ]
 );
 
@@ -376,7 +379,7 @@ struct DraggedProjectEntryView {
     selection: SelectedEntry,
     details: EntryDetails,
     click_offset: Point<Pixels>,
-    selections: Arc<BTreeSet<SelectedEntry>>,
+    selections: Arc<[SelectedEntry]>,
 }
 
 struct ItemColors {
@@ -442,7 +445,15 @@ impl ProjectPanel {
                     }
                 }
                 project::Event::ActiveEntryChanged(None) => {
-                    this.marked_entries.clear();
+                    let is_active_item_file_diff_view = this
+                        .workspace
+                        .upgrade()
+                        .and_then(|ws| ws.read(cx).active_item(cx))
+                        .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
+                        .unwrap_or(false);
+                    if !is_active_item_file_diff_view {
+                        this.marked_entries.clear();
+                    }
                 }
                 project::Event::RevealInProjectPanel(entry_id) => {
                     if let Some(()) = this
@@ -676,7 +687,7 @@ impl ProjectPanel {
                                 project_panel.update(cx, |project_panel, _| {
                                     let entry = SelectedEntry { worktree_id, entry_id };
                                     project_panel.marked_entries.clear();
-                                    project_panel.marked_entries.insert(entry);
+                                    project_panel.marked_entries.push(entry);
                                     project_panel.selection = Some(entry);
                                 });
                                 if !focus_opened_item {
@@ -887,6 +898,7 @@ impl ProjectPanel {
             let should_hide_rename = is_root
                 && (cfg!(target_os = "windows")
                     || (settings.hide_root && visible_worktrees_count == 1));
+            let should_show_compare = !is_dir && self.file_abs_paths_to_diff(cx).is_some();
 
             let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
@@ -917,6 +929,10 @@ impl ProjectPanel {
                             })
                             .when(is_foldable, |menu| {
                                 menu.action("Fold Directory", Box::new(FoldDirectory))
+                            })
+                            .when(should_show_compare, |menu| {
+                                menu.separator()
+                                    .action("Compare marked files", Box::new(CompareMarkedFiles))
                             })
                             .separator()
                             .action("Cut", Box::new(Cut))
@@ -1262,7 +1278,7 @@ impl ProjectPanel {
             };
             self.selection = Some(selection);
             if window.modifiers().shift {
-                self.marked_entries.insert(selection);
+                self.marked_entries.push(selection);
             }
             self.autoscroll(cx);
             cx.notify();
@@ -2007,7 +2023,7 @@ impl ProjectPanel {
                     };
                     self.selection = Some(selection);
                     if window.modifiers().shift {
-                        self.marked_entries.insert(selection);
+                        self.marked_entries.push(selection);
                     }
 
                     self.autoscroll(cx);
@@ -2244,7 +2260,7 @@ impl ProjectPanel {
                 };
                 self.selection = Some(selection);
                 if window.modifiers().shift {
-                    self.marked_entries.insert(selection);
+                    self.marked_entries.push(selection);
                 }
                 self.autoscroll(cx);
                 cx.notify();
@@ -2569,6 +2585,43 @@ impl ProjectPanel {
             let worktree_id = entry.worktree_id;
             self.project
                 .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        }
+    }
+
+    fn file_abs_paths_to_diff(&self, cx: &Context<Self>) -> Option<(PathBuf, PathBuf)> {
+        let mut selections_abs_path = self
+            .marked_entries
+            .iter()
+            .filter_map(|entry| {
+                let project = self.project.read(cx);
+                let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
+                let entry = worktree.read(cx).entry_for_id(entry.entry_id)?;
+                if !entry.is_file() {
+                    return None;
+                }
+                worktree.read(cx).absolutize(&entry.path).ok()
+            })
+            .rev();
+
+        let last_path = selections_abs_path.next()?;
+        let previous_to_last = selections_abs_path.next()?;
+        Some((previous_to_last, last_path))
+    }
+
+    fn compare_marked_files(
+        &mut self,
+        _: &CompareMarkedFiles,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selected_files = self.file_abs_paths_to_diff(cx);
+        if let Some((file_path1, file_path2)) = selected_files {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    FileDiffView::open(file_path1, file_path2, workspace, window, cx)
+                        .detach_and_log_err(cx);
+                })
+                .ok();
         }
     }
 
@@ -3914,11 +3967,9 @@ impl ProjectPanel {
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
-        let selections = Arc::new(self.marked_entries.clone());
-
         let dragged_selection = DraggedSelection {
             active_selection: selection,
-            marked_selections: selections,
+            marked_selections: Arc::from(self.marked_entries.clone()),
         };
 
         let bg_color = if is_marked {
@@ -4089,7 +4140,7 @@ impl ProjectPanel {
                         });
                         if drag_state.items().count() == 1 {
                             this.marked_entries.clear();
-                            this.marked_entries.insert(drag_state.active_selection);
+                            this.marked_entries.push(drag_state.active_selection);
                         }
                         this.hover_expand_task.take();
 
@@ -4156,66 +4207,69 @@ impl ProjectPanel {
                 }),
             )
             .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right
-                        || event.down.first_mouse
+                cx.listener(move |project_panel, event: &gpui::ClickEvent, window, cx| {
+                    if event.is_right_click() || event.first_focus()
                         || show_editor
                     {
                         return;
                     }
-                    if event.down.button == MouseButton::Left {
-                        this.mouse_down = false;
+                    if event.standard_click() {
+                        project_panel.mouse_down = false;
                     }
                     cx.stop_propagation();
 
-                    if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
-                        let current_selection = this.index_for_selection(selection);
+                    if let Some(selection) = project_panel.selection.filter(|_| event.modifiers().shift) {
+                        let current_selection = project_panel.index_for_selection(selection);
                         let clicked_entry = SelectedEntry {
                             entry_id,
                             worktree_id,
                         };
-                        let target_selection = this.index_for_selection(clicked_entry);
+                        let target_selection = project_panel.index_for_selection(clicked_entry);
                         if let Some(((_, _, source_index), (_, _, target_index))) =
                             current_selection.zip(target_selection)
                         {
                             let range_start = source_index.min(target_index);
                             let range_end = source_index.max(target_index) + 1;
-                            let mut new_selections = BTreeSet::new();
-                            this.for_each_visible_entry(
+                            let mut new_selections = Vec::new();
+                            project_panel.for_each_visible_entry(
                                 range_start..range_end,
                                 window,
                                 cx,
                                 |entry_id, details, _, _| {
-                                    new_selections.insert(SelectedEntry {
+                                    new_selections.push(SelectedEntry {
                                         entry_id,
                                         worktree_id: details.worktree_id,
                                     });
                                 },
                             );
 
-                            this.marked_entries = this
-                                .marked_entries
-                                .union(&new_selections)
-                                .cloned()
-                                .collect();
+                            for selection in &new_selections {
+                                if !project_panel.marked_entries.contains(selection) {
+                                    project_panel.marked_entries.push(*selection);
+                                }
+                            }
 
-                            this.selection = Some(clicked_entry);
-                            this.marked_entries.insert(clicked_entry);
+                            project_panel.selection = Some(clicked_entry);
+                            if !project_panel.marked_entries.contains(&clicked_entry) {
+                                project_panel.marked_entries.push(clicked_entry);
+                            }
                         }
                     } else if event.modifiers().secondary() {
-                        if event.down.click_count > 1 {
-                            this.split_entry(entry_id, cx);
+                        if event.click_count() > 1 {
+                            project_panel.split_entry(entry_id, cx);
                         } else {
-                            this.selection = Some(selection);
-                            if !this.marked_entries.insert(selection) {
-                                this.marked_entries.remove(&selection);
+                            project_panel.selection = Some(selection);
+                            if let Some(position) = project_panel.marked_entries.iter().position(|e| *e == selection) {
+                                project_panel.marked_entries.remove(position);
+                            } else {
+                                project_panel.marked_entries.push(selection);
                             }
                         }
                     } else if kind.is_dir() {
-                        this.marked_entries.clear();
+                        project_panel.marked_entries.clear();
                         if is_sticky {
-                            if let Some((_, _, index)) = this.index_for_entry(entry_id, worktree_id) {
-                                this.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
+                            if let Some((_, _, index)) = project_panel.index_for_entry(entry_id, worktree_id) {
+                                project_panel.scroll_handle.scroll_to_item_with_offset(index, ScrollStrategy::Top, sticky_index.unwrap_or(0));
                                 cx.notify();
                                 // move down by 1px so that clicked item
                                 // don't count as sticky anymore
@@ -4231,16 +4285,16 @@ impl ProjectPanel {
                             }
                         }
                         if event.modifiers().alt {
-                            this.toggle_expand_all(entry_id, window, cx);
+                            project_panel.toggle_expand_all(entry_id, window, cx);
                         } else {
-                            this.toggle_expanded(entry_id, window, cx);
+                            project_panel.toggle_expanded(entry_id, window, cx);
                         }
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
+                        let click_count = event.click_count();
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
-                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                        project_panel.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }
                 }),
             )
@@ -4811,12 +4865,21 @@ impl ProjectPanel {
         {
             anyhow::bail!("can't reveal an ignored entry in the project panel");
         }
+        let is_active_item_file_diff_view = self
+            .workspace
+            .upgrade()
+            .and_then(|ws| ws.read(cx).active_item(cx))
+            .map(|item| item.act_as_type(TypeId::of::<FileDiffView>(), cx).is_some())
+            .unwrap_or(false);
+        if is_active_item_file_diff_view {
+            return Ok(());
+        }
 
         let worktree_id = worktree.id();
         self.expand_entry(worktree_id, entry_id, cx);
         self.update_visible_entries(Some((worktree_id, entry_id)), cx);
         self.marked_entries.clear();
-        self.marked_entries.insert(SelectedEntry {
+        self.marked_entries.push(SelectedEntry {
             worktree_id,
             entry_id,
         });
@@ -5138,7 +5201,10 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(window, cx);
                     }
                 }))
-                .on_click(cx.listener(|this, _event, _, cx| {
+                .on_click(cx.listener(|this, event, _, cx| {
+                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                        return;
+                    }
                     cx.stop_propagation();
                     this.selection = None;
                     this.marked_entries.clear();
@@ -5168,6 +5234,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
                 .on_action(cx.listener(Self::remove_from_project))
+                .on_action(cx.listener(Self::compare_marked_files))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -5179,7 +5246,7 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_click(cx.listener(|this, event: &gpui::ClickEvent, window, cx| {
-                            if event.up.click_count > 1 {
+                            if event.click_count() > 1 {
                                 if let Some(entry_id) = this.last_worktree_root_id {
                                     let project = this.project.read(cx);
 
@@ -5558,6 +5625,10 @@ impl Panel for ProjectPanel {
     }
 
     fn starts_open(&self, _: &Window, cx: &App) -> bool {
+        if !ProjectPanelSettings::get_global(cx).starts_open {
+            return false;
+        }
+
         let project = &self.project.read(cx);
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)

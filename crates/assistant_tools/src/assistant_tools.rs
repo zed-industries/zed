@@ -36,13 +36,12 @@ use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
-use crate::find_path_tool::FindPathTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
-pub use find_path_tool::FindPathToolInput;
+pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
 pub use open_tool::OpenTool;
 pub use project_notifications_tool::ProjectNotificationsTool;
