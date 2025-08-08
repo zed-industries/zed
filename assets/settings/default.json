@@ -1173,6 +1173,9 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // The amount of padding between the end of the source line and the start
+      // of the inline blame in units of em widths.
+      "padding": 7,
       // Whether or not to display the git commit summary on the same line.
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at

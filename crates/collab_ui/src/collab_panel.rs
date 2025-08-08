@@ -3053,7 +3053,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if self.user_store.read(cx).current_user().is_none() {
+            .child(if !self.client.status().borrow().is_connected() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

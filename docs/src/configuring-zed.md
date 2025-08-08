@@ -1795,7 +1795,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "delay_ms": 500
     }
   }
@@ -1808,7 +1807,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "show_commit_summary": true
     }
   }
@@ -1821,8 +1819,19 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "min_column": 80
+    }
+  }
+}
+```
+
+5. Set the padding between the end of the line and the inline blame hint, in ems:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "padding": 10
     }
   }
 }
