@@ -94,8 +94,12 @@ impl AgentTool for FindPathTool {
         acp::ToolKind::Search
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        format!("Find paths matching “`{}`”", input.glob).into()
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        let mut title = "Find paths".to_string();
+        if let Ok(input) = input {
+            title.push_str(&format!(" matching “`{}`”", input.glob));
+        }
+        title.into()
     }
 
     fn run(

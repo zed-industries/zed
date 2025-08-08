@@ -30,7 +30,7 @@ impl AgentTool for ThinkingTool {
         acp::ToolKind::Think
     }
 
-    fn initial_title(&self, _input: Self::Input) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Thinking".into()
     }
 

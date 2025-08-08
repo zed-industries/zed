@@ -695,7 +695,7 @@ where
     fn kind(&self) -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
-    fn initial_title(&self, input: Option<Self::Input>) -> SharedString;
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self) -> Schema {
@@ -753,7 +753,7 @@ where
     }
 
     fn initial_title(&self, input: serde_json::Value) -> SharedString {
-        let parsed_input = serde_json::from_value(input).ok();
+        let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
         self.0.initial_title(parsed_input)
     }
 

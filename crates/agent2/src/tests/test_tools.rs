@@ -24,7 +24,7 @@ impl AgentTool for EchoTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Option<Self::Input>) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Echo".into()
     }
 
@@ -55,8 +55,8 @@ impl AgentTool for DelayTool {
         "delay".into()
     }
 
-    fn initial_title(&self, input: Option<Self::Input>) -> SharedString {
-        if let Some(input) = input {
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        if let Ok(input) = input {
             format!("Delay {}ms", input.ms).into()
         } else {
             "Delay".into()
@@ -100,7 +100,7 @@ impl AgentTool for ToolRequiringPermission {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Option<Self::Input>) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "This tool requires permission".into()
     }
 
@@ -135,7 +135,7 @@ impl AgentTool for InfiniteTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Option<Self::Input>) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Infinite Tool".into()
     }
 
@@ -186,7 +186,7 @@ impl AgentTool for WordListTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Option<Self::Input>) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "List of random words".into()
     }
 
