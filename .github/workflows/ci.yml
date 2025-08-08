@@ -88,7 +88,6 @@ jobs:
     name: Check Postgres and Protobuf migrations, mergability
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     timeout-minutes: 60
@@ -135,7 +134,6 @@ jobs:
     name: Check workspace-hack crate
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -220,7 +218,6 @@ jobs:
     name: Check docs
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       (needs.job_spec.outputs.run_tests == 'true' || needs.job_spec.outputs.run_docs == 'true')
     runs-on:
@@ -258,7 +255,6 @@ jobs:
     name: (macOS) Run Clippy and tests
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -381,7 +377,6 @@ jobs:
     name: (Linux) Build Remote Server
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on:
@@ -421,7 +416,6 @@ jobs:
     name: (Windows) Run Clippy and tests
     needs: [job_spec]
     if: |
-      false &&
       github.repository_owner == 'zed-industries' &&
       needs.job_spec.outputs.run_tests == 'true'
     runs-on: [self-hosted, Windows, X64]
@@ -517,7 +511,6 @@ jobs:
     runs-on:
       - self-mini-macos
     if: |
-      false &&
       ( startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [macos_tests]
@@ -606,7 +599,6 @@ jobs:
     runs-on:
       - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     if: |
-      false &&
       ( startsWith(github.ref, 'refs/tags/v')
       || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [linux_tests]
@@ -711,10 +703,8 @@ jobs:
     timeout-minutes: 60
     runs-on: github-8vcpu-ubuntu-2404
     if: |
-      false && (
-      startsWith(github.ref, 'refs/tags/v')
-      || contains(github.event.pull_request.labels.*.name, 'run-bundling')
-      )
+      ( startsWith(github.ref, 'refs/tags/v')
+      || contains(github.event.pull_request.labels.*.name, 'run-bundling') )
     needs: [linux_tests]
     name: Build Zed on FreeBSD
     steps:
@@ -780,7 +770,7 @@ jobs:
     timeout-minutes: 120
     name: Create a Windows installer
     runs-on: [self-hosted, Windows, X64]
-    if: false && contains(github.event.pull_request.labels.*.name, 'run-bundling')
+    if: contains(github.event.pull_request.labels.*.name, 'run-bundling')
     # if: (startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))
     needs: [windows_tests]
     env:
