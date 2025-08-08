@@ -16,7 +16,7 @@ use worktree::ChildEntriesOptions;
 /// Matches the most common license locations, with US and UK English spelling.
 const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
-        "^ (?: license | licence) (?: [\\-._] (?: mit | isc | upl))? (?: \\.txt | \\.md)? $",
+        "^ (?: license | licence) (?: [\\-._] (?: isc | mit | upl))? (?: \\.txt | \\.md)? $",
     )
     .ignore_whitespace(true)
     .case_insensitive(true)
@@ -27,10 +27,14 @@ const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| 
 fn is_license_eligible_for_data_collection(license: &str) -> bool {
     // TODO: Include more licenses later (namely, Apache)
     const LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
-        [MIT_LICENSE_REGEX, ISC_LICENSE_REGEX, UPL_LICENSE_REGEX]
-            .into_iter()
-            .map(|pattern| Regex::new(&canonicalize_license_text(pattern)).unwrap())
-            .collect()
+        [
+            include_str!("license_detection/isc.regex"),
+            include_str!("license_detection/mit.regex"),
+            include_str!("license_detection/upl.regex"),
+        ]
+        .into_iter()
+        .map(|pattern| Regex::new(&canonicalize_license_text(pattern)).unwrap())
+        .collect()
     });
 
     let license = canonicalize_license_text(license);
@@ -167,86 +171,6 @@ impl LicenseDetectionWatcher {
         }
     }
 }
-
-const MIT_LICENSE_REGEX: &str = r#"
-^.*MIT License.*
-
-Copyright.*
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files \(the "Software"\), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software\.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT\. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE\.$
-"#;
-
-const ISC_LICENSE_REGEX: &str = r#"
-^ISC License
-
-Copyright.*
-
-Permission to use, copy, modify, and/or distribute this software for any
-purpose with or without fee is hereby granted, provided that the above
-copyright notice and this permission notice appear in all copies\.
-
-THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-MERCHANTABILITY AND FITNESS\. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE\.$
-"#;
-
-const UPL_LICENSE_REGEX: &str = r#"
-^Copyright.*
-
-The Universal Permissive License.*
-
-Subject to the condition set forth below, permission is hereby granted to any person
-obtaining a copy of this software, associated documentation and/or data \(collectively
-the "Software"\), free of charge and under any and all copyright rights in the
-Software, and any and all patent rights owned or freely licensable by each licensor
-hereunder covering either \(i\) the unmodified Software as contributed to or provided
-by such licensor, or \(ii\) the Larger Works \(as defined below\), to deal in both
-
-\(a\) the Software, and
-
-\(b\) any piece of software and/or hardware listed in the lrgrwrks\.txt file if one is
-    included with the Software \(each a "Larger Work" to which the Software is
-    contributed by such licensors\),
-
-without restriction, including without limitation the rights to copy, create
-derivative works of, display, perform, and distribute the Software and make, use,
-sell, offer for sale, import, export, have made, and have sold the Software and the
-Larger Work\(s\), and to sublicense the foregoing rights on either these or other
-terms\.
-
-This license is subject to the following condition:
-
-The above copyright notice and either this complete permission notice or at a minimum
-a reference to the UPL must be included in all copies or substantial portions of the
-Software\.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT\. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
-HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
-CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE
-OR THE USE OR OTHER DEALINGS IN THE SOFTWARE\.$
-"#;
 
 #[cfg(test)]
 mod tests {
