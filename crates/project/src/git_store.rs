@@ -28,6 +28,7 @@ use git::{
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus,
     },
+    stash::GitStash,
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -248,6 +249,7 @@ pub struct RepositorySnapshot {
     pub merge: MergeDetails,
     pub remote_origin_url: Option<String>,
     pub remote_upstream_url: Option<String>,
+    pub stash_entries: GitStash,
 }
 
 type JobId = u64;
@@ -2677,6 +2679,7 @@ impl RepositorySnapshot {
             merge: Default::default(),
             remote_origin_url: None,
             remote_upstream_url: None,
+            stash_entries: Default::default(),
         }
     }
 
@@ -3193,6 +3196,10 @@ impl Repository {
 
     pub fn cached_status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.snapshot.status()
+    }
+
+    pub fn cached_stash(&self) -> GitStash {
+        self.snapshot.stash_entries.clone()
     }
 
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
@@ -4476,6 +4483,7 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
+        println!("paths changed with updates_tx: {:?}", updates_tx);
         self.paths_needing_status_update.extend(paths);
 
         let this = cx.weak_entity();
@@ -4495,6 +4503,7 @@ impl Repository {
 
                 let paths = changed_paths.iter().cloned().collect::<Vec<_>>();
                 let statuses = backend.status(&paths).await?;
+                let stash_entries = backend.stash_entries().await?;
 
                 let changed_path_statuses = cx
                     .background_spawn(async move {
@@ -4526,6 +4535,7 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
+                    this.snapshot.stash_entries = stash_entries;
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
@@ -4786,6 +4796,7 @@ async fn compute_snapshot(
     let statuses = backend
         .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
         .await?;
+    let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4836,6 +4847,7 @@ async fn compute_snapshot(
         merge: merge_details,
         remote_origin_url,
         remote_upstream_url,
+        stash_entries,
     };
 
     Ok((snapshot, events))

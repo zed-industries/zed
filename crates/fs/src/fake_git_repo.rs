@@ -314,6 +314,10 @@ impl GitRepository for FakeGitRepository {
         async move { result? }.boxed()
     }
 
+    fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
+        unimplemented!()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         self.with_state_async(false, move |state| {
             let current_branch = &state.current_branch_name;
