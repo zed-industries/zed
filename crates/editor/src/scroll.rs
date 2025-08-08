@@ -12,7 +12,7 @@ use crate::{
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
 use core::fmt::Debug;
-use gpui::{App, Axis, Context, Global, Pixels, Task, Window, point, px};
+use gpui::{Along, App, Axis, Context, Global, Pixels, Task, Window, point, px};
 use language::language_settings::{AllLanguageSettings, SoftWrap};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -49,14 +49,14 @@ impl ScrollAnchor {
     }
 
     pub fn scroll_position(&self, snapshot: &DisplaySnapshot) -> gpui::Point<f32> {
-        let mut scroll_position = self.offset;
-        if self.anchor == Anchor::min() {
-            scroll_position.y = 0.;
-        } else {
-            let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
-            scroll_position.y += scroll_top;
-        }
-        scroll_position
+        self.offset.apply_along(Axis::Vertical, |offset| {
+            if self.anchor == Anchor::min() {
+                0.
+            } else {
+                let scroll_top = self.anchor.to_display_point(snapshot).row().as_f32();
+                (offset + scroll_top).max(0.)
+            }
+        })
     }
 
     pub fn top_row(&self, buffer: &MultiBufferSnapshot) -> u32 {
@@ -348,8 +348,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
-        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
+    pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
+        self.autoscroll_request.take()
     }
 
     pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {

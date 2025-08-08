@@ -1,18 +1,21 @@
 use crate::debugger::breakpoint_store::BreakpointSessionState;
+use crate::debugger::dap_command::{DataBreakpointContext, ReadMemory};
+use crate::debugger::memory::{self, Memory, MemoryIterator, MemoryPageBuilder, PageAddress};
 
 use super::breakpoint_store::{
     BreakpointStore, BreakpointStoreEvent, BreakpointUpdatedReason, SourceBreakpoint,
 };
 use super::dap_command::{
-    self, Attach, ConfigurationDone, ContinueCommand, DisconnectCommand, EvaluateCommand,
-    Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand, ModulesCommand,
-    NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand, ScopesCommand,
-    SetExceptionBreakpoints, SetVariableValueCommand, StackTraceCommand, StepBackCommand,
-    StepCommand, StepInCommand, StepOutCommand, TerminateCommand, TerminateThreadsCommand,
-    ThreadsCommand, VariablesCommand,
+    self, Attach, ConfigurationDone, ContinueCommand, DataBreakpointInfoCommand, DisconnectCommand,
+    EvaluateCommand, Initialize, Launch, LoadedSourcesCommand, LocalDapCommand, LocationsCommand,
+    ModulesCommand, NextCommand, PauseCommand, RestartCommand, RestartStackFrameCommand,
+    ScopesCommand, SetDataBreakpointsCommand, SetExceptionBreakpoints, SetVariableValueCommand,
+    StackTraceCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+    TerminateCommand, TerminateThreadsCommand, ThreadsCommand, VariablesCommand,
 };
 use super::dap_store::DapStore;
 use anyhow::{Context as _, Result, anyhow};
+use base64::Engine;
 use collections::{HashMap, HashSet, IndexMap};
 use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::messages::Response;
@@ -26,7 +29,7 @@ use dap::{
 use dap::{
     ExceptionBreakpointsFilter, ExceptionFilterOptions, OutputEvent, OutputEventCategory,
     RunInTerminalRequestArguments, StackFramePresentationHint, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, VariablePresentationHint,
+    StartDebuggingRequestArgumentsRequest, VariablePresentationHint, WriteMemoryArguments,
 };
 use futures::SinkExt;
 use futures::channel::mpsc::UnboundedSender;
@@ -42,6 +45,7 @@ use serde_json::Value;
 use smol::stream::StreamExt;
 use std::any::TypeId;
 use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
 use std::u64;
 use std::{
     any::Any,
@@ -52,20 +56,15 @@ use std::{
 };
 use task::TaskContext;
 use text::{PointUtf16, ToPointUtf16};
-use util::ResultExt;
+use util::{ResultExt, debug_panic, maybe};
 use worktree::Worktree;
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, PartialOrd, Ord, Eq)]
 #[repr(transparent)]
-pub struct ThreadId(pub u64);
+pub struct ThreadId(pub i64);
 
-impl ThreadId {
-    pub const MIN: ThreadId = ThreadId(u64::MIN);
-    pub const MAX: ThreadId = ThreadId(u64::MAX);
-}
-
-impl From<u64> for ThreadId {
-    fn from(id: u64) -> Self {
+impl From<i64> for ThreadId {
+    fn from(id: i64) -> Self {
         Self(id)
     }
 }
@@ -134,8 +133,18 @@ pub struct Watcher {
     pub presentation_hint: Option<VariablePresentationHint>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DataBreakpointState {
+    pub dap: dap::DataBreakpoint,
+    pub is_enabled: bool,
+    pub context: Arc<DataBreakpointContext>,
+}
+
 pub enum SessionState {
-    Building(Option<Task<Result<()>>>),
+    /// Represents a session that is building/initializing
+    /// even if a session doesn't have a pre build task this state
+    /// is used to run all the async tasks that are required to start the session
+    Booting(Option<Task<Result<()>>>),
     Running(RunningMode),
 }
 
@@ -568,7 +577,7 @@ impl SessionState {
     {
         match self {
             SessionState::Running(debug_adapter_client) => debug_adapter_client.request(request),
-            SessionState::Building(_) => Task::ready(Err(anyhow!(
+            SessionState::Booting(_) => Task::ready(Err(anyhow!(
                 "no adapter running to send request: {request:?}"
             ))),
         }
@@ -577,7 +586,7 @@ impl SessionState {
     /// Did this debug session stop at least once?
     pub(crate) fn has_ever_stopped(&self) -> bool {
         match self {
-            SessionState::Building(_) => false,
+            SessionState::Booting(_) => false,
             SessionState::Running(running_mode) => running_mode.has_ever_stopped,
         }
     }
@@ -682,9 +691,11 @@ pub struct Session {
     pub(crate) breakpoint_store: Entity<BreakpointStore>,
     ignore_breakpoints: bool,
     exception_breakpoints: BTreeMap<String, (ExceptionBreakpointsFilter, IsEnabled)>,
+    data_breakpoints: BTreeMap<String, DataBreakpointState>,
     background_tasks: Vec<Task<()>>,
     restart_task: Option<Task<()>>,
     task_context: TaskContext,
+    memory: memory::Memory,
     quirks: SessionQuirks,
 }
 
@@ -775,6 +786,7 @@ pub enum SessionEvent {
         request: RunInTerminalRequestArguments,
         sender: mpsc::Sender<Result<u32>>,
     },
+    DataBreakpointInfo,
     ConsoleOutput,
 }
 
@@ -830,7 +842,7 @@ impl Session {
             .detach();
 
             let this = Self {
-                mode: SessionState::Building(None),
+                mode: SessionState::Booting(None),
                 id: session_id,
                 child_session_ids: HashSet::default(),
                 parent_session,
@@ -851,10 +863,12 @@ impl Session {
                 is_session_terminated: false,
                 ignore_breakpoints: false,
                 breakpoint_store,
+                data_breakpoints: Default::default(),
                 exception_breakpoints: Default::default(),
                 label,
                 adapter,
                 task_context,
+                memory: memory::Memory::new(),
                 quirks,
             };
 
@@ -868,7 +882,7 @@ impl Session {
 
     pub fn worktree(&self) -> Option<Entity<Worktree>> {
         match &self.mode {
-            SessionState::Building(_) => None,
+            SessionState::Booting(_) => None,
             SessionState::Running(local_mode) => local_mode.worktree.upgrade(),
         }
     }
@@ -929,14 +943,12 @@ impl Session {
             .await?;
             this.update(cx, |this, cx| {
                 match &mut this.mode {
-                    SessionState::Building(task) if task.is_some() => {
+                    SessionState::Booting(task) if task.is_some() => {
                         task.take().unwrap().detach_and_log_err(cx);
                     }
-                    _ => {
-                        debug_assert!(
-                            this.parent_session.is_some(),
-                            "Booting a root debug session without a boot task"
-                        );
+                    SessionState::Booting(_) => {}
+                    SessionState::Running(_) => {
+                        debug_panic!("Attempting to boot a session that is already running");
                     }
                 };
                 this.mode = SessionState::Running(mode);
@@ -1032,7 +1044,7 @@ impl Session {
 
     pub fn binary(&self) -> Option<&DebugAdapterBinary> {
         match &self.mode {
-            SessionState::Building(_) => None,
+            SessionState::Booting(_) => None,
             SessionState::Running(running_mode) => Some(&running_mode.binary),
         }
     }
@@ -1078,26 +1090,26 @@ impl Session {
 
     pub fn is_started(&self) -> bool {
         match &self.mode {
-            SessionState::Building(_) => false,
+            SessionState::Booting(_) => false,
             SessionState::Running(running) => running.is_started,
         }
     }
 
     pub fn is_building(&self) -> bool {
-        matches!(self.mode, SessionState::Building(_))
+        matches!(self.mode, SessionState::Booting(_))
     }
 
     pub fn as_running_mut(&mut self) -> Option<&mut RunningMode> {
         match &mut self.mode {
             SessionState::Running(local_mode) => Some(local_mode),
-            SessionState::Building(_) => None,
+            SessionState::Booting(_) => None,
         }
     }
 
     pub fn as_running(&self) -> Option<&RunningMode> {
         match &self.mode {
             SessionState::Running(local_mode) => Some(local_mode),
-            SessionState::Building(_) => None,
+            SessionState::Booting(_) => None,
         }
     }
 
@@ -1291,7 +1303,7 @@ impl Session {
             SessionState::Running(local_mode) => {
                 local_mode.initialize_sequence(&self.capabilities, initialize_rx, dap_store, cx)
             }
-            SessionState::Building(_) => {
+            SessionState::Booting(_) => {
                 Task::ready(Err(anyhow!("cannot initialize, still building")))
             }
         }
@@ -1328,7 +1340,7 @@ impl Session {
                 })
                 .detach();
             }
-            SessionState::Building(_) => {}
+            SessionState::Booting(_) => {}
         }
     }
 
@@ -1664,6 +1676,12 @@ impl Session {
         self.invalidate_command_type::<ModulesCommand>();
         self.invalidate_command_type::<LoadedSourcesCommand>();
         self.invalidate_command_type::<ThreadsCommand>();
+        self.invalidate_command_type::<DataBreakpointInfoCommand>();
+        self.invalidate_command_type::<ReadMemory>();
+        let executor = self.as_running().map(|running| running.executor.clone());
+        if let Some(executor) = executor {
+            self.memory.clear(&executor);
+        }
     }
 
     fn invalidate_state(&mut self, key: &RequestSlot) {
@@ -1736,6 +1754,137 @@ impl Session {
         &self.modules
     }
 
+    // CodeLLDB returns the size of a pointed-to-memory, which we can use to make the experience of go-to-memory better.
+    pub fn data_access_size(
+        &mut self,
+        frame_id: Option<u64>,
+        evaluate_name: &str,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<u64>> {
+        let request = self.request(
+            EvaluateCommand {
+                expression: format!("?${{sizeof({evaluate_name})}}"),
+                frame_id,
+
+                context: Some(EvaluateArgumentsContext::Repl),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            result.result.parse().ok()
+        })
+    }
+
+    pub fn memory_reference_of_expr(
+        &mut self,
+        frame_id: Option<u64>,
+        expression: String,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<(String, Option<String>)>> {
+        let request = self.request(
+            EvaluateCommand {
+                expression,
+                frame_id,
+
+                context: Some(EvaluateArgumentsContext::Repl),
+                source: None,
+            },
+            |_, response, _| response.ok(),
+            cx,
+        );
+        cx.background_spawn(async move {
+            let result = request.await?;
+            result
+                .memory_reference
+                .map(|reference| (reference, result.type_))
+        })
+    }
+
+    pub fn write_memory(&mut self, address: u64, data: &[u8], cx: &mut Context<Self>) {
+        let data = base64::engine::general_purpose::STANDARD.encode(data);
+        self.request(
+            WriteMemoryArguments {
+                memory_reference: address.to_string(),
+                data,
+                allow_partial: None,
+                offset: None,
+            },
+            |this, response, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
+                this.invalidate_command_type::<VariablesCommand>();
+                cx.emit(SessionEvent::Variables);
+                response.ok()
+            },
+            cx,
+        )
+        .detach();
+    }
+    pub fn read_memory(
+        &mut self,
+        range: RangeInclusive<u64>,
+        cx: &mut Context<Self>,
+    ) -> MemoryIterator {
+        // This function is a bit more involved when it comes to fetching data.
+        // Since we attempt to read memory in pages, we need to account for some parts
+        // of memory being unreadable. Therefore, we start off by fetching a page per request.
+        // In case that fails, we try to re-fetch smaller regions until we have the full range.
+        let page_range = Memory::memory_range_to_page_range(range.clone());
+        for page_address in PageAddress::iter_range(page_range) {
+            self.read_single_page_memory(page_address, cx);
+        }
+        self.memory.memory_range(range)
+    }
+
+    fn read_single_page_memory(&mut self, page_start: PageAddress, cx: &mut Context<Self>) {
+        _ = maybe!({
+            let builder = self.memory.build_page(page_start)?;
+
+            self.memory_read_fetch_page_recursive(builder, cx);
+            Some(())
+        });
+    }
+    fn memory_read_fetch_page_recursive(
+        &mut self,
+        mut builder: MemoryPageBuilder,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(next_request) = builder.next_request() else {
+            // We're done fetching. Let's grab the page and insert it into our memory store.
+            let (address, contents) = builder.build();
+            self.memory.insert_page(address, contents);
+
+            return;
+        };
+        let size = next_request.size;
+        self.fetch(
+            ReadMemory {
+                memory_reference: format!("0x{:X}", next_request.address),
+                offset: Some(0),
+                count: next_request.size,
+            },
+            move |this, memory, cx| {
+                if let Ok(memory) = memory {
+                    builder.known(memory.content);
+                    if let Some(unknown) = memory.unreadable_bytes {
+                        builder.unknown(unknown);
+                    }
+                    // This is the recursive bit: if we're not yet done with
+                    // the whole page, we'll kick off a new request with smaller range.
+                    // Note that this function is recursive only conceptually;
+                    // since it kicks off a new request with callback, we don't need to worry about stack overflow.
+                    this.memory_read_fetch_page_recursive(builder, cx);
+                } else {
+                    builder.unknown(size);
+                }
+            },
+            cx,
+        );
+    }
+
     pub fn ignore_breakpoints(&self) -> bool {
         self.ignore_breakpoints
     }
@@ -1764,6 +1913,10 @@ impl Session {
             // todo(debugger): We need to propagate this change to downstream sessions and send a message to upstream sessions
             unimplemented!()
         }
+    }
+
+    pub fn data_breakpoints(&self) -> impl Iterator<Item = &DataBreakpointState> {
+        self.data_breakpoints.values()
     }
 
     pub fn exception_breakpoints(
@@ -1797,6 +1950,45 @@ impl Session {
         } else {
             debug_assert!(false, "Not implemented");
         }
+    }
+
+    pub fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<'_, Session>) {
+        if let Some(state) = self.data_breakpoints.get_mut(id) {
+            state.is_enabled = !state.is_enabled;
+            self.send_exception_breakpoints(cx);
+        }
+    }
+
+    fn send_data_breakpoints(&mut self, cx: &mut Context<Self>) {
+        if let Some(mode) = self.as_running() {
+            let breakpoints = self
+                .data_breakpoints
+                .values()
+                .filter_map(|state| state.is_enabled.then(|| state.dap.clone()))
+                .collect();
+            let command = SetDataBreakpointsCommand { breakpoints };
+            mode.request(command).detach_and_log_err(cx);
+        }
+    }
+
+    pub fn create_data_breakpoint(
+        &mut self,
+        context: Arc<DataBreakpointContext>,
+        data_id: String,
+        dap: dap::DataBreakpoint,
+        cx: &mut Context<Self>,
+    ) {
+        if self.data_breakpoints.remove(&data_id).is_none() {
+            self.data_breakpoints.insert(
+                data_id,
+                DataBreakpointState {
+                    dap,
+                    is_enabled: true,
+                    context,
+                },
+            );
+        }
+        self.send_data_breakpoints(cx);
     }
 
     pub fn breakpoints_enabled(&self) -> bool {
@@ -1954,7 +2146,7 @@ impl Session {
                     )
                 }
             }
-            SessionState::Building(build_task) => {
+            SessionState::Booting(build_task) => {
                 build_task.take();
                 Task::ready(Some(()))
             }
@@ -2008,7 +2200,7 @@ impl Session {
     pub fn adapter_client(&self) -> Option<Arc<DebugAdapterClient>> {
         match self.mode {
             SessionState::Running(ref local) => Some(local.client.clone()),
-            SessionState::Building(_) => None,
+            SessionState::Booting(_) => None,
         }
     }
 
@@ -2360,6 +2552,20 @@ impl Session {
             .unwrap_or_default()
     }
 
+    pub fn data_breakpoint_info(
+        &mut self,
+        context: Arc<DataBreakpointContext>,
+        mode: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Option<dap::DataBreakpointInfoResponse>> {
+        let command = DataBreakpointInfoCommand {
+            context: context.clone(),
+            mode,
+        };
+
+        self.request(command, |_, response, _| response.ok(), cx)
+    }
+
     pub fn set_variable_value(
         &mut self,
         stack_frame_id: u64,
@@ -2378,6 +2584,8 @@ impl Session {
                 move |this, response, cx| {
                     let response = response.log_err()?;
                     this.invalidate_command_type::<VariablesCommand>();
+                    this.invalidate_command_type::<ReadMemory>();
+                    this.memory.clear(cx.background_executor());
                     this.refresh_watchers(stack_frame_id, cx);
                     cx.emit(SessionEvent::Variables);
                     Some(response)
@@ -2417,6 +2625,8 @@ impl Session {
         cx.spawn(async move |this, cx| {
             let response = request.await;
             this.update(cx, |this, cx| {
+                this.memory.clear(cx.background_executor());
+                this.invalidate_command_type::<ReadMemory>();
                 match response {
                     Ok(response) => {
                         let event = dap::OutputEvent {

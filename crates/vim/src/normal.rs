@@ -64,6 +64,8 @@ actions!(
         DeleteRight,
         /// Deletes using Helix-style behavior.
         HelixDelete,
+        /// Collapse the current selection
+        HelixCollapseSelection,
         /// Changes from cursor to end of line.
         ChangeToEndOfLine,
         /// Deletes from cursor to end of line.
@@ -141,6 +143,20 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         });
         vim.visual_delete(false, window, cx);
         vim.switch_mode(Mode::HelixNormal, true, window, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &HelixCollapseSelection, window, cx| {
+        vim.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut point = selection.head();
+                    if !selection.reversed && !selection.is_empty() {
+                        point = movement::left(map, selection.head());
+                    }
+                    selection.collapse_to(point, selection.goal)
+                });
+            });
+        });
     });
 
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {

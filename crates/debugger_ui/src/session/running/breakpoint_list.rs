@@ -24,12 +24,11 @@ use project::{
 };
 use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div,
-    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, Indicator,
-    InteractiveElement, IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement,
-    Render, RenderOnce, Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement,
-    Styled, Toggleable, Tooltip, Window, div, h_flex, px, v_flex,
+    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement,
+    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
+    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
+    Tooltip, Window, div, h_flex, px, v_flex,
 };
-use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -46,6 +45,7 @@ actions!(
 pub(crate) enum SelectedBreakpointKind {
     Source,
     Exception,
+    Data,
 }
 pub(crate) struct BreakpointList {
     workspace: WeakEntity<Workspace>,
@@ -55,8 +55,6 @@ pub(crate) struct BreakpointList {
     scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
-    hide_scrollbar_task: Option<Task<()>>,
-    show_scrollbar: bool,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
     selected_ix: Option<usize>,
@@ -102,8 +100,6 @@ impl BreakpointList {
                 worktree_store,
                 scrollbar_state,
                 breakpoints: Default::default(),
-                hide_scrollbar_task: None,
-                show_scrollbar: false,
                 workspace,
                 session,
                 focus_handle,
@@ -187,6 +183,9 @@ impl BreakpointList {
                 ),
                 BreakpointEntryKind::ExceptionBreakpoint(bp) => {
                     (SelectedBreakpointKind::Exception, bp.is_enabled)
+                }
+                BreakpointEntryKind::DataBreakpoint(bp) => {
+                    (SelectedBreakpointKind::Data, bp.0.is_enabled)
                 }
             })
         })
@@ -391,7 +390,8 @@ impl BreakpointList {
                 let row = line_breakpoint.breakpoint.row;
                 self.go_to_line_breakpoint(path, row, window, cx);
             }
-            BreakpointEntryKind::ExceptionBreakpoint(_) => {}
+            BreakpointEntryKind::DataBreakpoint(_)
+            | BreakpointEntryKind::ExceptionBreakpoint(_) => {}
         }
     }
 
@@ -421,6 +421,10 @@ impl BreakpointList {
                 let id = exception_breakpoint.id.clone();
                 self.toggle_exception_breakpoint(&id, cx);
             }
+            BreakpointEntryKind::DataBreakpoint(data_breakpoint) => {
+                let id = data_breakpoint.0.dap.data_id.clone();
+                self.toggle_data_breakpoint(&id, cx);
+            }
         }
         cx.notify();
     }
@@ -441,7 +445,7 @@ impl BreakpointList {
                 let row = line_breakpoint.breakpoint.row;
                 self.edit_line_breakpoint(path, row, BreakpointEditAction::Toggle, cx);
             }
-            BreakpointEntryKind::ExceptionBreakpoint(_) => {}
+            _ => {}
         }
         cx.notify();
     }
@@ -488,6 +492,14 @@ impl BreakpointList {
             self.strip_mode.take();
         }
         cx.notify();
+    }
+
+    fn toggle_data_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(session) = &self.session {
+            session.update(cx, |this, cx| {
+                this.toggle_data_breakpoint(&id, cx);
+            });
+        }
     }
 
     fn toggle_exception_breakpoint(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -548,21 +560,6 @@ impl BreakpointList {
         Ok(())
     }
 
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
     fn render_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_ix = self.selected_ix;
         let focus_handle = self.focus_handle.clone();
@@ -597,43 +594,39 @@ impl BreakpointList {
         .flex_grow()
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.show_scrollbar || self.scrollbar_state.is_dragging()) {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("breakpoint-list-vertical-scrollbar")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("breakpoint-list-vertical-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
     }
+
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let selection_kind = self.selection_kind();
         let focus_handle = self.focus_handle.clone();
@@ -642,6 +635,7 @@ impl BreakpointList {
             SelectedBreakpointKind::Exception => {
                 "Exception Breakpoints cannot be removed from the breakpoint list"
             }
+            SelectedBreakpointKind::Data => "Remove data breakpoint from a breakpoint list",
         });
         let toggle_label = selection_kind.map(|(_, is_enabled)| {
             if is_enabled {
@@ -687,7 +681,7 @@ impl BreakpointList {
                 }),
             )
             .child(
-                IconButton::new("remove-breakpoint-breakpoint-list", IconName::X)
+                IconButton::new("remove-breakpoint-breakpoint-list", IconName::Close)
                     .icon_size(IconSize::XSmall)
                     .icon_color(ui::Color::Error)
                     .when_some(remove_breakpoint_tooltip, |this, tooltip| {
@@ -783,21 +777,24 @@ impl Render for BreakpointList {
                     weak: weak.clone(),
                 })
         });
-        self.breakpoints
-            .extend(breakpoints.chain(exception_breakpoints));
+        let data_breakpoints = self.session.as_ref().into_iter().flat_map(|session| {
+            session
+                .read(cx)
+                .data_breakpoints()
+                .map(|state| BreakpointEntry {
+                    kind: BreakpointEntryKind::DataBreakpoint(DataBreakpoint(state.clone())),
+                    weak: weak.clone(),
+                })
+        });
+        self.breakpoints.extend(
+            breakpoints
+                .chain(data_breakpoints)
+                .chain(exception_breakpoints),
+        );
         v_flex()
             .id("breakpoint-list")
             .key_context("BreakpointList")
             .track_focus(&self.focus_handle)
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(window, cx);
-                }
-            }))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
             .on_action(cx.listener(Self::select_first))
@@ -814,7 +811,7 @@ impl Render for BreakpointList {
                 v_flex()
                     .size_full()
                     .child(self.render_list(cx))
-                    .children(self.render_vertical_scrollbar(cx)),
+                    .child(self.render_vertical_scrollbar(cx)),
             )
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal()).child(
@@ -905,7 +902,11 @@ impl LineBreakpoint {
                     .ok();
                 }
             })
-            .child(Indicator::icon(Icon::new(icon_name)).color(Color::Debugger))
+            .child(
+                Icon::new(icon_name)
+                    .color(Color::Debugger)
+                    .size(IconSize::XSmall),
+            )
             .on_mouse_down(MouseButton::Left, move |_, _, _| {});
 
         ListItem::new(SharedString::from(format!(
@@ -996,6 +997,103 @@ struct ExceptionBreakpoint {
     data: ExceptionBreakpointsFilter,
     is_enabled: bool,
 }
+#[derive(Clone, Debug)]
+struct DataBreakpoint(project::debugger::session::DataBreakpointState);
+
+impl DataBreakpoint {
+    fn render(
+        &self,
+        props: SupportedBreakpointProperties,
+        strip_mode: Option<ActiveBreakpointStripMode>,
+        ix: usize,
+        is_selected: bool,
+        focus_handle: FocusHandle,
+        list: WeakEntity<BreakpointList>,
+    ) -> ListItem {
+        let color = if self.0.is_enabled {
+            Color::Debugger
+        } else {
+            Color::Muted
+        };
+        let is_enabled = self.0.is_enabled;
+        let id = self.0.dap.data_id.clone();
+        ListItem::new(SharedString::from(format!(
+            "data-breakpoint-ui-item-{}",
+            self.0.dap.data_id
+        )))
+        .rounded()
+        .start_slot(
+            div()
+                .id(SharedString::from(format!(
+                    "data-breakpoint-ui-item-{}-click-handler",
+                    self.0.dap.data_id
+                )))
+                .tooltip({
+                    let focus_handle = focus_handle.clone();
+                    move |window, cx| {
+                        Tooltip::for_action_in(
+                            if is_enabled {
+                                "Disable Data Breakpoint"
+                            } else {
+                                "Enable Data Breakpoint"
+                            },
+                            &ToggleEnableBreakpoint,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let list = list.clone();
+                    move |_, _, cx| {
+                        list.update(cx, |this, cx| {
+                            this.toggle_data_breakpoint(&id, cx);
+                        })
+                        .ok();
+                    }
+                })
+                .cursor_pointer()
+                .child(
+                    Icon::new(IconName::Binary)
+                        .color(color)
+                        .size(IconSize::Small),
+                ),
+        )
+        .child(
+            h_flex()
+                .w_full()
+                .mr_4()
+                .py_0p5()
+                .justify_between()
+                .child(
+                    v_flex()
+                        .py_1()
+                        .gap_1()
+                        .min_h(px(26.))
+                        .justify_center()
+                        .id(("data-breakpoint-label", ix))
+                        .child(
+                            Label::new(self.0.context.human_readable_label())
+                                .size(LabelSize::Small)
+                                .line_height_style(ui::LineHeightStyle::UiLabel),
+                        ),
+                )
+                .child(BreakpointOptionsStrip {
+                    props,
+                    breakpoint: BreakpointEntry {
+                        kind: BreakpointEntryKind::DataBreakpoint(self.clone()),
+                        weak: list,
+                    },
+                    is_selected,
+                    focus_handle,
+                    strip_mode,
+                    index: ix,
+                }),
+        )
+        .toggle_state(is_selected)
+    }
+}
 
 impl ExceptionBreakpoint {
     fn render(
@@ -1062,7 +1160,11 @@ impl ExceptionBreakpoint {
                     }
                 })
                 .cursor_pointer()
-                .child(Indicator::icon(Icon::new(IconName::Flame)).color(color)),
+                .child(
+                    Icon::new(IconName::Flame)
+                        .color(color)
+                        .size(IconSize::Small),
+                ),
         )
         .child(
             h_flex()
@@ -1105,6 +1207,7 @@ impl ExceptionBreakpoint {
 enum BreakpointEntryKind {
     LineBreakpoint(LineBreakpoint),
     ExceptionBreakpoint(ExceptionBreakpoint),
+    DataBreakpoint(DataBreakpoint),
 }
 
 #[derive(Clone, Debug)]
@@ -1140,6 +1243,14 @@ impl BreakpointEntry {
                     focus_handle,
                     self.weak.clone(),
                 ),
+            BreakpointEntryKind::DataBreakpoint(data_breakpoint) => data_breakpoint.render(
+                props.for_data_breakpoints(),
+                strip_mode,
+                ix,
+                is_selected,
+                focus_handle,
+                self.weak.clone(),
+            ),
         }
     }
 
@@ -1153,6 +1264,11 @@ impl BreakpointEntry {
             BreakpointEntryKind::ExceptionBreakpoint(exception_breakpoint) => format!(
                 "exception-breakpoint-control-strip--{}",
                 exception_breakpoint.id
+            )
+            .into(),
+            BreakpointEntryKind::DataBreakpoint(data_breakpoint) => format!(
+                "data-breakpoint-control-strip--{}",
+                data_breakpoint.0.dap.data_id
             )
             .into(),
         }
@@ -1172,8 +1288,8 @@ impl BreakpointEntry {
             BreakpointEntryKind::LineBreakpoint(line_breakpoint) => {
                 line_breakpoint.breakpoint.condition.is_some()
             }
-            // We don't support conditions on exception breakpoints
-            BreakpointEntryKind::ExceptionBreakpoint(_) => false,
+            // We don't support conditions on exception/data breakpoints
+            _ => false,
         }
     }
 
@@ -1223,6 +1339,10 @@ impl From<&Capabilities> for SupportedBreakpointProperties {
 impl SupportedBreakpointProperties {
     fn for_exception_breakpoints(self) -> Self {
         // TODO: we don't yet support conditions for exception breakpoints at the data layer, hence all props are disabled here.
+        Self::empty()
+    }
+    fn for_data_breakpoints(self) -> Self {
+        // TODO: we don't yet support conditions for data breakpoints at the data layer, hence all props are disabled here.
         Self::empty()
     }
 }
@@ -1319,7 +1439,7 @@ impl RenderOnce for BreakpointOptionsStrip {
                     .child(
                         IconButton::new(
                             SharedString::from(format!("{id}-log-toggle")),
-                            IconName::ScrollText,
+                            IconName::Notepad,
                         )
                         .icon_size(IconSize::XSmall)
                         .style(style_for_toggle(ActiveBreakpointStripMode::Log, has_logs))

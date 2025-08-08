@@ -2,6 +2,7 @@ use crate::persistence::DebuggerPaneItem;
 use crate::session::DebugSession;
 use crate::session::running::RunningState;
 use crate::session::running::breakpoint_list::BreakpointList;
+
 use crate::{
     ClearAllBreakpoints, Continue, CopyDebugAdapterArguments, Detach, FocusBreakpointList,
     FocusConsole, FocusFrames, FocusLoadedSources, FocusModules, FocusTerminal, FocusVariables,
@@ -299,7 +300,7 @@ impl DebugPanel {
         });
 
         session.update(cx, |session, _| match &mut session.mode {
-            SessionState::Building(state_task) => {
+            SessionState::Booting(state_task) => {
                 *state_task = Some(boot_task);
             }
             SessionState::Running(_) => {
@@ -648,7 +649,7 @@ impl DebugPanel {
                 .tooltip(Tooltip::text("Open Documentation"))
         };
         let logs_button = || {
-            IconButton::new("debug-open-logs", IconName::ScrollText)
+            IconButton::new("debug-open-logs", IconName::Notepad)
                 .icon_size(IconSize::Small)
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(debugger_tools::OpenDebugAdapterLogs.boxed_clone(), cx)
@@ -787,7 +788,7 @@ impl DebugPanel {
                                     )
                                     .child(
                                         IconButton::new("debug-step-out", IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
                                                 &running_state,
@@ -811,7 +812,7 @@ impl DebugPanel {
                                     )
                                     .child(Divider::vertical())
                                     .child(
-                                        IconButton::new("debug-restart", IconName::DebugRestart)
+                                        IconButton::new("debug-restart", IconName::RotateCcw)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
                                                 &running_state,
@@ -1759,6 +1760,7 @@ impl Render for DebugPanel {
                                         category_filter: Some(
                                             zed_actions::ExtensionCategoryFilter::DebugAdapters,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,
@@ -1804,6 +1806,7 @@ impl Render for DebugPanel {
                                                 .child(breakpoint_list)
                                                 .child(Divider::vertical())
                                                 .child(welcome_experience)
+                                                .child(Divider::vertical())
                                         } else {
                                             this.items_end()
                                                 .child(welcome_experience)

@@ -38,7 +38,7 @@ impl Tool for ContextServerTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Cog
+        IconName::ToolHammer
     }
 
     fn source(&self) -> ToolSource {
@@ -47,7 +47,7 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 

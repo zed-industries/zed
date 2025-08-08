@@ -115,21 +115,9 @@ impl ProjectIndexDebugView {
                 .collect::<Vec<_>>();
 
             this.update(cx, |this, cx| {
-                let view = cx.entity().downgrade();
                 this.selected_path = Some(PathState {
                     path: file_path,
-                    list_state: ListState::new(
-                        chunks.len(),
-                        gpui::ListAlignment::Top,
-                        px(100.),
-                        move |ix, _, cx| {
-                            if let Some(view) = view.upgrade() {
-                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
-                            } else {
-                                div().into_any()
-                            }
-                        },
-                    ),
+                    list_state: ListState::new(chunks.len(), gpui::ListAlignment::Top, px(100.)),
                     chunks,
                 });
                 cx.notify();
@@ -219,7 +207,13 @@ impl Render for ProjectIndexDebugView {
                             cx.notify();
                         })),
                 )
-                .child(list(selected_path.list_state.clone()).size_full())
+                .child(
+                    list(
+                        selected_path.list_state.clone(),
+                        cx.processor(|this, ix, _, cx| this.render_chunk(ix, cx)),
+                    )
+                    .size_full(),
+                )
                 .size_full()
                 .into_any_element()
         } else {

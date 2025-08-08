@@ -2072,6 +2072,21 @@ impl Buffer {
         self.text.push_transaction(transaction, now);
     }
 
+    /// Differs from `push_transaction` in that it does not clear the redo
+    /// stack. Intended to be used to create a parent transaction to merge
+    /// potential child transactions into.
+    ///
+    /// The caller is responsible for removing it from the undo history using
+    /// `forget_transaction` if no edits are merged into it. Otherwise, if edits
+    /// are merged into this transaction, the caller is responsible for ensuring
+    /// the redo stack is cleared. The easiest way to ensure the redo stack is
+    /// cleared is to create transactions with the usual `start_transaction` and
+    /// `end_transaction` methods and merging the resulting transactions into
+    /// the transaction created by this method
+    pub fn push_empty_transaction(&mut self, now: Instant) -> TransactionId {
+        self.text.push_empty_transaction(now)
+    }
+
     /// Prevent the last transaction from being grouped with any subsequent transactions,
     /// even if they occur with the buffer's undo grouping duration.
     pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
@@ -3364,13 +3379,19 @@ impl BufferSnapshot {
 
     /// Returns a tuple of the range and character kind of the word
     /// surrounding the given position.
-    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+    pub fn surrounding_word<T: ToOffset>(
+        &self,
+        start: T,
+        for_completion: bool,
+    ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).take(128).peekable();
         let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
-        let classifier = self.char_classifier_at(start);
+        let classifier = self
+            .char_classifier_at(start)
+            .for_completion(for_completion);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),
             next_chars.peek().copied().map(|c| classifier.kind(c)),
