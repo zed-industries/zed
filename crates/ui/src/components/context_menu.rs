@@ -679,18 +679,18 @@ impl ContextMenu {
             let next_index = ix + 1;
             if self.items.len() <= next_index {
                 self.select_first(&SelectFirst, window, cx);
+                return;
             } else {
                 for (ix, item) in self.items.iter().enumerate().skip(next_index) {
                     if item.is_selectable() {
                         self.select_index(ix, window, cx);
                         cx.notify();
-                        break;
+                        return;
                     }
                 }
             }
-        } else {
-            self.select_first(&SelectFirst, window, cx);
         }
+        self.select_first(&SelectFirst, window, cx);
     }
 
     pub fn select_previous(
