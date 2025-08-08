@@ -134,7 +134,7 @@ use language::{
 use linked_editing_ranges::refresh_linked_ranges;
 use lsp::{
     CodeActionKind, CompletionItemKind, CompletionTriggerKind, InsertTextFormat, InsertTextMode,
-    LanguageServerId, LanguageServerName,
+    LanguageServerId,
 };
 use lsp_colors::LspColorData;
 use markdown::Markdown;
@@ -1864,7 +1864,6 @@ impl Editor {
                                 editor.tasks_update_task =
                                     Some(editor.refresh_runnables(window, cx));
                             }
-                            editor.update_lsp_data(true, None, window, cx);
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
@@ -1884,6 +1883,11 @@ impl Editor {
                                             .ok();
                                     }
                                 }
+                            }
+                        }
+                        project::Event::LanguageServerBufferRegistered { buffer_id, .. } => {
+                            if editor.buffer().read(cx).buffer(*buffer_id).is_some() {
+                                editor.update_lsp_data(false, Some(*buffer_id), window, cx);
                             }
                         }
                         _ => {}
@@ -2699,6 +2703,11 @@ impl Editor {
 
     pub fn set_completion_provider(&mut self, provider: Option<Rc<dyn CompletionProvider>>) {
         self.completion_provider = provider;
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn completion_provider(&self) -> Option<Rc<dyn CompletionProvider>> {
+        self.completion_provider.clone()
     }
 
     pub fn semantics_provider(&self) -> Option<Rc<dyn SemanticsProvider>> {
@@ -7756,8 +7765,14 @@ impl Editor {
         } else {
             None
         };
-        let is_move =
-            move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode;
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
+        let is_move = supports_jump
+            && (move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode);
         let completion = if is_move {
             invalidation_row_range =
                 move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
@@ -8179,7 +8194,7 @@ impl Editor {
                 editor.set_breakpoint_context_menu(
                     row,
                     Some(position),
-                    event.down.position,
+                    event.position(),
                     window,
                     cx,
                 );
@@ -8346,7 +8361,11 @@ impl Editor {
         .icon_color(color)
         .toggle_state(is_active)
         .on_click(cx.listener(move |editor, e: &ClickEvent, window, cx| {
-            let quick_launch = e.down.button == MouseButton::Left;
+            let quick_launch = match e {
+                ClickEvent::Keyboard(_) => true,
+                ClickEvent::Mouse(e) => e.down.button == MouseButton::Left,
+            };
+
             window.focus(&editor.focus_handle(cx));
             editor.toggle_code_actions(
                 &ToggleCodeActions {
@@ -8358,7 +8377,7 @@ impl Editor {
             );
         }))
         .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
-            editor.set_breakpoint_context_menu(row, position, event.down.position, window, cx);
+            editor.set_breakpoint_context_menu(row, position, event.position(), window, cx);
         }))
     }
 
@@ -8791,8 +8810,12 @@ impl Editor {
             return None;
         }
 
-        let highlighted_edits =
-            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview.as_ref()?, false, cx);
+        let highlighted_edits = if let Some(edit_preview) = edit_preview.as_ref() {
+            crate::edit_prediction_edit_text(&snapshot, edits, edit_preview, false, cx)
+        } else {
+            // Fallback for providers without edit_preview
+            crate::edit_prediction_fallback_text(edits, cx)
+        };
 
         let styled_text = highlighted_edits.to_styled_text(&style.text);
         let line_count = highlighted_edits.text.lines().count();
@@ -9060,6 +9083,18 @@ impl Editor {
         let editor_bg_color = cx.theme().colors().editor_background;
         editor_bg_color.blend(accent_color.opacity(0.6))
     }
+    fn get_prediction_provider_icon_name(
+        provider: &Option<RegisteredEditPredictionProvider>,
+    ) -> IconName {
+        match provider {
+            Some(provider) => match provider.provider.name() {
+                "copilot" => IconName::Copilot,
+                "supermaven" => IconName::Supermaven,
+                _ => IconName::ZedPredict,
+            },
+            None => IconName::ZedPredict,
+        }
+    }
 
     fn render_edit_prediction_cursor_popover(
         &self,
@@ -9072,6 +9107,7 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) -> Option<AnyElement> {
         let provider = self.edit_prediction_provider.as_ref()?;
+        let provider_icon = Self::get_prediction_provider_icon_name(&self.edit_prediction_provider);
 
         if provider.provider.needs_terms_acceptance(cx) {
             return Some(
@@ -9098,7 +9134,7 @@ impl Editor {
                         h_flex()
                             .flex_1()
                             .gap_2()
-                            .child(Icon::new(IconName::ZedPredict))
+                            .child(Icon::new(provider_icon))
                             .child(Label::new("Accept Terms of Service"))
                             .child(div().w_full())
                             .child(
@@ -9114,12 +9150,8 @@ impl Editor {
 
         let is_refreshing = provider.provider.is_refreshing(cx);
 
-        fn pending_completion_container() -> Div {
-            h_flex()
-                .h_full()
-                .flex_1()
-                .gap_2()
-                .child(Icon::new(IconName::ZedPredict))
+        fn pending_completion_container(icon: IconName) -> Div {
+            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
         }
 
         let completion = match &self.active_edit_prediction {
@@ -9149,7 +9181,7 @@ impl Editor {
                                         Icon::new(IconName::ZedPredictUp)
                                     }
                                 }
-                                EditPrediction::Edit { .. } => Icon::new(IconName::ZedPredict),
+                                EditPrediction::Edit { .. } => Icon::new(provider_icon),
                             }))
                             .child(
                                 h_flex()
@@ -9216,15 +9248,15 @@ impl Editor {
                     cx,
                 )?,
 
-                None => {
-                    pending_completion_container().child(Label::new("...").size(LabelSize::Small))
-                }
+                None => pending_completion_container(provider_icon)
+                    .child(Label::new("...").size(LabelSize::Small)),
             },
 
-            None => pending_completion_container().child(Label::new("No Prediction")),
+            None => pending_completion_container(provider_icon)
+                .child(Label::new("...").size(LabelSize::Small)),
         };
 
-        let completion = if is_refreshing {
+        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
             completion
                 .with_animation(
                     "loading-completion",
@@ -9324,23 +9356,35 @@ impl Editor {
                 .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
         }
 
+        let supports_jump = self
+            .edit_prediction_provider
+            .as_ref()
+            .map(|provider| provider.provider.supports_jump_to_edit())
+            .unwrap_or(true);
+
         match &completion.completion {
             EditPrediction::Move {
                 target, snapshot, ..
-            } => Some(
-                h_flex()
-                    .px_2()
-                    .gap_2()
-                    .flex_1()
-                    .child(
-                        if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
-                            Icon::new(IconName::ZedPredictDown)
-                        } else {
-                            Icon::new(IconName::ZedPredictUp)
-                        },
-                    )
-                    .child(Label::new("Jump to Edit")),
-            ),
+            } => {
+                if !supports_jump {
+                    return None;
+                }
+
+                Some(
+                    h_flex()
+                        .px_2()
+                        .gap_2()
+                        .flex_1()
+                        .child(
+                            if target.text_anchor.to_point(&snapshot).row > cursor_point.row {
+                                Icon::new(IconName::ZedPredictDown)
+                            } else {
+                                Icon::new(IconName::ZedPredictUp)
+                            },
+                        )
+                        .child(Label::new("Jump to Edit")),
+                )
+            }
 
             EditPrediction::Edit {
                 edits,
@@ -9350,14 +9394,13 @@ impl Editor {
             } => {
                 let first_edit_row = edits.first()?.0.start.text_anchor.to_point(&snapshot).row;
 
-                let (highlighted_edits, has_more_lines) = crate::edit_prediction_edit_text(
-                    &snapshot,
-                    &edits,
-                    edit_preview.as_ref()?,
-                    true,
-                    cx,
-                )
-                .first_line_preview();
+                let (highlighted_edits, has_more_lines) =
+                    if let Some(edit_preview) = edit_preview.as_ref() {
+                        crate::edit_prediction_edit_text(&snapshot, &edits, edit_preview, true, cx)
+                            .first_line_preview()
+                    } else {
+                        crate::edit_prediction_fallback_text(&edits, cx).first_line_preview()
+                    };
 
                 let styled_text = gpui::StyledText::new(highlighted_edits.text)
                     .with_default_highlights(&style.text, highlighted_edits.highlights);
@@ -9368,11 +9411,13 @@ impl Editor {
                     .child(styled_text)
                     .when(has_more_lines, |parent| parent.child("…"));
 
-                let left = if first_edit_row != cursor_point.row {
+                let left = if supports_jump && first_edit_row != cursor_point.row {
                     render_relative_row_jump("", cursor_point.row, first_edit_row)
                         .into_any_element()
                 } else {
-                    Icon::new(IconName::ZedPredict).into_any_element()
+                    let icon_name =
+                        Editor::get_prediction_provider_icon_name(&self.edit_prediction_provider);
+                    Icon::new(icon_name).into_any_element()
                 };
 
                 Some(
@@ -14703,6 +14748,81 @@ impl Editor {
         }
     }
 
+    pub fn unwrap_syntax_node(
+        &mut self,
+        _: &UnwrapSyntaxNode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections: Box<[_]> = self.selections.all::<usize>(cx).into();
+
+        let edits = old_selections
+            .iter()
+            // only consider the first selection for now
+            .take(1)
+            .map(|selection| {
+                // Only requires two branches once if-let-chains stabilize (#53667)
+                let selection_range = if !selection.is_empty() {
+                    selection.range()
+                } else if let Some((_, ancestor_range)) =
+                    buffer.syntax_ancestor(selection.start..selection.end)
+                {
+                    match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    }
+                } else {
+                    selection.range()
+                };
+
+                let mut new_range = selection_range.clone();
+                while let Some((_, ancestor_range)) = buffer.syntax_ancestor(new_range.clone()) {
+                    new_range = match ancestor_range {
+                        MultiOrSingleBufferOffsetRange::Single(range) => range,
+                        MultiOrSingleBufferOffsetRange::Multi(range) => range,
+                    };
+                    if new_range.start < selection_range.start
+                        || new_range.end > selection_range.end
+                    {
+                        break;
+                    }
+                }
+
+                (selection, selection_range, new_range)
+            })
+            .collect::<Vec<_>>();
+
+        self.transact(window, cx, |editor, window, cx| {
+            for (_, child, parent) in &edits {
+                let text = buffer.text_for_range(child.clone()).collect::<String>();
+                editor.replace_text_in_range(Some(parent.clone()), &text, window, cx);
+            }
+
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |s| {
+                    s.select(
+                        edits
+                            .iter()
+                            .map(|(s, old, new)| Selection {
+                                id: s.id,
+                                start: new.start,
+                                end: new.start + old.len(),
+                                goal: SelectionGoal::None,
+                                reversed: s.reversed,
+                            })
+                            .collect(),
+                    );
+                },
+            );
+        });
+    }
+
     fn refresh_runnables(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<()> {
         if !EditorSettings::get_global(cx).gutter.runnables {
             self.clear_tasks();
@@ -15846,7 +15966,7 @@ impl Editor {
                     let language_server_name = project
                         .language_server_statuses(cx)
                         .find(|(id, _)| server_id == *id)
-                        .map(|(_, status)| LanguageServerName::from(status.name.as_str()));
+                        .map(|(_, status)| status.name.clone());
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
                             lsp_location.uri.clone(),
@@ -22184,7 +22304,6 @@ impl SemanticsProvider for Entity<Project> {
     }
 
     fn supports_inlay_hints(&self, buffer: &Entity<Buffer>, cx: &mut App) -> bool {
-        // TODO: make this work for remote projects
         self.update(cx, |project, cx| {
             if project
                 .active_debug_session(cx)
@@ -23186,6 +23305,33 @@ fn edit_prediction_edit_text(
         .collect::<Vec<_>>();
 
     edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
+}
+
+fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, String)], cx: &App) -> HighlightedText {
+    // Fallback for providers that don't provide edit_preview (like Copilot/Supermaven)
+    // Just show the raw edit text with basic styling
+    let mut text = String::new();
+    let mut highlights = Vec::new();
+
+    let insertion_highlight_style = HighlightStyle {
+        color: Some(cx.theme().colors().text),
+        ..Default::default()
+    };
+
+    for (_, edit_text) in edits {
+        let start_offset = text.len();
+        text.push_str(edit_text);
+        let end_offset = text.len();
+
+        if start_offset < end_offset {
+            highlights.push((start_offset..end_offset, insertion_highlight_style));
+        }
+    }
+
+    HighlightedText {
+        text: text.into(),
+        highlights,
+    }
 }
 
 pub fn diagnostic_style(severity: lsp::DiagnosticSeverity, colors: &StatusColors) -> Hsla {

@@ -4439,7 +4439,7 @@ mod tests {
         });
         for name in languages.language_names() {
             languages
-                .language_for_name(&name)
+                .language_for_name(name.as_ref())
                 .await
                 .with_context(|| format!("language name {name}"))
                 .unwrap();

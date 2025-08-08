@@ -4,7 +4,7 @@ use backtrace::{self, Backtrace};
 use chrono::Utc;
 use client::{
     TelemetrySettings,
-    telemetry::{self, SENTRY_MINIDUMP_ENDPOINT},
+    telemetry::{self, MINIDUMP_ENDPOINT},
 };
 use db::kvp::KEY_VALUE_STORE;
 use futures::AsyncReadExt;
@@ -149,6 +149,7 @@ pub fn init_panic_hook(
                 let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
                 let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
                 let panic_file = fs::OpenOptions::new()
+                    .write(true)
                     .create_new(true)
                     .open(&panic_file_path)
                     .log_err();
@@ -553,6 +554,10 @@ async fn upload_previous_panics(
             .log_err();
     }
 
+    if MINIDUMP_ENDPOINT.is_none() {
+        return Ok(most_recent_panic);
+    }
+
     // loop back over the directory again to upload any minidumps that are missing panics
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
     while let Some(child) = children.next().await {
@@ -584,7 +589,7 @@ async fn upload_minidump(
     minidump: Vec<u8>,
     panic: Option<&Panic>,
 ) -> Result<()> {
-    let sentry_upload_url = SENTRY_MINIDUMP_ENDPOINT
+    let minidump_endpoint = MINIDUMP_ENDPOINT
         .to_owned()
         .ok_or_else(|| anyhow::anyhow!("Minidump endpoint not set"))?;
 
@@ -597,15 +602,16 @@ async fn upload_minidump(
         )
         .text("platform", "rust");
     if let Some(panic) = panic {
-        form = form.text(
-            "release",
-            format!("{}-{}", panic.release_channel, panic.app_version),
-        );
-        // TODO: tack on more fields
+        form = form
+            .text(
+                "sentry[release]",
+                format!("{}-{}", panic.release_channel, panic.app_version),
+            )
+            .text("sentry[logentry][formatted]", panic.payload.clone());
     }
 
     let mut response_text = String::new();
-    let mut response = http.send_multipart_form(&sentry_upload_url, form).await?;
+    let mut response = http.send_multipart_form(&minidump_endpoint, form).await?;
     response
         .body_mut()
         .read_to_string(&mut response_text)

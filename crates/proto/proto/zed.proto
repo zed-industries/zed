@@ -362,9 +362,6 @@ message Envelope {
         GetDocumentSymbols get_document_symbols = 330;
         GetDocumentSymbolsResponse get_document_symbols_response = 331;
 
-        LanguageServerIdForName language_server_id_for_name = 332;
-        LanguageServerIdForNameResponse language_server_id_for_name_response = 333;
-
         LoadCommitDiff load_commit_diff = 334;
         LoadCommitDiffResponse load_commit_diff_response = 335;
 
@@ -424,6 +421,7 @@ message Envelope {
     reserved 247 to 254;
     reserved 255 to 256;
     reserved 280 to 281;
+    reserved 332 to 333;
 }
 
 message Hello {

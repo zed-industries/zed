@@ -75,6 +75,10 @@ actions!(
         ActivateEditingPage,
         /// Activates the AI Setup page.
         ActivateAISetupPage,
+        /// Finish the onboarding process.
+        Finish,
+        /// Sign in while in the onboarding flow.
+        SignIn
     ]
 );
 
@@ -261,40 +265,6 @@ impl Onboarding {
         cx.emit(ItemEvent::UpdateTab);
     }
 
-    fn go_to_welcome_page(&self, cx: &mut App) {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            let Some((onboarding_id, onboarding_idx)) = workspace
-                .active_pane()
-                .read(cx)
-                .items()
-                .enumerate()
-                .find_map(|(idx, item)| {
-                    let _ = item.downcast::<Onboarding>()?;
-                    Some((item.item_id(), idx))
-                })
-            else {
-                return;
-            };
-
-            workspace.active_pane().update(cx, |pane, cx| {
-                // Get the index here to get around the borrow checker
-                let idx = pane.items().enumerate().find_map(|(idx, item)| {
-                    let _ = item.downcast::<WelcomePage>()?;
-                    Some(idx)
-                });
-
-                if let Some(idx) = idx {
-                    pane.activate_item(idx, true, true, window, cx);
-                } else {
-                    let item = Box::new(WelcomePage::new(window, cx));
-                    pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
-                }
-
-                pane.remove_item(onboarding_id, false, false, window, cx);
-            });
-        });
-    }
-
     fn render_nav_buttons(
         &mut self,
         window: &mut Window,
@@ -401,6 +371,14 @@ impl Onboarding {
                                     .children(self.render_nav_buttons(window, cx)),
                             )
                             .map(|this| {
+                                let keybinding = KeyBinding::for_action_in(
+                                    &Finish,
+                                    &self.focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.)));
+
                                 if ai_setup_page {
                                     this.child(
                                         ButtonLike::new("start_building")
@@ -412,23 +390,29 @@ impl Onboarding {
                                                     .w_full()
                                                     .justify_between()
                                                     .child(Label::new("Start Building"))
-                                                    .child(
-                                                        Icon::new(IconName::Check)
-                                                            .size(IconSize::Small),
-                                                    ),
+                                                    .children(keybinding),
                                             )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.go_to_welcome_page(cx);
-                                            })),
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            }),
                                     )
                                 } else {
                                     this.child(
                                         ButtonLike::new("skip_all")
                                             .size(ButtonSize::Medium)
-                                            .child(Label::new("Skip All").ml_1())
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.go_to_welcome_page(cx);
-                                            })),
+                                            .child(
+                                                h_flex()
+                                                    .ml_1()
+                                                    .w_full()
+                                                    .justify_between()
+                                                    .child(
+                                                        Label::new("Skip All").color(Color::Muted),
+                                                    )
+                                                    .children(keybinding),
+                                            )
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(Finish.boxed_clone(), cx);
+                                            }),
                                     )
                                 }
                             }),
@@ -446,33 +430,52 @@ impl Onboarding {
                     Button::new("sign_in", "Sign In")
                         .full_width()
                         .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Medium)
+                        .key_binding(
+                            KeyBinding::for_action_in(&SignIn, &self.focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                        )
                         .on_click(|_, window, cx| {
-                            let client = Client::global(cx);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    client
-                                        .sign_in_with_optional_connect(true, &cx)
-                                        .await
-                                        .notify_async_err(cx);
-                                })
-                                .detach();
+                            window.dispatch_action(SignIn.boxed_clone(), cx);
                         })
                         .into_any_element()
                 },
             )
     }
 
+    fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+        go_to_welcome_page(cx);
+    }
+
+    fn handle_sign_in(_: &SignIn, window: &mut Window, cx: &mut App) {
+        let client = Client::global(cx);
+
+        window
+            .spawn(cx, async move |cx| {
+                client
+                    .sign_in_with_optional_connect(true, &cx)
+                    .await
+                    .notify_async_err(cx);
+            })
+            .detach();
+    }
+
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let client = Client::global(cx);
+
         match self.selected_page {
-            SelectedPage::Basics => {
-                crate::basics_page::render_basics_page(window, cx).into_any_element()
-            }
+            SelectedPage::Basics => crate::basics_page::render_basics_page(cx).into_any_element(),
             SelectedPage::Editing => {
                 crate::editing_page::render_editing_page(window, cx).into_any_element()
             }
-            SelectedPage::AiSetup => {
-                crate::ai_setup_page::render_ai_setup_page(&self, window, cx).into_any_element()
-            }
+            SelectedPage::AiSetup => crate::ai_setup_page::render_ai_setup_page(
+                self.workspace.clone(),
+                self.user_store.clone(),
+                client,
+                window,
+                cx,
+            )
+            .into_any_element(),
         }
     }
 }
@@ -484,11 +487,14 @@ impl Render for Onboarding {
             .key_context({
                 let mut ctx = KeyContext::new_with_defaults();
                 ctx.add("Onboarding");
+                ctx.add("menu");
                 ctx
             })
             .track_focus(&self.focus_handle)
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .on_action(Self::on_finish)
+            .on_action(Self::handle_sign_in)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
                 this.set_page(SelectedPage::Basics, cx);
             }))
@@ -497,6 +503,14 @@ impl Render for Onboarding {
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
                 this.set_page(SelectedPage::AiSetup, cx);
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
+                window.focus_next();
+                cx.notify();
+            }))
+            .on_action(cx.listener(|_, _: &menu::SelectPrevious, window, cx| {
+                window.focus_prev();
+                cx.notify();
             }))
             .child(
                 h_flex()
@@ -559,6 +573,40 @@ impl Item for Onboarding {
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
         f(*event)
     }
+}
+
+fn go_to_welcome_page(cx: &mut App) {
+    with_active_or_new_workspace(cx, |workspace, window, cx| {
+        let Some((onboarding_id, onboarding_idx)) = workspace
+            .active_pane()
+            .read(cx)
+            .items()
+            .enumerate()
+            .find_map(|(idx, item)| {
+                let _ = item.downcast::<Onboarding>()?;
+                Some((item.item_id(), idx))
+            })
+        else {
+            return;
+        };
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            // Get the index here to get around the borrow checker
+            let idx = pane.items().enumerate().find_map(|(idx, item)| {
+                let _ = item.downcast::<WelcomePage>()?;
+                Some(idx)
+            });
+
+            if let Some(idx) = idx {
+                pane.activate_item(idx, true, true, window, cx);
+            } else {
+                let item = Box::new(WelcomePage::new(window, cx));
+                pane.add_item(item, true, true, Some(onboarding_idx), window, cx);
+            }
+
+            pane.remove_item(onboarding_id, false, false, window, cx);
+        });
+    });
 }
 
 pub async fn handle_import_vscode_settings(

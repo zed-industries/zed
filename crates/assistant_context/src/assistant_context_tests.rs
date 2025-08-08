@@ -1210,8 +1210,8 @@ async fn test_summarization(cx: &mut TestAppContext) {
     });
 
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("Brief");
-    fake_model.stream_last_completion_response(" Introduction");
+    fake_model.send_last_completion_stream_text_chunk("Brief");
+    fake_model.send_last_completion_stream_text_chunk(" Introduction");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -1274,7 +1274,7 @@ async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
     });
 
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("A successful summary");
+    fake_model.send_last_completion_stream_text_chunk("A successful summary");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -1356,7 +1356,7 @@ fn setup_context_editor_with_fake_model(
 
 fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("Assistant response");
+    fake_model.send_last_completion_stream_text_chunk("Assistant response");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 }
