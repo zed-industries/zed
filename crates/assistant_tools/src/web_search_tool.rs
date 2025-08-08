@@ -177,7 +177,7 @@ impl ToolCard for WebSearchToolCard {
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .truncate(true)
                             .tooltip({

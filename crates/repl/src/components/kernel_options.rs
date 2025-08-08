@@ -236,7 +236,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .child(
                     Button::new("kernel-docs", "Kernel Docs")
                         .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::End)
                         .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),

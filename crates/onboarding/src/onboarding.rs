@@ -690,7 +690,7 @@ pub async fn handle_import_vscode_settings(
                     "Failed to import settings. See log for details",
                     cx,
                     |this, _| {
-                        this.icon(ToastIcon::new(IconName::X).color(Color::Error))
+                        this.icon(ToastIcon::new(IconName::Close).color(Color::Error))
                             .action("Open Log", |window, cx| {
                                 window.dispatch_action(workspace::OpenLog.boxed_clone(), cx)
                             })

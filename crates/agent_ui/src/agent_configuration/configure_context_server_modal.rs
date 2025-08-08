@@ -567,7 +567,7 @@ impl ConfigureContextServerModal {
                         Button::new("open-repository", "Open Repository")
                             .icon(IconName::ArrowUpRight)
                             .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |window, cx| {
