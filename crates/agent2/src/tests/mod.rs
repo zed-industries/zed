@@ -27,7 +27,7 @@ mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -47,7 +47,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
 
@@ -119,7 +119,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -169,7 +169,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -306,7 +306,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(tool_call.title, "nonexistent_tool");
     assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
 }
 
@@ -326,7 +326,7 @@ async fn expect_tool_call(
     }
 }
 
-async fn expect_tool_call_update(
+async fn expect_tool_call_update_fields(
     events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
 ) -> acp::ToolCallUpdate {
     let event = events
@@ -335,7 +335,9 @@ async fn expect_tool_call_update(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCallUpdate(tool_call_update) => return tool_call_update,
+        AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
+            return update
+        }
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -371,7 +373,7 @@ async fn next_tool_call_authorization(
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -410,7 +412,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "can't run on CI yet"]
+// #[ignore = "can't run on CI yet"]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -425,31 +427,33 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     });
 
     // Wait until both tools are called.
-    let mut expected_tool_calls = vec!["echo", "infinite"];
+    let mut expected_tools = vec!["Echo", "Infinite Tool"];
     let mut echo_id = None;
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
-        match event.unwrap() {
+        match dbg!(event.unwrap()) {
             AgentResponseEvent::ToolCall(tool_call) => {
-                assert_eq!(tool_call.title, expected_tool_calls.remove(0));
-                if tool_call.title == "echo" {
+                assert_eq!(tool_call.title, expected_tools.remove(0));
+                if tool_call.title == "Echo" {
                     echo_id = Some(tool_call.id);
                 }
             }
-            AgentResponseEvent::ToolCallUpdate(acp::ToolCallUpdate {
-                id,
-                fields:
-                    acp::ToolCallUpdateFields {
-                        status: Some(acp::ToolCallStatus::Completed),
-                        ..
-                    },
-            }) if Some(&id) == echo_id.as_ref() => {
+            AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+                acp::ToolCallUpdate {
+                    id,
+                    fields:
+                        acp::ToolCallUpdateFields {
+                            status: Some(acp::ToolCallStatus::Completed),
+                            ..
+                        },
+                },
+            )) if Some(&id) == echo_id.as_ref() => {
                 echo_completed = true;
             }
             _ => {}
         }
 
-        if expected_tool_calls.is_empty() && echo_completed {
+        if expected_tools.is_empty() && echo_completed {
             break;
         }
     }
@@ -687,7 +691,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             raw_output: None,
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
@@ -700,7 +704,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             },
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
@@ -711,7 +715,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             },
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
@@ -722,7 +726,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             },
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {

@@ -40,7 +40,7 @@ impl AgentTool for ThinkingTool {
         event_stream: ToolCallEventStream,
         _cx: &mut App,
     ) -> Task<Result<String>> {
-        event_stream.send_update(acp::ToolCallUpdateFields {
+        event_stream.update_fields(acp::ToolCallUpdateFields {
             content: Some(vec![input.content.into()]),
             ..Default::default()
         });

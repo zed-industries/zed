@@ -182,8 +182,12 @@ impl AgentTool for EditFileTool {
         acp::ToolKind::Edit
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        input.display_description.into()
+    fn initial_title(&self, input: Option<Self::Input>) -> SharedString {
+        if let Some(input) = input {
+            input.display_description.into()
+        } else {
+            "Editing file".into()
+        }
     }
 
     fn run(
@@ -226,7 +230,7 @@ impl AgentTool for EditFileTool {
                 .await?;
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
-            event_stream.send_diff(diff.clone());
+            event_stream.update_diff(diff.clone());
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx

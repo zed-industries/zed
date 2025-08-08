@@ -111,7 +111,7 @@ impl AgentTool for FindPathTool {
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
-            event_stream.send_update(acp::ToolCallUpdateFields {
+            event_stream.update_fields(acp::ToolCallUpdateFields {
                 title: Some(if paginated_matches.len() == 0 {
                     "No matches".into()
                 } else if paginated_matches.len() == 1 {

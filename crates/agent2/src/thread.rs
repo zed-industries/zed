@@ -102,9 +102,8 @@ pub enum AgentResponseEvent {
     Text(String),
     Thinking(String),
     ToolCall(acp::ToolCall),
-    ToolCallUpdate(acp::ToolCallUpdate),
+    ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
-    ToolCallDiff(ToolCallDiff),
     Stop(acp::StopReason),
 }
 
@@ -113,12 +112,6 @@ pub struct ToolCallAuthorization {
     pub tool_call: acp::ToolCall,
     pub options: Vec<acp::PermissionOption>,
     pub response: oneshot::Sender<acp::PermissionOptionId>,
-}
-
-#[derive(Debug)]
-pub struct ToolCallDiff {
-    pub tool_call_id: acp::ToolCallId,
-    pub diff: Entity<acp_thread::Diff>,
 }
 
 pub struct Thread {
@@ -294,7 +287,7 @@ impl Thread {
                     while let Some(tool_result) = tool_uses.next().await {
                         log::info!("Tool finished {:?}", tool_result);
 
-                        event_stream.send_tool_call_update(
+                        event_stream.update_tool_call_fields(
                             &tool_result.tool_use_id,
                             acp::ToolCallUpdateFields {
                                 status: Some(if tool_result.is_error {
@@ -477,9 +470,7 @@ impl Thread {
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
-            if let Ok(initial_title) = tool.initial_title(tool_use.input.clone()) {
-                title = initial_title;
-            }
+            title = tool.initial_title(tool_use.input.clone());
             kind = tool.kind();
         }
 
@@ -489,7 +480,7 @@ impl Thread {
                 .content
                 .push(MessageContent::ToolUse(tool_use.clone()));
         } else {
-            event_stream.send_tool_call_update(
+            event_stream.update_tool_call_fields(
                 &tool_use.id,
                 acp::ToolCallUpdateFields {
                     title: Some(title.into()),
@@ -517,7 +508,7 @@ impl Thread {
 
         let tool_event_stream =
             ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone());
-        tool_event_stream.send_update(acp::ToolCallUpdateFields {
+        tool_event_stream.update_fields(acp::ToolCallUpdateFields {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
@@ -704,7 +695,7 @@ where
     fn kind(&self) -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
-    fn initial_title(&self, input: Self::Input) -> SharedString;
+    fn initial_title(&self, input: Option<Self::Input>) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self) -> Schema {
@@ -735,7 +726,7 @@ pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self, cx: &mut App) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
-    fn initial_title(&self, input: serde_json::Value) -> Result<SharedString>;
+    fn initial_title(&self, input: serde_json::Value) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn run(
         self: Arc<Self>,
@@ -761,9 +752,9 @@ where
         self.0.kind()
     }
 
-    fn initial_title(&self, input: serde_json::Value) -> Result<SharedString> {
-        let parsed_input = serde_json::from_value(input)?;
-        Ok(self.0.initial_title(parsed_input))
+    fn initial_title(&self, input: serde_json::Value) -> SharedString {
+        let parsed_input = serde_json::from_value(input).ok();
+        self.0.initial_title(parsed_input)
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -886,7 +877,7 @@ impl AgentResponseEventStream {
         }
     }
 
-    fn send_tool_call_update(
+    fn update_tool_call_fields(
         &self,
         tool_use_id: &LanguageModelToolUseId,
         fields: acp::ToolCallUpdateFields,
@@ -896,14 +887,21 @@ impl AgentResponseEventStream {
                 acp::ToolCallUpdate {
                     id: acp::ToolCallId(tool_use_id.to_string().into()),
                     fields,
-                },
+                }
+                .into(),
             )))
             .ok();
     }
 
-    fn send_tool_call_diff(&self, tool_call_diff: ToolCallDiff) {
+    fn update_tool_call_diff(&self, tool_use_id: &LanguageModelToolUseId, diff: Entity<Diff>) {
         self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCallDiff(tool_call_diff)))
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateDiff {
+                    id: acp::ToolCallId(tool_use_id.to_string().into()),
+                    diff,
+                }
+                .into(),
+            )))
             .ok();
     }
 
@@ -975,15 +973,13 @@ impl ToolCallEventStream {
         }
     }
 
-    pub fn send_update(&self, fields: acp::ToolCallUpdateFields) {
-        self.stream.send_tool_call_update(&self.tool_use_id, fields);
+    pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields);
     }
 
-    pub fn send_diff(&self, diff: Entity<Diff>) {
-        self.stream.send_tool_call_diff(ToolCallDiff {
-            tool_call_id: acp::ToolCallId(self.tool_use_id.to_string().into()),
-            diff,
-        });
+    pub fn update_diff(&self, diff: Entity<Diff>) {
+        self.stream.update_tool_call_diff(&self.tool_use_id, diff);
     }
 
     pub fn authorize(&self, title: String) -> impl use<> + Future<Output = Result<()>> {
