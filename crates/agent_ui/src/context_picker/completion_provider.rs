@@ -539,10 +539,10 @@ impl ContextPickerCompletionProvider {
             label: CodeLabel::plain(url_to_fetch.to_string(), None),
             documentation: None,
             source: project::CompletionSource::Custom,
-            icon_path: Some(IconName::Globe.path().into()),
+            icon_path: Some(IconName::ToolWeb.path().into()),
             insert_text_mode: None,
             confirm: Some(confirm_completion_callback(
-                IconName::Globe.path().into(),
+                IconName::ToolWeb.path().into(),
                 url_to_fetch.clone(),
                 excerpt_id,
                 source_range.start,

@@ -438,7 +438,7 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::Hammer).color(Color::Muted))
+                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
                                 .action("Dismiss", |_, _| {})
                         },
                     );

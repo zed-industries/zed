@@ -41,7 +41,7 @@ impl ContextKind {
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
             ContextKind::Selection => IconName::Context,
-            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::FetchedUrl => IconName::ToolWeb,
             ContextKind::Thread => IconName::Thread,
             ContextKind::TextThread => IconName::TextThread,
             ContextKind::Rules => RULES_ICON,

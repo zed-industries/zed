@@ -2750,7 +2750,7 @@ impl ActiveThread {
                                 h_flex()
                                     .gap_1p5()
                                     .child(
-                                        Icon::new(IconName::LightBulb)
+                                        Icon::new(IconName::ToolThink)
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted),
                                     )

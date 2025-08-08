@@ -45,7 +45,7 @@ impl Tool for WebSearchTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
