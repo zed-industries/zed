@@ -425,7 +425,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.20"
+agent-client-protocol = "0.0.23"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -461,6 +461,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
@@ -600,7 +601,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.7.0"
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -660,6 +661,9 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
+# We can switch back to the published version once https://github.com/infinitefield/yawc/pull/16 is merged and a new
+# version is released.
+yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]

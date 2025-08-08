@@ -128,7 +128,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004
+      - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
@@ -168,7 +168,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-32vcpu-ubuntu-2204-arm
+      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo

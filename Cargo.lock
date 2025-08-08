@@ -138,9 +138,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.0.20"
+version = "0.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12dbfec3d27680337ed9d3064eecafe97acf0b0f190148bb4e29d96707c9e403"
+checksum = "3fad72b7b8ee4331b3a4c8d43c107e982a4725564b4ee658ae5c4e79d2b486e8"
 dependencies = [
  "anyhow",
  "futures 0.3.31",
@@ -158,7 +158,10 @@ dependencies = [
  "acp_thread",
  "agent-client-protocol",
  "agent_servers",
+ "agent_settings",
  "anyhow",
+ "assistant_tool",
+ "assistant_tools",
  "client",
  "clock",
  "cloud_llm_client",
@@ -171,10 +174,16 @@ dependencies = [
  "gpui_tokio",
  "handlebars 4.5.0",
  "indoc",
+ "itertools 0.14.0",
+ "language",
  "language_model",
  "language_models",
  "log",
+ "lsp",
+ "paths",
+ "pretty_assertions",
  "project",
+ "prompt_store",
  "reqwest_client",
  "rust-embed",
  "schemars",
@@ -185,6 +194,7 @@ dependencies = [
  "ui",
  "util",
  "uuid",
+ "watch",
  "workspace-hack",
  "worktree",
 ]
@@ -1411,7 +1421,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "log",
- "nom",
+ "nom 7.1.3",
  "num-rational",
  "v_frame",
 ]
@@ -2785,7 +2795,7 @@ version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
 dependencies = [
- "nom",
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -3071,17 +3081,22 @@ dependencies = [
  "anyhow",
  "cloud_api_types",
  "futures 0.3.31",
+ "gpui",
+ "gpui_tokio",
  "http_client",
  "parking_lot",
  "serde_json",
  "workspace-hack",
+ "yawc",
 ]
 
 [[package]]
 name = "cloud_api_types"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
+ "ciborium",
  "cloud_llm_client",
  "pretty_assertions",
  "serde",
@@ -7497,9 +7512,9 @@ dependencies = [
 
 [[package]]
 name = "grid"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71b01d27060ad58be4663b9e4ac9e2d4806918e8876af8912afbddd1a91d5eaa"
+checksum = "12101ecc8225ea6d675bc70263074eab6169079621c2186fe0c66590b2df9681"
 
 [[package]]
 name = "group"
@@ -9118,6 +9133,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "client",
+ "cloud_api_types",
  "cloud_llm_client",
  "collections",
  "futures 0.3.31",
@@ -10578,6 +10594,15 @@ checksum = "d273983c5a657a70a3e8f2a01329822f3b8c8172b73826411a55751e404a0a4a"
 dependencies = [
  "memchr",
  "minimal-lexical",
+]
+
+[[package]]
+name = "nom"
+version = "8.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df9761775871bdef83bee530e60050f7e54b1105350d6884eb0fb4f46c2f9405"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -12618,6 +12643,7 @@ dependencies = [
  "editor",
  "file_icons",
  "git",
+ "git_ui",
  "gpui",
  "indexmap",
  "language",
@@ -12631,6 +12657,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -15401,7 +15428,7 @@ version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bba3a93db0cc4f7bdece8bb09e77e2e785c20bfebf79eb8340ed80708048790"
 dependencies = [
- "nom",
+ "nom 7.1.3",
  "unicode_categories",
 ]
 
@@ -16201,9 +16228,9 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.8.3"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7aaef0ac998e6527d6d0d5582f7e43953bb17221ac75bb8eb2fcc2db3396db1c"
+checksum = "a13e5d13f79d558b5d353a98072ca8ca0e99da429467804de959aa8c83c9a004"
 dependencies = [
  "arrayvec",
  "grid",
@@ -16604,9 +16631,8 @@ dependencies = [
 
 [[package]]
 name = "tiktoken-rs"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25563eeba904d770acf527e8b370fe9a5547bacd20ff84a0b6c3bc41288e5625"
+version = "0.8.0"
+source = "git+https://github.com/zed-industries/tiktoken-rs?rev=30c32a4522751699adeda0d5840c71c3b75ae73d#30c32a4522751699adeda0d5840c71c3b75ae73d"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -19977,7 +20003,7 @@ dependencies = [
  "naga",
  "nix 0.28.0",
  "nix 0.29.0",
- "nom",
+ "nom 7.1.3",
  "num-bigint",
  "num-bigint-dig",
  "num-integer",
@@ -20311,6 +20337,34 @@ name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
+
+[[package]]
+name = "yawc"
+version = "0.2.4"
+source = "git+https://github.com/deviant-forks/yawc?rev=1899688f3e69ace4545aceb97b2a13881cf26142#1899688f3e69ace4545aceb97b2a13881cf26142"
+dependencies = [
+ "base64 0.22.1",
+ "bytes 1.10.1",
+ "flate2",
+ "futures 0.3.31",
+ "http-body-util",
+ "hyper 1.6.0",
+ "hyper-util",
+ "js-sys",
+ "nom 8.0.0",
+ "pin-project",
+ "rand 0.8.5",
+ "sha1",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls 0.26.2",
+ "tokio-util",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "webpki-roots",
+]
 
 [[package]]
 name = "yazi"

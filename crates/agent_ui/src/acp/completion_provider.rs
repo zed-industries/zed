@@ -59,7 +59,7 @@ impl ContextPickerCompletionProvider {
         }
     }
 
-    fn completion_for_path(
+    pub(crate) fn completion_for_path(
         project_path: ProjectPath,
         path_prefix: &str,
         is_recent: bool,

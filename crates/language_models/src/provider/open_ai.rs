@@ -674,6 +674,10 @@ pub fn count_open_ai_tokens(
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::Five | Model::FiveMini | Model::FiveNano => {
+                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+            }
         }
         .map(|tokens| tokens as u64)
     })
@@ -865,7 +869,7 @@ impl Render for ConfigurationView {
             .child(
                 Button::new("docs", "Learn More")
                     .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(move |_, _window, cx| {
                         cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")

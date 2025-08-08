@@ -24,7 +24,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
@@ -153,16 +153,17 @@ impl AgentConnection for ClaudeAgentConnection {
             })
             .detach();
 
-            let end_turn_tx = Rc::new(RefCell::new(None));
+            let turn_state = Rc::new(RefCell::new(TurnState::None));
+
             let handler_task = cx.spawn({
-                let end_turn_tx = end_turn_tx.clone();
+                let turn_state = turn_state.clone();
                 let mut thread_rx = thread_rx.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentSession::handle_message(
                             thread_rx.clone(),
                             message,
-                            end_turn_tx.clone(),
+                            turn_state.clone(),
                             cx,
                         )
                         .await
@@ -188,7 +189,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
             let session = ClaudeAgentSession {
                 outgoing_tx,
-                end_turn_tx,
+                turn_state,
                 _handler_task: handler_task,
                 _mcp_server: Some(permission_mcp_server),
             };
@@ -220,8 +221,8 @@ impl AgentConnection for ClaudeAgentConnection {
             )));
         };
 
-        let (tx, rx) = oneshot::channel();
-        session.end_turn_tx.borrow_mut().replace(tx);
+        let (end_tx, end_rx) = oneshot::channel();
+        session.turn_state.replace(TurnState::InProgress { end_tx });
 
         let mut content = String::new();
         for chunk in params.prompt {
@@ -255,7 +256,7 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        cx.foreground_executor().spawn(async move { rx.await? })
+        cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
@@ -265,18 +266,27 @@ impl AgentConnection for ClaudeAgentConnection {
             return;
         };
 
+        let request_id = new_request_id();
+
+        let turn_state = session.turn_state.take();
+        let TurnState::InProgress { end_tx } = turn_state else {
+            // Already cancelled or idle, put it back
+            session.turn_state.replace(turn_state);
+            return;
+        };
+
+        session.turn_state.replace(TurnState::CancelRequested {
+            end_tx,
+            request_id: request_id.clone(),
+        });
+
         session
             .outgoing_tx
-            .unbounded_send(SdkMessage::new_interrupt_message())
+            .unbounded_send(SdkMessage::ControlRequest {
+                request_id,
+                request: ControlRequest::Interrupt,
+            })
             .log_err();
-
-        if let Some(end_turn_tx) = session.end_turn_tx.borrow_mut().take() {
-            end_turn_tx
-                .send(Ok(acp::PromptResponse {
-                    stop_reason: acp::StopReason::Cancelled,
-                }))
-                .ok();
-        }
     }
 }
 
@@ -338,26 +348,139 @@ fn spawn_claude(
 
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
+    turn_state: Rc<RefCell<TurnState>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
+}
+
+#[derive(Debug, Default)]
+enum TurnState {
+    #[default]
+    None,
+    InProgress {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+    CancelRequested {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+        request_id: String,
+    },
+    CancelConfirmed {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+}
+
+impl TurnState {
+    fn is_cancelled(&self) -> bool {
+        matches!(self, TurnState::CancelConfirmed { .. })
+    }
+
+    fn end_tx(self) -> Option<oneshot::Sender<Result<acp::PromptResponse>>> {
+        match self {
+            TurnState::None => None,
+            TurnState::InProgress { end_tx, .. } => Some(end_tx),
+            TurnState::CancelRequested { end_tx, .. } => Some(end_tx),
+            TurnState::CancelConfirmed { end_tx } => Some(end_tx),
+        }
+    }
+
+    fn confirm_cancellation(self, id: &str) -> Self {
+        match self {
+            TurnState::CancelRequested { request_id, end_tx } if request_id == id => {
+                TurnState::CancelConfirmed { end_tx }
+            }
+            _ => self,
+        }
+    }
 }
 
 impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<acp::PromptResponse>>>>>,
+        turn_state: Rc<RefCell<TurnState>>,
         cx: &mut AsyncApp,
     ) {
         match message {
             // we should only be sending these out, they don't need to be in the thread
             SdkMessage::ControlRequest { .. } => {}
-            SdkMessage::Assistant {
+            SdkMessage::User {
                 message,
                 session_id: _,
+            } => {
+                let Some(thread) = thread_rx
+                    .recv()
+                    .await
+                    .log_err()
+                    .and_then(|entity| entity.upgrade())
+                else {
+                    log::error!("Received an SDK message but thread is gone");
+                    return;
+                };
+
+                for chunk in message.content.chunks() {
+                    match chunk {
+                        ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
+                            if !turn_state.borrow().is_cancelled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(text.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
+                        ContentChunk::ToolResult {
+                            content,
+                            tool_use_id,
+                        } => {
+                            let content = content.to_string();
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.update_tool_call(
+                                        acp::ToolCallUpdate {
+                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            fields: acp::ToolCallUpdateFields {
+                                                status: if turn_state.borrow().is_cancelled() {
+                                                    // Do not set to completed if turn was cancelled
+                                                    None
+                                                } else {
+                                                    Some(acp::ToolCallStatus::Completed)
+                                                },
+                                                content: (!content.is_empty())
+                                                    .then(|| vec![content.into()]),
+                                                ..Default::default()
+                                            },
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Thinking { .. }
+                        | ContentChunk::RedactedThinking
+                        | ContentChunk::ToolUse { .. } => {
+                            debug_panic!(
+                                "Should not get {:?} with role: assistant. should we handle this?",
+                                chunk
+                            );
+                        }
+
+                        ContentChunk::Image
+                        | ContentChunk::Document
+                        | ContentChunk::WebSearchToolResult => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        format!("Unsupported content: {:?}", chunk).into(),
+                                        false,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                    }
+                }
             }
-            | SdkMessage::User {
+            SdkMessage::Assistant {
                 message,
                 session_id: _,
             } => {
@@ -423,31 +546,12 @@ impl ClaudeAgentSession {
                                 })
                                 .log_err();
                         }
-                        ContentChunk::ToolResult {
-                            content,
-                            tool_use_id,
-                        } => {
-                            let content = content.to_string();
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.update_tool_call(
-                                        acp::ToolCallUpdate {
-                                            id: acp::ToolCallId(tool_use_id.into()),
-                                            fields: acp::ToolCallUpdateFields {
-                                                status: Some(acp::ToolCallStatus::Completed),
-                                                content: (!content.is_empty())
-                                                    .then(|| vec![content.into()]),
-                                                ..Default::default()
-                                            },
-                                        },
-                                        cx,
-                                    )
-                                })
-                                .log_err();
+                        ContentChunk::ToolResult { .. } | ContentChunk::WebSearchToolResult => {
+                            debug_panic!(
+                                "Should not get tool results with role: assistant. should we handle this?"
+                            );
                         }
-                        ContentChunk::Image
-                        | ContentChunk::Document
-                        | ContentChunk::WebSearchToolResult => {
+                        ContentChunk::Image | ContentChunk::Document => {
                             thread
                                 .update(cx, |thread, cx| {
                                     thread.push_assistant_content_block(
@@ -467,27 +571,41 @@ impl ClaudeAgentSession {
                 result,
                 ..
             } => {
-                if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error || subtype == ResultErrorType::ErrorDuringExecution {
-                        end_turn_tx
-                            .send(Err(anyhow!(
-                                "Error: {}",
-                                result.unwrap_or_else(|| subtype.to_string())
-                            )))
-                            .ok();
-                    } else {
-                        let stop_reason = match subtype {
-                            ResultErrorType::Success => acp::StopReason::EndTurn,
-                            ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
-                            ResultErrorType::ErrorDuringExecution => unreachable!(),
-                        };
-                        end_turn_tx
-                            .send(Ok(acp::PromptResponse { stop_reason }))
-                            .ok();
-                    }
+                let turn_state = turn_state.take();
+                let was_cancelled = turn_state.is_cancelled();
+                let Some(end_turn_tx) = turn_state.end_tx() else {
+                    debug_panic!("Received `SdkMessage::Result` but there wasn't an active turn");
+                    return;
+                };
+
+                if is_error || (!was_cancelled && subtype == ResultErrorType::ErrorDuringExecution)
+                {
+                    end_turn_tx
+                        .send(Err(anyhow!(
+                            "Error: {}",
+                            result.unwrap_or_else(|| subtype.to_string())
+                        )))
+                        .ok();
+                } else {
+                    let stop_reason = match subtype {
+                        ResultErrorType::Success => acp::StopReason::EndTurn,
+                        ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
+                    };
+                    end_turn_tx
+                        .send(Ok(acp::PromptResponse { stop_reason }))
+                        .ok();
                 }
             }
-            SdkMessage::System { .. } | SdkMessage::ControlResponse { .. } => {}
+            SdkMessage::ControlResponse { response } => {
+                if matches!(response.subtype, ResultErrorType::Success) {
+                    let new_state = turn_state.take().confirm_cancellation(&response.request_id);
+                    turn_state.replace(new_state);
+                } else {
+                    log::error!("Control response error: {:?}", response);
+                }
+            }
+            SdkMessage::System { .. } => {}
         }
     }
 
@@ -728,22 +846,15 @@ impl Display for ResultErrorType {
     }
 }
 
-impl SdkMessage {
-    fn new_interrupt_message() -> Self {
-        use rand::Rng;
-        // In the Claude Code TS SDK they just generate a random 12 character string,
-        // `Math.random().toString(36).substring(2, 15)`
-        let request_id = rand::thread_rng()
-            .sample_iter(&rand::distributions::Alphanumeric)
-            .take(12)
-            .map(char::from)
-            .collect();
-
-        Self::ControlRequest {
-            request_id,
-            request: ControlRequest::Interrupt,
-        }
-    }
+fn new_request_id() -> String {
+    use rand::Rng;
+    // In the Claude Code TS SDK they just generate a random 12 character string,
+    // `Math.random().toString(36).substring(2, 15)`
+    rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -889,6 +889,7 @@ impl settings::Settings for ThemeSettings {
             .user
             .into_iter()
             .chain(sources.release_channel)
+            .chain(sources.operating_system)
             .chain(sources.profile)
             .chain(sources.server)
         {

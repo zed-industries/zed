@@ -690,7 +690,7 @@ impl Render for ConfigurationView {
                                             Button::new("lmstudio-site", "LM Studio")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _window, cx| {
                                                     cx.open_url(LMSTUDIO_SITE)
@@ -705,7 +705,7 @@ impl Render for ConfigurationView {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _window, cx| {
                                                 cx.open_url(LMSTUDIO_DOWNLOAD_URL)
@@ -718,7 +718,7 @@ impl Render for ConfigurationView {
                                     Button::new("view-models", "Model Catalog")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
+                                        .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _window, cx| {
                                             cx.open_url(LMSTUDIO_CATALOG_URL)
@@ -744,7 +744,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_lmstudio_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::PlayOutlined)
+                                        .icon(IconName::PlayFilled)
                                         .on_click(cx.listener(move |this, _, _window, cx| {
                                             this.retry_connection(cx)
                                         })),

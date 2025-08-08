@@ -297,6 +297,7 @@ impl ClaudeTool {
             content: self.content(),
             locations: self.locations(),
             raw_input: None,
+            raw_output: None,
         }
     }
 }
