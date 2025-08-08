@@ -570,13 +570,33 @@ mod test {
             Mode::HelixNormal,
         );
 
-        cx.simulate_keystrokes("2 T r");
+        cx.simulate_keystrokes("F e F e");
 
         cx.assert_state(
             indoc! {"
-                The quick br«ˇown
-                fox jumps over
-                the laz»y dog."},
+                The quick brown
+                fox jumps ov«ˇer
+                the» lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("e 2 F e");
+
+        cx.assert_state(
+            indoc! {"
+                Th«ˇe quick brown
+                fox jumps over»
+                the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("t r t r");
+
+        cx.assert_state(
+            indoc! {"
+                The quick «brown
+                fox jumps oveˇ»r
+                the lazy dog."},
             Mode::HelixNormal,
         );
     }
