@@ -503,29 +503,27 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         match event {
                             AgentResponseEvent::Text(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::AgentMessageChunk {
-                                            content: acp::ContentBlock::Text(acp::TextContent {
-                                                text,
-                                                annotations: None,
-                                            }),
-                                        },
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        false,
                                         cx,
                                     )
-                                })??;
+                                })?;
                             }
                             AgentResponseEvent::Thinking(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::AgentThoughtChunk {
-                                            content: acp::ContentBlock::Text(acp::TextContent {
-                                                text,
-                                                annotations: None,
-                                            }),
-                                        },
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        true,
                                         cx,
                                     )
-                                })??;
+                                })?;
                             }
                             AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
                                 tool_call,
@@ -551,27 +549,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             }
                             AgentResponseEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::ToolCall(tool_call),
-                                        cx,
-                                    )
-                                })??;
+                                    thread.upsert_tool_call(tool_call, cx)
+                                })?;
                             }
-                            AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
+                            AgentResponseEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::ToolCallUpdate(tool_call_update),
-                                        cx,
-                                    )
-                                })??;
-                            }
-                            AgentResponseEvent::ToolCallDiff(tool_call_diff) => {
-                                acp_thread.update(cx, |thread, cx| {
-                                    thread.set_tool_call_diff(
-                                        &tool_call_diff.tool_call_id,
-                                        tool_call_diff.diff,
-                                        cx,
-                                    )
+                                    thread.update_tool_call(update, cx)
                                 })??;
                             }
                             AgentResponseEvent::Stop(stop_reason) => {

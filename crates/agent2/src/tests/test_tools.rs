@@ -24,7 +24,7 @@ impl AgentTool for EchoTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _: Self::Input) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Echo".into()
     }
 
@@ -55,8 +55,12 @@ impl AgentTool for DelayTool {
         "delay".into()
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        format!("Delay {}ms", input.ms).into()
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        if let Ok(input) = input {
+            format!("Delay {}ms", input.ms).into()
+        } else {
+            "Delay".into()
+        }
     }
 
     fn kind(&self) -> acp::ToolKind {
@@ -96,7 +100,7 @@ impl AgentTool for ToolRequiringPermission {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Self::Input) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "This tool requires permission".into()
     }
 
@@ -131,8 +135,8 @@ impl AgentTool for InfiniteTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Self::Input) -> SharedString {
-        "This is the tool that never ends... it just goes on and on my friends!".into()
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        "Infinite Tool".into()
     }
 
     fn run(
@@ -182,7 +186,7 @@ impl AgentTool for WordListTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, _input: Self::Input) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "List of random words".into()
     }
 

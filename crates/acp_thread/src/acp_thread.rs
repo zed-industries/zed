@@ -198,7 +198,7 @@ impl ToolCall {
         }
     }
 
-    fn update(
+    fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
         language_registry: Arc<LanguageRegistry>,
@@ -413,6 +413,39 @@ impl ToolCallContent {
             Self::Diff { diff } => diff.read(cx).to_markdown(cx),
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ToolCallUpdate {
+    UpdateFields(acp::ToolCallUpdate),
+    UpdateDiff(ToolCallUpdateDiff),
+}
+
+impl ToolCallUpdate {
+    fn id(&self) -> &acp::ToolCallId {
+        match self {
+            Self::UpdateFields(update) => &update.id,
+            Self::UpdateDiff(diff) => &diff.id,
+        }
+    }
+}
+
+impl From<acp::ToolCallUpdate> for ToolCallUpdate {
+    fn from(update: acp::ToolCallUpdate) -> Self {
+        Self::UpdateFields(update)
+    }
+}
+
+impl From<ToolCallUpdateDiff> for ToolCallUpdate {
+    fn from(diff: ToolCallUpdateDiff) -> Self {
+        Self::UpdateDiff(diff)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateDiff {
+    pub id: acp::ToolCallId,
+    pub diff: Entity<Diff>,
 }
 
 #[derive(Debug, Default)]
@@ -710,33 +743,29 @@ impl AcpThread {
 
     pub fn update_tool_call(
         &mut self,
-        update: acp::ToolCallUpdate,
+        update: impl Into<ToolCallUpdate>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let update = update.into();
         let languages = self.project.read(cx).languages().clone();
 
         let (ix, current_call) = self
-            .tool_call_mut(&update.id)
+            .tool_call_mut(update.id())
             .context("Tool call not found")?;
-        current_call.update(update.fields, languages, cx);
+        match update {
+            ToolCallUpdate::UpdateFields(update) => {
+                current_call.update_fields(update.fields, languages, cx);
+            }
+            ToolCallUpdate::UpdateDiff(update) => {
+                current_call.content.clear();
+                current_call
+                    .content
+                    .push(ToolCallContent::Diff { diff: update.diff });
+            }
+        }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
-        Ok(())
-    }
-
-    pub fn set_tool_call_diff(
-        &mut self,
-        tool_call_id: &acp::ToolCallId,
-        diff: Entity<Diff>,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let (ix, current_call) = self
-            .tool_call_mut(tool_call_id)
-            .context("Tool call not found")?;
-        current_call.content.clear();
-        current_call.content.push(ToolCallContent::Diff { diff });
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
         Ok(())
     }
 
