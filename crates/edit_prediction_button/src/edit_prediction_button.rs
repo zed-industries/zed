@@ -538,7 +538,10 @@ impl EditPredictionButton {
 
         if matches!(
             provider,
-            EditPredictionProvider::Zed | EditPredictionProvider::Ollama
+            EditPredictionProvider::Zed
+                | EditPredictionProvider::Copilot
+                | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Ollama
         ) {
             menu = menu
                 .separator()
@@ -1485,7 +1488,7 @@ mod tests {
             let user_store = cx.new(|cx| client::UserStore::new(client, cx));
             let popover_handle = PopoverMenuHandle::default();
 
-            cx.new(|cx| InlineCompletionButton::new(fs, user_store, popover_handle, cx))
+            cx.new(|cx| EditPredictionButton::new(fs, user_store, popover_handle, cx))
         });
 
         // Verify initially no models
@@ -1623,7 +1626,7 @@ mod tests {
 
         // Simulate clicking "Refresh Models" button
         cx.update(|cx| {
-            InlineCompletionButton::refresh_ollama_models(cx);
+            EditPredictionButton::refresh_ollama_models(cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -1946,7 +1949,7 @@ mod tests {
             // Call the actual function to ensure it doesn't panic with discovered models
             // Note: In a test environment, the file system changes may not persist to
             // the global settings, but the function should execute without errors
-            InlineCompletionButton::switch_ollama_model(fs, "test-model:latest".to_string(), cx);
+            EditPredictionButton::switch_ollama_model(fs, "test-model:latest".to_string(), cx);
         });
 
         // Allow any async operations to complete

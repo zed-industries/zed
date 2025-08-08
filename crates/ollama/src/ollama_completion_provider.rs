@@ -3,9 +3,9 @@ use anyhow::{Context as AnyhowContext, Result};
 use futures::StreamExt;
 use std::{path::Path, sync::Arc, time::Duration};
 
+use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, AppContext, Context, Entity, EntityId, Global, Subscription, Task};
 use http_client::HttpClient;
-use inline_completion::{Direction, EditPredictionProvider, InlineCompletion};
 use language::{Anchor, Buffer, ToOffset};
 use settings::SettingsStore;
 
@@ -395,7 +395,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
         buffer: &Entity<Buffer>,
         cursor_position: Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<InlineCompletion> {
+    ) -> Option<EditPrediction> {
         let buffer_id = buffer.entity_id();
         if Some(buffer_id) != self.buffer_id {
             return None;
@@ -433,7 +433,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 
         let position = cursor_position.bias_right(buffer_snapshot);
 
-        Some(InlineCompletion {
+        Some(EditPrediction {
             id: None,
             edits: vec![(position..position, remaining_completion.to_string())],
             edit_preview: None,
@@ -875,14 +875,14 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         editor_cx.update_editor(|editor, window, cx| {
-            editor.refresh_inline_completion(false, true, window, cx);
+            editor.refresh_edit_prediction(false, true, window, cx);
         });
 
         cx.background_executor.run_until_parked();
 
         editor_cx.update_editor(|editor, window, cx| {
             // Verify we have an active completion
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
 
             // The display text should show the full completion
             assert_eq!(editor.display_text(cx), "let items = vec![hello, world]");
@@ -890,20 +890,20 @@ mod tests {
             assert_eq!(editor.text(cx), "let items = ");
 
             // Accept first partial - should accept "vec" (alphabetic characters)
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
 
             // Assert the buffer now contains the first partially accepted text
             assert_eq!(editor.text(cx), "let items = vec");
             // Completion should still be active for remaining text
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
 
             // Accept second partial - should accept "![" (non-alphabetic characters)
-            editor.accept_partial_inline_completion(&Default::default(), window, cx);
+            editor.accept_partial_edit_prediction(&Default::default(), window, cx);
 
             // Assert the buffer now contains both partial acceptances
             assert_eq!(editor.text(cx), "let items = vec![");
             // Completion should still be active for remaining text
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
         });
     }
 
@@ -954,30 +954,30 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         editor_cx.update_editor(|editor, window, cx| {
-            editor.refresh_inline_completion(false, true, window, cx);
+            editor.refresh_edit_prediction(false, true, window, cx);
         });
 
         cx.background_executor.run_until_parked();
 
         editor_cx.update_editor(|editor, window, cx| {
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "foobar");
             assert_eq!(editor.text(cx), "foo");
 
             // Backspace within the original text - completion should remain
             editor.backspace(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "fobar");
             assert_eq!(editor.text(cx), "fo");
 
             editor.backspace(&Default::default(), window, cx);
-            assert!(editor.has_active_inline_completion());
+            assert!(editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "fbar");
             assert_eq!(editor.text(cx), "f");
 
             // This backspace removes all original text - should invalidate completion
             editor.backspace(&Default::default(), window, cx);
-            assert!(!editor.has_active_inline_completion());
+            assert!(!editor.has_active_edit_prediction());
             assert_eq!(editor.display_text(cx), "");
             assert_eq!(editor.text(cx), "");
         });

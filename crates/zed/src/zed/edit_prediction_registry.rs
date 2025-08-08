@@ -15,7 +15,7 @@ use ui::Window;
 use util::ResultExt;
 use workspace::Workspace;
 use zed_actions;
-use zeta::{ProviderDataCollection, ZetaInlineCompletionProvider};
+use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     // Initialize global Ollama service

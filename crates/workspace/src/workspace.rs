@@ -1086,6 +1086,7 @@ pub struct Workspace {
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
     window_edited: bool,
+    last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -1418,6 +1419,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            last_window_title: None,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
@@ -1813,10 +1815,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                match latest_project_path_opened {
-                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
-                    None => true,
-                }
+                latest_project_path_opened.map_or(true, |path| path == history_path)
             })
     }
 
@@ -4406,7 +4405,13 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
+        if let Some(last_title) = self.last_window_title.as_ref() {
+            if &title == last_title {
+                return;
+            }
+        }
         window.set_window_title(&title);
+        self.last_window_title = Some(title);
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
@@ -4796,7 +4801,7 @@ impl Workspace {
                             .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
-                        if let Some(id) = id.clone() {
+                        if let Some(id) = id {
                             if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: id.clone(),
@@ -4809,7 +4814,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: id.clone(),
+                                    id,
                                     leader_id: leader_peer_id,
                                 };
                             }
