@@ -47,7 +47,7 @@ impl IntoElement for InstructionListItem {
                     Button::new(unique_id, button_label)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ArrowUpRight)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(move |_, _window, cx| cx.open_url(&link)),
                 )
