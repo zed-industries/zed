@@ -231,19 +231,19 @@ impl WindowsPlatform {
         }
     }
 
-    // Returns true if the app should quit.
-    fn handle_events(&self) -> bool {
+    // Returns if the app should quit.
+    fn handle_events(&self) {
         let mut msg = MSG::default();
         unsafe {
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 match msg.message {
-                    WM_QUIT => return true,
+                    WM_QUIT => return,
                     WM_INPUTLANGCHANGE
                     | WM_GPUI_CLOSE_ONE_WINDOW
                     | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
                     | WM_GPUI_DOCK_MENU_ACTION => {
                         if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
-                            return true;
+                            return;
                         }
                     }
                     _ => {
@@ -252,7 +252,6 @@ impl WindowsPlatform {
                 }
             }
         }
-        false
     }
 
     // Returns true if the app should quit.
@@ -323,6 +322,23 @@ impl WindowsPlatform {
             .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
             .map(|hwnd| hwnd.as_raw())
     }
+
+    fn start_vsync(&self) {
+        let vsync_provider = VSyncProvider::new().expect("Failed to create VSyncProvider");
+        let all_windows = self.raw_window_handles.clone();
+        std::thread::spawn(move || {
+            loop {
+                vsync_provider.wait_for_vsync();
+                for hwnd in all_windows.read().iter() {
+                    unsafe {
+                        RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
+                            .ok()
+                            .log_err();
+                    }
+                }
+            }
+        });
+    }
 }
 
 impl Platform for WindowsPlatform {
@@ -352,12 +368,8 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        loop {
-            if self.handle_events() {
-                break;
-            }
-            self.redraw_all();
-        }
+        self.start_vsync();
+        self.handle_events();
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
             callback();
