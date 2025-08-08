@@ -375,7 +375,7 @@ impl<T: Item> SumTree<T> {
         filter_node: F,
     ) -> FilterCursor<'a, F, T, U>
     where
-        F: FnMut(&T::Summary) -> bool,
+        F: FnMut(&T::Summary) -> Ordering,
         U: Dimension<'a, T::Summary>,
     {
         FilterCursor::new(self, cx, filter_node)
@@ -1026,7 +1026,7 @@ mod tests {
                 log::info!("tree items: {:?}", tree.items(&()));
 
                 let mut filter_cursor =
-                    tree.filter::<_, Count>(&(), |summary| summary.contains_even);
+                    tree.filter::<_, Count>(&(), |summary| summary.contains_even.cmp(&false));
                 let expected_filtered_items = tree
                     .items(&())
                     .into_iter()

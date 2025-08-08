@@ -412,7 +412,7 @@ mod tests {
             .take_while(|(key, _)| key.starts_with("ba"))
             .collect::<Vec<_>>();
 
-        assert_eq!(result.len(), 2);
+        assert_eq!(result.len(), 2, "{result:?}");
         assert!(result.iter().any(|(k, _)| k == &&"baa"));
         assert!(result.iter().any(|(k, _)| k == &&"baaab"));
 
