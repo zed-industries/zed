@@ -232,7 +232,7 @@ impl UserStore {
                                     if let Some(response) = response.log_err() {
                                         let user = Arc::new(User {
                                             id: user_id,
-                                            github_login: response.user.github_login.clone().into(),
+                                            github_login: response.user.github_login.clone(),
                                             avatar_uri: response.user.avatar_url.clone().into(),
                                             name: response.user.name.clone(),
                                         });
