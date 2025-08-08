@@ -75,6 +75,13 @@ pub enum Model {
     #[serde(rename = "o4-mini")]
     O4Mini,
 
+    #[serde(rename = "gpt-5")]
+    GptFive,
+    #[serde(rename = "gpt-5-mini")]
+    GptFiveMini,
+    #[serde(rename = "gpt-5-nano")]
+    GptFiveNano,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -105,6 +112,9 @@ impl Model {
             "o3-mini" => Ok(Self::O3Mini),
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
+            "gpt-5" => Ok(Self::GptFive),
+            "gpt-5-mini" => Ok(Self::GptFiveMini),
+            "gpt-5-nano" => Ok(Self::GptFiveNano),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -123,6 +133,9 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::GptFive => "gpt-5",
+            Self::GptFiveMini => "gpt-5-mini",
+            Self::GptFiveNano => "gpt-5-nano",
             Self::Custom { name, .. } => name,
         }
     }
@@ -141,6 +154,9 @@ impl Model {
             Self::O3Mini => "o3-mini",
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
+            Self::GptFive => "gpt-5",
+            Self::GptFiveMini => "gpt-5-mini",
+            Self::GptFiveNano => "gpt-5-nano",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -161,6 +177,9 @@ impl Model {
             Self::O3Mini => 200_000,
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
+            Self::GptFive => 400_000,
+            Self::GptFiveMini => 400_000,
+            Self::GptFiveNano => 400_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -182,6 +201,9 @@ impl Model {
             Self::O3Mini => Some(100_000),
             Self::O3 => Some(100_000),
             Self::O4Mini => Some(100_000),
+            Self::GptFive => Some(128_000),
+            Self::GptFiveMini => Some(128_000),
+            Self::GptFiveNano => Some(128_000),
         }
     }
 
@@ -197,7 +219,10 @@ impl Model {
             | Self::FourOmniMini
             | Self::FourPointOne
             | Self::FourPointOneMini
-            | Self::FourPointOneNano => true,
+            | Self::FourPointOneNano
+            | Self::GptFive
+            | Self::GptFiveMini
+            | Self::GptFiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
     }

@@ -310,7 +310,10 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FourPointOneNano
             | Model::O1
             | Model::O3
-            | Model::O4Mini => true,
+            | Model::O4Mini
+            | Model::GptFive
+            | Model::GptFiveMini
+            | Model::GptFiveNano => true,
             Model::ThreePointFiveTurbo
             | Model::Four
             | Model::FourTurbo
@@ -672,6 +675,10 @@ pub fn count_open_ai_tokens(
                     "gpt-4"
                 };
                 tiktoken_rs::num_tokens_from_messages(model, &messages)
+            }
+            // Fallback until tiktoken-rs adds native support for GPT-5 series
+            Model::GptFive | Model::GptFiveMini | Model::GptFiveNano => {
+                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
             }
             // Currently supported by tiktoken_rs
             // Sometimes tiktoken-rs is behind on model support. If that is the case, make a new branch
