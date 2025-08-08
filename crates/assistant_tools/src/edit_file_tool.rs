@@ -120,6 +120,8 @@ struct PartialInput {
     display_description: String,
 }
 
+const DEFAULT_UI_TEXT: &str = "Editing file";
+
 impl Tool for EditFileTool {
     fn name(&self) -> String {
         "edit_file".into()
@@ -207,6 +209,22 @@ impl Tool for EditFileTool {
             }
             Err(_) => "Editing file".to_string(),
         }
+    }
+
+    fn still_streaming_ui_text(&self, input: &serde_json::Value) -> String {
+        if let Some(input) = serde_json::from_value::<PartialInput>(input.clone()).ok() {
+            let description = input.display_description.trim();
+            if !description.is_empty() {
+                return description.to_string();
+            }
+
+            let path = input.path.trim();
+            if !path.is_empty() {
+                return path.to_string();
+            }
+        }
+
+        DEFAULT_UI_TEXT.to_string()
     }
 
     fn run(
@@ -1350,6 +1368,73 @@ mod tests {
             .unwrap()
             .replace("\\", "/"); // Naive Windows paths normalization
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn still_streaming_ui_text_with_path() {
+        let input = json!({
+            "path": "src/main.rs",
+            "display_description": "",
+            "old_string": "old code",
+            "new_string": "new code"
+        });
+
+        assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
+    }
+
+    #[test]
+    fn still_streaming_ui_text_with_description() {
+        let input = json!({
+            "path": "",
+            "display_description": "Fix error handling",
+            "old_string": "old code",
+            "new_string": "new code"
+        });
+
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
+    }
+
+    #[test]
+    fn still_streaming_ui_text_with_path_and_description() {
+        let input = json!({
+            "path": "src/main.rs",
+            "display_description": "Fix error handling",
+            "old_string": "old code",
+            "new_string": "new code"
+        });
+
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            "Fix error handling",
+        );
+    }
+
+    #[test]
+    fn still_streaming_ui_text_no_path_or_description() {
+        let input = json!({
+            "path": "",
+            "display_description": "",
+            "old_string": "old code",
+            "new_string": "new code"
+        });
+
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
+    }
+
+    #[test]
+    fn still_streaming_ui_text_with_null() {
+        let input = serde_json::Value::Null;
+
+        assert_eq!(
+            EditFileTool.still_streaming_ui_text(&input),
+            DEFAULT_UI_TEXT,
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
