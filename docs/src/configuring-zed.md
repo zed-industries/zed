@@ -1275,6 +1275,18 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 `boolean` values
 
+## Status Bar
+
+- Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
+- Setting: `status_bar`
+- Default:
+
+```json
+"status_bar": {
+  "active_language_button": true,
+},
+```
+
 ## LSP
 
 - Description: Configuration for language servers.

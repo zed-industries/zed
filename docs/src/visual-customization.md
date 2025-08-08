@@ -306,6 +306,17 @@ TBD: Centered layout related settings
   }
 ```
 
+### Status Bar
+
+```json
+  "status_bar": {
+    // Show/hide a button that displays the active buffer's language.
+    // Clicking the button brings up the language selector.
+    // Defaults to true.
+    "active_language_button": true,
+  },
+```
+
 ### Multibuffer
 
 ```json
