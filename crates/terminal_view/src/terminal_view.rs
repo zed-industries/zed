@@ -64,8 +64,8 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -195,8 +195,6 @@ impl Focusable for TerminalView {
         self.focus_handle.clone()
     }
 }
-
-const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(8.);
 
 impl TerminalView {
     ///Create a new Terminal in the current working directory or the user's home directory
@@ -958,13 +956,12 @@ impl TerminalView {
                 .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
-                .h_full()
                 .absolute()
-                .right_0()
                 .top_0()
                 .bottom_0()
+                .right_0()
+                .h_full()
                 .w(TERMINAL_SCROLLBAR_WIDTH)
-                .cursor_default()
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
@@ -1498,9 +1495,8 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
-        // Calculate scrollbar width only when actually visible to prevent text overlap
+        // Always calculate scrollbar width to prevent layout shift
         let scrollbar_width = if Self::should_show_scrollbar(cx)
-            && (self.show_scrollbar || self.scrollbar_state.is_dragging())
             && self.content_mode(window, cx).is_scrollable()
             && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
         {
