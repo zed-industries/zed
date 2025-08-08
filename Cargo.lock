@@ -267,6 +267,8 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
+ "language_model",
+ "language_models",
  "libc",
  "log",
  "nix 0.29.0",

@@ -153,34 +153,53 @@ impl State {
             return Task::ready(Ok(()));
         }
 
+        let key = ApiKey::get(cx);
+
+        cx.spawn(async move |this, cx| {
+            let key = key.await?;
+
+            this.update(cx, |this, cx| {
+                this.api_key = Some(key.key);
+                this.api_key_from_env = key.from_env;
+                cx.notify();
+            })?;
+
+            Ok(())
+        })
+    }
+}
+
+pub struct ApiKey {
+    pub key: String,
+    pub from_env: bool,
+}
+
+impl ApiKey {
+    pub fn get(cx: &mut App) -> Task<Result<Self>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .anthropic
             .api_url
             .clone();
 
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
-                (api_key, true)
-            } else {
+        if let Ok(key) = std::env::var(ANTHROPIC_API_KEY_VAR) {
+            Task::ready(Ok(ApiKey {
+                key,
+                from_env: true,
+            }))
+        } else {
+            cx.spawn(async move |cx| {
                 let (_, api_key) = credentials_provider
                     .read_credentials(&api_url, &cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
 
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
+                Ok(ApiKey {
+                    key: String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
+                    from_env: false,
+                })
+            })
+        }
     }
 }
 
