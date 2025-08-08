@@ -42,7 +42,7 @@ use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
 
 use ::acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk, Diff,
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
     LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 
@@ -732,7 +732,11 @@ impl AcpThreadView {
         cx: &App,
     ) -> Option<impl Iterator<Item = Entity<MultiBuffer>>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
+        Some(
+            entry
+                .diffs()
+                .map(|diff| diff.read(cx).multibuffer().clone()),
+        )
     }
 
     fn authenticate(
@@ -1314,10 +1318,9 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff {
-                diff: Diff { multibuffer, .. },
-                ..
-            } => self.render_diff_editor(multibuffer),
+            ToolCallContent::Diff { diff, .. } => {
+                self.render_diff_editor(&diff.read(cx).multibuffer())
+            }
         }
     }
 

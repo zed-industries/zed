@@ -1,5 +1,5 @@
 use crate::{templates::Templates, AgentResponseEvent, Thread};
-use crate::{FindPathTool, ReadFileTool, ThinkingTool, ToolCallAuthorization};
+use crate::{EditFileTool, FindPathTool, ReadFileTool, ThinkingTool, ToolCallAuthorization};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
@@ -412,11 +412,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             anyhow!("No default model configured. Please configure a default model in settings.")
                         })?;
 
-                    let thread = cx.new(|_| {
+                    let thread = cx.new(|cx| {
                         let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log.clone(), agent.templates.clone(), default_model);
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(FindPathTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
+                        thread.add_tool(EditFileTool::new(cx.entity()));
                         thread
                     });
 
@@ -560,6 +561,15 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.handle_session_update(
                                         acp::SessionUpdate::ToolCallUpdate(tool_call_update),
+                                        cx,
+                                    )
+                                })??;
+                            }
+                            AgentResponseEvent::ToolCallDiff(tool_call_diff) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.set_tool_call_diff(
+                                        &tool_call_diff.tool_call_id,
+                                        tool_call_diff.diff,
                                         cx,
                                     )
                                 })??;
