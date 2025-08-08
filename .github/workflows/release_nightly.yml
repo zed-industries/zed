@@ -168,7 +168,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - namespace-profile-32x64-ubuntu-2004-arm # ubuntu 20.04 for minimal glibc
+      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
