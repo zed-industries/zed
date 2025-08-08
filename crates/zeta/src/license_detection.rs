@@ -53,7 +53,13 @@ fn canonicalize_license_text(license: &str) -> String {
     PARAGRAPH_SEPARATOR_REGEX
         .split(license)
         .filter(|paragraph| !paragraph.trim().is_empty())
-        .map(|paragraph| paragraph.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|paragraph| {
+            paragraph
+                .trim()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
         .collect::<Vec<_>>()
         .join("\n\n")
 }
