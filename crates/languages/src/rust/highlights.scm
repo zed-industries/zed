@@ -47,6 +47,21 @@
 (macro_definition
   name: (identifier) @function.special.definition)
 
+[
+  (crate)
+  (super)
+] @module
+
+(mod_item
+  name: (identifier) @module)
+
+(scoped_use_list
+  path: (identifier) @module)
+
+(scoped_use_list
+  path: (scoped_identifier
+    (identifier) @module))
+
 ; Identifier conventions
 
 ; Assume uppercase names are types/enum-constructors
@@ -119,9 +134,7 @@
   "where"
   "while"
   "yield"
-  (crate)
   (mutable_specifier)
-  (super)
 ] @keyword
 
 [
