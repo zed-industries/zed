@@ -139,6 +139,8 @@ impl ContextMenuEntry {
     }
 }
 
+impl FluentBuilder for ContextMenuEntry {}
+
 impl From<ContextMenuEntry> for ContextMenuItem {
     fn from(entry: ContextMenuEntry) -> Self {
         ContextMenuItem::Entry(entry)
@@ -353,6 +355,10 @@ impl ContextMenu {
         self
     }
 
+    pub fn push_item(&mut self, item: impl Into<ContextMenuItem>) {
+        self.items.push(item.into());
+    }
+
     pub fn entry(
         mut self,
         label: impl Into<SharedString>,
@@ -555,7 +561,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)),
             icon: Some(IconName::ArrowUpRight),
-            icon_size: IconSize::XSmall,
+            icon_size: IconSize::Small,
             icon_position: IconPosition::End,
             icon_color: None,
             disabled: false,
@@ -673,18 +679,18 @@ impl ContextMenu {
             let next_index = ix + 1;
             if self.items.len() <= next_index {
                 self.select_first(&SelectFirst, window, cx);
+                return;
             } else {
                 for (ix, item) in self.items.iter().enumerate().skip(next_index) {
                     if item.is_selectable() {
                         self.select_index(ix, window, cx);
                         cx.notify();
-                        break;
+                        return;
                     }
                 }
             }
-        } else {
-            self.select_first(&SelectFirst, window, cx);
         }
+        self.select_first(&SelectFirst, window, cx);
     }
 
     pub fn select_previous(
@@ -972,12 +978,10 @@ impl ContextMenu {
                             .children(action.as_ref().and_then(|action| {
                                 self.action_context
                                     .as_ref()
-                                    .map(|focus| {
+                                    .and_then(|focus| {
                                         KeyBinding::for_action_in(&**action, focus, window, cx)
                                     })
-                                    .unwrap_or_else(|| {
-                                        KeyBinding::for_action(&**action, window, cx)
-                                    })
+                                    .or_else(|| KeyBinding::for_action(&**action, window, cx))
                                     .map(|binding| {
                                         div().ml_4().child(binding.disabled(*disabled)).when(
                                             *disabled && documentation_aside.is_some(),
@@ -1199,6 +1203,7 @@ mod tests {
                     .separator()
                     .separator()
                     .entry("Last entry", None, |_, _| {})
+                    .header("Last header")
             })
         });
 
@@ -1249,6 +1254,28 @@ mod tests {
                 Some(2),
                 context_menu.selected_index,
                 "Should go back to previous selectable entry (first)"
+            );
+        });
+
+        context_menu.update_in(cx, |context_menu, window, cx| {
+            context_menu.select_first(&SelectFirst, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should start from the first selectable entry"
+            );
+
+            context_menu.select_previous(&SelectPrevious, window, cx);
+            assert_eq!(
+                Some(5),
+                context_menu.selected_index,
+                "Should wrap around to last selectable entry"
+            );
+            context_menu.select_next(&SelectNext, window, cx);
+            assert_eq!(
+                Some(2),
+                context_menu.selected_index,
+                "Should wrap around to first selectable entry"
             );
         });
     }

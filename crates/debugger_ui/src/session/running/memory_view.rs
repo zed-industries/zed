@@ -8,10 +8,10 @@ use std::{
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    Action, AppContext, DismissEvent, Empty, Entity, FocusHandle, Focusable, MouseButton,
-    MouseMoveEvent, Point, ScrollStrategy, ScrollWheelEvent, Stateful, Subscription, Task,
-    TextStyle, UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, bounds,
-    deferred, point, size, uniform_list,
+    Action, AppContext, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
+    MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful, Subscription, Task, TextStyle,
+    UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point,
+    uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
@@ -23,7 +23,6 @@ use ui::{
     ParentElement, Pixels, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
     StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, div, h_flex, px, v_flex,
 };
-use util::ResultExt;
 use workspace::Workspace;
 
 use crate::{ToggleDataBreakpoint, session::running::stack_frame_list::StackFrameList};
@@ -34,9 +33,7 @@ pub(crate) struct MemoryView {
     workspace: WeakEntity<Workspace>,
     scroll_handle: UniformListScrollHandle,
     scroll_state: ScrollbarState,
-    show_scrollbar: bool,
     stack_frame_list: WeakEntity<StackFrameList>,
-    hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     view_state: ViewState,
     query_editor: Entity<Editor>,
@@ -126,6 +123,8 @@ impl ViewState {
     }
 }
 
+struct ScrollbarDragging;
+
 static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
 static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
@@ -148,8 +147,6 @@ impl MemoryView {
             scroll_state,
             scroll_handle,
             stack_frame_list,
-            show_scrollbar: false,
-            hide_scrollbar_task: None,
             focus_handle: cx.focus_handle(),
             view_state,
             query_editor,
@@ -159,60 +156,49 @@ impl MemoryView {
             open_context_menu: None,
         };
         this.change_query_bar_mode(false, window, cx);
+        cx.on_focus_out(&this.focus_handle, window, |this, _, window, cx| {
+            this.change_query_bar_mode(false, window, cx);
+            cx.notify();
+        })
+        .detach();
         this
     }
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.show_scrollbar || self.scroll_state.is_dragging()) {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("memory-view-vertical-scrollbar")
-                .on_mouse_move(cx.listener(|this, evt, _, cx| {
-                    this.handle_drag(evt);
-                    cx.notify();
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("memory-view-vertical-scrollbar")
+            .on_drag_move(cx.listener(|this, evt, _, cx| {
+                let did_handle = this.handle_scroll_drag(evt);
+                cx.notify();
+                if did_handle {
                     cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
+                }
+            }))
+            .on_drag(ScrollbarDragging, |_, _, _, cx| cx.new(|_| Empty))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scroll_state.clone())),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scroll_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
@@ -302,16 +288,12 @@ impl MemoryView {
         .detach();
     }
 
-    fn handle_drag(&mut self, evt: &MouseMoveEvent) {
-        if !evt.dragging() {
-            return;
-        }
-        if !self.scroll_state.is_dragging()
-            && !self
-                .view_state
-                .selection
-                .as_ref()
-                .is_some_and(|selection| selection.is_dragging())
+    fn handle_memory_drag(&mut self, evt: &DragMoveEvent<Drag>) {
+        if !self
+            .view_state
+            .selection
+            .as_ref()
+            .is_some_and(|selection| selection.is_dragging())
         {
             return;
         }
@@ -319,22 +301,31 @@ impl MemoryView {
         debug_assert!(row_count > 1);
         let scroll_handle = self.scroll_state.scroll_handle();
         let viewport = scroll_handle.viewport();
-        let (top_area, bottom_area) = {
-            let size = size(viewport.size.width, viewport.size.height / 10.);
-            (
-                bounds(viewport.origin, size),
-                bounds(
-                    point(viewport.origin.x, viewport.origin.y + size.height * 2.),
-                    size,
-                ),
-            )
-        };
 
-        if bottom_area.contains(&evt.position) {
-            //ix == row_count - 1 {
+        if viewport.bottom() < evt.event.position.y {
             self.view_state.schedule_scroll_down();
-        } else if top_area.contains(&evt.position) {
+        } else if viewport.top() > evt.event.position.y {
             self.view_state.schedule_scroll_up();
+        }
+    }
+
+    fn handle_scroll_drag(&mut self, evt: &DragMoveEvent<ScrollbarDragging>) -> bool {
+        if !self.scroll_state.is_dragging() {
+            return false;
+        }
+        let row_count = self.view_state.row_count();
+        debug_assert!(row_count > 1);
+        let scroll_handle = self.scroll_state.scroll_handle();
+        let viewport = scroll_handle.viewport();
+
+        if viewport.bottom() < evt.event.position.y {
+            self.view_state.schedule_scroll_down();
+            true
+        } else if viewport.top() > evt.event.position.y {
+            self.view_state.schedule_scroll_up();
+            true
+        } else {
+            false
         }
     }
 
@@ -583,16 +574,22 @@ impl MemoryView {
         else {
             return;
         };
+        let expr = format!("?${{{expr}}}");
         let reference = self.session.update(cx, |this, cx| {
             this.memory_reference_of_expr(selected_frame, expr, cx)
         });
         cx.spawn(async move |this, cx| {
-            if let Some(reference) = reference.await {
+            if let Some((reference, typ)) = reference.await {
                 _ = this.update(cx, |this, cx| {
-                    let Ok(address) = parse_int::parse::<u64>(&reference) else {
-                        return;
+                    let sizeof_expr = if typ.as_ref().is_some_and(|t| {
+                        t.chars()
+                            .all(|c| c.is_whitespace() || c.is_alphabetic() || c == '*')
+                    }) {
+                        typ.as_deref()
+                    } else {
+                        None
                     };
-                    this.jump_to_address(address, cx);
+                    this.go_to_memory_reference(&reference, sizeof_expr, selected_frame, cx);
                 });
             }
         })
@@ -667,7 +664,7 @@ impl MemoryView {
                 menu = menu.action_disabled_when(
                     *memory_unreadable,
                     "Set Data Breakpoint",
-                    ToggleDataBreakpoint.boxed_clone(),
+                    ToggleDataBreakpoint { access_type: None }.boxed_clone(),
                 );
             }
             menu.context(self.focus_handle.clone())
@@ -763,7 +760,7 @@ fn render_single_memory_view_line(
                             this.when(selection.contains(base_address + cell_ix as u64), |this| {
                                 let weak = weak.clone();
 
-                                this.bg(Color::Accent.color(cx)).when(
+                                this.bg(Color::Selected.color(cx).opacity(0.2)).when(
                                     !selection.is_dragging(),
                                     |this| {
                                         let selection = selection.drag().memory_range();
@@ -860,7 +857,7 @@ fn render_single_memory_view_line(
                         .px_0p5()
                         .when_some(view_state.selection.as_ref(), |this, selection| {
                             this.when(selection.contains(base_address + ix as u64), |this| {
-                                this.bg(Color::Accent.color(cx))
+                                this.bg(Color::Selected.color(cx).opacity(0.2))
                             })
                         })
                         .child(
@@ -899,15 +896,6 @@ impl Render for MemoryView {
             .on_action(cx.listener(Self::page_up))
             .size_full()
             .track_focus(&self.focus_handle)
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(window, cx);
-                }
-            }))
             .child(
                 h_flex()
                     .w_full()
@@ -944,8 +932,8 @@ impl Render for MemoryView {
             .child(
                 v_flex()
                     .size_full()
-                    .on_mouse_move(cx.listener(|this, evt: &MouseMoveEvent, _, _| {
-                        this.handle_drag(evt);
+                    .on_drag_move(cx.listener(|this, evt, _, _| {
+                        this.handle_memory_drag(&evt);
                     }))
                     .child(self.render_memory(cx).size_full())
                     .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
@@ -957,7 +945,7 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .children(self.render_vertical_scrollbar(cx)),
+                    .child(self.render_vertical_scrollbar(cx)),
             )
     }
 }

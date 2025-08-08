@@ -63,9 +63,9 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
+    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -351,7 +351,7 @@ impl TerminalBuilder {
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
-        window: AnyWindowHandle,
+        window_id: u64,
         completion_tx: Sender<Option<ExitStatus>>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
@@ -463,11 +463,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(
-            &pty_options,
-            TerminalBounds::default().into(),
-            window.window_id().as_u64(),
-        ) {
+        let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {

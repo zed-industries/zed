@@ -66,20 +66,9 @@ The list can be obtained as follows:
 - Click on `More` in the `Installed` tab
 - Click on `Export configuration`
 
-## Backend dependencies
+### Backend Dependencies (optional) {#backend-dependencies}
 
-> This section is still in development. The instructions are not yet complete.
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://www.postgresql.org/download/windows/)
-- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
-```
+If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ### Notes
 

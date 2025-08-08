@@ -179,7 +179,7 @@ impl RenderOnce for Tab {
 
 impl Component for Tab {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::Navigation
     }
 
     fn description() -> Option<&'static str> {

@@ -38,8 +38,6 @@ impl BladeAtlasState {
 }
 
 pub struct BladeTextureInfo {
-    #[allow(dead_code)]
-    pub size: gpu::Extent,
     pub raw_view: gpu::TextureView,
 }
 
@@ -63,15 +61,6 @@ impl BladeAtlas {
         self.0.lock().destroy();
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn clear_textures(&self, texture_kind: AtlasTextureKind) {
-        let mut lock = self.0.lock();
-        let textures = &mut lock.storage[texture_kind];
-        for texture in textures.iter_mut() {
-            texture.clear();
-        }
-    }
-
     pub fn before_frame(&self, gpu_encoder: &mut gpu::CommandEncoder) {
         let mut lock = self.0.lock();
         lock.flush(gpu_encoder);
@@ -85,13 +74,7 @@ impl BladeAtlas {
     pub fn get_texture_info(&self, id: AtlasTextureId) -> BladeTextureInfo {
         let lock = self.0.lock();
         let texture = &lock.storage[id];
-        let size = texture.allocator.size();
         BladeTextureInfo {
-            size: gpu::Extent {
-                width: size.width as u32,
-                height: size.height as u32,
-                depth: 1,
-            },
             raw_view: texture.raw_view,
         }
     }
@@ -334,10 +317,6 @@ struct BladeAtlasTexture {
 }
 
 impl BladeAtlasTexture {
-    fn clear(&mut self) {
-        self.allocator.clear();
-    }
-
     fn allocate(&mut self, size: Size<DevicePixels>) -> Option<AtlasTile> {
         let allocation = self.allocator.allocate(size.into())?;
         let tile = AtlasTile {
