@@ -92,29 +92,45 @@
   (#set! tag go-main)
 )
 
-; Table test case - slice
+; Table test cases - slice and map
 (
   (short_var_declaration
-    left: (expression_list (identifier) @_slice_var)
+    left: (expression_list (identifier) @_collection_var)
     right: (expression_list
       (composite_literal
-        type: (slice_type)
+        type: [
+          (slice_type)
+          (map_type
+            key: (type_identifier) @_key_type
+            (#eq? @_key_type "string")
+          )
+        ]
         body: (literal_value
-          (literal_element
-            (literal_value
-              (keyed_element
-                (literal_element
-                  (identifier) @_field_name
-                )
-                (literal_element
-                  [
-                    (interpreted_string_literal) @run @_table_test_case_name
-                    (raw_string_literal) @run @_table_test_case_name
-                  ]
+          [
+            (literal_element
+              (literal_value
+                (keyed_element
+                  (literal_element
+                    (identifier) @_field_name
+                  )
+                  (literal_element
+                    [
+                      (interpreted_string_literal) @run @_table_test_case_name
+                      (raw_string_literal) @run @_table_test_case_name
+                    ]
+                  )
                 )
               )
             )
-          )
+            (keyed_element
+              (literal_element
+                [
+                  (interpreted_string_literal) @run @_table_test_case_name
+                  (raw_string_literal) @run @_table_test_case_name
+                ]
+              )
+            )
+          ]
         )
       )
     )
@@ -122,79 +138,16 @@
   (for_statement
     (range_clause
       left: (expression_list
-        (identifier)
-        (identifier) @_loop_var
-      )
-      right: (identifier) @_range_var_check
-      (#eq? @_range_var_check @_slice_var)
-    )
-    body: (block
-      (expression_statement
-        (call_expression
-          function: (selector_expression
-            operand: (identifier) @_t_var
-            field: (field_identifier) @_run_check
-            (#eq? @_run_check "Run")
+        [
+          (
+            (identifier)
+            (identifier) @_loop_var
           )
-          arguments: (argument_list
-            .
-            (selector_expression
-              operand: (identifier) @_tc_var_check
-              (#eq? @_tc_var_check @_loop_var)
-              field: (field_identifier) @_field_check
-              (#eq? @_field_check @_field_name)
-            )
-            .
-            (func_literal
-              parameters: (parameter_list
-                (parameter_declaration
-                  type: (pointer_type
-                    (qualified_type
-                      package: (package_identifier) @_pkg
-                      name: (type_identifier) @_type
-                      (#eq? @_pkg "testing")
-                      (#eq? @_type "T")
-                    )
-                  )
-                )
-              )
-            )
-          )
-        )
+          (identifier) @_loop_var
+        ]
       )
-    )
-  ) @_
-  (#set! tag go-table-test-case)
-)
-
-; Table test cases - map
-(
-  (short_var_declaration
-    left: (expression_list (identifier) @_map_var)
-    right: (expression_list
-      (composite_literal
-        type: (map_type
-          key: (type_identifier) @_key_type
-          (#eq? @_key_type "string")
-        )
-        body: (literal_value
-          (keyed_element
-            (literal_element
-              [
-                (interpreted_string_literal) @run @_table_test_case_name
-                (raw_string_literal) @run @_table_test_case_name
-              ]
-            )
-          )
-        )
-      )
-    )
-  )
-  (for_statement
-    (range_clause
-      left: (expression_list (identifier) @_key_var)
       right: (identifier) @_range_var
-      (#eq? @_range_var @_map_var)
+      (#eq? @_range_var @_collection_var)
     )
     body: (block
       (expression_statement
@@ -206,8 +159,16 @@
           )
           arguments: (argument_list
             .
-            (identifier) @_arg_var
-            (#eq? @_arg_var @_key_var)
+            [
+              (selector_expression
+                operand: (identifier) @_tc_var
+                (#eq? @_tc_var @_loop_var)
+                field: (field_identifier) @_field_check
+                (#eq? @_field_check @_field_name)
+              )
+              (identifier) @_arg_var
+              (#eq? @_arg_var @_loop_var)
+            ]
             .
             (func_literal
               parameters: (parameter_list
