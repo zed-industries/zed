@@ -668,7 +668,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
-            name: ThinkingTool.name().into(),
+            name: "thinking".into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: true,
@@ -682,7 +682,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         tool_call,
         acp::ToolCall {
             id: acp::ToolCallId("1".into()),
-            title: "thinking".into(),
+            title: "Thinking".into(),
             kind: acp::ToolKind::Think,
             status: acp::ToolCallStatus::Pending,
             content: vec![],
