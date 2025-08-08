@@ -2473,7 +2473,7 @@ impl Render for KeybindingEditorModal {
                                                         .label_size(LabelSize::Small)
                                                         .icon(IconName::ArrowUpRight)
                                                         .icon_color(Color::Muted)
-                                                        .icon_size(IconSize::XSmall)
+                                                        .icon_size(IconSize::Small)
                                                         .on_click(cx.listener(
                                                             |this, _, window, cx| {
                                                                 this.show_matching_bindings(
