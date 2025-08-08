@@ -214,7 +214,7 @@ impl AgentTool for EditFileTool {
                 model,
                 project.clone(),
                 action_log.clone(),
-                // todo! move edit agent to this crate so we can use our templates?
+                // TODO: move edit agent to this crate so we can use our templates
                 assistant_tools::templates::Templates::new(),
                 edit_format,
             );
@@ -226,14 +226,6 @@ impl AgentTool for EditFileTool {
                 .await?;
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
-            event_stream.send_update(acp::ToolCallUpdateFields {
-                locations: Some(vec![acp::ToolCallLocation {
-                    path: project_path.path.to_path_buf(),
-                    // todo!
-                    line: None
-                }]),
-                ..Default::default()
-            });
             event_stream.send_diff(diff.clone());
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
