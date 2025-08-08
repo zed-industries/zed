@@ -70,24 +70,28 @@ impl AgentTool for ReadFileTool {
         acp::ToolKind::Read
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        let path = &input.path;
-        match (input.start_line, input.end_line) {
-            (Some(start), Some(end)) => {
-                format!(
-                    "[Read file `{}` (lines {}-{})](@selection:{}:({}-{}))",
-                    path, start, end, path, start, end
-                )
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        if let Ok(input) = input {
+            let path = &input.path;
+            match (input.start_line, input.end_line) {
+                (Some(start), Some(end)) => {
+                    format!(
+                        "[Read file `{}` (lines {}-{})](@selection:{}:({}-{}))",
+                        path, start, end, path, start, end
+                    )
+                }
+                (Some(start), None) => {
+                    format!(
+                        "[Read file `{}` (from line {})](@selection:{}:({}-{}))",
+                        path, start, path, start, start
+                    )
+                }
+                _ => format!("[Read file `{}`](@file:{})", path, path),
             }
-            (Some(start), None) => {
-                format!(
-                    "[Read file `{}` (from line {})](@selection:{}:({}-{}))",
-                    path, start, path, start, start
-                )
-            }
-            _ => format!("[Read file `{}`](@file:{})", path, path),
+            .into()
+        } else {
+            "Read file".into()
         }
-        .into()
     }
 
     fn run(

@@ -1,3 +1,4 @@
+use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use agent_client_protocol as acp;
 use anyhow::{anyhow, Context as _, Result};
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
 
-use crate::{AgentTool, Thread, ToolCallEventStream};
+const DEFAULT_UI_TEXT: &str = "Editing file";
 
 /// This is a tool for creating a new file or editing an existing file. For moving or renaming files, you should generally use the `terminal` tool with the 'mv' command instead.
 ///
@@ -76,6 +77,14 @@ pub struct EditFileToolInput {
     /// When a file already exists or you just created it, prefer editing
     /// it as opposed to recreating it from scratch.
     pub mode: EditFileMode,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+struct EditFileToolPartialInput {
+    #[serde(default)]
+    path: String,
+    #[serde(default)]
+    display_description: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -182,8 +191,27 @@ impl AgentTool for EditFileTool {
         acp::ToolKind::Edit
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        input.display_description.into()
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        match input {
+            Ok(input) => input.display_description.into(),
+            Err(raw_input) => {
+                if let Some(input) =
+                    serde_json::from_value::<EditFileToolPartialInput>(raw_input).ok()
+                {
+                    let description = input.display_description.trim();
+                    if !description.is_empty() {
+                        return description.to_string().into();
+                    }
+
+                    let path = input.path.trim().to_string();
+                    if !path.is_empty() {
+                        return path.into();
+                    }
+                }
+
+                DEFAULT_UI_TEXT.into()
+            }
+        }
     }
 
     fn run(
@@ -226,7 +254,7 @@ impl AgentTool for EditFileTool {
                 .await?;
 
             let diff = cx.new(|cx| Diff::new(buffer.clone(), cx))?;
-            event_stream.send_diff(diff.clone());
+            event_stream.update_diff(diff.clone());
 
             let old_snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot())?;
             let old_text = cx
@@ -1346,6 +1374,66 @@ mod tests {
             .unwrap();
             assert!(stream_rx.try_next().is_err());
         }
+    }
+
+    #[gpui::test]
+    async fn test_initial_title_with_partial_input(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|_| {
+            Thread::new(
+                project.clone(),
+                Rc::default(),
+                action_log.clone(),
+                Templates::new(),
+                model.clone(),
+            )
+        });
+        let tool = Arc::new(EditFileTool { thread });
+
+        assert_eq!(
+            tool.initial_title(Err(json!({
+                "path": "src/main.rs",
+                "display_description": "",
+                "old_string": "old code",
+                "new_string": "new code"
+            }))),
+            "src/main.rs"
+        );
+        assert_eq!(
+            tool.initial_title(Err(json!({
+                "path": "",
+                "display_description": "Fix error handling",
+                "old_string": "old code",
+                "new_string": "new code"
+            }))),
+            "Fix error handling"
+        );
+        assert_eq!(
+            tool.initial_title(Err(json!({
+                "path": "src/main.rs",
+                "display_description": "Fix error handling",
+                "old_string": "old code",
+                "new_string": "new code"
+            }))),
+            "Fix error handling"
+        );
+        assert_eq!(
+            tool.initial_title(Err(json!({
+                "path": "",
+                "display_description": "",
+                "old_string": "old code",
+                "new_string": "new code"
+            }))),
+            DEFAULT_UI_TEXT
+        );
+        assert_eq!(
+            tool.initial_title(Err(serde_json::Value::Null)),
+            DEFAULT_UI_TEXT
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {

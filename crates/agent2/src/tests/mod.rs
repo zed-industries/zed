@@ -306,7 +306,7 @@ async fn test_tool_hallucination(cx: &mut TestAppContext) {
     let tool_call = expect_tool_call(&mut events).await;
     assert_eq!(tool_call.title, "nonexistent_tool");
     assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
 }
 
@@ -326,7 +326,7 @@ async fn expect_tool_call(
     }
 }
 
-async fn expect_tool_call_update(
+async fn expect_tool_call_update_fields(
     events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
 ) -> acp::ToolCallUpdate {
     let event = events
@@ -335,7 +335,9 @@ async fn expect_tool_call_update(
         .expect("no tool call authorization event received")
         .unwrap();
     match event {
-        AgentResponseEvent::ToolCallUpdate(tool_call_update) => return tool_call_update,
+        AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
+            return update
+        }
         event => {
             panic!("Unexpected event {event:?}");
         }
@@ -425,31 +427,33 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     });
 
     // Wait until both tools are called.
-    let mut expected_tool_calls = vec!["echo", "infinite"];
+    let mut expected_tools = vec!["Echo", "Infinite Tool"];
     let mut echo_id = None;
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
         match event.unwrap() {
             AgentResponseEvent::ToolCall(tool_call) => {
-                assert_eq!(tool_call.title, expected_tool_calls.remove(0));
-                if tool_call.title == "echo" {
+                assert_eq!(tool_call.title, expected_tools.remove(0));
+                if tool_call.title == "Echo" {
                     echo_id = Some(tool_call.id);
                 }
             }
-            AgentResponseEvent::ToolCallUpdate(acp::ToolCallUpdate {
-                id,
-                fields:
-                    acp::ToolCallUpdateFields {
-                        status: Some(acp::ToolCallStatus::Completed),
-                        ..
-                    },
-            }) if Some(&id) == echo_id.as_ref() => {
+            AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+                acp::ToolCallUpdate {
+                    id,
+                    fields:
+                        acp::ToolCallUpdateFields {
+                            status: Some(acp::ToolCallStatus::Completed),
+                            ..
+                        },
+                },
+            )) if Some(&id) == echo_id.as_ref() => {
                 echo_completed = true;
             }
             _ => {}
         }
 
-        if expected_tool_calls.is_empty() && echo_completed {
+        if expected_tools.is_empty() && echo_completed {
             break;
         }
     }
@@ -647,11 +651,24 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "Think", cx));
     cx.run_until_parked();
 
-    let input = json!({ "content": "Thinking hard!" });
+    // Simulate streaming partial input.
+    let input = json!({});
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
             id: "1".into(),
             name: ThinkingTool.name().into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: false,
+        },
+    ));
+
+    // Input streaming completed
+    let input = json!({ "content": "Thinking hard!" });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "1".into(),
+            name: "thinking".into(),
             raw_input: input.to_string(),
             input,
             is_input_complete: true,
@@ -670,22 +687,35 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             status: acp::ToolCallStatus::Pending,
             content: vec![],
             locations: vec![],
-            raw_input: Some(json!({ "content": "Thinking hard!" })),
+            raw_input: Some(json!({})),
             raw_output: None,
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
             id: acp::ToolCallId("1".into()),
             fields: acp::ToolCallUpdateFields {
-                status: Some(acp::ToolCallStatus::InProgress,),
+                title: Some("Thinking".into()),
+                kind: Some(acp::ToolKind::Think),
+                raw_input: Some(json!({ "content": "Thinking hard!" })),
                 ..Default::default()
             },
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::InProgress),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
@@ -696,7 +726,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             },
         }
     );
-    let update = expect_tool_call_update(&mut events).await;
+    let update = expect_tool_call_update_fields(&mut events).await;
     assert_eq!(
         update,
         acp::ToolCallUpdate {
