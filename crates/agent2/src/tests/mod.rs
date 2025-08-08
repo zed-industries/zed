@@ -272,7 +272,7 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 tool_name: ToolRequiringPermission.name().into(),
                 is_error: false,
                 content: "Allowed".into(),
-                output: None
+                output: Some("Allowed".into())
             }),
             MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),

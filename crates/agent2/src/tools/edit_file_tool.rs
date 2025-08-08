@@ -882,7 +882,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_needs_confirmation(cx: &mut TestAppContext) {
+    async fn test_authorize(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
@@ -967,23 +967,7 @@ mod tests {
         let event = stream_rx.expect_tool_authorization().await;
         assert_eq!(event.tool_call.title, "test 4 (local settings)");
 
-        // Test 5: Path outside of the project should require confirmation.
-        let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
-        let _auth = cx.update(|cx| {
-            tool.authorize(
-                &EditFileToolInput {
-                    display_description: "test 5".into(),
-                    path: paths::config_dir().join("tasks.json"),
-                    mode: EditFileMode::Edit,
-                },
-                &stream_tx,
-                cx,
-            )
-        });
-        let event = stream_rx.expect_tool_authorization().await;
-        assert_eq!(event.tool_call.title, "test 5 (global settings)");
-
-        // Test 6: When always_allow_tool_actions is enabled, no confirmation needed
+        // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
         cx.update(|cx| {
             let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
             settings.always_allow_tool_actions = true;
@@ -994,7 +978,7 @@ mod tests {
         cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
-                    display_description: "test 6.1".into(),
+                    display_description: "test 5.1".into(),
                     path: ".zed/settings.json".into(),
                     mode: EditFileMode::Edit,
                 },
@@ -1010,7 +994,7 @@ mod tests {
         cx.update(|cx| {
             tool.authorize(
                 &EditFileToolInput {
-                    display_description: "test 6.2".into(),
+                    display_description: "test 5.2".into(),
                     path: "/etc/hosts".into(),
                     mode: EditFileMode::Edit,
                 },
@@ -1021,6 +1005,72 @@ mod tests {
         .await
         .unwrap();
         assert!(stream_rx.try_next().is_err());
+    }
+
+    #[gpui::test]
+    async fn test_authorize_global_config(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let model = Arc::new(FakeLanguageModel::default());
+        let thread = cx.new(|_| {
+            Thread::new(
+                project,
+                Rc::default(),
+                action_log.clone(),
+                Templates::new(),
+                model.clone(),
+            )
+        });
+        let tool = Arc::new(EditFileTool { thread });
+
+        // Test global config paths - these should require confirmation if they exist and are outside the project
+        let test_cases = vec![
+            (
+                "/etc/hosts",
+                true,
+                "System file should require confirmation",
+            ),
+            (
+                "/usr/local/bin/script",
+                true,
+                "System bin file should require confirmation",
+            ),
+            (
+                "project/normal_file.rs",
+                false,
+                "Normal project file should not require confirmation",
+            ),
+        ];
+
+        for (path, should_confirm, description) in test_cases {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let auth = cx.update(|cx| {
+                tool.authorize(
+                    &EditFileToolInput {
+                        display_description: "Edit file".into(),
+                        path: path.into(),
+                        mode: EditFileMode::Edit,
+                    },
+                    &stream_tx,
+                    cx,
+                )
+            });
+
+            if should_confirm {
+                stream_rx.expect_tool_authorization().await;
+            } else {
+                auth.await.unwrap();
+                assert!(
+                    stream_rx.try_next().is_err(),
+                    "Failed for case: {} - path: {} - expected no confirmation but got one",
+                    description,
+                    path
+                );
+            }
+        }
     }
 
     #[gpui::test]

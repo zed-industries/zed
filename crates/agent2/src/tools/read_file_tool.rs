@@ -1,10 +1,11 @@
 use agent_client_protocol::{self as acp};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use assistant_tool::{outline, ActionLog};
 use gpui::{Entity, Task};
 use indoc::formatdoc;
 use language::{Anchor, Point};
-use project::{AgentLocation, Project, WorktreeSettings};
+use language_model::{LanguageModelImage, LanguageModelToolResultContent};
+use project::{image_store, AgentLocation, ImageItem, Project, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -59,7 +60,7 @@ impl ReadFileTool {
 
 impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
-    type Output = String;
+    type Output = LanguageModelToolResultContent;
 
     fn name(&self) -> SharedString {
         "read_file".into()
@@ -92,9 +93,9 @@ impl AgentTool for ReadFileTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<LanguageModelToolResultContent>> {
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
         };
@@ -133,51 +134,27 @@ impl AgentTool for ReadFileTool {
 
         let file_path = input.path.clone();
 
-        event_stream.send_update(acp::ToolCallUpdateFields {
-            locations: Some(vec![acp::ToolCallLocation {
-                path: project_path.path.to_path_buf(),
-                line: input.start_line,
-                // TODO (tracked): use full range
-            }]),
-            ..Default::default()
-        });
+        if image_store::is_image_file(&self.project, &project_path, cx) {
+            return cx.spawn(async move |cx| {
+                let image_entity: Entity<ImageItem> = cx
+                    .update(|cx| {
+                        self.project.update(cx, |project, cx| {
+                            project.open_image(project_path.clone(), cx)
+                        })
+                    })?
+                    .await?;
 
-        // TODO (tracked): images
-        // if image_store::is_image_file(&self.project, &project_path, cx) {
-        //     let model = &self.thread.read(cx).selected_model;
+                let image =
+                    image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
 
-        //     if !model.supports_images() {
-        //         return Task::ready(Err(anyhow!(
-        //             "Attempted to read an image, but Zed doesn't currently support sending images to {}.",
-        //             model.name().0
-        //         )))
-        //         .into();
-        //     }
+                let language_model_image = cx
+                    .update(|cx| LanguageModelImage::from_image(image, cx))?
+                    .await
+                    .context("processing image")?;
 
-        //     return cx.spawn(async move |cx| -> Result<ToolResultOutput> {
-        //         let image_entity: Entity<ImageItem> = cx
-        //             .update(|cx| {
-        //                 self.project.update(cx, |project, cx| {
-        //                     project.open_image(project_path.clone(), cx)
-        //                 })
-        //             })?
-        //             .await?;
-
-        //         let image =
-        //             image_entity.read_with(cx, |image_item, _| Arc::clone(&image_item.image))?;
-
-        //         let language_model_image = cx
-        //             .update(|cx| LanguageModelImage::from_image(image, cx))?
-        //             .await
-        //             .context("processing image")?;
-
-        //         Ok(ToolResultOutput {
-        //             content: ToolResultContent::Image(language_model_image),
-        //             output: None,
-        //         })
-        //     });
-        // }
-        //
+                Ok(language_model_image.into())
+            });
+        }
 
         let project = self.project.clone();
         let action_log = self.action_log.clone();
@@ -245,7 +222,7 @@ impl AgentTool for ReadFileTool {
                     })?;
                 }
 
-                Ok(result)
+                Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
@@ -258,7 +235,7 @@ impl AgentTool for ReadFileTool {
                         log.buffer_read(buffer, cx);
                     })?;
 
-                    Ok(result)
+                    Ok(result.into())
                 } else {
                     // File is too big, so return the outline
                     // and a suggestion to read again with line numbers.
@@ -277,7 +254,8 @@ impl AgentTool for ReadFileTool {
 
                         Alternatively, you can fall back to the `grep` tool (if available)
                         to search the file for specific content."
-                    })
+                    }
+                    .into())
                 }
             }
         })
@@ -346,7 +324,7 @@ mod test {
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "This is a small file content");
+        assert_eq!(result.unwrap(), "This is a small file content".into());
     }
 
     #[gpui::test]
@@ -366,7 +344,7 @@ mod test {
         language_registry.add(Arc::new(rust_lang()));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log));
-        let content = cx
+        let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {
                     path: "root/large_file.rs".into(),
@@ -377,6 +355,7 @@ mod test {
             })
             .await
             .unwrap();
+        let content = result.to_str().unwrap();
 
         assert_eq!(
             content.lines().skip(4).take(6).collect::<Vec<_>>(),
@@ -399,8 +378,9 @@ mod test {
                 };
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
-            .await;
-        let content = result.unwrap();
+            .await
+            .unwrap();
+        let content = result.to_str().unwrap();
         let expected_content = (0..1000)
             .flat_map(|i| {
                 vec![
@@ -446,7 +426,7 @@ mod test {
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4");
+        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4".into());
     }
 
     #[gpui::test]
@@ -476,7 +456,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2");
+        assert_eq!(result.unwrap(), "Line 1\nLine 2".into());
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -489,7 +469,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1");
+        assert_eq!(result.unwrap(), "Line 1".into());
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -502,7 +482,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3");
+        assert_eq!(result.unwrap(), "Line 3".into());
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -730,7 +710,7 @@ mod test {
             })
             .await;
         assert!(result.is_ok(), "Should be able to read normal files");
-        assert_eq!(result.unwrap(), "Normal file content");
+        assert_eq!(result.unwrap(), "Normal file content".into());
 
         // Path traversal attempts with .. should fail
         let result = cx
@@ -835,7 +815,10 @@ mod test {
             .await
             .unwrap();
 
-        assert_eq!(result, "fn main() { println!(\"Hello from worktree1\"); }");
+        assert_eq!(
+            result,
+            "fn main() { println!(\"Hello from worktree1\"); }".into()
+        );
 
         // Test reading private file in worktree1 should fail
         let result = cx
@@ -894,7 +877,7 @@ mod test {
 
         assert_eq!(
             result,
-            "export function greet() { return 'Hello from worktree2'; }"
+            "export function greet() { return 'Hello from worktree2'; }".into()
         );
 
         // Test reading private file in worktree2 should fail

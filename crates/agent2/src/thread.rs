@@ -510,15 +510,27 @@ impl Thread {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
         });
+        let supports_images = self.selected_model.supports_images();
         let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
         Some(cx.foreground_executor().spawn(async move {
-            match tool_result.await {
-                Ok(tool_output) => LanguageModelToolResult {
+            let tool_result = tool_result.await.and_then(|output| {
+                if let LanguageModelToolResultContent::Image(_) = &output.llm_output {
+                    if !supports_images {
+                        return Err(anyhow!(
+                            "Attempted to read an image, but this model doesn't support it.",
+                        ));
+                    }
+                }
+                Ok(output)
+            });
+
+            match tool_result {
+                Ok(output) => LanguageModelToolResult {
                     tool_use_id: tool_use.id,
                     tool_name: tool_use.name,
                     is_error: false,
-                    content: tool_output.llm_output,
-                    output: Some(tool_output.raw_output),
+                    content: output.llm_output,
+                    output: Some(output.raw_output),
                 },
                 Err(error) => LanguageModelToolResult {
                     tool_use_id: tool_use.id,
