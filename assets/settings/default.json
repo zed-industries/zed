@@ -1218,7 +1218,9 @@
       "**/*.crt",
       "**/.dev.vars",
       "**/secrets.yml",
-      "**/zed/settings.json"
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json"
     ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
