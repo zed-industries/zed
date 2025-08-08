@@ -721,9 +721,7 @@ impl ActivityIndicator {
                 AutoUpdateStatus::Updated { version } => Some(Content {
                     icon: None,
                     message: "Click to restart and update Zed".to_string(),
-                    on_click: Some(Arc::new(move |_, _, cx| {
-                        workspace::reload(&workspace::Reload, cx)
-                    })),
+                    on_click: Some(Arc::new(move |_, _, cx| workspace::reload(cx))),
                     tooltip_message: Some(Self::version_tooltip_message(&version)),
                 }),
                 AutoUpdateStatus::Errored => Some(Content {

@@ -544,8 +544,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     toast_layer::init(cx);
     history_manager::init(cx);
 
-    cx.on_action(Workspace::close_global);
-    cx.on_action(reload);
+    cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
+    cx.on_action(|_: &Reload, cx| reload(cx));
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
@@ -2140,7 +2140,7 @@ impl Workspace {
         }
     }
 
-    pub fn close_global(_: &CloseWindow, cx: &mut App) {
+    pub fn close_global(cx: &mut App) {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
@@ -7489,7 +7489,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn reload(_: &Reload, cx: &mut App) {
+pub fn reload(cx: &mut App) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
