@@ -474,8 +474,17 @@ impl Thread {
             }
         });
 
+        let mut title = SharedString::from(&tool_use.name);
+        let mut kind = acp::ToolKind::Other;
+        if let Some(tool) = tool.as_ref() {
+            if let Ok(initial_title) = tool.initial_title(tool_use.input.clone()) {
+                title = initial_title;
+            }
+            kind = tool.kind();
+        }
+
         if push_new_tool_use {
-            event_stream.send_tool_call(tool.as_ref(), &tool_use);
+            event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
             last_message
                 .content
                 .push(MessageContent::ToolUse(tool_use.clone()));
@@ -483,6 +492,8 @@ impl Thread {
             event_stream.send_tool_call_update(
                 &tool_use.id,
                 acp::ToolCallUpdateFields {
+                    title: Some(title.into()),
+                    kind: Some(kind),
                     raw_input: Some(tool_use.input.clone()),
                     ..Default::default()
                 },
@@ -842,17 +853,17 @@ impl AgentResponseEventStream {
 
     fn send_tool_call(
         &self,
-        tool: Option<&Arc<dyn AnyAgentTool>>,
-        tool_use: &LanguageModelToolUse,
+        id: &LanguageModelToolUseId,
+        title: SharedString,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
     ) {
         self.0
             .unbounded_send(Ok(AgentResponseEvent::ToolCall(Self::initial_tool_call(
-                &tool_use.id,
-                tool.and_then(|t| t.initial_title(tool_use.input.clone()).ok())
-                    .map(|i| i.into())
-                    .unwrap_or_else(|| tool_use.name.to_string()),
-                tool.map(|t| t.kind()).unwrap_or(acp::ToolKind::Other),
-                tool_use.input.clone(),
+                id,
+                title.to_string(),
+                kind,
+                input,
             ))))
             .ok();
     }

@@ -647,6 +647,19 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
     let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "Think", cx));
     cx.run_until_parked();
 
+    // Simulate streaming partial input.
+    let input = json!({});
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "1".into(),
+            name: ThinkingTool.name().into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: false,
+        },
+    ));
+
+    // Input streaming completed
     let input = json!({ "content": "Thinking hard!" });
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
@@ -665,12 +678,12 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         tool_call,
         acp::ToolCall {
             id: acp::ToolCallId("1".into()),
-            title: "Thinking".into(),
+            title: "thinking".into(),
             kind: acp::ToolKind::Think,
             status: acp::ToolCallStatus::Pending,
             content: vec![],
             locations: vec![],
-            raw_input: Some(json!({ "content": "Thinking hard!" })),
+            raw_input: Some(json!({})),
             raw_output: None,
         }
     );
@@ -680,7 +693,20 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
         acp::ToolCallUpdate {
             id: acp::ToolCallId("1".into()),
             fields: acp::ToolCallUpdateFields {
-                status: Some(acp::ToolCallStatus::InProgress,),
+                title: Some("Thinking".into()),
+                kind: Some(acp::ToolKind::Think),
+                raw_input: Some(json!({ "content": "Thinking hard!" })),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::InProgress),
                 ..Default::default()
             },
         }
