@@ -473,7 +473,7 @@ impl PickerDelegate for BranchListDelegate {
             && entry.is_new
         {
             Some(
-                IconButton::new("branch-from-default", IconName::GitBranchSmall)
+                IconButton::new("branch-from-default", IconName::GitBranchAlt)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.delegate.set_selected_index(ix, window, cx);
                         this.delegate.confirm(true, window, cx);

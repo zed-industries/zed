@@ -52,8 +52,6 @@ pub enum IconName {
     Check,
     CheckDouble,
     ChevronDown,
-    /// This chevron indicates a popover menu.
-    ChevronDownSmall,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
@@ -136,7 +134,7 @@ pub enum IconName {
     GenericMinimize,
     GenericRestore,
     GitBranch,
-    GitBranchSmall,
+    GitBranchAlt,
     Github,
     Hash,
     HistoryRerun,

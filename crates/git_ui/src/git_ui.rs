@@ -438,7 +438,7 @@ mod remote_button {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu(move |window, cx| {
