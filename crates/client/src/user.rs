@@ -235,7 +235,7 @@ impl UserStore {
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
                                         id: user_id,
-                                        github_login: response.user.github_login.clone().into(),
+                                        github_login: response.user.github_login.clone(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
                                     });
