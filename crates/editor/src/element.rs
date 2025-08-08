@@ -86,8 +86,6 @@ use util::post_inc;
 use util::{RangeExt, ResultExt, debug_panic};
 use workspace::{CollaboratorId, Workspace, item::Item, notifications::NotifyTaskExt};
 
-const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
-
 /// Determines what kinds of highlights should be applied to a lines background.
 #[derive(Clone, Copy, Default)]
 struct LineHighlightSpec {
@@ -2428,10 +2426,13 @@ impl EditorElement {
         let editor = self.editor.read(cx);
         let blame = editor.blame.clone()?;
         let padding = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+            let mut padding = ProjectSettings::get_global(cx)
+                .git
+                .inline_blame
+                .unwrap_or_default()
+                .padding as f32;
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref() {
                 match &edit_prediction.completion {
@@ -2469,7 +2470,7 @@ impl EditorElement {
             let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
                 .inline_blame
-                .and_then(|settings| settings.min_column)
+                .map(|settings| settings.min_column)
                 .map(|col| self.column_pixels(col as usize, window))
                 .unwrap_or(px(0.));
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
@@ -8365,7 +8366,13 @@ impl Element for EditorElement {
                                 })
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
-                            let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
+                            let inline_blame_padding = ProjectSettings::get_global(cx)
+                                .git
+                                .inline_blame
+                                .unwrap_or_default()
+                                .padding
+                                as f32
+                                * em_advance;
                             Some(
                                 element
                                     .layout_as_root(AvailableSpace::min_size(), window, cx)
