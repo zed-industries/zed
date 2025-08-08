@@ -1238,6 +1238,11 @@
     // 2. hour24
     "hour_format": "hour12"
   },
+  // Status bar-related settings.
+  "status_bar": {
+    // Whether to show the active language button in the status bar.
+    "active_language_button": true
+  },
   // Settings specific to the terminal
   "terminal": {
     // What shell to use when opening a terminal. May take 3 values:
