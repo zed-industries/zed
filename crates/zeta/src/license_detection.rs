@@ -183,102 +183,31 @@ impl LicenseDetectionWatcher {
 
 #[cfg(test)]
 mod tests {
+
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::{Settings as _, SettingsStore};
     use unindent::unindent;
+    use worktree::WorktreeSettings;
 
     use super::*;
 
+    const MIT_LICENSE: &str = include_str!("license_detection/mit-text");
+    const APACHE_LICENSE: &str = include_str!("license_detection/apache-text");
+
     #[test]
     fn test_mit_positive_detection() {
-        let example_license = unindent(
-            r#"
-                MIT License
-
-                Copyright (c) 2024 John Doe
-
-                Permission is hereby granted, free of charge, to any person obtaining a copy
-                of this software and associated documentation files (the "Software"), to deal
-                in the Software without restriction, including without limitation the rights
-                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-                copies of the Software, and to permit persons to whom the Software is
-                furnished to do so, subject to the following conditions:
-
-                The above copyright notice and this permission notice shall be included in all
-                copies or substantial portions of the Software.
-
-                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-                SOFTWARE.
-            "#
-            .trim(),
-        );
-
-        assert!(is_license_eligible_for_data_collection(&example_license));
-
-        let example_license = unindent(
-            r#"
-                The MIT License (MIT)
-
-                Copyright (c) 2019 John Doe
-
-                Permission is hereby granted, free of charge, to any person obtaining a copy
-                of this software and associated documentation files (the "Software"), to deal
-                in the Software without restriction, including without limitation the rights
-                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-                copies of the Software, and to permit persons to whom the Software is
-                furnished to do so, subject to the following conditions:
-
-                The above copyright notice and this permission notice shall be included in all
-                copies or substantial portions of the Software.
-
-                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-                SOFTWARE.
-            "#
-            .trim(),
-        );
-
-        assert!(is_license_eligible_for_data_collection(&example_license));
+        assert!(is_license_eligible_for_data_collection(&MIT_LICENSE));
     }
 
     #[test]
     fn test_mit_negative_detection() {
-        let example_license = unindent(
-            r#"
-                MIT License
+        let example_license = format!(
+            r#"{MIT_LICENSE}
 
-                Copyright (c) 2024 John Doe
-
-                Permission is hereby granted, free of charge, to any person obtaining a copy
-                of this software and associated documentation files (the "Software"), to deal
-                in the Software without restriction, including without limitation the rights
-                to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-                copies of the Software, and to permit persons to whom the Software is
-                furnished to do so, subject to the following conditions:
-
-                The above copyright notice and this permission notice shall be included in all
-                copies or substantial portions of the Software.
-
-                THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-                IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-                FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-                AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-                LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-                OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-                SOFTWARE.
-
-                This project is dual licensed under the MIT License and the Apache License, Version 2.0.
-            "#
-            .trim(),
+            This project is dual licensed under the MIT License and the Apache License, Version 2.0."#
         );
-
         assert!(!is_license_eligible_for_data_collection(&example_license));
     }
 
@@ -434,11 +363,10 @@ mod tests {
 
     #[test]
     fn test_apache_positive_detection() {
-        let license = include_str!("license_detection/apache-text");
-        assert!(is_license_eligible_for_data_collection(license));
+        assert!(is_license_eligible_for_data_collection(APACHE_LICENSE));
 
         let license_with_appendix = format!(
-            r#"{license}
+            r#"{APACHE_LICENSE}
 
             END OF TERMS AND CONDITIONS
 
@@ -484,9 +412,8 @@ mod tests {
 
     #[test]
     fn test_apache_negative_detection() {
-        let license = include_str!("license_detection/apache-text");
         assert!(!is_license_eligible_for_data_collection(&format!(
-            "{license}\n\nThe terms in this license are only enforceable if P!=NP."
+            "{APACHE_LICENSE}\n\nThe terms in this license are void if P=NP."
         )));
     }
 
@@ -608,5 +535,132 @@ mod tests {
         assert!(is_license_eligible_for_data_collection(
             &mit_with_weird_spacing
         ));
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            WorktreeSettings::register(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_watcher_single_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let worktree = Worktree::local(
+            Path::new("/root/main.rs"),
+            true,
+            fs.clone(),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let watcher = cx.update(|cx| LicenseDetectionWatcher::new(&worktree, cx));
+        assert!(matches!(watcher, LicenseDetectionWatcher::SingleFile));
+        assert!(!watcher.is_project_open_source());
+    }
+
+    #[gpui::test]
+    async fn test_watcher_updates_on_changes(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree("/root", json!({ "main.rs": "fn main() {}" }))
+            .await;
+
+        let worktree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let watcher = cx.update(|cx| LicenseDetectionWatcher::new(&worktree, cx));
+        assert!(matches!(watcher, LicenseDetectionWatcher::Local { .. }));
+        assert!(!watcher.is_project_open_source());
+
+        fs.write(Path::new("/root/LICENSE-MIT"), MIT_LICENSE.as_bytes())
+            .await
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+        assert!(watcher.is_project_open_source());
+
+        fs.write(Path::new("/root/LICENSE-APACHE"), APACHE_LICENSE.as_bytes())
+            .await
+            .unwrap();
+
+        cx.background_executor.run_until_parked();
+        assert!(watcher.is_project_open_source());
+
+        fs.write(Path::new("/root/LICENSE-MIT"), "Nevermind".as_bytes())
+            .await
+            .unwrap();
+
+        // Still considered open source as LICENSE-APACHE is present
+        cx.background_executor.run_until_parked();
+        assert!(watcher.is_project_open_source());
+
+        fs.write(
+            Path::new("/root/LICENSE-APACHE"),
+            "Also nevermind".as_bytes(),
+        )
+        .await
+        .unwrap();
+
+        cx.background_executor.run_until_parked();
+        assert!(!watcher.is_project_open_source());
+    }
+
+    #[gpui::test]
+    async fn test_watcher_initially_opensource_and_then_deleted(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({ "main.rs": "fn main() {}", "LICENSE-MIT": MIT_LICENSE }),
+        )
+        .await;
+
+        let worktree = Worktree::local(
+            Path::new("/root"),
+            true,
+            fs.clone(),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let watcher = cx.update(|cx| LicenseDetectionWatcher::new(&worktree, cx));
+        assert!(matches!(watcher, LicenseDetectionWatcher::Local { .. }));
+
+        cx.background_executor.run_until_parked();
+        assert!(watcher.is_project_open_source());
+
+        fs.remove_file(
+            Path::new("/root/LICENSE-MIT"),
+            fs::RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        cx.background_executor.run_until_parked();
+        assert!(!watcher.is_project_open_source());
     }
 }
