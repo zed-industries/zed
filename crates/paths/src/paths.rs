@@ -6,6 +6,26 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// Macro to DRY up portable directory logic.
+/// Usage: portable_dir!("dirname", fallback_expr)
+#[macro_export]
+macro_rules! portable_dir {
+    ($name:expr, $fallback:expr) => {{
+        use std::fs;
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let portable_path = exe_dir.join($name);
+                if fs::metadata(&portable_path)
+                    .map(|m| m.is_dir())
+                    .unwrap_or(false)
+                {
+                    return portable_path;
+                }
+            }
+        }
+        $fallback
+    }};
+}
 /// A default editorconfig file name to use when resolving project settings.
 pub const EDITORCONFIG_NAME: &str = ".editorconfig";
 
@@ -195,10 +215,30 @@ pub fn crashes_retired_dir() -> &'static Option<PathBuf> {
     CRASHES_RETIRED_DIR.get_or_init(|| crashes_dir().as_ref().map(|dir| dir.join("Retired")))
 }
 
-/// Returns the path to the `settings.json` file.
+/// Returns the path to the `settings.json` file, preferring a portable ./settings.json next to the executable if present.
+
 pub fn settings_file() -> &'static PathBuf {
+    use std::fs;
+    use std::path::PathBuf;
+
     static SETTINGS_FILE: OnceLock<PathBuf> = OnceLock::new();
-    SETTINGS_FILE.get_or_init(|| config_dir().join("settings.json"))
+
+    SETTINGS_FILE.get_or_init(|| {
+        // Try portable mode: ./settings.json next to the executable
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                let portable_path = exe_dir.join("settings.json");
+                if fs::metadata(&portable_path)
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+                {
+                    return portable_path;
+                }
+            }
+        }
+        // Fallback to config dir
+        config_dir().join("settings.json")
+    })
 }
 
 /// Returns the path to the global settings file.
@@ -242,7 +282,7 @@ pub fn debug_scenarios_file() -> &'static PathBuf {
 /// This is where installed extensions are stored.
 pub fn extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| data_dir().join("extensions"))
+    EXTENSIONS_DIR.get_or_init(|| portable_dir!("extensions", data_dir().join("extensions")))
 }
 
 /// Returns the path to the extensions directory.
@@ -250,7 +290,8 @@ pub fn extensions_dir() -> &'static PathBuf {
 /// This is where installed extensions are stored on a remote.
 pub fn remote_extensions_dir() -> &'static PathBuf {
     static EXTENSIONS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    EXTENSIONS_DIR.get_or_init(|| data_dir().join("remote_extensions"))
+    EXTENSIONS_DIR
+        .get_or_init(|| portable_dir!("remote_extensions", data_dir().join("remote_extensions")))
 }
 
 /// Returns the path to the extensions directory.
@@ -258,7 +299,12 @@ pub fn remote_extensions_dir() -> &'static PathBuf {
 /// This is where installed extensions are stored on a remote.
 pub fn remote_extensions_uploads_dir() -> &'static PathBuf {
     static UPLOAD_DIR: OnceLock<PathBuf> = OnceLock::new();
-    UPLOAD_DIR.get_or_init(|| remote_extensions_dir().join("uploads"))
+    UPLOAD_DIR.get_or_init(|| {
+        portable_dir!(
+            "remote_extensions/uploads",
+            remote_extensions_dir().join("uploads")
+        )
+    })
 }
 
 /// Returns the path to the themes directory.
@@ -266,13 +312,13 @@ pub fn remote_extensions_uploads_dir() -> &'static PathBuf {
 /// This is where themes that are not provided by extensions are stored.
 pub fn themes_dir() -> &'static PathBuf {
     static THEMES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    THEMES_DIR.get_or_init(|| config_dir().join("themes"))
+    THEMES_DIR.get_or_init(|| portable_dir!("themes", config_dir().join("themes")))
 }
 
 /// Returns the path to the snippets directory.
 pub fn snippets_dir() -> &'static PathBuf {
     static SNIPPETS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SNIPPETS_DIR.get_or_init(|| config_dir().join("snippets"))
+    SNIPPETS_DIR.get_or_init(|| portable_dir!("snippets", config_dir().join("snippets")))
 }
 
 /// Returns the path to the contexts directory.
@@ -281,11 +327,13 @@ pub fn snippets_dir() -> &'static PathBuf {
 pub fn contexts_dir() -> &'static PathBuf {
     static CONTEXTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONTEXTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("conversations")
-        } else {
-            data_dir().join("conversations")
-        }
+        portable_dir!("conversations", {
+            if cfg!(target_os = "macos") {
+                config_dir().join("conversations")
+            } else {
+                data_dir().join("conversations")
+            }
+        })
     })
 }
 
@@ -295,11 +343,13 @@ pub fn contexts_dir() -> &'static PathBuf {
 pub fn prompts_dir() -> &'static PathBuf {
     static PROMPTS_DIR: OnceLock<PathBuf> = OnceLock::new();
     PROMPTS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("prompts")
-        } else {
-            data_dir().join("prompts")
-        }
+        portable_dir!("prompts", {
+            if cfg!(target_os = "macos") {
+                config_dir().join("prompts")
+            } else {
+                data_dir().join("prompts")
+            }
+        })
     })
 }
 
@@ -321,11 +371,13 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
     static PROMPT_TEMPLATES_DIR: OnceLock<PathBuf> = OnceLock::new();
     PROMPT_TEMPLATES_DIR
         .get_or_init(|| {
-            if cfg!(target_os = "macos") {
-                config_dir().join("prompt_overrides")
-            } else {
-                data_dir().join("prompt_overrides")
-            }
+            portable_dir!("prompt_overrides", {
+                if cfg!(target_os = "macos") {
+                    config_dir().join("prompt_overrides")
+                } else {
+                    data_dir().join("prompt_overrides")
+                }
+            })
         })
         .clone()
 }
@@ -336,11 +388,13 @@ pub fn prompt_overrides_dir(repo_path: Option<&Path>) -> PathBuf {
 pub fn embeddings_dir() -> &'static PathBuf {
     static EMBEDDINGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     EMBEDDINGS_DIR.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            config_dir().join("embeddings")
-        } else {
-            data_dir().join("embeddings")
-        }
+        portable_dir!("embeddings", {
+            if cfg!(target_os = "macos") {
+                config_dir().join("embeddings")
+            } else {
+                data_dir().join("embeddings")
+            }
+        })
     })
 }
 
@@ -349,7 +403,7 @@ pub fn embeddings_dir() -> &'static PathBuf {
 /// This is where language servers are downloaded to for languages built-in to Zed.
 pub fn languages_dir() -> &'static PathBuf {
     static LANGUAGES_DIR: OnceLock<PathBuf> = OnceLock::new();
-    LANGUAGES_DIR.get_or_init(|| data_dir().join("languages"))
+    LANGUAGES_DIR.get_or_init(|| portable_dir!("languages", data_dir().join("languages")))
 }
 
 /// Returns the path to the debug adapters directory
@@ -365,19 +419,20 @@ pub fn debug_adapters_dir() -> &'static PathBuf {
 /// This is where agent servers are downloaded to
 pub fn agent_servers_dir() -> &'static PathBuf {
     static AGENT_SERVERS_DIR: OnceLock<PathBuf> = OnceLock::new();
-    AGENT_SERVERS_DIR.get_or_init(|| data_dir().join("agent_servers"))
+    AGENT_SERVERS_DIR
+        .get_or_init(|| portable_dir!("agent_servers", data_dir().join("agent_servers")))
 }
 
 /// Returns the path to the Copilot directory.
 pub fn copilot_dir() -> &'static PathBuf {
     static COPILOT_DIR: OnceLock<PathBuf> = OnceLock::new();
-    COPILOT_DIR.get_or_init(|| data_dir().join("copilot"))
+    COPILOT_DIR.get_or_init(|| portable_dir!("copilot", data_dir().join("copilot")))
 }
 
 /// Returns the path to the Supermaven directory.
 pub fn supermaven_dir() -> &'static PathBuf {
     static SUPERMAVEN_DIR: OnceLock<PathBuf> = OnceLock::new();
-    SUPERMAVEN_DIR.get_or_init(|| data_dir().join("supermaven"))
+    SUPERMAVEN_DIR.get_or_init(|| portable_dir!("supermaven", data_dir().join("supermaven")))
 }
 
 /// Returns the path to the default Prettier directory.
