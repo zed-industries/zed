@@ -40,7 +40,7 @@ pub trait Summary: Clone {
 
     fn zero(cx: &Self::Context) -> Self;
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
-    fn sub_summary(&mut self, summary: &Self, cx: &Self::Context) {}
+    fn sub_summary(&mut self, _: &Self, _: &Self::Context) {}
 }
 
 /// Catch-all implementation for when you need something that implements [`Summary`] without a specific type.
@@ -297,7 +297,7 @@ impl<T: Item> SumTree<T> {
                         } else {
                             summary
                         };
-                        previous_item.insert(current_item.clone());
+                        _ = previous_item.insert(current_item.clone());
                         Some(current_item)
                     })
                     .collect();
@@ -921,18 +921,6 @@ impl<T: KeyedItem> Edit<T> {
             Edit::Remove(key) => key.clone(),
         }
     }
-}
-
-fn sum<'a, T, I>(iter: I, cx: &T::Context) -> T
-where
-    T: 'a + Summary,
-    I: Iterator<Item = &'a T>,
-{
-    let mut sum = T::zero(cx);
-    for value in iter {
-        sum.add_summary(value, cx);
-    }
-    sum
 }
 
 #[cfg(test)]
