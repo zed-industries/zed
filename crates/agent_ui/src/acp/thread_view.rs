@@ -30,7 +30,7 @@ use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::Project;
+use project::{CompletionIntent, Project};
 use settings::{Settings as _, SettingsStore};
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
@@ -2608,6 +2608,61 @@ impl AcpThreadView {
                 diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 cx.notify();
             })
+        }
+    }
+
+    pub(crate) fn insert_dragged_files(
+        &self,
+        paths: Vec<project::ProjectPath>,
+        _added_worktrees: Vec<Entity<project::Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let buffer = self.message_editor.read(cx).buffer().clone();
+        let Some((&excerpt_id, _, _)) = buffer.read(cx).snapshot(cx).as_singleton() else {
+            return;
+        };
+        let Some(buffer) = buffer.read(cx).as_singleton() else {
+            return;
+        };
+        for path in paths {
+            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+                continue;
+            };
+            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+                continue;
+            };
+
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+            let path_prefix = abs_path
+                .file_name()
+                .unwrap_or(path.path.as_os_str())
+                .display()
+                .to_string();
+            let completion = ContextPickerCompletionProvider::completion_for_path(
+                path,
+                &path_prefix,
+                false,
+                entry.is_dir(),
+                excerpt_id,
+                anchor..anchor,
+                self.message_editor.clone(),
+                self.mention_set.clone(),
+                cx,
+            );
+
+            self.message_editor.update(cx, |message_editor, cx| {
+                message_editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        completion.new_text,
+                    )],
+                    cx,
+                );
+            });
+            if let Some(confirm) = completion.confirm.clone() {
+                confirm(CompletionIntent::Complete, window, cx);
+            }
         }
     }
 }
