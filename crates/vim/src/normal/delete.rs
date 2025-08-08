@@ -102,8 +102,33 @@ impl Vim {
                 // Emulates behavior in vim where if we expanded backwards to include a newline
                 // the cursor gets set back to the start of the line
                 let mut should_move_to_start: HashSet<_> = Default::default();
+
+                // Emulates behavior in vim where after deletion the cursor should try to move
+                // to the same column it was before deletion if the line is not empty or only
+                // contains whitespace
+                let mut column_before_move: HashMap<_, _> = Default::default();
+
                 editor.change_selections(Default::default(), window, cx, |s| {
                     s.move_with(|map, selection| {
+                        let cursor_point = selection.head().to_point(map);
+                        let line_start = Point::new(cursor_point.row, 0);
+                        let line_end = Point::new(
+                            cursor_point.row,
+                            map.buffer_snapshot
+                                .line_len(MultiBufferRow(cursor_point.row)),
+                        );
+                        let current_line_has_non_whitespace_chars = map
+                            .buffer_snapshot
+                            .text_for_range(line_start..line_end)
+                            .any(|chunk| chunk.chars().any(|c| !c.is_whitespace()));
+                        if object == Object::Paragraph
+                            && around
+                            && current_line_has_non_whitespace_chars
+                        {
+                            let cursor_point = selection.head().to_point(map);
+                            column_before_move.insert(selection.id, cursor_point.column);
+                        }
+
                         object.expand_selection(map, selection, around, times);
                         let offset_range = selection.map(|p| p.to_offset(map, Bias::Left)).range();
                         let mut move_selection_start_to_previous_line =
@@ -164,6 +189,14 @@ impl Vim {
                         let mut cursor = selection.head();
                         if should_move_to_start.contains(&selection.id) {
                             *cursor.column_mut() = 0;
+                        } else if let Some(column) = column_before_move.get(&selection.id)
+                            && *column > 0
+                        {
+                            let mut cursor_point = cursor.to_point(map);
+                            cursor_point.column = *column;
+                            let new_cursor = cursor_point.to_display_point(map);
+                            *cursor.row_mut() = new_cursor.row().0;
+                            *cursor.column_mut() = new_cursor.column();
                         }
                         cursor = map.clip_point(cursor, Bias::Left);
                         selection.collapse_to(cursor, selection.goal)
