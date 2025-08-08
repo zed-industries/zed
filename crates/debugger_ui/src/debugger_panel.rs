@@ -812,7 +812,7 @@ impl DebugPanel {
                                     )
                                     .child(Divider::vertical())
                                     .child(
-                                        IconButton::new("debug-restart", IconName::DebugRestart)
+                                        IconButton::new("debug-restart", IconName::RotateCcw)
                                             .icon_size(IconSize::XSmall)
                                             .on_click(window.listener_for(
                                                 &running_state,
