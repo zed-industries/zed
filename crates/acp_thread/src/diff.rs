@@ -174,6 +174,10 @@ impl Diff {
             buffer_text
         )
     }
+
+    pub fn has_revealed_range(&self, cx: &App) -> bool {
+        self.multibuffer().read(cx).excerpt_paths().next().is_some()
+    }
 }
 
 pub struct PendingDiff {
