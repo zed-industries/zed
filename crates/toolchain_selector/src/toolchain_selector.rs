@@ -15,7 +15,13 @@ use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(toolchain, [Select]);
+actions!(
+    toolchain,
+    [
+        /// Selects a toolchain for the current project.
+        Select
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(ToolchainSelector::register).detach();

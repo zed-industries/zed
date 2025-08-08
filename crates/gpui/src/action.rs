@@ -125,9 +125,7 @@ pub trait Action: Any + Send {
         Self: Sized;
 
     /// Optional JSON schema for the action's input data.
-    fn action_json_schema(
-        _: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Option<schemars::schema::Schema>
+    fn action_json_schema(_: &mut schemars::SchemaGenerator) -> Option<schemars::Schema>
     where
         Self: Sized,
     {
@@ -147,6 +145,15 @@ pub trait Action: Any + Send {
     /// Returns the deprecation message for this action, if any. In Zed, the keymap JSON schema will
     /// cause this to be displayed as a warning.
     fn deprecation_message() -> Option<&'static str>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    /// The documentation for this action, if any. When using the derive macro for actions
+    /// this will be automatically generated from the doc comments on the action struct.
+    fn documentation() -> Option<&'static str>
     where
         Self: Sized,
     {
@@ -218,6 +225,7 @@ pub(crate) struct ActionRegistry {
     all_names: Vec<&'static str>, // So we can return a static slice.
     deprecated_aliases: HashMap<&'static str, &'static str>, // deprecated name -> preferred name
     deprecation_messages: HashMap<&'static str, &'static str>, // action name -> deprecation message
+    documentation: HashMap<&'static str, &'static str>, // action name -> documentation
 }
 
 impl Default for ActionRegistry {
@@ -225,6 +233,7 @@ impl Default for ActionRegistry {
         let mut this = ActionRegistry {
             by_name: Default::default(),
             names_by_type_id: Default::default(),
+            documentation: Default::default(),
             all_names: Default::default(),
             deprecated_aliases: Default::default(),
             deprecation_messages: Default::default(),
@@ -238,7 +247,7 @@ impl Default for ActionRegistry {
 
 struct ActionData {
     pub build: ActionBuilder,
-    pub json_schema: fn(&mut schemars::r#gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+    pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
 }
 
 /// This type must be public so that our macros can build it in other crates.
@@ -253,9 +262,10 @@ pub struct MacroActionData {
     pub name: &'static str,
     pub type_id: TypeId,
     pub build: ActionBuilder,
-    pub json_schema: fn(&mut schemars::r#gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+    pub json_schema: fn(&mut schemars::SchemaGenerator) -> Option<schemars::Schema>,
     pub deprecated_aliases: &'static [&'static str],
     pub deprecation_message: Option<&'static str>,
+    pub documentation: Option<&'static str>,
 }
 
 inventory::collect!(MacroActionBuilder);
@@ -278,6 +288,7 @@ impl ActionRegistry {
             json_schema: A::action_json_schema,
             deprecated_aliases: A::deprecated_aliases(),
             deprecation_message: A::deprecation_message(),
+            documentation: A::documentation(),
         });
     }
 
@@ -318,6 +329,9 @@ impl ActionRegistry {
         if let Some(deprecation_msg) = action.deprecation_message {
             self.deprecation_messages.insert(name, deprecation_msg);
         }
+        if let Some(documentation) = action.documentation {
+            self.documentation.insert(name, documentation);
+        }
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -357,8 +371,8 @@ impl ActionRegistry {
 
     pub fn action_schemas(
         &self,
-        generator: &mut schemars::r#gen::SchemaGenerator,
-    ) -> Vec<(&'static str, Option<schemars::schema::Schema>)> {
+        generator: &mut schemars::SchemaGenerator,
+    ) -> Vec<(&'static str, Option<schemars::Schema>)> {
         // Use the order from all_names so that the resulting schema has sensible order.
         self.all_names
             .iter()
@@ -379,18 +393,20 @@ impl ActionRegistry {
     pub fn deprecation_messages(&self) -> &HashMap<&'static str, &'static str> {
         &self.deprecation_messages
     }
+
+    pub fn documentation(&self) -> &HashMap<&'static str, &'static str> {
+        &self.documentation
+    }
 }
 
 /// Generate a list of all the registered actions.
 /// Useful for transforming the list of available actions into a
 /// format suited for static analysis such as in validating keymaps, or
 /// generating documentation.
-pub fn generate_list_of_all_registered_actions() -> Vec<MacroActionData> {
-    let mut actions = Vec::new();
-    for builder in inventory::iter::<MacroActionBuilder> {
-        actions.push(builder.0());
-    }
-    actions
+pub fn generate_list_of_all_registered_actions() -> impl Iterator<Item = MacroActionData> {
+    inventory::iter::<MacroActionBuilder>
+        .into_iter()
+        .map(|builder| builder.0())
 }
 
 mod no_action {

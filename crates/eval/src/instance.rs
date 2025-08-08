@@ -594,6 +594,7 @@ impl ExampleInstance {
                 tools: Vec::new(),
                 tool_choice: None,
                 stop: Vec::new(),
+                thinking_allowed: true,
             };
 
             let model = model.clone();
@@ -1054,6 +1055,15 @@ pub fn response_events_to_markdown(
                 | LanguageModelCompletionEvent::StartMessage { .. }
                 | LanguageModelCompletionEvent::StatusUpdate { .. },
             ) => {}
+            Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                json_parse_error, ..
+            }) => {
+                flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
+                response.push_str(&format!(
+                    "**Error**: parse error in tool use JSON: {}\n\n",
+                    json_parse_error
+                ));
+            }
             Err(error) => {
                 flush_buffers(&mut response, &mut text_buffer, &mut thinking_buffer);
                 response.push_str(&format!("**Error**: {}\n\n", error));
@@ -1131,6 +1141,17 @@ impl ThreadDialog {
                 | Ok(LanguageModelCompletionEvent::StatusUpdate { .. })
                 | Ok(LanguageModelCompletionEvent::StartMessage { .. })
                 | Ok(LanguageModelCompletionEvent::Stop(_)) => {}
+
+                Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                    json_parse_error,
+                    ..
+                }) => {
+                    flush_text(&mut current_text, &mut content);
+                    content.push(MessageContent::Text(format!(
+                        "ERROR: parse error in tool use JSON: {}",
+                        json_parse_error
+                    )));
+                }
 
                 Err(error) => {
                     flush_text(&mut current_text, &mut content);

@@ -212,7 +212,7 @@ impl QuickActionBar {
             .trigger_with_tooltip(
                 ButtonLike::new_rounded_right(element_id("dropdown"))
                     .child(
-                        Icon::new(IconName::ChevronDownSmall)
+                        Icon::new(IconName::ChevronDown)
                             .size(IconSize::XSmall)
                             .color(Color::Muted),
                     )

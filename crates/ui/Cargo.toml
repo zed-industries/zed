@@ -34,6 +34,9 @@ workspace-hack.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [features]
 default = []
 stories = ["dep:story"]

@@ -47,7 +47,16 @@ use workspace::{
 
 actions!(
     project_search,
-    [SearchInNew, ToggleFocus, NextField, ToggleFilters]
+    [
+        /// Searches in a new project search tab.
+        SearchInNew,
+        /// Toggles focus between the search bar and the search results.
+        ToggleFocus,
+        /// Moves to the next input field.
+        NextField,
+        /// Toggles the search filters panel.
+        ToggleFilters
+    ]
 );
 
 #[derive(Default)]
@@ -186,6 +195,7 @@ pub struct ProjectSearch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum InputPanel {
     Query,
+    Replacement,
     Exclude,
     Include,
 }
@@ -208,6 +218,7 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
+    query_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -344,8 +355,9 @@ impl ProjectSearch {
 
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
-                        .update(cx, |project_search, _| {
+                        .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
+                            cx.notify();
                         })
                         .ok()?;
                 }
@@ -876,6 +888,7 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
+            query_error: None,
         };
         this.entity_changed(window, cx);
         this
@@ -1209,14 +1222,16 @@ impl ProjectSearchView {
                     if should_unmark_error {
                         cx.notify();
                     }
+                    self.query_error = None;
 
                     Some(query)
                 }
-                Err(_e) => {
+                Err(e) => {
                     let should_mark_error = self.panels_with_errors.insert(InputPanel::Query);
                     if should_mark_error {
                         cx.notify();
                     }
+                    self.query_error = Some(e.to_string());
 
                     None
                 }
@@ -1949,7 +1964,7 @@ impl Render for ProjectSearchBar {
             MultipleInputs,
         }
 
-        let input_base_styles = |base_style: BaseStyle| {
+        let input_base_styles = |base_style: BaseStyle, panel: InputPanel| {
             h_flex()
                 .min_w_32()
                 .map(|div| match base_style {
@@ -1961,11 +1976,11 @@ impl Render for ProjectSearchBar {
                 .pr_1()
                 .py_1()
                 .border_1()
-                .border_color(search.border_color_for(InputPanel::Query, cx))
+                .border_color(search.border_color_for(panel, cx))
                 .rounded_lg()
         };
 
-        let query_column = input_base_styles(BaseStyle::SingleInput)
+        let query_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.previous_history_query(action, window, cx)
@@ -2154,7 +2169,7 @@ impl Render for ProjectSearchBar {
             .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(BaseStyle::SingleInput)
+            let replace_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Replacement)
                 .child(self.render_text_input(&search.replacement_editor, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
@@ -2228,7 +2243,7 @@ impl Render for ProjectSearchBar {
                         .gap_2()
                         .w(input_width)
                         .child(
-                            input_base_styles(BaseStyle::MultipleInputs)
+                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Include)
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.previous_history_query(action, window, cx)
                                 }))
@@ -2238,7 +2253,7 @@ impl Render for ProjectSearchBar {
                                 .child(self.render_text_input(&search.included_files_editor, cx)),
                         )
                         .child(
-                            input_base_styles(BaseStyle::MultipleInputs)
+                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.previous_history_query(action, window, cx)
                                 }))
@@ -2253,7 +2268,7 @@ impl Render for ProjectSearchBar {
                         .min_w_64()
                         .gap_1()
                         .child(
-                            IconButton::new("project-search-opened-only", IconName::FileSearch)
+                            IconButton::new("project-search-opened-only", IconName::FolderSearch)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(self.is_opened_only_enabled(cx))
                                 .tooltip(Tooltip::text("Only Search Open Files"))
@@ -2290,6 +2305,14 @@ impl Render for ProjectSearchBar {
         {
             key_context.add("in_replace");
         }
+
+        let query_error_line = search.query_error.as_ref().map(|error| {
+            Label::new(error)
+                .size(LabelSize::Small)
+                .color(Color::Error)
+                .mt_neg_1()
+                .ml_2()
+        });
 
         v_flex()
             .py(px(1.0))
@@ -2342,6 +2365,7 @@ impl Render for ProjectSearchBar {
             .gap_2()
             .w_full()
             .child(search_line)
+            .children(query_error_line)
             .children(replace_line)
             .children(filter_line)
     }

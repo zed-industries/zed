@@ -1,6 +1,6 @@
 mod completion_provider;
 mod fetch_context_picker;
-mod file_context_picker;
+pub(crate) mod file_context_picker;
 mod rules_context_picker;
 mod symbol_context_picker;
 mod thread_context_picker;
@@ -102,7 +102,7 @@ impl ContextPickerAction {
 
     pub fn icon(&self) -> IconName {
         match self {
-            Self::AddSelections => IconName::Context,
+            Self::AddSelections => IconName::Reader,
         }
     }
 }
@@ -147,8 +147,8 @@ impl ContextPickerMode {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
-            Self::Fetch => IconName::Globe,
-            Self::Thread => IconName::MessageBubbles,
+            Self::Fetch => IconName::ToolWeb,
+            Self::Thread => IconName::Thread,
             Self::Rules => RULES_ICON,
         }
     }
@@ -426,6 +426,7 @@ impl ContextPicker {
                             this.add_recent_file(project_path.clone(), window, cx);
                         })
                     },
+                    None,
                 )
             }
             RecentEntry::Thread(thread) => {
@@ -443,6 +444,7 @@ impl ContextPicker {
                                 .detach_and_log_err(cx);
                         })
                     },
+                    None,
                 )
             }
         }

@@ -46,6 +46,7 @@ impl DapRegistry {
         let name = adapter.name();
         let _previous_value = self.0.write().adapters.insert(name, adapter);
     }
+
     pub fn add_locator(&self, locator: Arc<dyn DapLocator>) {
         self.0.write().locators.insert(locator.name(), locator);
     }
@@ -86,7 +87,7 @@ impl DapRegistry {
         self.0.read().adapters.get(name).cloned()
     }
 
-    pub fn enumerate_adapters(&self) -> Vec<DebugAdapterName> {
+    pub fn enumerate_adapters<B: FromIterator<DebugAdapterName>>(&self) -> B {
         self.0.read().adapters.keys().cloned().collect()
     }
 }

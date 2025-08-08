@@ -46,7 +46,13 @@ use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(
+    terminal_panel,
+    [
+        /// Toggles focus on the terminal panel.
+        ToggleFocus
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -426,10 +432,9 @@ impl TerminalPanel {
             })
             .unwrap_or((None, None));
         let kind = TerminalKind::Shell(working_directory);
-        let window_handle = window.window_handle();
         let terminal = project
             .update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, python_venv_directory, window_handle, cx)
+                project.create_terminal_with_venv(kind, python_venv_directory, cx)
             })
             .ok()?;
 
@@ -499,7 +504,7 @@ impl TerminalPanel {
 
         let task = SpawnInTerminal {
             command_label,
-            command,
+            command: Some(command),
             args,
             ..task.clone()
         };
@@ -660,13 +665,10 @@ impl TerminalPanel {
                 "terminal not yet supported for remote projects"
             )));
         }
-        let window_handle = window.window_handle();
         let project = workspace.project().downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(kind, window_handle, cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal(kind, cx))?
                 .await?;
 
             workspace.update_in(cx, |workspace, window, cx| {
@@ -703,11 +705,8 @@ impl TerminalPanel {
                 terminal_panel.active_pane.clone()
             })?;
             let project = workspace.read_with(cx, |workspace, _| workspace.project().clone())?;
-            let window_handle = cx.window_handle();
             let terminal = project
-                .update(cx, |project, cx| {
-                    project.create_terminal(kind, window_handle, cx)
-                })?
+                .update(cx, |project, cx| project.create_terminal(kind, cx))?
                 .await?;
             let result = workspace.update_in(cx, |workspace, window, cx| {
                 let terminal_view = Box::new(cx.new(|cx| {
@@ -808,7 +807,6 @@ impl TerminalPanel {
     ) -> Task<Result<WeakEntity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
-        let window_handle = window.window_handle();
         let task_workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             let project = terminal_panel.update(cx, |this, cx| {
@@ -817,7 +815,7 @@ impl TerminalPanel {
             })??;
             let new_terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Task(spawn_task), window_handle, cx)
+                    project.create_terminal(TerminalKind::Task(spawn_task), cx)
                 })?
                 .await?;
             terminal_to_replace.update_in(cx, |terminal_to_replace, window, cx| {
@@ -1431,7 +1429,7 @@ impl Panel for TerminalPanel {
         if (self.is_enabled(cx) || !self.has_no_terminals(cx))
             && TerminalSettings::get_global(cx).button
         {
-            Some(IconName::Terminal)
+            Some(IconName::TerminalAlt)
         } else {
             None
         }

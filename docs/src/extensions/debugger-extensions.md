@@ -56,7 +56,7 @@ impl zed::Extension for MyExtension {
 }
 ```
 
-`dap_config_to_scenario` is used when the user spawns a session via new session modal UI. At a high level, it takes a generic debug configuration (that isn't specific to any
+`dap_config_to_scenario` is used when the user spawns a session via new process modal UI. At a high level, it takes a generic debug configuration (that isn't specific to any
 debug adapter) and tries to turn it into a concrete debug scenario for your adapter.
 Put another way, it is supposed to answer the question: "Given a program, a list of arguments, current working directory and environment variables, what would the configuration for spawning this debug adapter look like?".
 

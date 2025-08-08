@@ -268,7 +268,7 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
 }
 
 /// A theme is the primary mechanism for defining the appearance of the UI.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Theme {
     /// The unique identifier for the theme.
     pub id: String,

@@ -61,7 +61,7 @@ jobs:
       - style
       - tests
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
     steps:
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
@@ -79,12 +79,12 @@ jobs:
       - name: Build docker image
         run: |
           docker build -f Dockerfile-collab \
-            --build-arg GITHUB_SHA=$GITHUB_SHA \
-            --tag registry.digitalocean.com/zed/collab:$GITHUB_SHA \
+            --build-arg "GITHUB_SHA=$GITHUB_SHA" \
+            --tag "registry.digitalocean.com/zed/collab:$GITHUB_SHA" \
             .
 
       - name: Publish docker image
-        run: docker push registry.digitalocean.com/zed/collab:${GITHUB_SHA}
+        run: docker push "registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
       - name: Prune Docker system
         run: docker system prune  --filter 'until=72h' -f
@@ -94,7 +94,7 @@ jobs:
     needs:
       - publish
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - namespace-profile-16x32-ubuntu-2204
 
     steps:
       - name: Checkout repo
@@ -131,17 +131,20 @@ jobs:
           source script/lib/deploy-helpers.sh
           export_vars_for_environment $ZED_KUBE_NAMESPACE
 
-          export ZED_DO_CERTIFICATE_ID=$(doctl compute certificate list --format ID --no-header)
+          ZED_DO_CERTIFICATE_ID="$(doctl compute certificate list --format ID --no-header)"
+          export ZED_DO_CERTIFICATE_ID
           export ZED_IMAGE_ID="registry.digitalocean.com/zed/collab:${GITHUB_SHA}"
 
           export ZED_SERVICE_NAME=collab
           export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_COLLAB_LOAD_BALANCER_SIZE_UNIT
+          export DATABASE_MAX_CONNECTIONS=850
           envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
           kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
           echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"
 
           export ZED_SERVICE_NAME=api
           export ZED_LOAD_BALANCER_SIZE_UNIT=$ZED_API_LOAD_BALANCER_SIZE_UNIT
+          export DATABASE_MAX_CONNECTIONS=60
           envsubst < crates/collab/k8s/collab.template.yml | kubectl apply -f -
           kubectl -n "$ZED_KUBE_NAMESPACE" rollout status deployment/$ZED_SERVICE_NAME --watch
           echo "deployed ${ZED_SERVICE_NAME} to ${ZED_KUBE_NAMESPACE}"

@@ -381,10 +381,14 @@ fn show_hover(
                             .anchor_after(local_diagnostic.range.end),
                 };
 
+                let scroll_handle = ScrollHandle::new();
+
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     markdown,
                     border_color,
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
                     background_color,
                     keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
                     anchor,
@@ -955,6 +959,8 @@ pub struct DiagnosticPopover {
     pub keyboard_grace: Rc<RefCell<bool>>,
     pub anchor: Anchor,
     _subscription: Subscription,
+    pub scroll_handle: ScrollHandle,
+    pub scrollbar_state: ScrollbarState,
 }
 
 impl DiagnosticPopover {
@@ -968,10 +974,7 @@ impl DiagnosticPopover {
         let this = cx.entity().downgrade();
         div()
             .id("diagnostic")
-            .block()
-            .max_h(max_size.height)
-            .overflow_y_scroll()
-            .max_w(max_size.width)
+            .occlude()
             .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
@@ -992,26 +995,71 @@ impl DiagnosticPopover {
                 div()
                     .py_1()
                     .px_2()
-                    .child(
-                        MarkdownElement::new(
-                            self.markdown.clone(),
-                            diagnostics_markdown_style(window, cx),
-                        )
-                        .on_url_click(move |link, window, cx| {
-                            if let Some(renderer) = GlobalDiagnosticRenderer::global(cx) {
-                                this.update(cx, |this, cx| {
-                                    renderer.as_ref().open_link(this, link, window, cx);
-                                })
-                                .ok();
-                            }
-                        }),
-                    )
                     .bg(self.background_color)
                     .border_1()
                     .border_color(self.border_color)
-                    .rounded_lg(),
+                    .rounded_lg()
+                    .child(
+                        div()
+                            .id("diagnostic-content-container")
+                            .overflow_y_scroll()
+                            .max_w(max_size.width)
+                            .max_h(max_size.height)
+                            .track_scroll(&self.scroll_handle)
+                            .child(
+                                MarkdownElement::new(
+                                    self.markdown.clone(),
+                                    diagnostics_markdown_style(window, cx),
+                                )
+                                .on_url_click(
+                                    move |link, window, cx| {
+                                        if let Some(renderer) = GlobalDiagnosticRenderer::global(cx)
+                                        {
+                                            this.update(cx, |this, cx| {
+                                                renderer.as_ref().open_link(this, link, window, cx);
+                                            })
+                                            .ok();
+                                        }
+                                    },
+                                ),
+                            ),
+                    )
+                    .child(self.render_vertical_scrollbar(cx)),
             )
             .into_any_element()
+    }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Editor>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("diagnostic-popover-vertical-scroll")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 

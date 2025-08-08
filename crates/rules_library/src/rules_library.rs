@@ -37,7 +37,16 @@ pub fn init(cx: &mut App) {
 
 actions!(
     rules_library,
-    [NewRule, DeleteRule, DuplicateRule, ToggleDefaultRule]
+    [
+        /// Creates a new rule in the rules library.
+        NewRule,
+        /// Deletes the selected rule.
+        DeleteRule,
+        /// Duplicates the selected rule.
+        DuplicateRule,
+        /// Toggles whether the selected rule is a default rule.
+        ToggleDefaultRule
+    ]
 );
 
 const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
@@ -310,7 +319,7 @@ impl PickerDelegate for RulePickerDelegate {
                             })
                             .into_any()
                     } else {
-                        IconButton::new("delete-rule", IconName::TrashAlt)
+                        IconButton::new("delete-rule", IconName::Trash)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
                             .shape(IconButtonShape::Square)
@@ -602,7 +611,7 @@ impl RulesLibrary {
                 this.update_in(cx, |this, window, cx| match rule {
                     Ok(rule) => {
                         let title_editor = cx.new(|cx| {
-                            let mut editor = Editor::auto_width(window, cx);
+                            let mut editor = Editor::single_line(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
@@ -972,6 +981,7 @@ impl RulesLibrary {
                                     tool_choice: None,
                                     stop: Vec::new(),
                                     temperature: None,
+                                    thinking_allowed: true,
                                 },
                                 cx,
                             )
@@ -1091,7 +1101,7 @@ impl RulesLibrary {
                                                 inlay_hints_style: editor::make_inlay_hints_style(
                                                     cx,
                                                 ),
-                                                inline_completion_styles:
+                                                edit_prediction_styles:
                                                     editor::make_suggestion_styles(cx),
                                                 ..EditorStyle::default()
                                             },
@@ -1153,7 +1163,7 @@ impl RulesLibrary {
                                                 })
                                                 .into_any()
                                         } else {
-                                            IconButton::new("delete-rule", IconName::TrashAlt)
+                                            IconButton::new("delete-rule", IconName::Trash)
                                                 .icon_size(IconSize::Small)
                                                 .tooltip(move |window, cx| {
                                                     Tooltip::for_action(

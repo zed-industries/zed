@@ -30,8 +30,8 @@ const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
 const OLLAMA_SITE: &str = "https://ollama.com/";
 
-const PROVIDER_ID: &str = "ollama";
-const PROVIDER_NAME: &str = "Ollama";
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
+const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -181,23 +181,27 @@ impl LanguageModelProviderState for OllamaLanguageModelProvider {
 
 impl LanguageModelProvider for OllamaLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn icon(&self) -> IconName {
         IconName::AiOllama
     }
 
-    fn default_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.provided_models(cx).into_iter().next()
+    fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
+        // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
+        // to load by default.
+        None
     }
 
-    fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        self.default_model(cx)
+    fn default_fast_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
+        // See explanation for default_model.
+        None
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
@@ -334,7 +338,10 @@ impl OllamaLanguageModel {
                 temperature: request.temperature.or(Some(1.0)),
                 ..Default::default()
             }),
-            think: self.model.supports_thinking,
+            think: self
+                .model
+                .supports_thinking
+                .map(|supports_thinking| supports_thinking && request.thinking_allowed),
             tools: request.tools.into_iter().map(tool_into_ollama).collect(),
         }
     }
@@ -350,11 +357,11 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        LanguageModelProviderId(PROVIDER_ID.into())
+        PROVIDER_ID
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        LanguageModelProviderName(PROVIDER_NAME.into())
+        PROVIDER_NAME
     }
 
     fn supports_tools(&self) -> bool {
@@ -453,7 +460,7 @@ fn map_to_language_model_completion_events(
             let delta = match response {
                 Ok(delta) => delta,
                 Err(e) => {
-                    let event = Err(LanguageModelCompletionError::Other(anyhow!(e)));
+                    let event = Err(LanguageModelCompletionError::from(anyhow!(e)));
                     return Some((vec![event], state));
                 }
             };
@@ -601,7 +608,7 @@ impl Render for ConfigurationView {
                                             Button::new("ollama-site", "Ollama")
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
@@ -614,7 +621,7 @@ impl Render for ConfigurationView {
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
@@ -624,10 +631,10 @@ impl Render for ConfigurationView {
                                     }
                                 })
                                 .child(
-                                    Button::new("view-models", "All Models")
+                                    Button::new("view-models", "View All Models")
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
+                                        .icon_size(IconSize::Small)
                                         .icon_color(Color::Muted)
                                         .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
@@ -651,7 +658,7 @@ impl Render for ConfigurationView {
                                     Button::new("retry_ollama_models", "Connect")
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
-                                        .icon(IconName::Play)
+                                        .icon(IconName::PlayFilled)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
                                         })),

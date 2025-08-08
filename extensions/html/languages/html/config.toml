@@ -2,7 +2,7 @@ name = "HTML"
 grammar = "html"
 path_suffixes = ["html", "htm", "shtml"]
 autoclose_before = ">})"
-block_comment = ["<!-- ", " -->"]
+block_comment = { start = "<!--", prefix = "", end = "-->", tab_size = 0 }
 brackets = [
     { start = "{", end = "}", close = true, newline = true },
     { start = "[", end = "]", close = true, newline = true },

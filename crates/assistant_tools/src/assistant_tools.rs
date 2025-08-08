@@ -2,7 +2,7 @@ mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
-mod edit_agent;
+pub mod edit_agent;
 mod edit_file_tool;
 mod fetch_tool;
 mod find_path_tool;
@@ -11,15 +11,14 @@ mod list_directory_tool;
 mod move_path_tool;
 mod now_tool;
 mod open_tool;
+mod project_notifications_tool;
 mod read_file_tool;
 mod schema;
-mod templates;
+pub mod templates;
 mod terminal_tool;
 mod thinking_tool;
 mod ui;
 mod web_search_tool;
-
-use std::sync::Arc;
 
 use assistant_tool::ToolRegistry;
 use copy_path_tool::CopyPathTool;
@@ -27,6 +26,7 @@ use gpui::{App, Entity};
 use http_client::HttpClientWithUrl;
 use language_model::LanguageModelRegistry;
 use move_path_tool::MovePathTool;
+use std::sync::Arc;
 use web_search_tool::WebSearchTool;
 
 pub(crate) use templates::*;
@@ -36,15 +36,15 @@ use crate::delete_path_tool::DeletePathTool;
 use crate::diagnostics_tool::DiagnosticsTool;
 use crate::edit_file_tool::EditFileTool;
 use crate::fetch_tool::FetchTool;
-use crate::find_path_tool::FindPathTool;
 use crate::list_directory_tool::ListDirectoryTool;
 use crate::now_tool::NowTool;
 use crate::thinking_tool::ThinkingTool;
 
 pub use edit_file_tool::{EditFileMode, EditFileToolInput};
-pub use find_path_tool::FindPathToolInput;
+pub use find_path_tool::*;
 pub use grep_tool::{GrepTool, GrepToolInput};
 pub use open_tool::OpenTool;
+pub use project_notifications_tool::ProjectNotificationsTool;
 pub use read_file_tool::{ReadFileTool, ReadFileToolInput};
 pub use terminal_tool::TerminalTool;
 
@@ -61,6 +61,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     registry.register_tool(ListDirectoryTool);
     registry.register_tool(NowTool);
     registry.register_tool(OpenTool);
+    registry.register_tool(ProjectNotificationsTool);
     registry.register_tool(FindPathTool);
     registry.register_tool(ReadFileTool);
     registry.register_tool(GrepTool);

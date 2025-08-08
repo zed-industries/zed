@@ -31,6 +31,10 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
   brew install cmake
   ```
 
+### Backend Dependencies (optional) {#backend-dependencies}
+
+If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+
 ## Building Zed from Source
 
 Once you have the dependencies installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
@@ -51,25 +55,6 @@ And to run the tests:
 
 ```sh
 cargo test --workspace
-```
-
-## Backend Dependencies
-
-If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
-
-- Install [Postgres](https://postgresapp.com)
-- Install [Livekit](https://formulae.brew.sh/formula/livekit) and [Foreman](https://formulae.brew.sh/formula/foreman)
-
-  ```sh
-  brew install livekit foreman
-  ```
-
-- Follow the steps in the [collab README](https://github.com/zed-industries/zed/blob/main/crates/collab/README.md) to configure the Postgres database for integration tests
-
-Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
-
-```sh
-docker compose up -d
 ```
 
 ## Troubleshooting
@@ -135,6 +120,21 @@ This error seems to be caused by OS resource constraints. Installing and running
 - `cargo nexttest run --workspace --no-fail-fast`
 
 ## Tips & Tricks
+
+### Avoiding continual rebuilds
+
+If you are finding that Zed is continually rebuilding root crates, it may be because
+you are pointing your development Zed at the codebase itself.
+
+This causes problems because `cargo run` exports a bunch of environment
+variables which are picked up by the `rust-analyzer` that runs in the development
+build of Zed. These environment variables are in turn passed to `cargo check`, which
+invalidates the build cache of some of the crates we depend on.
+
+You can easily avoid running the built binary on the checked-out Zed codebase using `cargo run
+~/path/to/other/project` to ensure that you don't hit this.
+
+### Speeding up verification
 
 If you are building Zed a lot, you may find that macOS continually verifies new
 builds which can add a few seconds to your iteration cycles.

@@ -48,7 +48,14 @@ use workspace::{
 
 actions!(
     diagnostics,
-    [Deploy, ToggleWarnings, ToggleDiagnosticsRefresh]
+    [
+        /// Opens the project diagnostics view.
+        Deploy,
+        /// Toggles the display of warning-level diagnostics.
+        ToggleWarnings,
+        /// Toggles automatic refresh of diagnostics.
+        ToggleDiagnosticsRefresh
+    ]
 );
 
 #[derive(Default)]
@@ -73,6 +80,7 @@ pub(crate) struct ProjectDiagnosticsEditor {
     include_warnings: bool,
     update_excerpts_task: Option<Task<Result<()>>>,
     cargo_diagnostics_fetch: CargoDiagnosticsFetchState,
+    diagnostic_summary_update: Task<()>,
     _subscription: Subscription,
 }
 
@@ -169,16 +177,25 @@ impl ProjectDiagnosticsEditor {
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
-                    path,
+                    paths,
                 } => {
-                    this.paths_to_update.insert(path.clone());
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
+                    this.paths_to_update.extend(paths.clone());
+                    let project = project.clone();
+                    this.diagnostic_summary_update = cx.spawn(async move |this, cx| {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(30))
+                            .await;
+                        this.update(cx, |this, cx| {
+                            this.summary = project.read(cx).diagnostic_summary(false, cx);
+                        })
+                        .log_err();
+                    });
                     cx.emit(EditorEvent::TitleChanged);
 
                     if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
+                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. recording change");
                     } else {
-                        log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
+                        log::debug!("diagnostics updated for server {language_server_id}, paths {paths:?}. updating excerpts");
                         this.update_stale_excerpts(window, cx);
                     }
                 }
@@ -269,6 +286,7 @@ impl ProjectDiagnosticsEditor {
                 cancel_task: None,
                 diagnostic_sources: Arc::new(Vec::new()),
             },
+            diagnostic_summary_update: Task::ready(()),
             _subscription: project_event_subscription,
         };
         this.update_all_diagnostics(true, window, cx);
@@ -649,7 +667,6 @@ impl ProjectDiagnosticsEditor {
                                     block.render_block(editor.clone(), bcx)
                                 }),
                                 priority: 1,
-                                render_in_minimap: false,
                             }
                         });
                 let block_ids = this.editor.update(cx, |editor, cx| {

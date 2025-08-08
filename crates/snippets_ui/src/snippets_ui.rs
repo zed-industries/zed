@@ -54,7 +54,15 @@ impl From<ScopeFileName> for ScopeName {
     }
 }
 
-actions!(snippets, [ConfigureSnippets, OpenFolder]);
+actions!(
+    snippets,
+    [
+        /// Opens the snippets configuration file.
+        ConfigureSnippets,
+        /// Opens the snippets folder in the file manager.
+        OpenFolder
+    ]
+);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
@@ -141,13 +149,12 @@ impl ScopeSelectorDelegate {
         scope_selector: WeakEntity<ScopeSelector>,
         language_registry: Arc<LanguageRegistry>,
     ) -> Self {
-        let candidates = Vec::from([GLOBAL_SCOPE_NAME.to_string()]).into_iter();
         let languages = language_registry.language_names().into_iter();
 
-        let candidates = candidates
+        let candidates = std::iter::once(LanguageName::new(GLOBAL_SCOPE_NAME))
             .chain(languages)
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name.as_ref()))
             .collect::<Vec<_>>();
 
         let mut existing_scopes = HashSet::new();
@@ -323,7 +330,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 .and_then(|available_language| self.scope_icon(available_language.matcher(), cx))
                 .or_else(|| {
                     Some(
-                        Icon::from_path(IconName::Globe.path())
+                        Icon::from_path(IconName::ToolWeb.path())
                             .map(|icon| icon.color(Color::Muted)),
                     )
                 })

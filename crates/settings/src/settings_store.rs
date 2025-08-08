@@ -2,30 +2,37 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, btree_map, hash_map};
 use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
-use futures::{FutureExt, StreamExt, channel::mpsc, future::LocalBoxFuture};
+use futures::{
+    FutureExt, StreamExt,
+    channel::{mpsc, oneshot},
+    future::LocalBoxFuture,
+};
 use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
-use schemars::{JsonSchema, r#gen::SchemaGenerator, schema::RootSchema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
+    env,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
     str::{self, FromStr},
     sync::Arc,
 };
-
-use util::{ResultExt as _, merge_non_null_json_value_into};
+use util::{
+    ResultExt as _, merge_non_null_json_value_into,
+    schemars::{DefaultDenyUnknownFields, add_new_subschema},
+};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    SettingsJsonSchemaParams, VsCodeSettings, WorktreeId, parse_json_with_comments,
-    update_value_in_json_text,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, VsCodeSettings,
+    WorktreeId, parse_json_with_comments, update_value_in_json_text,
 };
 
 /// A value that can be defined as a user setting.
@@ -56,14 +63,6 @@ pub trait Settings: 'static + Send + Sync {
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self>
     where
         Self: Sized;
-
-    fn json_schema(
-        generator: &mut SchemaGenerator,
-        _: &SettingsJsonSchemaParams,
-        _: &App,
-    ) -> RootSchema {
-        generator.root_schema_for::<Self::FileContent>()
-    }
 
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default")
@@ -128,6 +127,10 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The user settings for the current operating system.
+    pub operating_system: Option<&'a T>,
+    /// The settings associated with an enabled settings profile
+    pub profile: Option<&'a T>,
     /// The server's settings.
     pub server: Option<&'a T>,
     /// The project settings, ordered from least specific to most specific.
@@ -147,6 +150,8 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .chain(self.extensions)
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.operating_system)
+            .chain(self.profile)
             .chain(self.server)
             .chain(self.project.iter().copied())
     }
@@ -253,12 +258,7 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
-    fn json_schema(
-        &self,
-        generator: &mut SchemaGenerator,
-        _: &SettingsJsonSchemaParams,
-        cx: &App,
-    ) -> RootSchema;
+    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema;
     fn edits_for_update(
         &self,
         raw_settings: &serde_json::Value,
@@ -276,11 +276,11 @@ impl SettingsStore {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
         Self {
             setting_values: Default::default(),
-            raw_default_settings: serde_json::json!({}),
+            raw_default_settings: json!({}),
             raw_global_settings: None,
-            raw_user_settings: serde_json::json!({}),
+            raw_user_settings: json!({}),
             raw_server_settings: None,
-            raw_extension_settings: serde_json::json!({}),
+            raw_extension_settings: json!({}),
             raw_local_settings: Default::default(),
             raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
@@ -291,6 +291,14 @@ impl SettingsStore {
                 }
             }),
         }
+    }
+
+    pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
+        cx.observe_global::<ActiveSettingsProfileName>(|cx| {
+            Self::update_global(cx, |store, cx| {
+                store.recompute_values(None, cx).log_err();
+            });
+        })
     }
 
     pub fn update<C, R>(cx: &mut C, f: impl FnOnce(&mut Self, &mut C) -> R) -> R
@@ -332,6 +340,22 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let mut os_settings_value = None;
+            if let Some(os_settings) = &self.raw_user_settings.get(env::consts::OS) {
+                os_settings_value = setting_value.deserialize_setting(os_settings).log_err();
+            }
+
+            let mut profile_value = None;
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_settings) = profiles.get(&active_profile.0) {
+                        profile_value = setting_value
+                            .deserialize_setting(profile_settings)
+                            .log_err();
+                    }
+                }
+            }
+
             let server_value = self
                 .raw_server_settings
                 .as_ref()
@@ -351,6 +375,8 @@ impl SettingsStore {
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
                         release_channel: release_channel_value.as_ref(),
+                        operating_system: os_settings_value.as_ref(),
+                        profile: profile_value.as_ref(),
                         server: server_value.as_ref(),
                         project: &[],
                     },
@@ -411,6 +437,16 @@ impl SettingsStore {
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> &Value {
         &self.raw_user_settings
+    }
+
+    /// Get the configured settings profile names.
+    pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
+        self.raw_user_settings
+            .get("profiles")
+            .and_then(|v| v.as_object())
+            .into_iter()
+            .flat_map(|obj| obj.keys())
+            .map(|s| s.as_str())
     }
 
     /// Access the raw JSON value of the global settings.
@@ -509,41 +545,64 @@ impl SettingsStore {
             .ok();
     }
 
-    pub fn import_vscode_settings(&self, fs: Arc<dyn Fs>, vscode_settings: VsCodeSettings) {
+    pub fn import_vscode_settings(
+        &self,
+        fs: Arc<dyn Fs>,
+        vscode_settings: VsCodeSettings,
+    ) -> oneshot::Receiver<Result<()>> {
+        let (tx, rx) = oneshot::channel::<Result<()>>();
         self.setting_file_updates_tx
             .unbounded_send(Box::new(move |cx: AsyncApp| {
                 async move {
-                    let old_text = Self::load_settings(&fs).await?;
-                    let new_text = cx.read_global(|store: &SettingsStore, _cx| {
-                        store.get_vscode_edits(old_text, &vscode_settings)
-                    })?;
-                    let settings_path = paths::settings_file().as_path();
-                    if fs.is_file(settings_path).await {
-                        let resolved_path =
-                            fs.canonicalize(settings_path).await.with_context(|| {
-                                format!("Failed to canonicalize settings path {:?}", settings_path)
-                            })?;
+                    let res = async move {
+                        let old_text = Self::load_settings(&fs).await?;
+                        let new_text = cx.read_global(|store: &SettingsStore, _cx| {
+                            store.get_vscode_edits(old_text, &vscode_settings)
+                        })?;
+                        let settings_path = paths::settings_file().as_path();
+                        if fs.is_file(settings_path).await {
+                            let resolved_path =
+                                fs.canonicalize(settings_path).await.with_context(|| {
+                                    format!(
+                                        "Failed to canonicalize settings path {:?}",
+                                        settings_path
+                                    )
+                                })?;
 
-                        fs.atomic_write(resolved_path.clone(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", resolved_path)
-                            })?;
-                    } else {
-                        fs.atomic_write(settings_path.to_path_buf(), new_text)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to write settings to file {:?}", settings_path)
-                            })?;
+                            fs.atomic_write(resolved_path.clone(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", resolved_path)
+                                })?;
+                        } else {
+                            fs.atomic_write(settings_path.to_path_buf(), new_text)
+                                .await
+                                .with_context(|| {
+                                    format!("Failed to write settings to file {:?}", settings_path)
+                                })?;
+                        }
+
+                        anyhow::Ok(())
                     }
+                    .await;
 
-                    anyhow::Ok(())
+                    let new_res = match &res {
+                        Ok(_) => anyhow::Ok(()),
+                        Err(e) => Err(anyhow::anyhow!("Failed to write settings to file {:?}", e)),
+                    };
+
+                    _ = tx.send(new_res);
+                    res
                 }
                 .boxed_local()
             }))
             .ok();
-    }
 
+        rx
+    }
+}
+
+impl SettingsStore {
     /// Updates the value of a setting in a JSON file, returning the new text
     /// for that JSON file.
     pub fn new_text_for_update<T: Settings>(
@@ -631,7 +690,7 @@ impl SettingsStore {
         ));
     }
 
-    fn json_tab_size(&self) -> usize {
+    pub fn json_tab_size(&self) -> usize {
         const DEFAULT_JSON_TAB_SIZE: usize = 2;
 
         if let Some((setting_type_id, callback)) = &self.tab_size_callback {
@@ -877,128 +936,194 @@ impl SettingsStore {
     }
 
     pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
-        use schemars::{
-            r#gen::SchemaSettings,
-            schema::{Schema, SchemaObject},
-        };
-
-        let settings = SchemaSettings::draft07().with(|settings| {
-            settings.option_add_null_type = true;
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .into_generator();
+        let mut combined_schema = json!({
+            "type": "object",
+            "properties": {}
         });
-        let mut generator = SchemaGenerator::new(settings);
-        let mut combined_schema = RootSchema::default();
 
+        // Merge together settings schemas, similarly to json schema's "allOf". This merging is
+        // recursive, though at time of writing this recursive nature isn't used very much. An
+        // example of it is the schema for `jupyter` having contribution from both `EditorSettings`
+        // and `JupyterSettings`.
+        //
+        // This logic could be removed in favor of "allOf", but then there isn't the opportunity to
+        // validate and fully control the merge.
         for setting_value in self.setting_values.values() {
-            let setting_schema = setting_value.json_schema(&mut generator, schema_params, cx);
-            combined_schema
-                .definitions
-                .extend(setting_schema.definitions);
+            let mut setting_schema = setting_value.json_schema(&mut generator);
 
-            let target_schema = if let Some(key) = setting_value.key() {
-                let key_schema = combined_schema
-                    .schema
-                    .object()
-                    .properties
-                    .entry(key.to_string())
-                    .or_insert_with(|| Schema::Object(SchemaObject::default()));
-                if let Schema::Object(key_schema) = key_schema {
-                    key_schema
-                } else {
-                    continue;
-                }
-            } else {
-                &mut combined_schema.schema
-            };
-
-            merge_schema(target_schema, setting_schema.schema);
-        }
-
-        fn merge_schema(target: &mut SchemaObject, mut source: SchemaObject) {
-            let source_subschemas = source.subschemas();
-            let target_subschemas = target.subschemas();
-            if let Some(all_of) = source_subschemas.all_of.take() {
-                target_subschemas
-                    .all_of
-                    .get_or_insert(Vec::new())
-                    .extend(all_of);
-            }
-            if let Some(any_of) = source_subschemas.any_of.take() {
-                target_subschemas
-                    .any_of
-                    .get_or_insert(Vec::new())
-                    .extend(any_of);
-            }
-            if let Some(one_of) = source_subschemas.one_of.take() {
-                target_subschemas
-                    .one_of
-                    .get_or_insert(Vec::new())
-                    .extend(one_of);
-            }
-
-            if let Some(source) = source.object {
-                let target_properties = &mut target.object().properties;
-                for (key, value) in source.properties {
-                    match target_properties.entry(key) {
-                        btree_map::Entry::Vacant(e) => {
-                            e.insert(value);
-                        }
-                        btree_map::Entry::Occupied(e) => {
-                            if let (Schema::Object(target), Schema::Object(src)) =
-                                (e.into_mut(), value)
-                            {
-                                merge_schema(target, src);
-                            }
+            if let Some(key) = setting_value.key() {
+                if let Some(properties) = combined_schema.get_mut("properties") {
+                    if let Some(properties_obj) = properties.as_object_mut() {
+                        if let Some(target) = properties_obj.get_mut(key) {
+                            merge_schema(target, setting_schema.to_value());
+                        } else {
+                            properties_obj.insert(key.to_string(), setting_schema.to_value());
                         }
                     }
                 }
+            } else {
+                setting_schema.remove("description");
+                setting_schema.remove("additionalProperties");
+                merge_schema(&mut combined_schema, setting_schema.to_value());
             }
+        }
 
-            overwrite(&mut target.instance_type, source.instance_type);
-            overwrite(&mut target.string, source.string);
-            overwrite(&mut target.number, source.number);
-            overwrite(&mut target.reference, source.reference);
-            overwrite(&mut target.array, source.array);
-            overwrite(&mut target.enum_values, source.enum_values);
+        fn merge_schema(target: &mut serde_json::Value, source: serde_json::Value) {
+            let (Some(target_obj), serde_json::Value::Object(source_obj)) =
+                (target.as_object_mut(), source)
+            else {
+                return;
+            };
 
-            fn overwrite<T>(target: &mut Option<T>, source: Option<T>) {
-                if let Some(source) = source {
-                    *target = Some(source);
+            for (source_key, source_value) in source_obj {
+                match source_key.as_str() {
+                    "properties" => {
+                        let serde_json::Value::Object(source_properties) = source_value else {
+                            log::error!(
+                                "bug: expected object for `{}` json schema field, but got: {}",
+                                source_key,
+                                source_value
+                            );
+                            continue;
+                        };
+                        let target_properties =
+                            target_obj.entry(source_key.clone()).or_insert(json!({}));
+                        let Some(target_properties) = target_properties.as_object_mut() else {
+                            log::error!(
+                                "bug: expected object for `{}` json schema field, but got: {}",
+                                source_key,
+                                target_properties
+                            );
+                            continue;
+                        };
+                        for (key, value) in source_properties {
+                            if let Some(existing) = target_properties.get_mut(&key) {
+                                merge_schema(existing, value);
+                            } else {
+                                target_properties.insert(key, value);
+                            }
+                        }
+                    }
+                    "allOf" | "anyOf" | "oneOf" => {
+                        let serde_json::Value::Array(source_array) = source_value else {
+                            log::error!(
+                                "bug: expected array for `{}` json schema field, but got: {}",
+                                source_key,
+                                source_value,
+                            );
+                            continue;
+                        };
+                        let target_array =
+                            target_obj.entry(source_key.clone()).or_insert(json!([]));
+                        let Some(target_array) = target_array.as_array_mut() else {
+                            log::error!(
+                                "bug: expected array for `{}` json schema field, but got: {}",
+                                source_key,
+                                target_array,
+                            );
+                            continue;
+                        };
+                        target_array.extend(source_array);
+                    }
+                    "type"
+                    | "$ref"
+                    | "enum"
+                    | "minimum"
+                    | "maximum"
+                    | "pattern"
+                    | "description"
+                    | "additionalProperties" => {
+                        if let Some(old_value) =
+                            target_obj.insert(source_key.clone(), source_value.clone())
+                        {
+                            if old_value != source_value {
+                                log::error!(
+                                    "bug: while merging JSON schemas, \
+                                    mismatch `\"{}\": {}` (before was `{}`)",
+                                    source_key,
+                                    old_value,
+                                    source_value
+                                );
+                            }
+                        }
+                    }
+                    _ => {
+                        log::error!(
+                            "bug: while merging settings JSON schemas, \
+                            encountered unexpected `\"{}\": {}`",
+                            source_key,
+                            source_value
+                        );
+                    }
                 }
             }
         }
 
-        const ZED_SETTINGS: &str = "ZedSettings";
-        let RootSchema {
-            meta_schema,
-            schema: zed_settings_schema,
-            mut definitions,
-        } = combined_schema;
-        definitions.insert(ZED_SETTINGS.to_string(), zed_settings_schema.into());
-        let zed_settings_ref = Schema::new_ref(format!("#/definitions/{ZED_SETTINGS}"));
+        // add schemas which are determined at runtime
+        for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
+            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
+        }
 
-        // settings file contents matches ZedSettings + overrides for each release stage
-        let mut root_schema = json!({
+        // add merged settings schema to the definitions
+        const ZED_SETTINGS: &str = "ZedSettings";
+        let zed_settings_ref = add_new_subschema(&mut generator, ZED_SETTINGS, combined_schema);
+
+        // add `ZedSettingsOverride` which is the same as `ZedSettings` except that unknown
+        // fields are rejected. This is used for release stage settings and profiles.
+        let mut zed_settings_override = zed_settings_ref.clone();
+        zed_settings_override.insert("unevaluatedProperties".to_string(), false.into());
+        let zed_settings_override_ref = add_new_subschema(
+            &mut generator,
+            "ZedSettingsOverride",
+            zed_settings_override.to_value(),
+        );
+
+        // Remove `"additionalProperties": false` added by `DefaultDenyUnknownFields` so that
+        // unknown fields can be handled by the root schema and `ZedSettingsOverride`.
+        let mut definitions = generator.take_definitions(true);
+        definitions
+            .get_mut(ZED_SETTINGS)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("additionalProperties");
+
+        let meta_schema = generator
+            .settings()
+            .meta_schema
+            .as_ref()
+            .expect("meta_schema should be present in schemars settings")
+            .to_string();
+
+        json!({
+            "$schema": meta_schema,
+            "title": "Zed Settings",
+            "unevaluatedProperties": false,
+            // ZedSettings + settings overrides for each release stage / OS / profiles
             "allOf": [
                 zed_settings_ref,
                 {
                     "properties": {
-                        "dev": zed_settings_ref,
-                        "nightly": zed_settings_ref,
-                        "stable": zed_settings_ref,
-                        "preview": zed_settings_ref,
+                        "dev": zed_settings_override_ref,
+                        "nightly": zed_settings_override_ref,
+                        "stable": zed_settings_override_ref,
+                        "preview": zed_settings_override_ref,
+                        "linux": zed_settings_override_ref,
+                        "macos": zed_settings_override_ref,
+                        "windows": zed_settings_override_ref,
+                        "profiles": {
+                            "type": "object",
+                            "description": "Configures any number of settings profiles.",
+                            "additionalProperties": zed_settings_override_ref
+                        }
                     }
                 }
             ],
-            "definitions": definitions,
-        });
-
-        if let Some(meta_schema) = meta_schema {
-            if let Some(root_schema_object) = root_schema.as_object_mut() {
-                root_schema_object.insert("$schema".to_string(), meta_schema.into());
-            }
-        }
-
-        root_schema
+            "$defs": definitions,
+        })
     }
 
     fn recompute_values(
@@ -1052,6 +1177,23 @@ impl SettingsStore {
                 }
             }
 
+            let mut os_settings = None;
+            if let Some(settings) = &self.raw_user_settings.get(env::consts::OS) {
+                if let Some(settings) = setting_value.deserialize_setting(settings).log_err() {
+                    os_settings = Some(settings);
+                }
+            }
+
+            let mut profile_settings = None;
+            if let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() {
+                if let Some(profiles) = self.raw_user_settings.get("profiles") {
+                    if let Some(profile_json) = profiles.get(&active_profile.0) {
+                        profile_settings =
+                            setting_value.deserialize_setting(profile_json).log_err();
+                    }
+                }
+            }
+
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
                 if let Some(value) = setting_value
@@ -1062,6 +1204,8 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            operating_system: os_settings.as_ref(),
+                            profile: profile_settings.as_ref(),
                             server: server_settings.as_ref(),
                             project: &[],
                         },
@@ -1114,6 +1258,8 @@ impl SettingsStore {
                                     extensions: extension_settings.as_ref(),
                                     user: user_settings.as_ref(),
                                     release_channel: release_channel_settings.as_ref(),
+                                    operating_system: os_settings.as_ref(),
+                                    profile: profile_settings.as_ref(),
                                     server: server_settings.as_ref(),
                                     project: &project_settings_stack.iter().collect::<Vec<_>>(),
                                 },
@@ -1239,6 +1385,12 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                 release_channel: values
                     .release_channel
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                operating_system: values
+                    .operating_system
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                profile: values
+                    .profile
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 server: values
                     .server
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
@@ -1311,13 +1463,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         }
     }
 
-    fn json_schema(
-        &self,
-        generator: &mut SchemaGenerator,
-        params: &SettingsJsonSchemaParams,
-        cx: &App,
-    ) -> RootSchema {
-        T::json_schema(generator, params, cx)
+    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        T::FileContent::json_schema(generator)
     }
 
     fn edits_for_update(
@@ -1912,7 +2059,6 @@ mod tests {
     }
 
     #[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct UserSettingsContent {
         name: Option<String>,
         age: Option<u32>,
@@ -1955,7 +2101,6 @@ mod tests {
     }
 
     #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct MultiKeySettingsJson {
         key1: Option<String>,
         key2: Option<String>,
@@ -1994,7 +2139,6 @@ mod tests {
     }
 
     #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct JournalSettingsJson {
         pub path: Option<String>,
         pub hour_format: Option<HourFormat>,
@@ -2089,7 +2233,6 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-    #[schemars(deny_unknown_fields)]
     struct LanguageSettingEntry {
         language_setting_1: Option<bool>,
         language_setting_2: Option<bool>,

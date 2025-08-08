@@ -1,3 +1,4 @@
+mod add_llm_provider_modal;
 mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
@@ -6,6 +7,7 @@ use std::{sync::Arc, time::Duration};
 
 use agent_settings::AgentSettings;
 use assistant_tool::{ToolSource, ToolWorkingSet};
+use cloud_llm_client::Plan;
 use collections::HashMap;
 use context_server::ContextServerId;
 use extension::ExtensionManifest;
@@ -16,7 +18,9 @@ use gpui::{
     Focusable, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
 };
 use language::LanguageRegistry;
-use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
+use language_model::{
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
+};
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
@@ -24,8 +28,8 @@ use project::{
 };
 use settings::{Settings, update_settings_file};
 use ui::{
-    ContextMenu, Disclosure, ElevationIndex, Indicator, PopoverMenu, Scrollbar, ScrollbarState,
-    Switch, SwitchColor, Tooltip, prelude::*,
+    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
+    Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -34,7 +38,10 @@ use zed_actions::ExtensionCategoryFilter;
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
-use crate::AddContextServer;
+use crate::{
+    AddContextServer,
+    agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+};
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
@@ -86,6 +93,14 @@ impl AgentConfiguration {
         let scroll_handle = ScrollHandle::new();
         let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
+        let mut expanded_provider_configurations = HashMap::default();
+        if LanguageModelRegistry::read_global(cx)
+            .provider(&ZED_CLOUD_PROVIDER_ID)
+            .map_or(false, |cloud_provider| cloud_provider.must_accept_terms(cx))
+        {
+            expanded_provider_configurations.insert(ZED_CLOUD_PROVIDER_ID, true);
+        }
+
         let mut this = Self {
             fs,
             language_registry,
@@ -94,7 +109,7 @@ impl AgentConfiguration {
             configuration_views_by_provider: HashMap::default(),
             context_server_store,
             expanded_context_server_tools: HashMap::default(),
-            expanded_provider_configurations: HashMap::default(),
+            expanded_provider_configurations,
             tools,
             _registry_subscription: registry_subscription,
             scroll_handle,
@@ -161,20 +176,47 @@ impl AgentConfiguration {
             .copied()
             .unwrap_or(false);
 
+        let is_zed_provider = provider.id() == ZED_CLOUD_PROVIDER_ID;
+        let current_plan = if is_zed_provider {
+            self.workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).user_store().read(cx).plan())
+        } else {
+            None
+        };
+
+        let is_signed_in = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace.client().status().borrow().is_connected()
+            })
+            .unwrap_or(false);
+
         v_flex()
-            .py_2()
-            .gap_1p5()
-            .border_t_1()
-            .border_color(cx.theme().colors().border.opacity(0.6))
+            .w_full()
+            .when(is_expanded, |this| this.mb_2())
+            .child(
+                div()
+                    .opacity(0.6)
+                    .px_2()
+                    .child(Divider::horizontal().color(DividerColor::Border)),
+            )
             .child(
                 h_flex()
+                    .map(|this| {
+                        if is_expanded {
+                            this.mt_2().mb_1()
+                        } else {
+                            this.my_2()
+                        }
+                    })
                     .w_full()
-                    .gap_1()
                     .justify_between()
                     .child(
                         h_flex()
                             .id(provider_id_string.clone())
                             .cursor_pointer()
+                            .px_2()
                             .py_0p5()
                             .w_full()
                             .justify_between()
@@ -182,20 +224,39 @@ impl AgentConfiguration {
                             .hover(|hover| hover.bg(cx.theme().colors().element_hover))
                             .child(
                                 h_flex()
+                                    .w_full()
                                     .gap_2()
                                     .child(
                                         Icon::new(provider.icon())
                                             .size(IconSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(Label::new(provider_name.clone()).size(LabelSize::Large))
-                                    .when(
-                                        provider.is_authenticated(cx) && !is_expanded,
-                                        |parent| {
-                                            parent.child(
-                                                Icon::new(IconName::Check).color(Color::Success),
+                                    .child(
+                                        h_flex()
+                                            .w_full()
+                                            .gap_1()
+                                            .child(
+                                                Label::new(provider_name.clone())
+                                                    .size(LabelSize::Large),
                                             )
-                                        },
+                                            .map(|this| {
+                                                if is_zed_provider && is_signed_in {
+                                                    this.child(
+                                                        self.render_zed_plan_info(current_plan, cx),
+                                                    )
+                                                } else {
+                                                    this.when(
+                                                        provider.is_authenticated(cx)
+                                                            && !is_expanded,
+                                                        |parent| {
+                                                            parent.child(
+                                                                Icon::new(IconName::Check)
+                                                                    .color(Color::Success),
+                                                            )
+                                                        },
+                                                    )
+                                                }
+                                            }),
                                     ),
                             )
                             .child(
@@ -237,12 +298,16 @@ impl AgentConfiguration {
                         )
                     }),
             )
-            .when(is_expanded, |parent| match configuration_view {
-                Some(configuration_view) => parent.child(configuration_view),
-                None => parent.child(Label::new(format!(
-                    "No configuration view for {provider_name}",
-                ))),
-            })
+            .child(
+                div()
+                    .px_2()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    }),
+            )
     }
 
     fn render_provider_configuration_section(
@@ -252,142 +317,164 @@ impl AgentConfiguration {
         let providers = LanguageModelRegistry::read_global(cx).providers();
 
         v_flex()
-            .p(DynamicSpacing::Base16.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
+            .w_full()
             .child(
-                v_flex()
+                h_flex()
+                    .p(DynamicSpacing::Base16.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .pb_0()
                     .mb_2p5()
-                    .gap_0p5()
-                    .child(Headline::new("LLM Providers"))
+                    .items_start()
+                    .justify_between()
                     .child(
-                        Label::new("Add at least one provider to use AI-powered features.")
-                            .color(Color::Muted),
+                        v_flex()
+                            .w_full()
+                            .gap_0p5()
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .gap_2()
+                                    .justify_between()
+                                    .child(Headline::new("LLM Providers"))
+                                    .child(
+                                        PopoverMenu::new("add-provider-popover")
+                                            .trigger(
+                                                Button::new("add-provider", "Add Provider")
+                                                    .icon_position(IconPosition::Start)
+                                                    .icon(IconName::Plus)
+                                                    .icon_size(IconSize::Small)
+                                                    .icon_color(Color::Muted)
+                                                    .label_size(LabelSize::Small),
+                                            )
+                                            .anchor(gpui::Corner::TopRight)
+                                            .menu({
+                                                let workspace = self.workspace.clone();
+                                                move |window, cx| {
+                                                    Some(ContextMenu::build(
+                                                        window,
+                                                        cx,
+                                                        |menu, _window, _cx| {
+                                                            menu.header("Compatible APIs").entry(
+                                                                "OpenAI",
+                                                                None,
+                                                                {
+                                                                    let workspace =
+                                                                        workspace.clone();
+                                                                    move |window, cx| {
+                                                                        workspace
+                                                        .update(cx, |workspace, cx| {
+                                                            AddLlmProviderModal::toggle(
+                                                                LlmCompatibleProvider::OpenAi,
+                                                                workspace,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        })
+                                                        .log_err();
+                                                                    }
+                                                                },
+                                                            )
+                                                        },
+                                                    ))
+                                                }
+                                            }),
+                                    ),
+                            )
+                            .child(
+                                Label::new("Add at least one provider to use AI-powered features.")
+                                    .color(Color::Muted),
+                            ),
                     ),
             )
-            .children(
-                providers
-                    .into_iter()
-                    .map(|provider| self.render_provider_configuration_block(&provider, cx)),
+            .child(
+                div()
+                    .w_full()
+                    .pl(DynamicSpacing::Base08.rems(cx))
+                    .pr(DynamicSpacing::Base20.rems(cx))
+                    .children(
+                        providers.into_iter().map(|provider| {
+                            self.render_provider_configuration_block(&provider, cx)
+                        }),
+                    ),
             )
     }
 
     fn render_command_permission(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let always_allow_tool_actions = AgentSettings::get_global(cx).always_allow_tool_actions;
+        let fs = self.fs.clone();
 
-        h_flex()
-            .gap_4()
-            .justify_between()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .max_w_5_6()
-                    .child(Label::new("Allow running editing tools without asking for confirmation"))
-                    .child(
-                        Label::new(
-                            "The agent can perform potentially destructive actions without asking for your confirmation.",
-                        )
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Switch::new(
-                    "always-allow-tool-actions-switch",
-                    always_allow_tool_actions.into(),
-                )
-                .color(SwitchColor::Accent)
-                .on_click({
-                    let fs = self.fs.clone();
-                    move |state, _window, cx| {
-                        let allow = state == &ToggleState::Selected;
-                        update_settings_file::<AgentSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| {
-                                settings.set_always_allow_tool_actions(allow);
-                            },
-                        );
-                    }
-                }),
-            )
+        SwitchField::new(
+            "always-allow-tool-actions-switch",
+            "Allow running commands without asking for confirmation",
+            Some(
+                "The agent can perform potentially destructive actions without asking for your confirmation.".into(),
+            ),
+            always_allow_tool_actions,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_always_allow_tool_actions(allow);
+                });
+            },
+        )
     }
 
     fn render_single_file_review(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let single_file_review = AgentSettings::get_global(cx).single_file_review;
+        let fs = self.fs.clone();
 
-        h_flex()
-            .gap_4()
-            .justify_between()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .max_w_5_6()
-                    .child(Label::new("Enable single-file agent reviews"))
-                    .child(
-                        Label::new(
-                            "Agent edits are also displayed in single-file editors for review.",
-                        )
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Switch::new("single-file-review-switch", single_file_review.into())
-                    .color(SwitchColor::Accent)
-                    .on_click({
-                        let fs = self.fs.clone();
-                        move |state, _window, cx| {
-                            let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AgentSettings>(
-                                fs.clone(),
-                                cx,
-                                move |settings, _| {
-                                    settings.set_single_file_review(allow);
-                                },
-                            );
-                        }
-                    }),
-            )
+        SwitchField::new(
+            "single-file-review",
+            "Enable single-file agent reviews",
+            Some("Agent edits are also displayed in single-file editors for review.".into()),
+            single_file_review,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_single_file_review(allow);
+                });
+            },
+        )
     }
 
     fn render_sound_notification(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let play_sound_when_agent_done = AgentSettings::get_global(cx).play_sound_when_agent_done;
+        let fs = self.fs.clone();
 
-        h_flex()
-            .gap_4()
-            .justify_between()
-            .flex_wrap()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .max_w_5_6()
-                    .child(Label::new("Play sound when finished generating"))
-                    .child(
-                        Label::new(
-                            "Hear a notification sound when the agent is done generating changes or needs your input.",
-                        )
-                        .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Switch::new("play-sound-notification-switch", play_sound_when_agent_done.into())
-                    .color(SwitchColor::Accent)
-                    .on_click({
-                        let fs = self.fs.clone();
-                        move |state, _window, cx| {
-                            let allow = state == &ToggleState::Selected;
-                            update_settings_file::<AgentSettings>(
-                                fs.clone(),
-                                cx,
-                                move |settings, _| {
-                                    settings.set_play_sound_when_agent_done(allow);
-                                },
-                            );
-                        }
-                    }),
-            )
+        SwitchField::new(
+            "sound-notification",
+            "Play sound when finished generating",
+            Some(
+                "Hear a notification sound when the agent is done generating changes or needs your input.".into(),
+            ),
+            play_sound_when_agent_done,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_play_sound_when_agent_done(allow);
+                });
+            },
+        )
+    }
+
+    fn render_modifier_to_send(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let use_modifier_to_send = AgentSettings::get_global(cx).use_modifier_to_send;
+        let fs = self.fs.clone();
+
+        SwitchField::new(
+            "modifier-send",
+            "Use modifier to submit a message",
+            Some(
+                "Make a modifier (cmd-enter on macOS, ctrl-enter on Linux) required to send messages.".into(),
+            ),
+            use_modifier_to_send,
+            move |state, _window, cx| {
+                let allow = state == &ToggleState::Selected;
+                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
+                    settings.set_use_modifier_to_send(allow);
+                });
+            },
+        )
     }
 
     fn render_general_settings_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -401,6 +488,38 @@ impl AgentConfiguration {
             .child(self.render_command_permission(cx))
             .child(self.render_single_file_review(cx))
             .child(self.render_sound_notification(cx))
+            .child(self.render_modifier_to_send(cx))
+    }
+
+    fn render_zed_plan_info(&self, plan: Option<Plan>, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(plan) = plan {
+            let free_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.05));
+
+            let pro_chip_bg = cx
+                .theme()
+                .colors()
+                .editor_background
+                .opacity(0.5)
+                .blend(cx.theme().colors().text_accent.opacity(0.2));
+
+            let (plan_name, label_color, bg_color) = match plan {
+                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
+                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
+                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+            };
+
+            Chip::new(plan_name.to_string())
+                .bg_color(bg_color)
+                .label_color(label_color)
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        }
     }
 
     fn render_context_servers_section(
@@ -408,7 +527,7 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let context_server_ids = self.context_server_store.read(cx).all_server_ids().clone();
+        let context_server_ids = self.context_server_store.read(cx).configured_server_ids();
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
@@ -420,7 +539,7 @@ impl AgentConfiguration {
                 v_flex()
                     .gap_0p5()
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                    .child(Label::new("Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
+                    .child(Label::new("Connect to context servers through the Model Context Protocol, either using Zed extensions or directly.").color(Color::Muted)),
             )
             .children(
                 context_server_ids.into_iter().map(|context_server_id| {
@@ -454,7 +573,7 @@ impl AgentConfiguration {
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
                             .full_width()
-                            .icon(IconName::Hammer)
+                            .icon(IconName::ToolHammer)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
@@ -463,6 +582,7 @@ impl AgentConfiguration {
                                         category_filter: Some(
                                             ExtensionCategoryFilter::ContextServers,
                                         ),
+                                        id: None,
                                     }
                                     .boxed_clone(),
                                     cx,
