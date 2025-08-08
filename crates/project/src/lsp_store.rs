@@ -6725,13 +6725,15 @@ impl LspStore {
                         .as_ref()
                         .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                         .unwrap_or(&[]);
+                    let uri_path = lsp::Url::to_file_path(&uri).unwrap();
+                    let next_uri = lsp_command::file_path_to_lsp_url(uri_path.as_path()).unwrap();
                     match diagnostics {
                         PulledDiagnostics::Unchanged { result_id } => {
                             lsp_store
                                 .merge_diagnostics(
                                     server_id,
                                     lsp::PublishDiagnosticsParams {
-                                        uri: uri.clone(),
+                                        uri: next_uri.clone(),
                                         diagnostics: Vec::new(),
                                         version: None,
                                     },
@@ -6751,7 +6753,7 @@ impl LspStore {
                                 .merge_diagnostics(
                                     server_id,
                                     lsp::PublishDiagnosticsParams {
-                                        uri: uri.clone(),
+                                        uri: next_uri.clone(),
                                         diagnostics,
                                         version: None,
                                     },
@@ -7389,7 +7391,7 @@ impl LspStore {
         let buffer = buffer.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).unwrap();
+        let uri = lsp_command::file_path_to_lsp_url(abs_path.as_path()).unwrap();
         let next_snapshot = buffer.text_snapshot();
         for language_server in language_servers {
             let language_server = language_server.clone();
@@ -11586,13 +11588,15 @@ impl LspStore {
                 .as_ref()
                 .map(|adapter| adapter.disk_based_diagnostic_sources.as_slice())
                 .unwrap_or(&[]);
+            let uri_path = lsp::Url::to_file_path(&uri).unwrap();
+            let next_uri = lsp_command::file_path_to_lsp_url(uri_path.as_path()).unwrap();
 
             match diagnostics {
                 PulledDiagnostics::Unchanged { result_id } => {
                     self.merge_diagnostics(
                         server_id,
                         lsp::PublishDiagnosticsParams {
-                            uri: uri.clone(),
+                            uri: next_uri.clone(),
                             diagnostics: Vec::new(),
                             version: None,
                         },
@@ -11611,7 +11615,7 @@ impl LspStore {
                     self.merge_diagnostics(
                         server_id,
                         lsp::PublishDiagnosticsParams {
-                            uri: uri.clone(),
+                            uri: next_uri.clone(),
                             diagnostics,
                             version: workspace_diagnostics.version,
                         },
