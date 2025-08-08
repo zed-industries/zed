@@ -7,6 +7,7 @@
 //!
 //! Notably we do *not* assign a single language to a single file; in real world a single file can consist of multiple programming languages - HTML is a good example of that - and `language` crate tends to reflect that status quo in its API.
 mod buffer;
+mod comment_injection;
 mod diagnostic_set;
 mod highlight_map;
 mod language_registry;
@@ -72,6 +73,7 @@ pub use toolchain::{
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
 
+pub use self::comment_injection::{CommentInjection, CommentInjectionQuery};
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticGroup};

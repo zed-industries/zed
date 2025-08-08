@@ -101,6 +101,8 @@ actions!(
         HideOthers,
         /// Minimizes the current window.
         Minimize,
+        /// Opens the tagged comment configuration file.
+        OpenTaggedCommentConfiguration,
         /// Opens the default settings file.
         OpenDefaultSettings,
         /// Opens project-specific settings.
@@ -213,6 +215,18 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &OpenAccountSettings, cx| {
         with_active_or_new_workspace(cx, |_, _, cx| {
             cx.open_url(&zed_urls::account_url(cx));
+        });
+    });
+    cx.on_action(|_: &OpenTaggedCommentConfiguration, cx| {
+        use languages::Comment;
+
+        with_active_or_new_workspace(cx, |_, window, cx| {
+            open_settings_file(
+                Comment::config_path(),
+                || Comment::default_config().as_ref().into(),
+                window,
+                cx,
+            );
         });
     });
     cx.on_action(|_: &OpenTasks, cx| {

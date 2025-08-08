@@ -16,6 +16,7 @@ load-grammars = [
     "tree-sitter",
     "tree-sitter-bash",
     "tree-sitter-c",
+    "tree-sitter-comment",
     "tree-sitter-cpp",
     "tree-sitter-css",
     "tree-sitter-diff",
@@ -77,6 +78,7 @@ toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-comment = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-diff = { workspace = true, optional = true }

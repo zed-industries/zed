@@ -206,6 +206,46 @@
             "font_style": null,
             "font_weight": null
           },
+           "comment.note": {
+            "color": "#6060ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.note.name": {
+            "color": "#6060ff",
+            "font_style": null,
+            "font_weight": 700
+          },
+          "comment.todo": {
+            "color": "#00a0aa",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.todo.name": {
+            "color": "#00a0aa",
+            "font_style": null,
+            "font_weight": 700
+          },
+         "comment.warning": {
+            "color": "#ccaa00",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.warning.name": {
+            "color": "#ccaa00",
+            "font_style": null,
+            "font_weight": 700
+          },
+         "comment.error": {
+            "color": "#dd0000",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.error.name": {
+            "color": "#dd0000",
+            "font_style": null,
+            "font_weight": 700
+          },
           "constant": {
             "color": "#dfc184ff",
             "font_style": null,
@@ -604,6 +644,46 @@
             "color": "#7c7e86ff",
             "font_style": null,
             "font_weight": null
+          },
+          "comment.note": {
+            "color": "#6060ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.note.name": {
+            "color": "#6060ff",
+            "font_style": null,
+            "font_weight": 700
+          },
+          "comment.todo": {
+            "color": "#00a0aa",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.todo.name": {
+            "color": "#00a0aa",
+            "font_style": null,
+            "font_weight": 700
+          },
+         "comment.warning": {
+            "color": "#ccaa00",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.warning.name": {
+            "color": "#ccaa00",
+            "font_style": null,
+            "font_weight": 700
+          },
+         "comment.error": {
+            "color": "#dd0000",
+            "font_style": null,
+            "font_weight": null
+          },
+          "comment.error.name": {
+            "color": "#dd0000",
+            "font_style": null,
+            "font_weight": 700
           },
           "constant": {
             "color": "#c18401ff",
