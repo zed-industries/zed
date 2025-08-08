@@ -152,6 +152,15 @@ impl Global for GlobalAutoUpdate {}
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     AutoUpdateSetting::register(cx);
 
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        workspace.register_action(|_, action, window, cx| check(action, window, cx));
+
+        workspace.register_action(|_, action, _, cx| {
+            view_release_notes(action, cx);
+        });
+    })
+    .detach();
+
     let version = release_channel::AppVersion::global(cx);
     let auto_updater = cx.new(|cx| {
         let updater = AutoUpdater::new(version, http_client, cx);
@@ -183,13 +192,6 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
         updater
     });
     cx.set_global(GlobalAutoUpdate(Some(auto_updater)));
-    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        workspace.register_action(|_, action, window, cx| check(action, window, cx));
-        workspace.register_action(|_, action, _, cx| {
-            view_release_notes(action, cx);
-        });
-    })
-    .detach();
 }
 
 pub fn check(_: &Check, window: &mut Window, cx: &mut App) {
