@@ -195,7 +195,7 @@ impl AgentTool for EditFileTool {
         let project = self.thread.read(cx).project().clone();
         let project_path = match resolve_path(&input, project.clone(), cx) {
             Ok(path) => path,
-            Err(err) => return Task::ready(Err(anyhow!(err))).into(),
+            Err(err) => return Task::ready(Err(anyhow!(err))),
         };
 
         let request = self.thread.update(cx, |thread, cx| {
@@ -473,189 +473,97 @@ mod tests {
         );
     }
 
-    // #[gpui::test]
-    // async fn test_resolve_path_for_creating_file(cx: &mut TestAppContext) {
-    //     let mode = &EditFileMode::Create;
+    #[gpui::test]
+    async fn test_resolve_path_for_creating_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Create;
 
-    //     let result = test_resolve_path(mode, "root/new.txt", cx);
-    //     assert_resolved_path_eq(result.await, "new.txt");
+        let result = test_resolve_path(mode, "root/new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
 
-    //     let result = test_resolve_path(mode, "new.txt", cx);
-    //     assert_resolved_path_eq(result.await, "new.txt");
+        let result = test_resolve_path(mode, "new.txt", cx);
+        assert_resolved_path_eq(result.await, "new.txt");
 
-    //     let result = test_resolve_path(mode, "dir/new.txt", cx);
-    //     assert_resolved_path_eq(result.await, "dir/new.txt");
+        let result = test_resolve_path(mode, "dir/new.txt", cx);
+        assert_resolved_path_eq(result.await, "dir/new.txt");
 
-    //     let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
-    //     assert_eq!(
-    //         result.await.unwrap_err().to_string(),
-    //         "Can't create file: file already exists"
-    //     );
+        let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: file already exists"
+        );
 
-    //     let result = test_resolve_path(mode, "root/dir/nonexistent_dir/new.txt", cx);
-    //     assert_eq!(
-    //         result.await.unwrap_err().to_string(),
-    //         "Can't create file: parent directory doesn't exist"
-    //     );
-    // }
-
-    // #[gpui::test]
-    // async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
-    //     let mode = &EditFileMode::Edit;
-
-    //     let path_with_root = "root/dir/subdir/existing.txt";
-    //     let path_without_root = "dir/subdir/existing.txt";
-    //     let result = test_resolve_path(mode, path_with_root, cx);
-    //     assert_resolved_path_eq(result.await, path_without_root);
-
-    //     let result = test_resolve_path(mode, path_without_root, cx);
-    //     assert_resolved_path_eq(result.await, path_without_root);
-
-    //     let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
-    //     assert_eq!(
-    //         result.await.unwrap_err().to_string(),
-    //         "Can't edit file: path not found"
-    //     );
-
-    //     let result = test_resolve_path(mode, "root/dir", cx);
-    //     assert_eq!(
-    //         result.await.unwrap_err().to_string(),
-    //         "Can't edit file: path is a directory"
-    //     );
-    // }
-
-    // async fn test_resolve_path(
-    //     mode: &EditFileMode,
-    //     path: &str,
-    //     cx: &mut TestAppContext,
-    // ) -> anyhow::Result<ProjectPath> {
-    //     init_test(cx);
-
-    //     let fs = project::FakeFs::new(cx.executor());
-    //     fs.insert_tree(
-    //         "/root",
-    //         json!({
-    //             "dir": {
-    //                 "subdir": {
-    //                     "existing.txt": "hello"
-    //                 }
-    //             }
-    //         }),
-    //     )
-    //     .await;
-    //     let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
-
-    //     let input = EditFileToolInput {
-    //         display_description: "Some edit".into(),
-    //         path: path.into(),
-    //         mode: mode.clone(),
-    //     };
-
-    //     let result = cx.update(|cx| resolve_path(&input, project, cx));
-    //     result
-    // }
-
-    // fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-    //     let actual = path
-    //         .expect("Should return valid path")
-    //         .path
-    //         .to_str()
-    //         .unwrap()
-    //         .replace("\\", "/"); // Naive Windows paths normalization
-    //     assert_eq!(actual, expected);
-    // }
-
-    // #[test]
-    // fn still_streaming_ui_text_with_path() {
-    //     let input = json!({
-    //         "path": "src/main.rs",
-    //         "display_description": "",
-    //         "old_string": "old code",
-    //         "new_string": "new code"
-    //     });
-
-    //     assert_eq!(EditFileTool.still_streaming_ui_text(&input), "src/main.rs");
-    // }
-
-    // #[test]
-    // fn still_streaming_ui_text_with_description() {
-    //     let input = json!({
-    //         "path": "",
-    //         "display_description": "Fix error handling",
-    //         "old_string": "old code",
-    //         "new_string": "new code"
-    //     });
-
-    //     assert_eq!(
-    //         EditFileTool.still_streaming_ui_text(&input),
-    //         "Fix error handling",
-    //     );
-    // }
-
-    // #[test]
-    // fn still_streaming_ui_text_with_path_and_description() {
-    //     let input = json!({
-    //         "path": "src/main.rs",
-    //         "display_description": "Fix error handling",
-    //         "old_string": "old code",
-    //         "new_string": "new code"
-    //     });
-
-    //     assert_eq!(
-    //         EditFileTool.still_streaming_ui_text(&input),
-    //         "Fix error handling",
-    //     );
-    // }
-
-    // #[test]
-    // fn still_streaming_ui_text_no_path_or_description() {
-    //     let input = json!({
-    //         "path": "",
-    //         "display_description": "",
-    //         "old_string": "old code",
-    //         "new_string": "new code"
-    //     });
-
-    //     assert_eq!(
-    //         EditFileTool.still_streaming_ui_text(&input),
-    //         DEFAULT_UI_TEXT,
-    //     );
-    // }
-
-    // #[test]
-    // fn still_streaming_ui_text_with_null() {
-    //     let input = serde_json::Value::Null;
-
-    //     assert_eq!(
-    //         EditFileTool.still_streaming_ui_text(&input),
-    //         DEFAULT_UI_TEXT,
-    //     );
-    // }
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            TelemetrySettings::register(cx);
-            agent_settings::AgentSettings::register(cx);
-            Project::init_settings(cx);
-        });
+        let result = test_resolve_path(mode, "root/dir/nonexistent_dir/new.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't create file: parent directory doesn't exist"
+        );
     }
 
-    // fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
-    //     cx.update(|cx| {
-    //         // Set custom data directory (config will be under data_dir/config)
-    //         paths::set_custom_data_dir(data_dir.to_str().unwrap());
+    #[gpui::test]
+    async fn test_resolve_path_for_editing_file(cx: &mut TestAppContext) {
+        let mode = &EditFileMode::Edit;
 
-    //         let settings_store = SettingsStore::test(cx);
-    //         cx.set_global(settings_store);
-    //         language::init(cx);
-    //         TelemetrySettings::register(cx);
-    //         agent_settings::AgentSettings::register(cx);
-    //         Project::init_settings(cx);
-    //     });
-    // }
+        let path_with_root = "root/dir/subdir/existing.txt";
+        let path_without_root = "dir/subdir/existing.txt";
+        let result = test_resolve_path(mode, path_with_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, path_without_root, cx);
+        assert_resolved_path_eq(result.await, path_without_root);
+
+        let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path not found"
+        );
+
+        let result = test_resolve_path(mode, "root/dir", cx);
+        assert_eq!(
+            result.await.unwrap_err().to_string(),
+            "Can't edit file: path is a directory"
+        );
+    }
+
+    async fn test_resolve_path(
+        mode: &EditFileMode,
+        path: &str,
+        cx: &mut TestAppContext,
+    ) -> anyhow::Result<ProjectPath> {
+        init_test(cx);
+
+        let fs = project::FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir": {
+                    "subdir": {
+                        "existing.txt": "hello"
+                    }
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+
+        let input = EditFileToolInput {
+            display_description: "Some edit".into(),
+            path: path.into(),
+            mode: mode.clone(),
+        };
+
+        let result = cx.update(|cx| resolve_path(&input, project, cx));
+        result
+    }
+
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
+        let actual = path
+            .expect("Should return valid path")
+            .path
+            .to_str()
+            .unwrap()
+            .replace("\\", "/"); // Naive Windows paths normalization
+        assert_eq!(actual, expected);
+    }
 
     // #[gpui::test]
     // async fn test_format_on_save(cx: &mut TestAppContext) {
@@ -1633,4 +1541,29 @@ mod tests {
     //         );
     //     });
     // }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            TelemetrySettings::register(cx);
+            agent_settings::AgentSettings::register(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    fn init_test_with_config(cx: &mut TestAppContext, data_dir: &Path) {
+        cx.update(|cx| {
+            // Set custom data directory (config will be under data_dir/config)
+            paths::set_custom_data_dir(data_dir.to_str().unwrap());
+
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            TelemetrySettings::register(cx);
+            agent_settings::AgentSettings::register(cx);
+            Project::init_settings(cx);
+        });
+    }
 }
