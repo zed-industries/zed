@@ -1,4 +1,5 @@
 use crate::commit::parse_git_diff_name_status;
+use crate::stash::GitStash;
 use crate::status::{GitStatus, StatusCode};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -338,6 +339,8 @@ pub trait GitRepository: Send + Sync {
     fn merge_message(&self) -> BoxFuture<'_, Option<String>>;
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
+
+    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
@@ -973,6 +976,26 @@ impl GitRepository for RealGitRepository {
                 anyhow::bail!("git status failed: {stderr}");
             }
         })
+    }
+
+    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let output = new_std_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(&["stash", "list", "--pretty=%gd:%H:%s"])
+                    .output()?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.parse()
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git status failed: {stderr}");
+                }
+            })
+            .boxed()
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
