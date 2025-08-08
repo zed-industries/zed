@@ -8,8 +8,8 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageRegistry, LanguageToolchainStore, LocalFile as _, LspAdapter,
-    LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
+    LspAdapter, LspAdapterDelegate,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -231,6 +231,13 @@ impl JsonLspAdapter {
             ))
         }
 
+        schemas
+            .as_array_mut()
+            .unwrap()
+            .extend(cx.all_action_names().into_iter().map(|&name| {
+                project::lsp_store::json_language_server_ext::url_schema_for_action(name)
+            }));
+
         // This can be viewed via `dev: open language server logs` -> `json-language-server` ->
         // `Server Info`
         serde_json::json!({
@@ -262,7 +269,15 @@ impl JsonLspAdapter {
             .await;
 
         let config = cx.update(|cx| {
-            Self::get_workspace_config(self.languages.language_names().clone(), adapter_schemas, cx)
+            Self::get_workspace_config(
+                self.languages
+                    .language_names()
+                    .into_iter()
+                    .map(|name| name.to_string())
+                    .collect(),
+                adapter_schemas,
+                cx,
+            )
         })?;
         writer.replace(config.clone());
         return Ok(config);
@@ -401,10 +416,10 @@ impl LspAdapter for JsonLspAdapter {
         Ok(config)
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         [
-            ("JSON".into(), "json".into()),
-            ("JSONC".into(), "jsonc".into()),
+            (LanguageName::new("JSON"), "json".into()),
+            (LanguageName::new("JSONC"), "jsonc".into()),
         ]
         .into_iter()
         .collect()
@@ -502,6 +517,7 @@ impl LspAdapter for NodeVersionAdapter {
         Ok(Box::new(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone(),
         }))
     }
 

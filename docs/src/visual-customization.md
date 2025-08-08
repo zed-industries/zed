@@ -112,7 +112,8 @@ To disable this behavior use:
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners
     "show_user_picture": true,      // Show/hide user avatar
-    "show_sign_in": true            // Show/hide sign-in button
+    "show_sign_in": true,           // Show/hide sign-in button
+    "show_menus": false             // Show/hide menus
   },
 ```
 
@@ -222,6 +223,7 @@ TBD: Centered layout related settings
       "enabled": true,             // Show/hide inline blame
       "delay": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
+      "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
     },
     "hunk_style": "staged_hollow"  // staged_hollow, unstaged_hollow
@@ -266,7 +268,7 @@ TBD: Centered layout related settings
     "display_in": "active_editor",  // Where to show (active_editor, all_editor)
     "thumb": "always",              // When to show thumb (always, hover)
     "thumb_border": "left_open",    // Thumb border (left_open, right_open, full, none)
-    "max_width_columns": 80         // Maximum width of minimap
+    "max_width_columns": 80,        // Maximum width of minimap
     "current_line_highlight": null  // Highlight current line (null, line, gutter)
   },
 
@@ -327,7 +329,7 @@ TBD: Centered layout related settings
 ### Editor Completions, Snippets, Actions, Diagnostics {#editor-lsp}
 
 ```json
-  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom
+  "snippet_sort_order": "inline",        // Snippets completions: top, inline, bottom, none
   "show_completions_on_input": true,     // Show completions while typing
   "show_completion_documentation": true, // Show documentation in completions
   "auto_signature_help": false,          // Show method signatures inside parentheses
@@ -458,7 +460,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
-    // Default cursor shape for the terminal (block, bar, underline, hollow)
+    // Default cursor shape for the terminal cursor (block, bar, underline, hollow)
     "cursor_shape": "block",
 
     // Environment variables to add to terminal's process environment

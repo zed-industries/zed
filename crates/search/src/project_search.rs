@@ -195,6 +195,7 @@ pub struct ProjectSearch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum InputPanel {
     Query,
+    Replacement,
     Exclude,
     Include,
 }
@@ -354,8 +355,9 @@ impl ProjectSearch {
 
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
-                        .update(cx, |project_search, _| {
+                        .update(cx, |project_search, cx| {
                             project_search.match_ranges.extend(new_ranges);
+                            cx.notify();
                         })
                         .ok()?;
                 }
@@ -1962,7 +1964,7 @@ impl Render for ProjectSearchBar {
             MultipleInputs,
         }
 
-        let input_base_styles = |base_style: BaseStyle| {
+        let input_base_styles = |base_style: BaseStyle, panel: InputPanel| {
             h_flex()
                 .min_w_32()
                 .map(|div| match base_style {
@@ -1974,11 +1976,11 @@ impl Render for ProjectSearchBar {
                 .pr_1()
                 .py_1()
                 .border_1()
-                .border_color(search.border_color_for(InputPanel::Query, cx))
+                .border_color(search.border_color_for(panel, cx))
                 .rounded_lg()
         };
 
-        let query_column = input_base_styles(BaseStyle::SingleInput)
+        let query_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Query)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
                 this.previous_history_query(action, window, cx)
@@ -2167,7 +2169,7 @@ impl Render for ProjectSearchBar {
             .child(h_flex().min_w_64().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = input_base_styles(BaseStyle::SingleInput)
+            let replace_column = input_base_styles(BaseStyle::SingleInput, InputPanel::Replacement)
                 .child(self.render_text_input(&search.replacement_editor, cx));
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
@@ -2241,7 +2243,7 @@ impl Render for ProjectSearchBar {
                         .gap_2()
                         .w(input_width)
                         .child(
-                            input_base_styles(BaseStyle::MultipleInputs)
+                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Include)
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.previous_history_query(action, window, cx)
                                 }))
@@ -2251,7 +2253,7 @@ impl Render for ProjectSearchBar {
                                 .child(self.render_text_input(&search.included_files_editor, cx)),
                         )
                         .child(
-                            input_base_styles(BaseStyle::MultipleInputs)
+                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
                                 .on_action(cx.listener(|this, action, window, cx| {
                                     this.previous_history_query(action, window, cx)
                                 }))

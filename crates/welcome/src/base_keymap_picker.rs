@@ -1,4 +1,3 @@
-use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, Focusable, Render, Task, WeakEntity, Window,
@@ -6,7 +5,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
-use settings::{Settings, update_settings_file};
+use settings::{BaseKeymap, Settings, update_settings_file};
 use std::sync::Arc;
 use ui::{ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;

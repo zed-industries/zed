@@ -92,7 +92,10 @@ impl Focusable for ThemeSelector {
 
 impl Render for ThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("ThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -385,6 +388,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                             window.dispatch_action(
                                 Box::new(Extensions {
                                     category_filter: Some(ExtensionCategoryFilter::Themes),
+                                    id: None,
                                 }),
                                 cx,
                             );

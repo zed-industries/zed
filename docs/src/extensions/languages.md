@@ -402,11 +402,10 @@ If your language server supports additional languages, you can use `language_ids
 
 [language-servers.my-language-server]
 name = "Whatever LSP"
-languages = ["JavaScript", "JSX", "HTML", "CSS"]
+languages = ["JavaScript", "HTML", "CSS"]
 
 [language-servers.my-language-server.language_ids]
 "JavaScript" = "javascript"
-"JSX" = "javascriptreact"
 "TSX" = "typescriptreact"
 "HTML" = "html"
 "CSS" = "css"

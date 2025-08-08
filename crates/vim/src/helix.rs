@@ -1,21 +1,31 @@
-use editor::{DisplayPoint, Editor, movement};
+use editor::{DisplayPoint, Editor, SelectionEffects, ToOffset, ToPoint, movement};
 use gpui::{Action, actions};
 use gpui::{Context, Window};
 use language::{CharClassifier, CharKind};
-use text::SelectionGoal;
+use text::{Bias, SelectionGoal};
 
-use crate::{Vim, motion::Motion, state::Mode};
+use crate::{
+    Vim,
+    motion::{Motion, right},
+    state::Mode,
+};
 
 actions!(
     vim,
     [
         /// Switches to normal mode after the cursor (Helix-style).
-        HelixNormalAfter
+        HelixNormalAfter,
+        /// Inserts at the beginning of the selection.
+        HelixInsert,
+        /// Appends at the end of the selection.
+        HelixAppend,
     ]
 );
 
 pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
+    Vim::action(editor, cx, Vim::helix_insert);
+    Vim::action(editor, cx, Vim::helix_append);
 }
 
 impl Vim {
@@ -299,6 +309,112 @@ impl Vim {
             _ => self.helix_move_and_collapse(motion, times, window, cx),
         }
     }
+
+    fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_recording(cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|_map, selection| {
+                    // In helix normal mode, move cursor to start of selection and collapse
+                    if !selection.is_empty() {
+                        selection.collapse_to(selection.start, SelectionGoal::None);
+                    }
+                });
+            });
+        });
+        self.switch_mode(Mode::Insert, false, window, cx);
+    }
+
+    fn helix_append(&mut self, _: &HelixAppend, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_recording(cx);
+        self.switch_mode(Mode::Insert, false, window, cx);
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let point = if selection.is_empty() {
+                        right(map, selection.head(), 1)
+                    } else {
+                        selection.end
+                    };
+                    selection.collapse_to(point, SelectionGoal::None);
+                });
+            });
+        });
+    }
+
+    pub fn helix_replace(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
+                let (map, selections) = editor.selections.all_display(cx);
+
+                // Store selection info for positioning after edit
+                let selection_info: Vec<_> = selections
+                    .iter()
+                    .map(|selection| {
+                        let range = selection.range();
+                        let start_offset = range.start.to_offset(&map, Bias::Left);
+                        let end_offset = range.end.to_offset(&map, Bias::Left);
+                        let was_empty = range.is_empty();
+                        let was_reversed = selection.reversed;
+                        (
+                            map.buffer_snapshot.anchor_at(start_offset, Bias::Left),
+                            end_offset - start_offset,
+                            was_empty,
+                            was_reversed,
+                        )
+                    })
+                    .collect();
+
+                let mut edits = Vec::new();
+                for selection in &selections {
+                    let mut range = selection.range();
+
+                    // For empty selections, extend to replace one character
+                    if range.is_empty() {
+                        range.end = movement::saturating_right(&map, range.start);
+                    }
+
+                    let byte_range = range.start.to_offset(&map, Bias::Left)
+                        ..range.end.to_offset(&map, Bias::Left);
+
+                    if !byte_range.is_empty() {
+                        let replacement_text = text.repeat(byte_range.len());
+                        edits.push((byte_range, replacement_text));
+                    }
+                }
+
+                editor.edit(edits, cx);
+
+                // Restore selections based on original info
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                let ranges: Vec<_> = selection_info
+                    .into_iter()
+                    .map(|(start_anchor, original_len, was_empty, was_reversed)| {
+                        let start_point = start_anchor.to_point(&snapshot);
+                        if was_empty {
+                            // For cursor-only, collapse to start
+                            start_point..start_point
+                        } else {
+                            // For selections, span the replaced text
+                            let replacement_len = text.len() * original_len;
+                            let end_offset = start_anchor.to_offset(&snapshot) + replacement_len;
+                            let end_point = snapshot.offset_to_point(end_offset);
+                            if was_reversed {
+                                end_point..start_point
+                            } else {
+                                start_point..end_point
+                            }
+                        }
+                    })
+                    .collect();
+
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(ranges);
+                });
+            });
+        });
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
+    }
 }
 
 #[cfg(test)]
@@ -368,40 +484,40 @@ mod test {
         cx.assert_state("aa\n«ˇ  »bb", Mode::HelixNormal);
     }
 
-    // #[gpui::test]
-    // async fn test_delete(cx: &mut gpui::TestAppContext) {
-    //     let mut cx = VimTestContext::new(cx, true).await;
+    #[gpui::test]
+    async fn test_delete(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-    //     // test delete a selection
-    //     cx.set_state(
-    //         indoc! {"
-    //         The qu«ick ˇ»brown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        // test delete a selection
+        cx.set_state(
+            indoc! {"
+            The qu«ick ˇ»brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     cx.simulate_keystrokes("d");
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quˇbrown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
+        cx.assert_state(
+            indoc! {"
+            The quˇbrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
 
-    //     // test deleting a single character
-    //     cx.simulate_keystrokes("d");
+        // test deleting a single character
+        cx.simulate_keystrokes("d");
 
-    //     cx.assert_state(
-    //         indoc! {"
-    //         The quˇrown
-    //         fox jumps over
-    //         the lazy dog."},
-    //         Mode::HelixNormal,
-    //     );
-    // }
+        cx.assert_state(
+            indoc! {"
+            The quˇrown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+    }
 
     // #[gpui::test]
     // async fn test_delete_character_end_of_line(cx: &mut gpui::TestAppContext) {
@@ -496,5 +612,95 @@ mod test {
         cx.simulate_keystroke("b");
 
         cx.assert_state("«ˇaa»\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_insert_selected(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.set_state(
+            indoc! {"
+            «The ˇ»quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("i");
+
+        cx.assert_state(
+            indoc! {"
+            ˇThe quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_append(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        // test from the end of the selection
+        cx.set_state(
+            indoc! {"
+            «Theˇ» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("a");
+
+        cx.assert_state(
+            indoc! {"
+            Theˇ quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Insert,
+        );
+
+        // test from the beginning of the selection
+        cx.set_state(
+            indoc! {"
+            «ˇThe» quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("a");
+
+        cx.assert_state(
+            indoc! {"
+            Theˇ quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Insert,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_replace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // No selection (single character)
+        cx.set_state("ˇaa", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("ˇxa", Mode::HelixNormal);
+
+        // Cursor at the beginning
+        cx.set_state("«ˇaa»", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«ˇxx»", Mode::HelixNormal);
+
+        // Cursor at the end
+        cx.set_state("«aaˇ»", Mode::HelixNormal);
+
+        cx.simulate_keystrokes("r x");
+
+        cx.assert_state("«xxˇ»", Mode::HelixNormal);
     }
 }

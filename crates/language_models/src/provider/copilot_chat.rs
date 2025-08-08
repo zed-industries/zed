@@ -3,6 +3,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use cloud_llm_client::CompletionIntent;
 use collections::HashMap;
 use copilot::copilot_chat::{
     ChatMessage, ChatMessageContent, ChatMessagePart, CopilotChat, ImageUrl,
@@ -268,6 +269,19 @@ impl LanguageModel for CopilotChatLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
+        let is_user_initiated = request.intent.is_none_or(|intent| match intent {
+            CompletionIntent::UserPrompt
+            | CompletionIntent::ThreadContextSummarization
+            | CompletionIntent::InlineAssist
+            | CompletionIntent::TerminalInlineAssist
+            | CompletionIntent::GenerateGitCommitMessage => true,
+
+            CompletionIntent::ToolResults
+            | CompletionIntent::ThreadSummarization
+            | CompletionIntent::CreateFile
+            | CompletionIntent::EditFile => false,
+        });
+
         let copilot_request = match into_copilot_chat(&self.model, request) {
             Ok(request) => request,
             Err(err) => return futures::future::ready(Err(err.into())).boxed(),
@@ -276,7 +290,8 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(async move |cx| {
-            let request = CopilotChat::stream_completion(copilot_request, cx.clone());
+            let request =
+                CopilotChat::stream_completion(copilot_request, is_user_initiated, cx.clone());
             request_limiter
                 .stream(async move {
                     let response = request.await?;
@@ -691,7 +706,8 @@ impl Render for ConfigurationView {
                             .child(svg().size_8().path(IconName::CopilotError.path()))
                     }
                     _ => {
-                        const LABEL: &str = "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+                        const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+
                         v_flex().gap_2().child(Label::new(LABEL)).child(
                             Button::new("sign_in", "Sign in to use GitHub Copilot")
                                 .icon_color(Color::Muted)

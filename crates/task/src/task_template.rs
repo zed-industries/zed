@@ -256,7 +256,7 @@ impl TaskTemplate {
                     },
                 ),
                 command: Some(command),
-                args: self.args.clone(),
+                args: args_with_substitutions,
                 env,
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
@@ -642,11 +642,11 @@ mod tests {
             assert_eq!(
                 spawn_in_terminal.args,
                 &[
-                    "arg1 $ZED_SELECTED_TEXT",
-                    "arg2 $ZED_COLUMN",
-                    "arg3 $ZED_SYMBOL",
+                    "arg1 test_selected_text",
+                    "arg2 5678",
+                    "arg3 010101010101010101010101010101010101010101010101010101010101",
                 ],
-                "Args should not be substituted with variables"
+                "Args should be substituted with variables"
             );
             assert_eq!(
                 spawn_in_terminal.command_label,
