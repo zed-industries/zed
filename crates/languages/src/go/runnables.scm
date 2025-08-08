@@ -94,58 +94,68 @@
 
 ; Table test case - slice
 (
-  (function_declaration
-    name: (identifier) @_containing_function
-    (#match? @_containing_function "^Test.*")
-    body: (block
-      (short_var_declaration
-        left: (expression_list (identifier) @_slice_var)
-        right: (expression_list
-          (composite_literal
-            type: (slice_type)
-            body: (literal_value
-              (literal_element
-                (literal_value
-                  (keyed_element
-                    (literal_element
-                      (identifier) @_field_name
-                    )
-                    (literal_element
-                      [
-                        (interpreted_string_literal) @run @_table_test_case_name
-                        (raw_string_literal) @run @_table_test_case_name
-                      ]
-                    )
-                  )
+  (short_var_declaration
+    left: (expression_list (identifier) @_slice_var)
+    right: (expression_list
+      (composite_literal
+        type: (slice_type)
+        body: (literal_value
+          (literal_element
+            (literal_value
+              (keyed_element
+                (literal_element
+                  (identifier) @_field_name
+                )
+                (literal_element
+                  [
+                    (interpreted_string_literal) @run @_table_test_case_name
+                    (raw_string_literal) @run @_table_test_case_name
+                  ]
                 )
               )
             )
           )
         )
       )
-      (for_statement
-        (range_clause
-          left: (expression_list
-            (identifier)
-            (identifier) @_loop_var
+    )
+  )
+  (for_statement
+    (range_clause
+      left: (expression_list
+        (identifier)
+        (identifier) @_loop_var
+      )
+      right: (identifier) @_range_var_check
+      (#eq? @_range_var_check @_slice_var)
+    )
+    body: (block
+      (expression_statement
+        (call_expression
+          function: (selector_expression
+            operand: (identifier) @_t_var
+            field: (field_identifier) @_run_check
+            (#eq? @_run_check "Run")
           )
-          right: (identifier) @_range_var_check
-          (#eq? @_range_var_check @_slice_var)
-        )
-        body: (block
-          (expression_statement
-            (call_expression
-              function: (selector_expression
-                field: (field_identifier) @_run_check
-                (#eq? @_run_check "Run")
-              )
-              arguments: (argument_list
-                .
-                (selector_expression
-                  operand: (identifier) @_tc_var_check
-                  (#eq? @_tc_var_check @_loop_var)
-                  field: (field_identifier) @_field_check
-                  (#eq? @_field_check @_field_name)
+          arguments: (argument_list
+            .
+            (selector_expression
+              operand: (identifier) @_tc_var_check
+              (#eq? @_tc_var_check @_loop_var)
+              field: (field_identifier) @_field_check
+              (#eq? @_field_check @_field_name)
+            )
+            .
+            (func_literal
+              parameters: (parameter_list
+                (parameter_declaration
+                  type: (pointer_type
+                    (qualified_type
+                      package: (package_identifier) @_pkg
+                      name: (type_identifier) @_type
+                      (#eq? @_pkg "testing")
+                      (#eq? @_type "T")
+                    )
+                  )
                 )
               )
             )
@@ -159,63 +169,58 @@
 
 ; Table test cases - map
 (
-  (function_declaration
-    name: (identifier) @_containing_function
-    (#match? @_containing_function "^Test.*")
-    parameters: (parameter_list
-      (parameter_declaration
-        name: (identifier) @_t_param
-        type: (pointer_type
-          (qualified_type
-            package: (package_identifier) @_pkg
-            name: (type_identifier) @_type
-            (#eq? @_pkg "testing")
-            (#eq? @_type "T")
+  (short_var_declaration
+    left: (expression_list (identifier) @_map_var)
+    right: (expression_list
+      (composite_literal
+        type: (map_type
+          key: (type_identifier) @_key_type
+          (#eq? @_key_type "string")
+        )
+        body: (literal_value
+          (keyed_element
+            (literal_element
+              [
+                (interpreted_string_literal) @run @_table_test_case_name
+                (raw_string_literal) @run @_table_test_case_name
+              ]
+            )
           )
         )
       )
     )
+  )
+  (for_statement
+    (range_clause
+      left: (expression_list (identifier) @_key_var)
+      right: (identifier) @_range_var
+      (#eq? @_range_var @_map_var)
+    )
     body: (block
-      (short_var_declaration
-        left: (expression_list (identifier) @_map_var)
-        right: (expression_list
-          (composite_literal
-            type: (map_type
-              key: (type_identifier) @_key_type
-              (#eq? @_key_type "string")
-            )
-            body: (literal_value
-              (keyed_element
-                (literal_element
-                  [
-                    (interpreted_string_literal) @run @_table_test_case_name
-                    (raw_string_literal) @run @_table_test_case_name
-                  ]
-                )
-              )
-            )
+      (expression_statement
+        (call_expression
+          function: (selector_expression
+            operand: (identifier) @_t_var
+            field: (field_identifier) @_run_method
+            (#eq? @_run_method "Run")
           )
-        )
-      )
-      (for_statement
-        (range_clause
-          left: (expression_list (identifier) @_key_var)
-          right: (identifier) @_range_var
-          (#eq? @_range_var @_map_var)
-        )
-        body: (block
-          (expression_statement
-            (call_expression
-              function: (selector_expression
-                operand: (identifier) @_t_var
-                (#eq? @_t_var @_t_param)
-                field: (field_identifier) @_run_method
-                (#eq? @_run_method "Run")
-              )
-              arguments: (argument_list
-                .
-                (identifier) @_arg_var
-                (#eq? @_arg_var @_key_var)
+          arguments: (argument_list
+            .
+            (identifier) @_arg_var
+            (#eq? @_arg_var @_key_var)
+            .
+            (func_literal
+              parameters: (parameter_list
+                (parameter_declaration
+                  type: (pointer_type
+                    (qualified_type
+                      package: (package_identifier) @_pkg
+                      name: (type_identifier) @_type
+                      (#eq? @_pkg "testing")
+                      (#eq? @_type "T")
+                    )
+                  )
+                )
               )
             )
           )
