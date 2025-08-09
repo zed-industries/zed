@@ -47,20 +47,24 @@
 (macro_definition
   name: (identifier) @function.special.definition)
 
-[
-  (crate)
-  (super)
-] @module
-
 (mod_item
   name: (identifier) @module)
 
-(scoped_use_list
-  path: (identifier) @module)
+[
+  (crate) @module
+  (super) @module
+]
 
-(scoped_use_list
-  path: (scoped_identifier
-    (identifier) @module))
+path: (scoped_identifier
+  (identifier) @module)
+path: (identifier) @module
+
+(use_wildcard (identifier) @module)
+
+(visibility_modifier [
+  (crate) @keyword
+  (super) @keyword
+])
 
 ; Identifier conventions
 
