@@ -1,21 +1,15 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use chrono::Utc;
 use collections::HashMap;
 use stripe::SubscriptionStatus;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use crate::Result;
-use crate::db::billing_subscription::SubscriptionKind;
 use crate::stripe_client::{
-    RealStripeClient, StripeAutomaticTax, StripeClient, StripeCreateMeterEventParams,
-    StripeCreateMeterEventPayload, StripeCreateSubscriptionItems, StripeCreateSubscriptionParams,
-    StripeCustomerId, StripePrice, StripePriceId, StripeSubscription, StripeSubscriptionId,
-    StripeSubscriptionTrialSettings, StripeSubscriptionTrialSettingsEndBehavior,
-    StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod, UpdateSubscriptionItems,
-    UpdateSubscriptionParams,
+    RealStripeClient, StripeAutomaticTax, StripeClient, StripeCreateSubscriptionItems,
+    StripeCreateSubscriptionParams, StripeCustomerId, StripePrice, StripePriceId,
+    StripeSubscription,
 };
 
 pub struct StripeBilling {
@@ -94,30 +88,6 @@ impl StripeBilling {
             .ok_or_else(|| crate::Error::Internal(anyhow!("no price found for {lookup_key:?}")))
     }
 
-    pub async fn determine_subscription_kind(
-        &self,
-        subscription: &StripeSubscription,
-    ) -> Option<SubscriptionKind> {
-        let zed_pro_price_id = self.zed_pro_price_id().await.ok()?;
-        let zed_free_price_id = self.zed_free_price_id().await.ok()?;
-
-        subscription.items.iter().find_map(|item| {
-            let price = item.price.as_ref()?;
-
-            if price.id == zed_pro_price_id {
-                Some(if subscription.status == SubscriptionStatus::Trialing {
-                    SubscriptionKind::ZedProTrial
-                } else {
-                    SubscriptionKind::ZedPro
-                })
-            } else if price.id == zed_free_price_id {
-                Some(SubscriptionKind::ZedFree)
-            } else {
-                None
-            }
-        })
-    }
-
     /// Returns the Stripe customer associated with the provided email address, or creates a new customer, if one does
     /// not already exist.
     ///
@@ -148,65 +118,6 @@ impl StripeBilling {
         };
 
         Ok(customer_id)
-    }
-
-    pub async fn subscribe_to_price(
-        &self,
-        subscription_id: &StripeSubscriptionId,
-        price: &StripePrice,
-    ) -> Result<()> {
-        let subscription = self.client.get_subscription(subscription_id).await?;
-
-        if subscription_contains_price(&subscription, &price.id) {
-            return Ok(());
-        }
-
-        const BILLING_THRESHOLD_IN_CENTS: i64 = 20 * 100;
-
-        let price_per_unit = price.unit_amount.unwrap_or_default();
-        let _units_for_billing_threshold = BILLING_THRESHOLD_IN_CENTS / price_per_unit;
-
-        self.client
-            .update_subscription(
-                subscription_id,
-                UpdateSubscriptionParams {
-                    items: Some(vec![UpdateSubscriptionItems {
-                        price: Some(price.id.clone()),
-                    }]),
-                    trial_settings: Some(StripeSubscriptionTrialSettings {
-                        end_behavior: StripeSubscriptionTrialSettingsEndBehavior {
-                            missing_payment_method: StripeSubscriptionTrialSettingsEndBehaviorMissingPaymentMethod::Cancel
-                        },
-                    }),
-                },
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    pub async fn bill_model_request_usage(
-        &self,
-        customer_id: &StripeCustomerId,
-        event_name: &str,
-        requests: i32,
-    ) -> Result<()> {
-        let timestamp = Utc::now().timestamp();
-        let idempotency_key = Uuid::new_v4();
-
-        self.client
-            .create_meter_event(StripeCreateMeterEventParams {
-                identifier: &format!("model_requests/{}", idempotency_key),
-                event_name,
-                payload: StripeCreateMeterEventPayload {
-                    value: requests as u64,
-                    stripe_customer_id: customer_id,
-                },
-                timestamp: Some(timestamp),
-            })
-            .await?;
-
-        Ok(())
     }
 
     pub async fn subscribe_to_zed_free(
@@ -242,15 +153,4 @@ impl StripeBilling {
 
         Ok(subscription)
     }
-}
-
-fn subscription_contains_price(
-    subscription: &StripeSubscription,
-    price_id: &StripePriceId,
-) -> bool {
-    subscription.items.iter().any(|item| {
-        item.price
-            .as_ref()
-            .map_or(false, |price| price.id == *price_id)
-    })
 }

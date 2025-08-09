@@ -223,6 +223,7 @@ TBD: Centered layout related settings
       "enabled": true,             // Show/hide inline blame
       "delay": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
+      "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
     },
     "hunk_style": "staged_hollow"  // staged_hollow, unstaged_hollow
@@ -303,6 +304,17 @@ TBD: Centered layout related settings
     // Show diagnostics in file icon (off, errors, all). Requires file_icons=true
     "show_diagnostics": "off"
   }
+```
+
+### Status Bar
+
+```json
+  "status_bar": {
+    // Show/hide a button that displays the active buffer's language.
+    // Clicking the button brings up the language selector.
+    // Defaults to true.
+    "active_language_button": true,
+  },
 ```
 
 ### Multibuffer

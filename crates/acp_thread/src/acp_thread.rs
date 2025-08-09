@@ -1,18 +1,17 @@
 mod connection;
+mod diff;
+
 pub use connection::*;
+pub use diff::*;
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
 use assistant_tool::ActionLog;
-use buffer_diff::BufferDiff;
-use editor::{Bias, MultiBuffer, PathKey};
+use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
 use itertools::Itertools;
-use language::{
-    Anchor, Buffer, BufferSnapshot, Capability, LanguageRegistry, OffsetRangeExt as _, Point,
-    text_diff,
-};
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, text_diff};
 use markdown::Markdown;
 use project::{AgentLocation, Project};
 use std::collections::HashMap;
@@ -140,7 +139,7 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
+    pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         if let AgentThreadEntry::ToolCall(call) = self {
             itertools::Either::Left(call.diffs())
         } else {
@@ -166,6 +165,7 @@ pub struct ToolCall {
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
     pub raw_input: Option<serde_json::Value>,
+    pub raw_output: Option<serde_json::Value>,
 }
 
 impl ToolCall {
@@ -194,10 +194,11 @@ impl ToolCall {
             locations: tool_call.locations,
             status,
             raw_input: tool_call.raw_input,
+            raw_output: tool_call.raw_output,
         }
     }
 
-    fn update(
+    fn update_fields(
         &mut self,
         fields: acp::ToolCallUpdateFields,
         language_registry: Arc<LanguageRegistry>,
@@ -210,6 +211,7 @@ impl ToolCall {
             content,
             locations,
             raw_input,
+            raw_output,
         } = fields;
 
         if let Some(kind) = kind {
@@ -221,7 +223,9 @@ impl ToolCall {
         }
 
         if let Some(title) = title {
-            self.label = cx.new(|cx| Markdown::new_text(title.into(), cx));
+            self.label.update(cx, |label, cx| {
+                label.replace(title, cx);
+            });
         }
 
         if let Some(content) = content {
@@ -238,9 +242,13 @@ impl ToolCall {
         if let Some(raw_input) = raw_input {
             self.raw_input = Some(raw_input);
         }
+
+        if let Some(raw_output) = raw_output {
+            self.raw_output = Some(raw_output);
+        }
     }
 
-    pub fn diffs(&self) -> impl Iterator<Item = &Diff> {
+    pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
             ToolCallContent::ContentBlock { .. } => None,
             ToolCallContent::Diff { diff } => Some(diff),
@@ -380,7 +388,7 @@ impl ContentBlock {
 #[derive(Debug)]
 pub enum ToolCallContent {
     ContentBlock { content: ContentBlock },
-    Diff { diff: Diff },
+    Diff { diff: Entity<Diff> },
 }
 
 impl ToolCallContent {
@@ -394,7 +402,7 @@ impl ToolCallContent {
                 content: ContentBlock::new(content, &language_registry, cx),
             },
             acp::ToolCallContent::Diff { diff } => Self::Diff {
-                diff: Diff::from_acp(diff, language_registry, cx),
+                diff: cx.new(|cx| Diff::from_acp(diff, language_registry, cx)),
             },
         }
     }
@@ -402,107 +410,42 @@ impl ToolCallContent {
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
             Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
-            Self::Diff { diff } => diff.to_markdown(cx),
+            Self::Diff { diff } => diff.read(cx).to_markdown(cx),
         }
     }
 }
 
-#[derive(Debug)]
-pub struct Diff {
-    pub multibuffer: Entity<MultiBuffer>,
-    pub path: PathBuf,
-    pub new_buffer: Entity<Buffer>,
-    pub old_buffer: Entity<Buffer>,
-    _task: Task<Result<()>>,
+#[derive(Debug, PartialEq)]
+pub enum ToolCallUpdate {
+    UpdateFields(acp::ToolCallUpdate),
+    UpdateDiff(ToolCallUpdateDiff),
 }
 
-impl Diff {
-    pub fn from_acp(
-        diff: acp::Diff,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let acp::Diff {
-            path,
-            old_text,
-            new_text,
-        } = diff;
-
-        let multibuffer = cx.new(|_cx| MultiBuffer::without_headers(Capability::ReadOnly));
-
-        let new_buffer = cx.new(|cx| Buffer::local(new_text, cx));
-        let old_buffer = cx.new(|cx| Buffer::local(old_text.unwrap_or("".into()), cx));
-        let new_buffer_snapshot = new_buffer.read(cx).text_snapshot();
-        let old_buffer_snapshot = old_buffer.read(cx).snapshot();
-        let buffer_diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot, cx));
-        let diff_task = buffer_diff.update(cx, |diff, cx| {
-            diff.set_base_text(
-                old_buffer_snapshot,
-                Some(language_registry.clone()),
-                new_buffer_snapshot,
-                cx,
-            )
-        });
-
-        let task = cx.spawn({
-            let multibuffer = multibuffer.clone();
-            let path = path.clone();
-            let new_buffer = new_buffer.clone();
-            async move |cx| {
-                diff_task.await?;
-
-                multibuffer
-                    .update(cx, |multibuffer, cx| {
-                        let hunk_ranges = {
-                            let buffer = new_buffer.read(cx);
-                            let diff = buffer_diff.read(cx);
-                            diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &buffer, cx)
-                                .map(|diff_hunk| diff_hunk.buffer_range.to_point(&buffer))
-                                .collect::<Vec<_>>()
-                        };
-
-                        multibuffer.set_excerpts_for_path(
-                            PathKey::for_buffer(&new_buffer, cx),
-                            new_buffer.clone(),
-                            hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                            cx,
-                        );
-                        multibuffer.add_diff(buffer_diff.clone(), cx);
-                    })
-                    .log_err();
-
-                if let Some(language) = language_registry
-                    .language_for_file_path(&path)
-                    .await
-                    .log_err()
-                {
-                    new_buffer.update(cx, |buffer, cx| buffer.set_language(Some(language), cx))?;
-                }
-
-                anyhow::Ok(())
-            }
-        });
-
-        Self {
-            multibuffer,
-            path,
-            new_buffer,
-            old_buffer,
-            _task: task,
+impl ToolCallUpdate {
+    fn id(&self) -> &acp::ToolCallId {
+        match self {
+            Self::UpdateFields(update) => &update.id,
+            Self::UpdateDiff(diff) => &diff.id,
         }
     }
+}
 
-    fn to_markdown(&self, cx: &App) -> String {
-        let buffer_text = self
-            .multibuffer
-            .read(cx)
-            .all_buffers()
-            .iter()
-            .map(|buffer| buffer.read(cx).text())
-            .join("\n");
-        format!("Diff: {}\n```\n{}\n```\n", self.path.display(), buffer_text)
+impl From<acp::ToolCallUpdate> for ToolCallUpdate {
+    fn from(update: acp::ToolCallUpdate) -> Self {
+        Self::UpdateFields(update)
     }
+}
+
+impl From<ToolCallUpdateDiff> for ToolCallUpdate {
+    fn from(diff: ToolCallUpdateDiff) -> Self {
+        Self::UpdateDiff(diff)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateDiff {
+    pub id: acp::ToolCallId,
+    pub diff: Entity<Diff>,
 }
 
 #[derive(Debug, Default)]
@@ -557,7 +500,7 @@ pub struct PlanEntry {
 impl PlanEntry {
     pub fn from_acp(entry: acp::PlanEntry, cx: &mut App) -> Self {
         Self {
-            content: cx.new(|cx| Markdown::new_text(entry.content.into(), cx)),
+            content: cx.new(|cx| Markdown::new(entry.content.into(), None, None, cx)),
             priority: entry.priority,
             status: entry.status,
         }
@@ -800,15 +743,26 @@ impl AcpThread {
 
     pub fn update_tool_call(
         &mut self,
-        update: acp::ToolCallUpdate,
+        update: impl Into<ToolCallUpdate>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let update = update.into();
         let languages = self.project.read(cx).languages().clone();
 
         let (ix, current_call) = self
-            .tool_call_mut(&update.id)
+            .tool_call_mut(update.id())
             .context("Tool call not found")?;
-        current_call.update(update.fields, languages, cx);
+        match update {
+            ToolCallUpdate::UpdateFields(update) => {
+                current_call.update_fields(update.fields, languages, cx);
+            }
+            ToolCallUpdate::UpdateDiff(update) => {
+                current_call.content.clear();
+                current_call
+                    .content
+                    .push(ToolCallContent::Diff { diff: update.diff });
+            }
+        }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
 
@@ -896,7 +850,7 @@ impl AcpThread {
         });
     }
 
-    pub fn request_tool_call_permission(
+    pub fn request_tool_call_authorization(
         &mut self,
         tool_call: acp::ToolCall,
         options: Vec<acp::PermissionOption>,
@@ -971,13 +925,26 @@ impl AcpThread {
     }
 
     pub fn update_plan(&mut self, request: acp::Plan, cx: &mut Context<Self>) {
-        self.plan = Plan {
-            entries: request
-                .entries
-                .into_iter()
-                .map(|entry| PlanEntry::from_acp(entry, cx))
-                .collect(),
-        };
+        let new_entries_len = request.entries.len();
+        let mut new_entries = request.entries.into_iter();
+
+        // Reuse existing markdown to prevent flickering
+        for (old, new) in self.plan.entries.iter_mut().zip(new_entries.by_ref()) {
+            let PlanEntry {
+                content,
+                priority,
+                status,
+            } = old;
+            content.update(cx, |old, cx| {
+                old.replace(new.content, cx);
+            });
+            *priority = new.priority;
+            *status = new.status;
+        }
+        for new in new_entries {
+            self.plan.entries.push(PlanEntry::from_acp(new, cx))
+        }
+        self.plan.entries.truncate(new_entries_len);
 
         cx.notify();
     }
@@ -1038,8 +1005,9 @@ impl AcpThread {
                         )
                     })?
                     .await;
+
                 tx.send(result).log_err();
-                this.update(cx, |this, _cx| this.send_task.take())?;
+
                 anyhow::Ok(())
             }
             .await
@@ -1052,7 +1020,23 @@ impl AcpThread {
                     .log_err();
                 Err(e)?
             }
-            _ => {
+            result => {
+                let cancelled = matches!(
+                    result,
+                    Ok(Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::Cancelled
+                    }))
+                );
+
+                // We only take the task if the current prompt wasn't cancelled.
+                //
+                // This prompt may have been cancelled because another one was sent
+                // while it was still generating. In these cases, dropping `send_task`
+                // would cause the next generation to be cancelled.
+                if !cancelled {
+                    this.update(cx, |this, _cx| this.send_task.take()).ok();
+                }
+
                 this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Stopped))
                     .log_err();
                 Ok(())
@@ -1525,6 +1509,7 @@ mod tests {
                                     content: vec![],
                                     locations: vec![],
                                     raw_input: None,
+                                    raw_output: None,
                                 }),
                                 cx,
                             )
@@ -1637,6 +1622,7 @@ mod tests {
                                     }],
                                     locations: vec![],
                                     raw_input: None,
+                                    raw_output: None,
                                 }),
                                 cx,
                             )

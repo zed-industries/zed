@@ -141,6 +141,7 @@ impl Focusable for RecentProjects {
 impl Render for RecentProjects {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("RecentProjects")
             .w(rems(self.rem_width))
             .child(self.picker.clone())
             .on_mouse_down_out(cx.listener(|this, _, window, cx| {

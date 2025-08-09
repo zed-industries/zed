@@ -75,6 +75,9 @@ impl super::LspAdapter for CLspAdapter {
             &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let version_dir = container_dir.join(format!("clangd_{name}"));
         let binary_path = version_dir.join("bin/clangd");
+        let expected_digest = digest
+            .as_ref()
+            .and_then(|digest| digest.strip_prefix("sha256:"));
 
         let binary = LanguageServerBinary {
             path: binary_path.clone(),
@@ -99,7 +102,9 @@ impl super::LspAdapter for CLspAdapter {
                         log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
                     })
             };
-            if let (Some(actual_digest), Some(expected_digest)) = (&metadata.digest, digest) {
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, expected_digest)
+            {
                 if actual_digest == expected_digest {
                     if validity_check().await.is_ok() {
                         return Ok(binary);

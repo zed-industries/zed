@@ -603,11 +603,31 @@ async fn upload_minidump(
         .text("platform", "rust");
     if let Some(panic) = panic {
         form = form
+            .text("sentry[tags][channel]", panic.release_channel.clone())
+            .text("sentry[tags][version]", panic.app_version.clone())
+            .text("sentry[context][os][name]", panic.os_name.clone())
             .text(
+                "sentry[context][device][architecture]",
+                panic.architecture.clone(),
+            )
+            .text("sentry[logentry][formatted]", panic.payload.clone());
+
+        if let Some(sha) = panic.app_commit_sha.clone() {
+            form = form.text("sentry[release]", sha)
+        } else {
+            form = form.text(
                 "sentry[release]",
                 format!("{}-{}", panic.release_channel, panic.app_version),
             )
-            .text("sentry[logentry][formatted]", panic.payload.clone());
+        }
+        if let Some(v) = panic.os_version.clone() {
+            form = form.text("sentry[context][os][release]", v);
+        }
+        if let Some(location) = panic.location_data.as_ref() {
+            form = form.text("span", format!("{}:{}", location.file, location.line))
+        }
+        // TODO: add gpu-context, feature-flag-context, and more of device-context like gpu
+        // name, screen resolution, available ram, device model, etc
     }
 
     let mut response_text = String::new();

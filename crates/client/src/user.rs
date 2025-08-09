@@ -1,6 +1,7 @@
 use super::{Client, Status, TypedEnvelope, proto};
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
+use cloud_api_client::websocket_protocol::MessageToClient;
 use cloud_api_client::{GetAuthenticatedUserResponse, PlanInfo};
 use cloud_llm_client::{
     EDIT_PREDICTIONS_USAGE_AMOUNT_HEADER_NAME, EDIT_PREDICTIONS_USAGE_LIMIT_HEADER_NAME,
@@ -181,6 +182,12 @@ impl UserStore {
             client.add_message_handler(cx.weak_entity(), Self::handle_update_invite_info),
             client.add_message_handler(cx.weak_entity(), Self::handle_show_contacts),
         ];
+
+        client.add_message_to_client_handler({
+            let this = cx.weak_entity();
+            move |message, cx| Self::handle_message_to_client(this.clone(), message, cx)
+        });
+
         Self {
             users: Default::default(),
             by_github_login: Default::default(),
@@ -219,17 +226,35 @@ impl UserStore {
                     match status {
                         Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let response = client.cloud_client().get_authenticated_user().await;
-                                let mut current_user = None;
+                                let response = client
+                                    .cloud_client()
+                                    .get_authenticated_user()
+                                    .await
+                                    .log_err();
+
+                                let current_user_and_response = if let Some(response) = response {
+                                    let user = Arc::new(User {
+                                        id: user_id,
+                                        github_login: response.user.github_login.clone().into(),
+                                        avatar_uri: response.user.avatar_url.clone().into(),
+                                        name: response.user.name.clone(),
+                                    });
+
+                                    Some((user, response))
+                                } else {
+                                    None
+                                };
+                                current_user_tx
+                                    .send(
+                                        current_user_and_response
+                                            .as_ref()
+                                            .map(|(user, _)| user.clone()),
+                                    )
+                                    .await
+                                    .ok();
+
                                 cx.update(|cx| {
-                                    if let Some(response) = response.log_err() {
-                                        let user = Arc::new(User {
-                                            id: user_id,
-                                            github_login: response.user.github_login.clone().into(),
-                                            avatar_uri: response.user.avatar_url.clone().into(),
-                                            name: response.user.name.clone(),
-                                        });
-                                        current_user = Some(user.clone());
+                                    if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
                                             this.by_github_login
                                                 .insert(user.github_login.clone(), user_id);
@@ -240,7 +265,6 @@ impl UserStore {
                                         anyhow::Ok(())
                                     }
                                 })??;
-                                current_user_tx.send(current_user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }
@@ -811,6 +835,32 @@ impl UserStore {
         }));
         self.plan_info = Some(response.plan);
         cx.emit(Event::PrivateUserInfoUpdated);
+    }
+
+    fn handle_message_to_client(this: WeakEntity<Self>, message: &MessageToClient, cx: &App) {
+        cx.spawn(async move |cx| {
+            match message {
+                MessageToClient::UserUpdated => {
+                    let cloud_client = cx
+                        .update(|cx| {
+                            this.read_with(cx, |this, _cx| {
+                                this.client.upgrade().map(|client| client.cloud_client())
+                            })
+                        })??
+                        .ok_or(anyhow::anyhow!("Failed to get Cloud client"))?;
+
+                    let response = cloud_client.get_authenticated_user().await?;
+                    cx.update(|cx| {
+                        this.update(cx, |this, cx| {
+                            this.update_authenticated_user(response, cx);
+                        })
+                    })??;
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn watch_current_user(&self) -> watch::Receiver<Option<Arc<User>>> {

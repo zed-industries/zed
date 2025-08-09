@@ -136,6 +136,7 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
+        let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
@@ -151,22 +152,14 @@ impl State {
                     let (client, llm_api_token) = this
                         .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
 
-                    loop {
-                        let is_authenticated = user_store
-                            .read_with(cx, |user_store, _cx| user_store.current_user().is_some())?;
-                        if is_authenticated {
-                            break;
-                        }
-
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
+                    while current_user.borrow().is_none() {
+                        current_user.next().await;
                     }
 
-                    let response = Self::fetch_models(client, llm_api_token).await?;
-                    this.update(cx, |this, cx| {
-                        this.update_models(response, cx);
-                    })
+                    let response =
+                        Self::fetch_models(client.clone(), llm_api_token.clone()).await?;
+                    this.update(cx, |this, cx| this.update_models(response, cx))?;
+                    anyhow::Ok(())
                 })
                 .await
                 .context("failed to fetch Zed models")
@@ -444,7 +437,7 @@ fn render_accept_terms(
         .style(ButtonStyle::Subtle)
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
-        .icon_size(IconSize::XSmall)
+        .icon_size(IconSize::Small)
         .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 

@@ -573,7 +573,7 @@ impl AgentConfiguration {
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
                             .full_width()
-                            .icon(IconName::Hammer)
+                            .icon(IconName::ToolHammer)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {

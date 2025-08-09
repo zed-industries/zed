@@ -61,6 +61,10 @@ pub trait EditPredictionProvider: 'static + Sized {
     fn show_tab_accept_marker() -> bool {
         false
     }
+    fn supports_jump_to_edit() -> bool {
+        true
+    }
+
     fn data_collection_state(&self, _cx: &App) -> DataCollectionState {
         DataCollectionState::Unsupported
     }
@@ -116,6 +120,7 @@ pub trait EditPredictionProviderHandle {
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_tab_accept_marker(&self) -> bool;
+    fn supports_jump_to_edit(&self) -> bool;
     fn data_collection_state(&self, cx: &App) -> DataCollectionState;
     fn usage(&self, cx: &App) -> Option<EditPredictionUsage>;
     fn toggle_data_collection(&self, cx: &mut App);
@@ -164,6 +169,10 @@ where
 
     fn show_tab_accept_marker(&self) -> bool {
         T::show_tab_accept_marker()
+    }
+
+    fn supports_jump_to_edit(&self) -> bool {
+        T::supports_jump_to_edit()
     }
 
     fn data_collection_state(&self, cx: &App) -> DataCollectionState {

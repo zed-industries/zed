@@ -24,7 +24,7 @@ pub enum Severity {
 ///     .action_slot(
 ///         Button::new("learn-more", "Learn More")
 ///             .icon(IconName::ArrowUpRight)
-///             .icon_size(IconSize::XSmall)
+///             .icon_size(IconSize::Small)
 ///             .icon_position(IconPosition::End),
 ///     )
 /// ```
@@ -150,7 +150,7 @@ impl Component for Banner {
                     .action_slot(
                         Button::new("learn-more", "Learn More")
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End),
                     )
                     .into_any_element(),

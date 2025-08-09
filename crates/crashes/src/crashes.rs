@@ -1,6 +1,7 @@
 use crash_handler::CrashHandler;
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
+use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 
 use std::{
     env,
@@ -9,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     process::{self, Command},
     sync::{
-        OnceLock,
+        LazyLock, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -22,7 +23,14 @@ pub static CRASH_HANDLER: AtomicBool = AtomicBool::new(false);
 pub static REQUESTED_MINIDUMP: AtomicBool = AtomicBool::new(false);
 const CRASH_HANDLER_TIMEOUT: Duration = Duration::from_secs(60);
 
+pub static GENERATE_MINIDUMPS: LazyLock<bool> = LazyLock::new(|| {
+    *RELEASE_CHANNEL != ReleaseChannel::Dev || env::var("ZED_GENERATE_MINIDUMPS").is_ok()
+});
+
 pub async fn init(id: String) {
+    if !*GENERATE_MINIDUMPS {
+        return;
+    }
     let exe = env::current_exe().expect("unable to find ourselves");
     let zed_pid = process::id();
     // TODO: we should be able to get away with using 1 crash-handler process per machine,
@@ -138,6 +146,9 @@ impl minidumper::ServerHandler for CrashServer {
 }
 
 pub fn handle_panic() {
+    if !*GENERATE_MINIDUMPS {
+        return;
+    }
     // wait 500ms for the crash handler process to start up
     // if it's still not there just write panic info and no minidump
     let retry_frequency = Duration::from_millis(100);

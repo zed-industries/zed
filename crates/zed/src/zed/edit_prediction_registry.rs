@@ -5,11 +5,9 @@ use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
-use smol::stream::StreamExt;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
-use util::ResultExt;
 use workspace::Workspace;
 use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
@@ -59,25 +57,20 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     cx.on_action(clear_zeta_edit_history);
 
     let mut provider = all_language_settings(None, cx).edit_predictions.provider;
-    cx.spawn({
-        let user_store = user_store.clone();
+    cx.subscribe(&user_store, {
         let editors = editors.clone();
         let client = client.clone();
-
-        async move |cx| {
-            let mut status = client.status();
-            while let Some(_status) = status.next().await {
-                cx.update(|cx| {
-                    assign_edit_prediction_providers(
-                        &editors,
-                        provider,
-                        &client,
-                        user_store.clone(),
-                        cx,
-                    );
-                })
-                .log_err();
+        move |user_store, event, cx| match event {
+            client::user::Event::PrivateUserInfoUpdated => {
+                assign_edit_prediction_providers(
+                    &editors,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
             }
+            _ => {}
         }
     })
     .detach();

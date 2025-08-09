@@ -14,10 +14,10 @@ use crate::prelude::*;
 #[strum(serialize_all = "snake_case")]
 pub enum VectorName {
     AiGrid,
-    CertifiedUserStamp,
     DebuggerGrid,
     Grid,
     ProTrialStamp,
+    ProUserStamp,
     ZedLogo,
     ZedXCopilot,
 }

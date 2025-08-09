@@ -225,7 +225,6 @@ impl Tool for TerminalTool {
                                 env,
                                 ..Default::default()
                             }),
-                            window,
                             cx,
                         )
                     })?

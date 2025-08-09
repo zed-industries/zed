@@ -246,7 +246,7 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
 
     let project = Project::test(fs, [path!("/private/tmp").as_ref()], cx).await;
     let thread = new_test_thread(server, project.clone(), "/private/tmp", cx).await;
-    let full_turn = thread.update(cx, |thread, cx| {
+    let _ = thread.update(cx, |thread, cx| {
         thread.send_raw(
             r#"Run exactly `touch hello.txt && echo "Hello, world!" | tee hello.txt` in the terminal."#,
             cx,
@@ -285,9 +285,8 @@ pub async fn test_cancel(server: impl AgentServer + 'static, cx: &mut TestAppCon
         id.clone()
     });
 
-    let _ = thread.update(cx, |thread, cx| thread.cancel(cx));
-    full_turn.await.unwrap();
-    thread.read_with(cx, |thread, _| {
+    thread.update(cx, |thread, cx| thread.cancel(cx)).await;
+    thread.read_with(cx, |thread, _cx| {
         let AgentThreadEntry::ToolCall(ToolCall {
             status: ToolCallStatus::Canceled,
             ..

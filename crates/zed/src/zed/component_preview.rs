@@ -697,7 +697,7 @@ impl ComponentPreview {
             workspace.update(cx, |workspace, cx| {
                 let status_toast =
                     StatusToast::new("`zed/new-notification-system` created!", cx, |this, _cx| {
-                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                             .action("Open Pull Request", |_, cx| {
                                 cx.open_url("https://github.com/")
                             })

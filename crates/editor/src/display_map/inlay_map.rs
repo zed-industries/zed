@@ -48,16 +48,16 @@ pub struct Inlay {
 impl Inlay {
     pub fn hint(id: usize, position: Anchor, hint: &project::InlayHint) -> Self {
         let mut text = hint.text();
-        if hint.padding_right && !text.ends_with(' ') {
-            text.push(' ');
+        if hint.padding_right && text.chars_at(text.len().saturating_sub(1)).next() != Some(' ') {
+            text.push(" ");
         }
-        if hint.padding_left && !text.starts_with(' ') {
-            text.insert(0, ' ');
+        if hint.padding_left && text.chars_at(0).next() != Some(' ') {
+            text.push_front(" ");
         }
         Self {
             id: InlayId::Hint(id),
             position,
-            text: text.into(),
+            text,
             color: None,
         }
     }
@@ -737,13 +737,13 @@ impl InlayMap {
                     Inlay::mock_hint(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 } else {
                     Inlay::edit_prediction(
                         post_inc(next_inlay_id),
                         snapshot.buffer.anchor_at(position, bias),
-                        text.clone(),
+                        &text,
                     )
                 };
                 let inlay_id = next_inlay.id;
@@ -1694,7 +1694,7 @@ mod tests {
                     (offset, inlay.clone())
                 })
                 .collect::<Vec<_>>();
-            let mut expected_text = Rope::from(buffer_snapshot.text());
+            let mut expected_text = Rope::from(&buffer_snapshot.text());
             for (offset, inlay) in inlays.iter().rev() {
                 expected_text.replace(*offset..*offset, &inlay.text.to_string());
             }

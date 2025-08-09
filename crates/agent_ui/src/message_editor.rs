@@ -725,7 +725,7 @@ impl MessageEditor {
                     .when(focus_handle.is_focused(window), |this| {
                         this.child(
                             IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -831,7 +831,7 @@ impl MessageEditor {
                                                         parent.child(
                                                             IconButton::new(
                                                                 "stop-generation",
-                                                                IconName::StopFilled,
+                                                                IconName::Stop,
                                                             )
                                                             .icon_color(Color::Error)
                                                             .style(ButtonStyle::Tinted(
@@ -1305,7 +1305,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::X)
+            Icon::new(IconName::Close)
                 .color(Color::Error)
                 .size(IconSize::XSmall)
         } else {

@@ -207,7 +207,7 @@ impl Component for Callout {
                 "Error with Multiple Actions",
                 Callout::new()
                     .icon(
-                        Icon::new(IconName::X)
+                        Icon::new(IconName::Close)
                             .color(Color::Error)
                             .size(IconSize::Small),
                     )

@@ -92,7 +92,10 @@ impl Focusable for ThemeSelector {
 
 impl Render for ThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex()
+            .key_context("ThemeSelector")
+            .w(rems(34.))
+            .child(self.picker.clone())
     }
 }
 
@@ -373,7 +376,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     Button::new("docs", "View Theme Docs")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.open_url("https://zed.dev/docs/themes");

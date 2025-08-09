@@ -188,7 +188,7 @@ fn icon_for_key(keystroke: &Keystroke, platform_style: PlatformStyle) -> Option<
         "up" => Some(IconName::ArrowUp),
         "down" => Some(IconName::ArrowDown),
         "backspace" => Some(IconName::Backspace),
-        "delete" => Some(IconName::Delete),
+        "delete" => Some(IconName::Backspace),
         "return" => Some(IconName::Return),
         "enter" => Some(IconName::Return),
         "tab" => Some(IconName::Tab),

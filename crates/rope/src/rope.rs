@@ -471,7 +471,15 @@ impl<'a> FromIterator<&'a str> for Rope {
 }
 
 impl From<String> for Rope {
+    #[inline(always)]
     fn from(text: String) -> Self {
+        Rope::from(text.as_str())
+    }
+}
+
+impl From<&String> for Rope {
+    #[inline(always)]
+    fn from(text: &String) -> Self {
         Rope::from(text.as_str())
     }
 }

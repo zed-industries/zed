@@ -330,7 +330,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
                 .and_then(|available_language| self.scope_icon(available_language.matcher(), cx))
                 .or_else(|| {
                     Some(
-                        Icon::from_path(IconName::Globe.path())
+                        Icon::from_path(IconName::ToolWeb.path())
                             .map(|icon| icon.color(Color::Muted)),
                     )
                 })

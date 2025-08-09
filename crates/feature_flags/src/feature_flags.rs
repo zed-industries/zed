@@ -158,6 +158,11 @@ where
     }
 }
 
+#[derive(Debug)]
+pub struct OnFlagsReady {
+    pub is_staff: bool,
+}
+
 pub trait FeatureFlagAppExt {
     fn wait_for_flag<T: FeatureFlag>(&mut self) -> WaitForFlag;
 
@@ -168,6 +173,10 @@ pub trait FeatureFlagAppExt {
     fn set_staff(&mut self, staff: bool);
     fn has_flag<T: FeatureFlag>(&self) -> bool;
     fn is_staff(&self) -> bool;
+
+    fn on_flags_ready<F>(&mut self, callback: F) -> Subscription
+    where
+        F: FnMut(OnFlagsReady, &mut App) + 'static;
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where
@@ -196,6 +205,21 @@ impl FeatureFlagAppExt for App {
         self.try_global::<FeatureFlags>()
             .map(|flags| flags.staff)
             .unwrap_or(false)
+    }
+
+    fn on_flags_ready<F>(&mut self, mut callback: F) -> Subscription
+    where
+        F: FnMut(OnFlagsReady, &mut App) + 'static,
+    {
+        self.observe_global::<FeatureFlags>(move |cx| {
+            let feature_flags = cx.global::<FeatureFlags>();
+            callback(
+                OnFlagsReady {
+                    is_staff: feature_flags.staff,
+                },
+                cx,
+            );
+        })
     }
 
     fn observe_flag<T: FeatureFlag, F>(&mut self, mut callback: F) -> Subscription

@@ -2343,6 +2343,16 @@ impl AgentPanel {
         )
     }
 
+    fn render_backdrop(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .absolute()
+            .inset_0()
+            .bg(cx.theme().colors().panel_background)
+            .opacity(0.8)
+            .block_mouse_except_scroll()
+    }
+
     fn render_trial_end_upsell(
         &self,
         _window: &mut Window,
@@ -2352,15 +2362,24 @@ impl AgentPanel {
             return None;
         }
 
-        Some(EndTrialUpsell::new(Arc::new({
-            let this = cx.entity();
-            move |_, cx| {
-                this.update(cx, |_this, cx| {
-                    TrialEndUpsell::set_dismissed(true, cx);
-                    cx.notify();
-                });
-            }
-        })))
+        Some(
+            v_flex()
+                .absolute()
+                .inset_0()
+                .size_full()
+                .bg(cx.theme().colors().panel_background)
+                .opacity(0.85)
+                .block_mouse_except_scroll()
+                .child(EndTrialUpsell::new(Arc::new({
+                    let this = cx.entity();
+                    move |_, cx| {
+                        this.update(cx, |_this, cx| {
+                            TrialEndUpsell::set_dismissed(true, cx);
+                            cx.notify();
+                        });
+                    }
+                }))),
+        )
     }
 
     fn render_empty_state_section_header(
@@ -3168,8 +3187,10 @@ impl AgentPanel {
                     .detach();
                 });
             }
-            ActiveView::ExternalAgentThread { .. } => {
-                unimplemented!()
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view.insert_dragged_files(paths, added_worktrees, window, cx);
+                });
             }
             ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {
@@ -3210,9 +3231,10 @@ impl Render for AgentPanel {
         // - Scrolling in all views works as expected
         // - Files can be dropped into the panel
         let content = v_flex()
-            .key_context(self.key_context())
-            .justify_between()
+            .relative()
             .size_full()
+            .justify_between()
+            .key_context(self.key_context())
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, action: &NewThread, window, cx| {
                 this.new_thread(action, window, cx);
@@ -3255,14 +3277,12 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .child(self.render_toolbar(window, cx))
             .children(self.render_onboarding(window, cx))
-            .children(self.render_trial_end_upsell(window, cx))
             .map(|parent| match &self.active_view {
                 ActiveView::Thread {
                     thread,
                     message_editor,
                     ..
                 } => parent
-                    .relative()
                     .child(
                         if thread.read(cx).is_empty() && !self.should_render_onboarding(cx) {
                             self.render_thread_empty_state(window, cx)
@@ -3299,21 +3319,10 @@ impl Render for AgentPanel {
                     })
                     .child(h_flex().relative().child(message_editor.clone()).when(
                         !LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx),
-                        |this| {
-                            this.child(
-                                div()
-                                    .size_full()
-                                    .absolute()
-                                    .inset_0()
-                                    .bg(cx.theme().colors().panel_background)
-                                    .opacity(0.8)
-                                    .block_mouse_except_scroll(),
-                            )
-                        },
+                        |this| this.child(self.render_backdrop(cx)),
                     ))
                     .child(self.render_drag_target(cx)),
                 ActiveView::ExternalAgentThread { thread_view, .. } => parent
-                    .relative()
                     .child(thread_view.clone())
                     .child(self.render_drag_target(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
@@ -3352,7 +3361,8 @@ impl Render for AgentPanel {
                         ))
                 }
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
-            });
+            })
+            .children(self.render_trial_end_upsell(window, cx));
 
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {

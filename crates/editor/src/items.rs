@@ -1825,7 +1825,7 @@ pub fn entry_diagnostic_aware_icon_name_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconName, Color)> {
     match diagnostic_severity {
-        Some(DiagnosticSeverity::ERROR) => Some((IconName::X, Color::Error)),
+        Some(DiagnosticSeverity::ERROR) => Some((IconName::Close, Color::Error)),
         Some(DiagnosticSeverity::WARNING) => Some((IconName::Triangle, Color::Warning)),
         _ => None,
     }

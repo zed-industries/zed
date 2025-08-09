@@ -3,8 +3,9 @@ use std::rc::Rc;
 
 use agent_servers::AgentServer;
 use anyhow::Result;
-use gpui::{App, AppContext, Entity, Task};
+use gpui::{App, Entity, Task};
 use project::Project;
+use prompt_store::PromptStore;
 
 use crate::{templates::Templates, NativeAgent, NativeAgentConnection};
 
@@ -32,21 +33,22 @@ impl AgentServer for NativeAgentServer {
     fn connect(
         &self,
         _root_dir: &Path,
-        _project: &Entity<Project>,
+        project: &Entity<Project>,
         cx: &mut App,
     ) -> Task<Result<Rc<dyn acp_thread::AgentConnection>>> {
         log::info!(
             "NativeAgentServer::connect called for path: {:?}",
             _root_dir
         );
+        let project = project.clone();
+        let prompt_store = PromptStore::global(cx);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
-            // Create templates (you might want to load these from files or resources)
             let templates = Templates::new();
+            let prompt_store = prompt_store.await?;
 
-            // Create the native agent
             log::debug!("Creating native agent entity");
-            let agent = cx.update(|cx| cx.new(|_| NativeAgent::new(templates)))?;
+            let agent = NativeAgent::new(project, templates, Some(prompt_store), cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

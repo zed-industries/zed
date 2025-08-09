@@ -257,7 +257,7 @@ impl ToolCard for FindPathToolCard {
 
                         Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)

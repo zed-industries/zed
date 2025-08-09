@@ -1014,10 +1014,9 @@ impl RunningState {
                     ..task.resolved.clone()
                 };
                 let terminal = project
-                    .update_in(cx, |project, window, cx| {
+                    .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task_with_shell.clone()),
-                            window.window_handle(),
                             cx,
                         )
                     })?
@@ -1189,9 +1188,7 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| {
-            project.create_terminal(kind, window.window_handle(), cx)
-        });
+        let terminal_task = project.update(cx, |project, cx| project.create_terminal(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
@@ -1651,7 +1648,7 @@ impl RunningState {
 
         let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-            matches!(session.mode, session::SessionState::Building(_))
+            matches!(session.mode, session::SessionState::Booting(_))
         });
 
         if is_building {

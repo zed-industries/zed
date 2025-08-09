@@ -9,7 +9,7 @@ repository = "https://github.com/zed-industries/zed"
 [language_servers.emmet-language-server]
 name = "Emmet Language Server"
 language = "HTML"
-languages = ["HTML", "PHP", "ERB", "HTML/ERB", "JavaScript", "TSX", "CSS", "HEEX", "Elixir"]
+languages = ["HTML", "PHP", "ERB", "HTML/ERB", "JavaScript", "TSX", "CSS", "HEEX", "Elixir", "Vue.js"]
 
 [language_servers.emmet-language-server.language_ids]
 "HTML" = "html"
@@ -21,3 +21,4 @@ languages = ["HTML", "PHP", "ERB", "HTML/ERB", "JavaScript", "TSX", "CSS", "HEEX
 "CSS" = "css"
 "HEEX" = "heex"
 "Elixir" = "heex"
+"Vue.js" = "vue"

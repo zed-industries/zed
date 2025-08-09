@@ -344,7 +344,7 @@ impl TitleBar {
                         .child(
                             IconWithIndicator::new(
                                 Icon::new(IconName::Server)
-                                    .size(IconSize::XSmall)
+                                    .size(IconSize::Small)
                                     .color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )

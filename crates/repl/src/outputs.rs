@@ -163,7 +163,7 @@ impl Output {
                     el.child(
                         IconButton::new(
                             ElementId::Name("open-in-buffer".into()),
-                            IconName::FileText,
+                            IconName::FileTextOutlined,
                         )
                         .style(ButtonStyle::Transparent)
                         .tooltip(Tooltip::text("Open in Buffer"))

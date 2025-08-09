@@ -73,11 +73,10 @@ use gpui::{
     App, AppContext, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Hsla, SharedString,
     Task, WeakEntity, Window,
 };
-use itertools::Itertools;
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiagnosticSourceKind, Language,
-    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList,
-    Transaction, Unclipped, language_settings::InlayHintKind, proto::split_operations,
+    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainList, Transaction,
+    Unclipped, language_settings::InlayHintKind, proto::split_operations,
 };
 use lsp::{
     CodeActionKind, CompletionContext, CompletionItemKind, DocumentHighlightKind, InsertTextMode,
@@ -113,7 +112,7 @@ use std::{
 
 use task_store::TaskStore;
 use terminals::Terminals;
-use text::{Anchor, BufferId, OffsetRangeExt, Point};
+use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _,
@@ -306,7 +305,7 @@ pub enum Event {
         language_server_id: LanguageServerId,
     },
     DiagnosticsUpdated {
-        path: ProjectPath,
+        paths: Vec<ProjectPath>,
         language_server_id: LanguageServerId,
     },
     RemoteIdChanged(Option<u64>),
@@ -668,10 +667,10 @@ pub enum ResolveState {
 }
 
 impl InlayHint {
-    pub fn text(&self) -> String {
+    pub fn text(&self) -> Rope {
         match &self.label {
-            InlayHintLabel::String(s) => s.to_owned(),
-            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &part.value).join(""),
+            InlayHintLabel::String(s) => Rope::from(s),
+            InlayHintLabel::LabelParts(parts) => parts.iter().map(|part| &*part.value).collect(),
         }
     }
 }
@@ -1488,7 +1487,10 @@ impl Project {
                 fs.clone(),
                 cx,
             );
-            lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
+            lsp_store.set_language_server_statuses_from_proto(
+                response.payload.language_servers,
+                response.payload.language_server_capabilities,
+            );
             lsp_store
         })?;
 
@@ -2319,7 +2321,10 @@ impl Project {
         self.set_worktrees_from_proto(message.worktrees, cx)?;
         self.set_collaborators_from_proto(message.collaborators, cx)?;
         self.lsp_store.update(cx, |lsp_store, _| {
-            lsp_store.set_language_server_statuses_from_proto(message.language_servers)
+            lsp_store.set_language_server_statuses_from_proto(
+                message.language_servers,
+                message.language_server_capabilities,
+            )
         });
         self.enqueue_buffer_ordered_message(BufferOrderedMessage::Resync)
             .unwrap();
@@ -2896,18 +2901,17 @@ impl Project {
         cx: &mut Context<Self>,
     ) {
         match event {
-            LspStoreEvent::DiagnosticsUpdated {
-                language_server_id,
-                path,
-            } => cx.emit(Event::DiagnosticsUpdated {
-                path: path.clone(),
-                language_server_id: *language_server_id,
-            }),
-            LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
-                Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
+            LspStoreEvent::DiagnosticsUpdated { server_id, paths } => {
+                cx.emit(Event::DiagnosticsUpdated {
+                    paths: paths.clone(),
+                    language_server_id: *server_id,
+                })
+            }
+            LspStoreEvent::LanguageServerAdded(server_id, name, worktree_id) => cx.emit(
+                Event::LanguageServerAdded(*server_id, name.clone(), *worktree_id),
             ),
-            LspStoreEvent::LanguageServerRemoved(language_server_id) => {
-                cx.emit(Event::LanguageServerRemoved(*language_server_id))
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                cx.emit(Event::LanguageServerRemoved(*server_id))
             }
             LspStoreEvent::LanguageServerLog(server_id, log_type, string) => cx.emit(
                 Event::LanguageServerLog(*server_id, log_type.clone(), string.clone()),
@@ -3827,27 +3831,6 @@ impl Project {
     ) -> Task<anyhow::Result<InlayHint>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.resolve_inlay_hint(hint, buffer_handle, server_id, cx)
-        })
-    }
-
-    pub fn update_diagnostics(
-        &mut self,
-        language_server_id: LanguageServerId,
-        source_kind: DiagnosticSourceKind,
-        result_id: Option<String>,
-        params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: &[String],
-        cx: &mut Context<Self>,
-    ) -> Result<(), anyhow::Error> {
-        self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostics(
-                language_server_id,
-                params,
-                result_id,
-                source_kind,
-                disk_based_sources,
-                cx,
-            )
         })
     }
 

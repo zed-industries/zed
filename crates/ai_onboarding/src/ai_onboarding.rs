@@ -110,7 +110,7 @@ impl ZedAiOnboarding {
                     .style(ButtonStyle::Outlined)
                     .icon(IconName::ArrowUpRight)
                     .icon_color(Color::Muted)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .on_click(move |_, _window, cx| {
                         telemetry::event!("Review Terms of Service Clicked");
                         cx.open_url(&zed_urls::terms_of_service(cx))

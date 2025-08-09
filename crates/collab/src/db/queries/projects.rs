@@ -699,7 +699,10 @@ impl Database {
                     language_server::Column::ProjectId,
                     language_server::Column::Id,
                 ])
-                .update_column(language_server::Column::Name)
+                .update_columns([
+                    language_server::Column::Name,
+                    language_server::Column::Capabilities,
+                ])
                 .to_owned(),
             )
             .exec(&*tx)

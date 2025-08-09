@@ -143,25 +143,6 @@ impl ClaudeTool {
             Self::Grep(Some(params)) => vec![format!("`{params}`").into()],
             Self::WebFetch(Some(params)) => vec![params.prompt.clone().into()],
             Self::WebSearch(Some(params)) => vec![params.to_string().into()],
-            Self::TodoWrite(Some(params)) => vec![
-                params
-                    .todos
-                    .iter()
-                    .map(|todo| {
-                        format!(
-                            "- {} {}: {}",
-                            match todo.status {
-                                TodoStatus::Completed => "✅",
-                                TodoStatus::InProgress => "🚧",
-                                TodoStatus::Pending => "⬜",
-                            },
-                            todo.priority,
-                            todo.content
-                        )
-                    })
-                    .join("\n")
-                    .into(),
-            ],
             Self::ExitPlanMode(Some(params)) => vec![params.plan.clone().into()],
             Self::Edit(Some(params)) => vec![acp::ToolCallContent::Diff {
                 diff: acp::Diff {
@@ -192,6 +173,10 @@ impl ClaudeTool {
                         }]
                     })
                     .unwrap_or_default()
+            }
+            Self::TodoWrite(Some(_)) => {
+                // These are mapped to plan updates later
+                vec![]
             }
             Self::Task(None)
             | Self::NotebookRead(None)
@@ -312,6 +297,7 @@ impl ClaudeTool {
             content: self.content(),
             locations: self.locations(),
             raw_input: None,
+            raw_output: None,
         }
     }
 }
@@ -488,10 +474,11 @@ impl std::fmt::Display for GrepToolParams {
     }
 }
 
-#[derive(Deserialize, Serialize, JsonSchema, strum::Display, Debug)]
+#[derive(Default, Deserialize, Serialize, JsonSchema, strum::Display, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TodoPriority {
     High,
+    #[default]
     Medium,
     Low,
 }
@@ -526,14 +513,13 @@ impl Into<acp::PlanEntryStatus> for TodoStatus {
 
 #[derive(Deserialize, Serialize, JsonSchema, Debug)]
 pub struct Todo {
-    /// Unique identifier
-    pub id: String,
     /// Task description
     pub content: String,
-    /// Priority level of the todo
-    pub priority: TodoPriority,
     /// Current status of the todo
     pub status: TodoStatus,
+    /// Priority level of the todo
+    #[serde(default)]
+    pub priority: TodoPriority,
 }
 
 impl Into<acp::PlanEntry> for Todo {

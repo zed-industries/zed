@@ -2233,7 +2233,7 @@ fn render_thought_process_fold_icon_button(
         let button = match status {
             ThoughtProcessStatus::Pending => button
                 .child(
-                    Icon::new(IconName::LightBulb)
+                    Icon::new(IconName::ToolThink)
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
@@ -2248,7 +2248,7 @@ fn render_thought_process_fold_icon_button(
                 ),
             ThoughtProcessStatus::Completed => button
                 .style(ButtonStyle::Filled)
-                .child(Icon::new(IconName::LightBulb).size(IconSize::Small))
+                .child(Icon::new(IconName::ToolThink).size(IconSize::Small))
                 .child(Label::new("Thought Process").single_line()),
         };
 

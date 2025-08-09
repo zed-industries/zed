@@ -128,7 +128,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2004
+      - namespace-profile-16x32-ubuntu-2004 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
@@ -168,7 +168,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-32vcpu-ubuntu-2204-arm
+      - namespace-profile-8x32-ubuntu-2004-arm-m4 # ubuntu 20.04 for minimal glibc
     needs: tests
     steps:
       - name: Checkout repo
@@ -316,3 +316,12 @@ jobs:
           git config user.email github-actions@github.com
           git tag -f nightly
           git push origin nightly --force
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c # v3
+        env:
+          SENTRY_ORG: zed-dev
+          SENTRY_PROJECT: zed
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        with:
+          environment: production

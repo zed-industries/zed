@@ -485,7 +485,7 @@ mod remote_button {
             "Publish",
             0,
             0,
-            Some(IconName::ArrowUpFromLine),
+            Some(IconName::ExpandUp),
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -512,7 +512,7 @@ mod remote_button {
             "Republish",
             0,
             0,
-            Some(IconName::ArrowUpFromLine),
+            Some(IconName::ExpandUp),
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -567,7 +567,7 @@ mod remote_button {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu(move |window, cx| {

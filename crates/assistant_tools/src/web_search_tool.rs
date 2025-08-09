@@ -45,7 +45,7 @@ impl Tool for WebSearchTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Globe
+        IconName::ToolWeb
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -177,7 +177,7 @@ impl ToolCard for WebSearchToolCard {
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .truncate(true)
                             .tooltip({

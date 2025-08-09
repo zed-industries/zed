@@ -374,6 +374,14 @@ impl Focusable for KeymapEditor {
         }
     }
 }
+/// Helper function to check if two keystroke sequences match exactly
+fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+    keystrokes1.len() == keystrokes2.len()
+        && keystrokes1
+            .iter()
+            .zip(keystrokes2)
+            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+}
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -549,13 +557,7 @@ impl KeymapEditor {
                             .keystrokes()
                             .is_some_and(|keystrokes| {
                                 if exact_match {
-                                    keystroke_query.len() == keystrokes.len()
-                                        && keystroke_query.iter().zip(keystrokes).all(
-                                            |(query, keystroke)| {
-                                                query.key == keystroke.key
-                                                    && query.modifiers == keystroke.modifiers
-                                            },
-                                        )
+                                    keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
                                     return false;
                                 } else {
@@ -2340,8 +2342,50 @@ impl KeybindingEditorModal {
         self.save_or_display_error(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent)
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
+        let current_keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        if current_keystrokes.is_empty() {
+            return 0;
+        }
+
+        self.keymap_editor
+            .read(cx)
+            .keybindings
+            .iter()
+            .enumerate()
+            .filter(|(idx, binding)| {
+                // Don't count the binding we're currently editing
+                if !self.creating && *idx == self.editing_keybind_idx {
+                    return false;
+                }
+
+                binding
+                    .keystrokes()
+                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn show_matching_bindings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        // Dismiss the modal
+        cx.emit(DismissEvent);
+
+        // Update the keymap editor to show matching keystrokes
+        self.keymap_editor.update(cx, |editor, cx| {
+            editor.filter_state = FilterState::All;
+            editor.search_mode = SearchMode::KeyStroke { exact_match: true };
+            editor.keystroke_editor.update(cx, |keystroke_editor, cx| {
+                keystroke_editor.set_keystrokes(keystrokes, cx);
+            });
+        });
     }
 }
 
@@ -2356,6 +2400,7 @@ fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let matching_bindings_count = self.get_matching_bindings_count(cx);
 
         v_flex()
             .w(rems(34.))
@@ -2370,6 +2415,7 @@ impl Render for KeybindingEditorModal {
                     .header(
                         ModalHeader::new().child(
                             v_flex()
+                                .w_full()
                                 .pb_1p5()
                                 .mb_1()
                                 .gap_0p5()
@@ -2393,17 +2439,55 @@ impl Render for KeybindingEditorModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_2p5()
                                 .child(
                                     v_flex()
-                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(self.keybind_editor.clone()),
+                                        .child(Label::new("Edit Keystroke"))
+                                        .child(self.keybind_editor.clone())
+                                        .child(h_flex().gap_px().when(
+                                            matching_bindings_count > 0,
+                                            |this| {
+                                                let label = format!(
+                                                    "There {} {} {} with the same keystrokes.",
+                                                    if matching_bindings_count == 1 {
+                                                        "is"
+                                                    } else {
+                                                        "are"
+                                                    },
+                                                    matching_bindings_count,
+                                                    if matching_bindings_count == 1 {
+                                                        "binding"
+                                                    } else {
+                                                        "bindings"
+                                                    }
+                                                );
+
+                                                this.child(
+                                                    Label::new(label)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Button::new("show_matching", "View")
+                                                        .label_size(LabelSize::Small)
+                                                        .icon(IconName::ArrowUpRight)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::Small)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_matching_bindings(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                )
+                                            },
+                                        )),
                                 )
                                 .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
-                                            .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
                                             .child(editor),
@@ -2414,14 +2498,7 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         Banner::new()
                                             .severity(error.severity)
-                                            // For some reason, the div overflows its container to the
-                                            //right. The padding accounts for that.
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .pr_2()
-                                                    .child(Label::new(error.content.clone())),
-                                            ),
+                                            .child(Label::new(error.content.clone())),
                                     )
                                 }),
                         ),

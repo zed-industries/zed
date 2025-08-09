@@ -20,7 +20,7 @@ use text::{Anchor, OffsetRangeExt as _};
 use util::markdown::MarkdownCodeBlock;
 use util::{ResultExt as _, post_inc};
 
-pub const RULES_ICON: IconName = IconName::Context;
+pub const RULES_ICON: IconName = IconName::Reader;
 
 pub enum ContextKind {
     File,
@@ -40,8 +40,8 @@ impl ContextKind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::Symbol => IconName::Code,
-            ContextKind::Selection => IconName::Context,
-            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Selection => IconName::Reader,
+            ContextKind::FetchedUrl => IconName::ToolWeb,
             ContextKind::Thread => IconName::Thread,
             ContextKind::TextThread => IconName::TextThread,
             ContextKind::Rules => RULES_ICON,

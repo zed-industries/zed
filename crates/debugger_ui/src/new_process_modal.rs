@@ -1,5 +1,5 @@
 use anyhow::{Context as _, bail};
-use collections::{FxHashMap, HashMap};
+use collections::{FxHashMap, HashMap, HashSet};
 use language::LanguageRegistry;
 use std::{
     borrow::Cow,
@@ -450,7 +450,7 @@ impl NewProcessModal {
             .and_then(|buffer| buffer.read(cx).language())
             .cloned();
 
-        let mut available_adapters = workspace
+        let mut available_adapters: Vec<_> = workspace
             .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
             .unwrap_or_default();
         if let Some(language) = active_buffer_language {
@@ -1054,6 +1054,9 @@ impl DebugDelegate {
                 })
             })
         });
+
+        let valid_adapters: HashSet<_> = cx.global::<DapRegistry>().enumerate_adapters();
+
         cx.spawn(async move |this, cx| {
             let (recent, scenarios) = if let Some(task) = task {
                 task.await
@@ -1094,6 +1097,7 @@ impl DebugDelegate {
                                 } => !(hide_vscode && dir.ends_with(".vscode")),
                                 _ => true,
                             })
+                            .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
                                     Self::get_scenario_kind(&languages, &dap_registry, scenario);

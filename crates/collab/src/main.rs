@@ -7,6 +7,7 @@ use axum::{
     routing::get,
 };
 
+use collab::ServiceMode;
 use collab::api::CloudflareIpCountryHeader;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
@@ -15,7 +16,6 @@ use collab::{
     AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
     executor::Executor, rpc::ResultExt,
 };
-use collab::{ServiceMode, api::billing::poll_stripe_events_periodically};
 use db::Database;
 use std::{
     env::args,
@@ -118,8 +118,6 @@ async fn main() -> Result<()> {
                         .await?;
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
-
-                    poll_stripe_events_periodically(state.clone(), rpc_server.clone());
 
                     app = app
                         .merge(collab::api::routes(rpc_server.clone()))

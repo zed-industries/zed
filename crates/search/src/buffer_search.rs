@@ -336,7 +336,7 @@ impl Render for BufferSearchBar {
                         this.child(
                             IconButton::new(
                                 "buffer-search-bar-toggle-search-selection-button",
-                                IconName::SearchSelection,
+                                IconName::Quote,
                             )
                             .style(ButtonStyle::Subtle)
                             .shape(IconButtonShape::Square)

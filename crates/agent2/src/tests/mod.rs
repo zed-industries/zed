@@ -1,30 +1,33 @@
 use super::*;
-use crate::templates::Templates;
-use acp_thread::AgentConnection as _;
-use agent_client_protocol as acp;
+use acp_thread::AgentConnection;
+use agent_client_protocol::{self as acp};
+use anyhow::Result;
+use assistant_tool::ActionLog;
 use client::{Client, UserStore};
 use fs::FakeFs;
-use gpui::{AppContext, Entity, Task, TestAppContext};
+use futures::channel::mpsc::UnboundedReceiver;
+use gpui::{http_client::FakeHttpClient, AppContext, Entity, Task, TestAppContext};
 use indoc::indoc;
 use language_model::{
     fake_provider::FakeLanguageModel, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, MessageContent,
-    StopReason,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelToolResult,
+    LanguageModelToolUse, MessageContent, Role, StopReason,
 };
 use project::Project;
+use prompt_store::ProjectContext;
 use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use smol::stream::StreamExt;
-use std::{path::Path, rc::Rc, sync::Arc, time::Duration};
+use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
 
 mod test_tools;
 use test_tools::*;
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+#[ignore = "can't run on CI yet"]
 async fn test_echo(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -44,7 +47,7 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+#[ignore = "can't run on CI yet"]
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4Thinking).await;
 
@@ -77,7 +80,46 @@ async fn test_thinking(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+async fn test_system_prompt(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        project_context,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    project_context.borrow_mut().shell = "test-shell".into();
+    thread.update(cx, |thread, _| thread.add_tool(EchoTool));
+    thread.update(cx, |thread, cx| thread.send(model.clone(), "abc", cx));
+    cx.run_until_parked();
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(
+        pending_completions.len(),
+        1,
+        "unexpected pending completions: {:?}",
+        pending_completions
+    );
+
+    let pending_completion = pending_completions.pop().unwrap();
+    assert_eq!(pending_completion.messages[0].role, Role::System);
+
+    let system_message = &pending_completion.messages[0];
+    let system_prompt = system_message.content[0].to_str().unwrap();
+    assert!(
+        system_prompt.contains("test-shell"),
+        "unexpected system message: {:?}",
+        system_message
+    );
+    assert!(
+        system_prompt.contains("## Fixing Diagnostics"),
+        "unexpected system message: {:?}",
+        system_message
+    );
+}
+
+#[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -127,7 +169,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+#[ignore = "can't run on CI yet"]
 async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -175,7 +217,163 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+async fn test_tool_authorization(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| {
+        thread.add_tool(ToolRequiringPermission);
+        thread.send(model.clone(), "abc", cx)
+    });
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_2".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    let tool_call_auth_1 = next_tool_call_authorization(&mut events).await;
+    let tool_call_auth_2 = next_tool_call_authorization(&mut events).await;
+
+    // Approve the first
+    tool_call_auth_1
+        .response
+        .send(tool_call_auth_1.options[1].id.clone())
+        .unwrap();
+    cx.run_until_parked();
+
+    // Reject the second
+    tool_call_auth_2
+        .response
+        .send(tool_call_auth_1.options[2].id.clone())
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: Some("Allowed".into())
+            }),
+            MessageContent::ToolResult(LanguageModelToolResult {
+                tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: true,
+                content: "Permission to run tool denied by user".into(),
+                output: None
+            })
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_tool_hallucination(cx: &mut TestAppContext) {
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "abc", cx));
+    cx.run_until_parked();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_1".into(),
+            name: "nonexistent_tool".into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(tool_call.title, "nonexistent_tool");
+    assert_eq!(tool_call.status, acp::ToolCallStatus::Pending);
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(update.fields.status, Some(acp::ToolCallStatus::Failed));
+}
+
+async fn expect_tool_call(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCall {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCall(tool_call) => return tool_call,
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
+async fn expect_tool_call_update_fields(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> acp::ToolCallUpdate {
+    let event = events
+        .next()
+        .await
+        .expect("no tool call authorization event received")
+        .unwrap();
+    match event {
+        AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
+            return update
+        }
+        event => {
+            panic!("Unexpected event {event:?}");
+        }
+    }
+}
+
+async fn next_tool_call_authorization(
+    events: &mut UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+) -> ToolCallAuthorization {
+    loop {
+        let event = events
+            .next()
+            .await
+            .expect("no tool call authorization event received")
+            .unwrap();
+        if let AgentResponseEvent::ToolCallAuthorization(tool_call_authorization) = event {
+            let permission_kinds = tool_call_authorization
+                .options
+                .iter()
+                .map(|o| o.kind)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                permission_kinds,
+                vec![
+                    acp::PermissionOptionKind::AllowAlways,
+                    acp::PermissionOptionKind::AllowOnce,
+                    acp::PermissionOptionKind::RejectOnce,
+                ]
+            );
+            return tool_call_authorization;
+        }
+    }
+}
+
+#[gpui::test]
+#[ignore = "can't run on CI yet"]
 async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -214,7 +412,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[ignore = "temporarily disabled until it can be run on CI"]
+#[ignore = "can't run on CI yet"]
 async fn test_cancellation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Sonnet4).await;
 
@@ -229,31 +427,33 @@ async fn test_cancellation(cx: &mut TestAppContext) {
     });
 
     // Wait until both tools are called.
-    let mut expected_tool_calls = vec!["echo", "infinite"];
+    let mut expected_tools = vec!["Echo", "Infinite Tool"];
     let mut echo_id = None;
     let mut echo_completed = false;
     while let Some(event) = events.next().await {
         match event.unwrap() {
             AgentResponseEvent::ToolCall(tool_call) => {
-                assert_eq!(tool_call.title, expected_tool_calls.remove(0));
-                if tool_call.title == "echo" {
+                assert_eq!(tool_call.title, expected_tools.remove(0));
+                if tool_call.title == "Echo" {
                     echo_id = Some(tool_call.id);
                 }
             }
-            AgentResponseEvent::ToolCallUpdate(acp::ToolCallUpdate {
-                id,
-                fields:
-                    acp::ToolCallUpdateFields {
-                        status: Some(acp::ToolCallStatus::Completed),
-                        ..
-                    },
-            }) if Some(&id) == echo_id.as_ref() => {
+            AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(
+                acp::ToolCallUpdate {
+                    id,
+                    fields:
+                        acp::ToolCallUpdateFields {
+                            status: Some(acp::ToolCallStatus::Completed),
+                            ..
+                        },
+                },
+            )) if Some(&id) == echo_id.as_ref() => {
                 echo_completed = true;
             }
             _ => {}
         }
 
-        if expected_tool_calls.is_empty() && echo_completed {
+        if expected_tools.is_empty() && echo_completed {
             break;
         }
     }
@@ -281,12 +481,10 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_refusal(cx: &mut TestAppContext) {
-    let fake_model = Arc::new(FakeLanguageModel::default());
-    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake(fake_model.clone())).await;
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
 
-    let events = thread.update(cx, |thread, cx| {
-        thread.send(fake_model.clone(), "Hello", cx)
-    });
+    let events = thread.update(cx, |thread, cx| thread.send(model.clone(), "Hello", cx));
     cx.run_until_parked();
     thread.read_with(cx, |thread, _| {
         assert_eq!(
@@ -322,34 +520,37 @@ async fn test_refusal(cx: &mut TestAppContext) {
     });
 }
 
-#[ignore = "temporarily disabled until it can be run on CI"]
 #[gpui::test]
 async fn test_agent_connection(cx: &mut TestAppContext) {
-    cx.executor().allow_parking();
     cx.update(settings::init);
     let templates = Templates::new();
 
     // Initialize language model system with test provider
     cx.update(|cx| {
         gpui_tokio::init(cx);
-        let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-        cx.set_http_client(Arc::new(http_client));
-
         client::init_settings(cx);
-        let client = Client::production(cx);
+
+        let http_client = FakeHttpClient::with_404_response();
+        let clock = Arc::new(clock::FakeSystemClock::new());
+        let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         language_model::init(client.clone(), cx);
         language_models::init(user_store.clone(), client.clone(), cx);
-
-        // Initialize project settings
         Project::init_settings(cx);
-
-        // Use test registry with fake provider
         LanguageModelRegistry::test(cx);
     });
+    cx.executor().forbid_parking();
+
+    // Create a project for new_thread
+    let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
+    fake_fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
+    let cwd = Path::new("/test");
 
     // Create agent and connection
-    let agent = cx.new(|_| NativeAgent::new(templates.clone()));
+    let agent = NativeAgent::new(project.clone(), templates.clone(), None, &mut cx.to_async())
+        .await
+        .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
@@ -371,12 +572,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     assert!(!listed_models.is_empty(), "should have at least one model");
     assert_eq!(listed_models[0].id().0, "fake");
 
-    // Create a project for new_thread
-    let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
-    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
-
     // Create a thread using new_thread
-    let cwd = Path::new("/test");
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
         .update(|cx| {
@@ -390,34 +586,157 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
     // Test selected_model returns the default
-    let selected = cx
+    let model = cx
         .update(|cx| {
             let mut async_cx = cx.to_async();
             selector.selected_model(&session_id, &mut async_cx)
         })
         .await
         .expect("selected_model should succeed");
-    assert_eq!(selected.id().0, "fake", "should return default model");
+    let model = model.as_fake();
+    assert_eq!(model.id().0, "fake", "should return default model");
 
-    // The thread was created via prompt with the default model
-    // We can verify it through selected_model
+    let request = acp_thread.update(cx, |thread, cx| thread.send(vec!["abc".into()], cx));
+    cx.run_until_parked();
+    model.send_last_completion_stream_text_chunk("def");
+    cx.run_until_parked();
+    acp_thread.read_with(cx, |thread, cx| {
+        assert_eq!(
+            thread.to_markdown(cx),
+            indoc! {"
+                ## User
 
-    // Test prompt uses the selected model
-    let prompt_request = acp::PromptRequest {
-        session_id: session_id.clone(),
-        prompt: vec![acp::ContentBlock::Text(acp::TextContent {
-            text: "Test prompt".into(),
-            annotations: None,
-        })],
-    };
+                abc
 
-    let request = cx.update(|cx| connection.prompt(prompt_request, cx));
-    let request = cx.background_spawn(request);
-    smol::Timer::after(Duration::from_millis(100)).await;
+                ## Assistant
+
+                def
+
+            "}
+        )
+    });
 
     // Test cancel
     cx.update(|cx| connection.cancel(&session_id, cx));
     request.await.expect("prompt should fail gracefully");
+
+    // Ensure that dropping the ACP thread causes the native thread to be
+    // dropped as well.
+    cx.update(|_| drop(acp_thread));
+    let result = cx
+        .update(|cx| {
+            connection.prompt(
+                acp::PromptRequest {
+                    session_id: session_id.clone(),
+                    prompt: vec!["ghi".into()],
+                },
+                cx,
+            )
+        })
+        .await;
+    assert_eq!(
+        result.as_ref().unwrap_err().to_string(),
+        "Session not found",
+        "unexpected result: {:?}",
+        result
+    );
+}
+
+#[gpui::test]
+async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
+    let ThreadTest { thread, model, .. } = setup(cx, TestModel::Fake).await;
+    thread.update(cx, |thread, _cx| thread.add_tool(ThinkingTool));
+    let fake_model = model.as_fake();
+
+    let mut events = thread.update(cx, |thread, cx| thread.send(model.clone(), "Think", cx));
+    cx.run_until_parked();
+
+    // Simulate streaming partial input.
+    let input = json!({});
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "1".into(),
+            name: ThinkingTool.name().into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: false,
+        },
+    ));
+
+    // Input streaming completed
+    let input = json!({ "content": "Thinking hard!" });
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "1".into(),
+            name: "thinking".into(),
+            raw_input: input.to_string(),
+            input,
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    let tool_call = expect_tool_call(&mut events).await;
+    assert_eq!(
+        tool_call,
+        acp::ToolCall {
+            id: acp::ToolCallId("1".into()),
+            title: "Thinking".into(),
+            kind: acp::ToolKind::Think,
+            status: acp::ToolCallStatus::Pending,
+            content: vec![],
+            locations: vec![],
+            raw_input: Some(json!({})),
+            raw_output: None,
+        }
+    );
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                title: Some("Thinking".into()),
+                kind: Some(acp::ToolKind::Think),
+                raw_input: Some(json!({ "content": "Thinking hard!" })),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::InProgress),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                content: Some(vec!["Thinking hard!".into()]),
+                ..Default::default()
+            },
+        }
+    );
+    let update = expect_tool_call_update_fields(&mut events).await;
+    assert_eq!(
+        update,
+        acp::ToolCallUpdate {
+            id: acp::ToolCallId("1".into()),
+            fields: acp::ToolCallUpdateFields {
+                status: Some(acp::ToolCallStatus::Completed),
+                ..Default::default()
+            },
+        }
+    );
 }
 
 /// Filters out the stop events for asserting against in tests
@@ -436,12 +755,13 @@ fn stop_events(
 struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,
+    project_context: Rc<RefCell<ProjectContext>>,
 }
 
 enum TestModel {
     Sonnet4,
     Sonnet4Thinking,
-    Fake(Arc<FakeLanguageModel>),
+    Fake,
 }
 
 impl TestModel {
@@ -449,7 +769,7 @@ impl TestModel {
         match self {
             TestModel::Sonnet4 => LanguageModelId("claude-sonnet-4-latest".into()),
             TestModel::Sonnet4Thinking => LanguageModelId("claude-sonnet-4-thinking-latest".into()),
-            TestModel::Fake(fake_model) => fake_model.id(),
+            TestModel::Fake => unreachable!(),
         }
     }
 }
@@ -478,8 +798,8 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
             language_model::init(client.clone(), cx);
             language_models::init(user_store.clone(), client.clone(), cx);
 
-            if let TestModel::Fake(model) = model {
-                Task::ready(model as Arc<_>)
+            if let TestModel::Fake = model {
+                Task::ready(Arc::new(FakeLanguageModel::default()) as Arc<_>)
             } else {
                 let model_id = model.id();
                 let models = LanguageModelRegistry::read_global(cx);
@@ -499,9 +819,22 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         })
         .await;
 
-    let thread = cx.new(|_| Thread::new(project, templates, model.clone()));
-
-    ThreadTest { model, thread }
+    let project_context = Rc::new(RefCell::new(ProjectContext::default()));
+    let action_log = cx.new(|_| ActionLog::new(project.clone()));
+    let thread = cx.new(|_| {
+        Thread::new(
+            project,
+            project_context.clone(),
+            action_log,
+            templates,
+            model.clone(),
+        )
+    });
+    ThreadTest {
+        model,
+        thread,
+        project_context,
+    }
 }
 
 #[cfg(test)]

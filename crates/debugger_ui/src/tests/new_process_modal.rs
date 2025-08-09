@@ -298,7 +298,7 @@ async fn test_dap_adapter_config_conversion_and_validation(cx: &mut TestAppConte
 
     let adapter_names = cx.update(|cx| {
         let registry = DapRegistry::global(cx);
-        registry.enumerate_adapters()
+        registry.enumerate_adapters::<Vec<_>>()
     });
 
     let zed_config = ZedDebugConfig {

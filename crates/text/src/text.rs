@@ -713,7 +713,7 @@ impl Buffer {
         let mut base_text = base_text.into();
         let line_ending = LineEnding::detect(&base_text);
         LineEnding::normalize(&mut base_text);
-        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(base_text))
+        Self::new_normalized(replica_id, remote_id, line_ending, Rope::from(&*base_text))
     }
 
     pub fn new_normalized(

@@ -337,7 +337,7 @@ pub struct AgentAppState {
 }
 
 pub fn init(cx: &mut App) -> Arc<AgentAppState> {
-    let app_version = AppVersion::global(cx);
+    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
@@ -350,7 +350,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
-        "Zed/{} ({}; {})",
+        "Zed Agent Eval/{} ({}; {})",
         app_version,
         std::env::consts::OS,
         std::env::consts::ARCH
