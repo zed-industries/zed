@@ -142,6 +142,16 @@ impl VimTestContext {
         })
     }
 
+    pub fn enable_helix(&mut self) {
+        self.cx.update(|_, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings::<vim_mode_setting::HelixModeSetting>(cx, |s| {
+                    *s = Some(true)
+                });
+            });
+        })
+    }
+
     pub fn mode(&mut self) -> Mode {
         self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().entity.read(cx).mode)
     }
