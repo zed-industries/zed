@@ -2081,6 +2081,82 @@ impl GitPanel {
             .detach_and_log_err(cx);
     }
 
+    pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+        });
+
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut paths = path.await.ok()?.ok()??;
+            let mut path = paths.pop()?;
+            let repo_name = repo
+                .split(std::path::MAIN_SEPARATOR_STR)
+                .last()?
+                .strip_suffix(".git")?
+                .to_owned();
+
+            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
+            let result_toast = match fs.git_clone(&repo, path.as_path()).await {
+                Ok(_) => cx.update(|_, cx| {
+                    StatusToast::new(
+                        format!(
+                            "repo: {}, has been cloned in {}",
+                            &repo,
+                            path.to_string_lossy()
+                        ),
+                        cx,
+                        |this, _| {
+                            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
+                                .action("Add repo to project", {
+                                    path.push(repo_name);
+                                    move |_, cx| {
+                                        workspace
+                                            .update(cx, |workspace, cx| {
+                                                workspace
+                                                    .project()
+                                                    .update(cx, |project, cx| {
+                                                        project.create_worktree(
+                                                            path.as_path(),
+                                                            true,
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .detach();
+                                            })
+                                            .ok();
+                                    }
+                                })
+                                .dismiss_button(true)
+                        },
+                    )
+                }),
+                Err(e) => cx.update(|_, cx| {
+                    StatusToast::new(e.to_string(), cx, |this, _| {
+                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                            .dismiss_button(true)
+                    })
+                }),
+            }
+            .ok()?;
+
+            this.update(cx, |this, cx| {
+                this.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.toggle_status_toast(result_toast, cx);
+                    })
+                    .ok();
+            })
+            .ok();
+
+            Some(())
+        })
+        .detach();
+    }
+
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktrees = self
             .project
