@@ -521,11 +521,14 @@ async fn test_ssh_collaboration_formatting_with_prettier(
             });
         });
     });
+
+    const TS_FORMATTED_PREFIX: &'static str = "<format by ts>\n";
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.set_request_handler::<lsp::request::Formatting, _, _>(|_, _| async move {
-        panic!(
-            "Unexpected: prettier should be preferred since it's enabled and language supports it"
-        )
+        Ok(Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+            new_text: TS_FORMATTED_PREFIX.to_string(),
+        }]))
     });
 
     project_b
@@ -544,7 +547,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     executor.run_until_parked();
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        buffer_text.to_string() + "\n" + prettier_format_suffix,
+        TS_FORMATTED_PREFIX.to_string() + buffer_text + "\n" + prettier_format_suffix,
         "Prettier formatting was not applied to client buffer after client's request"
     );
 
@@ -581,7 +584,13 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     executor.run_until_parked();
     assert_eq!(
         buffer_b.read_with(cx_b, |buffer, _| buffer.text()),
-        buffer_text.to_string() + "\n" + prettier_format_suffix + "\n" + prettier_format_suffix,
+        TS_FORMATTED_PREFIX.to_string()
+            + TS_FORMATTED_PREFIX
+            + buffer_text
+            + "\n"
+            + prettier_format_suffix
+            + "\n"
+            + prettier_format_suffix,
         "Prettier formatting was not applied to client buffer after host's request"
     );
 }

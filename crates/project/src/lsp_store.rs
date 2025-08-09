@@ -672,7 +672,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -727,7 +727,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -756,7 +756,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let options = match options {
-                                                None => OneOf::Left(true),
+                                                None => OneOf::Left(false),
                                                 Some(options) => OneOf::Right(options),
                                             };
 
@@ -1445,19 +1445,26 @@ impl LocalLspStore {
             }
         }
 
+        // Default to use all language servers.
+        let mut default_formatter_list: Vec<Formatter> = adapters_and_servers
+            .iter()
+            .map(|(_, server)| Formatter::LanguageServer {
+                name: Some(server.name().to_string()),
+            })
+            .collect();
+
         let formatters = match (trigger, &settings.format_on_save) {
             (FormatTrigger::Save, FormatOnSave::Off) => &[],
             (FormatTrigger::Save, FormatOnSave::List(formatters)) => formatters.as_ref(),
-            (FormatTrigger::Manual, _) | (FormatTrigger::Save, FormatOnSave::On) => {
+            (FormatTrigger::Save, FormatOnSave::On) | (FormatTrigger::Manual, _) => {
                 match &settings.formatter {
                     SelectedFormatter::Auto => {
                         if settings.prettier.allowed {
                             zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            std::slice::from_ref(&Formatter::Prettier)
-                        } else {
-                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
-                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
+                            default_formatter_list.insert(0, Formatter::Prettier);
                         }
+
+                        default_formatter_list.as_ref()
                     }
                     SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
                 }
@@ -1465,7 +1472,6 @@ impl LocalLspStore {
         };
 
         let formatters = code_actions_on_format_formatter.iter().chain(formatters);
-
         for formatter in formatters {
             match formatter {
                 Formatter::Prettier => {
@@ -1561,7 +1567,7 @@ impl LocalLspStore {
 
                     let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                         zlog::trace!(logger => "formatting ranges");
-                        Self::format_ranges_via_lsp(
+                        match Self::format_ranges_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             ranges,
@@ -1571,10 +1577,20 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("Failed to format ranges via language server")?
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::warn!(
+                                    logger =>
+                                    "Failed to format ranges via LSP: {}",
+                                    err
+                                );
+                                continue;
+                            }
+                        }
                     } else {
                         zlog::trace!(logger => "formatting full");
-                        Self::format_via_lsp(
+                        match Self::format_via_lsp(
                             &lsp_store,
                             &buffer.handle,
                             buffer_path_abs,
@@ -1583,13 +1599,24 @@ impl LocalLspStore {
                             cx,
                         )
                         .await
-                        .context("failed to format via language server")?
+                        {
+                            Ok(edits) => edits,
+                            Err(err) => {
+                                zlog::warn!(
+                                    logger =>
+                                    "Failed to format buffer via LSP: {}",
+                                    err
+                                );
+                                continue;
+                            }
+                        }
                     };
 
                     if edits.is_empty() {
                         zlog::trace!(logger => "No changes");
                         continue;
                     }
+                    zlog::trace!("edits {}", edits.len());
                     extend_formatting_transaction(
                         buffer,
                         formatting_transaction_id,
