@@ -1,5 +1,11 @@
-use gpui::{Context, Element, Entity, Render, Subscription, WeakEntity, Window, div};
-use ui::text_for_keystrokes;
+use std::ops::Range;
+
+use editor::display_map::{is_invisible, replacement};
+use gpui::{
+    Context, Element, Entity, HighlightStyle, Render, StyledText, Subscription, WeakEntity, Window,
+    div,
+};
+use ui::{LabelLike, text_for_keystrokes};
 use workspace::{StatusItemView, item::ItemHandle, ui::prelude::*};
 
 use crate::{Vim, VimEvent, VimGlobals};
@@ -97,8 +103,11 @@ impl Render for ModeIndicator {
         };
 
         let vim_readable = vim.read(cx);
-        let label = if let Some(label) = vim_readable.status_label.clone() {
-            label
+        if let Some(label) = vim_readable.status_label.clone() {
+            Label::new(label)
+                .size(LabelSize::Small)
+                .line_height_style(LineHeightStyle::UiLabel)
+                .into_any_element()
         } else {
             let mode = if vim_readable.temp_mode {
                 format!("(insert) {}", vim_readable.mode)
@@ -107,17 +116,49 @@ impl Render for ModeIndicator {
             };
 
             let current_operators_description = self.current_operators_description(vim.clone(), cx);
-            let pending = self
+            let (pending, _, runs) = self
                 .pending_keys
                 .as_ref()
-                .unwrap_or(&current_operators_description);
-            format!("{} -- {} --", pending, mode).into()
-        };
+                .unwrap_or(&current_operators_description)
+                .chars()
+                .fold(
+                    (String::new(), 0usize, Vec::<Range<usize>>::new()),
+                    |(pending, index, mut ranges), c| {
+                        let (extend, highlight) = match c {
+                            '\t' => ("\\t".to_string(), true),
+                            '\n' => ("\\n".to_string(), true),
+                            '\r' => ("\\r".to_string(), true),
+                            c if is_invisible(c) => {
+                                if c <= '\x1f' {
+                                    (replacement(c).unwrap_or("").to_string(), true)
+                                } else {
+                                    (format!("\\u{:04X}", c as u32), true)
+                                }
+                            }
+                            c => (c.to_string(), false),
+                        };
+                        let end = index + extend.len();
+                        if highlight {
+                            ranges.push(index..end);
+                        }
+                        (pending + &extend, end, ranges)
+                    },
+                );
+            let highlights = runs.iter().map(|range| {
+                (
+                    range.clone(),
+                    HighlightStyle::color(cx.theme().colors().text_muted),
+                )
+            });
 
-        Label::new(label)
-            .size(LabelSize::Small)
-            .line_height_style(LineHeightStyle::UiLabel)
-            .into_any_element()
+            // The pending string needs to be at the start of the label or the highlights will be in the wrong position
+            let label = format!("{} -- {} --", pending, mode);
+            LabelLike::new()
+                .size(LabelSize::Small)
+                .line_height_style(LineHeightStyle::UiLabel)
+                .child(StyledText::new(label).with_highlights(highlights))
+                .into_any_element()
+        }
     }
 }
 
