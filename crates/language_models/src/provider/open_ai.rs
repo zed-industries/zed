@@ -270,7 +270,8 @@ impl OpenAiLanguageModel {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request =
+                stream_completion(http_client.as_ref(), &api_url, &api_key, request, true);
             let response = request.await?;
             Ok(response)
         });
@@ -350,6 +351,8 @@ impl LanguageModel for OpenAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.id().starts_with("o1"),
+            true,
             self.max_output_tokens(),
         );
         let completions = self.stream_completion(request, cx);
@@ -365,10 +368,10 @@ pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
+    stream: bool,
+    multipart_allowed: bool,
     max_output_tokens: Option<u64>,
 ) -> open_ai::Request {
-    let stream = !model_id.starts_with("o1-");
-
     let mut messages = Vec::new();
     for message in request.messages {
         for content in message.content {
@@ -377,6 +380,7 @@ pub fn into_open_ai(
                     add_message_content_part(
                         open_ai::MessagePart::Text { text: text },
                         message.role,
+                        multipart_allowed,
                         &mut messages,
                     )
                 }
@@ -390,6 +394,7 @@ pub fn into_open_ai(
                             },
                         },
                         message.role,
+                        multipart_allowed,
                         &mut messages,
                     );
                 }
@@ -477,6 +482,7 @@ pub fn into_open_ai(
 fn add_message_content_part(
     new_part: open_ai::MessagePart,
     role: Role,
+    multipart_allowed: bool,
     messages: &mut Vec<open_ai::RequestMessage>,
 ) {
     match (role, messages.last_mut()) {
@@ -488,7 +494,9 @@ fn add_message_content_part(
                 ..
             }),
         )
-        | (Role::System, Some(open_ai::RequestMessage::System { content, .. })) => {
+        | (Role::System, Some(open_ai::RequestMessage::System { content, .. }))
+            if multipart_allowed =>
+        {
             content.push_part(new_part);
         }
         _ => {

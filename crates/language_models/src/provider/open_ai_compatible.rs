@@ -9,7 +9,7 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter,
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
@@ -38,6 +38,10 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub supports_parallel_tools: Option<bool>,
+    pub streaming: Option<bool>,
+    pub multipart_allowed: Option<bool>,
+    pub minimal_schema: Option<bool>,
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {
@@ -249,6 +253,7 @@ impl OpenAiCompatibleLanguageModel {
         cx: &AsyncApp,
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
+        let stream = request.stream;
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, _| {
             (state.api_key.clone(), state.settings.api_url.clone())
@@ -261,7 +266,8 @@ impl OpenAiCompatibleLanguageModel {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey { provider });
             };
-            let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request =
+                stream_completion(http_client.as_ref(), &api_url, &api_key, request, stream);
             let response = request.await?;
             Ok(response)
         });
@@ -341,6 +347,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
         .boxed()
     }
 
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        if self.model.minimal_schema.unwrap_or(false) {
+            LanguageModelToolSchemaFormat::JsonSchemaMinimal
+        } else {
+            LanguageModelToolSchemaFormat::JsonSchema
+        }
+    }
+
     fn stream_completion(
         &self,
         request: LanguageModelRequest,
@@ -355,7 +369,14 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            self.model.supports_parallel_tools.unwrap_or(true),
+            self.model.streaming.unwrap_or(true),
+            self.model.multipart_allowed.unwrap_or(true),
+            self.max_output_tokens(),
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
