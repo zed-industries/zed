@@ -20,7 +20,7 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, WORK_DIRECTORY_REPO_PATH,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -28,7 +28,7 @@ use git::{
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus,
     },
-    stash::GitStash,
+    stash::{GitStash, StashEntry},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -2739,6 +2739,12 @@ impl RepositorySnapshot {
             entry_ids: vec![self.id.to_proto()],
             scan_id: self.scan_id,
             is_last_update: true,
+            stash_entries: self
+                .stash_entries
+                .entries
+                .iter()
+                .map(|entry| stash_to_proto(entry))
+                .collect(),
         }
     }
 
@@ -2802,6 +2808,12 @@ impl RepositorySnapshot {
             entry_ids: vec![],
             scan_id: self.scan_id,
             is_last_update: true,
+            stash_entries: self
+                .stash_entries
+                .entries
+                .iter()
+                .map(|entry| stash_to_proto(entry))
+                .collect(),
         }
     }
 
@@ -2856,6 +2868,22 @@ impl RepositorySnapshot {
             .to_string()
             .into()
     }
+}
+
+pub fn stash_to_proto(entry: &StashEntry) -> proto::StashEntry {
+    proto::StashEntry {
+        oid: entry.oid.as_bytes().to_vec(),
+        message: entry.message.clone(),
+        index: entry.index as i64,
+    }
+}
+
+pub fn proto_to_stash(entry: &proto::StashEntry) -> Result<StashEntry> {
+    Ok(StashEntry {
+        oid: Oid::from_bytes(&entry.oid)?,
+        message: entry.message.clone(),
+        index: entry.index as usize,
+    })
 }
 
 impl MergeDetails {
@@ -4226,6 +4254,13 @@ impl Repository {
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
+        self.snapshot.stash_entries = GitStash {
+            entries: update
+                .stash_entries
+                .iter()
+                .filter_map(|entry| proto_to_stash(entry).ok())
+                .collect(),
+        };
 
         let edits = update
             .removed_statuses
