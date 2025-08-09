@@ -206,6 +206,7 @@
 operator: "/" @operator
 
 (lifetime) @lifetime
+(lifetime (identifier) @lifetime)
 
 (parameter (identifier) @variable.parameter)
 
