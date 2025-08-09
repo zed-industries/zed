@@ -603,8 +603,8 @@ async fn upload_minidump(
         .text("platform", "rust");
     if let Some(panic) = panic {
         form = form
-            .text("channel", panic.release_channel.clone())
-            .text("version", panic.app_version.clone())
+            .text("sentry[tags][channel]", panic.release_channel.clone())
+            .text("sentry[tags][version]", panic.app_version.clone())
             .text("sentry[context][os][name]", panic.os_name.clone())
             .text(
                 "sentry[context][device][architecture]",
