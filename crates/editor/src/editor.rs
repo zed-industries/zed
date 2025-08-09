@@ -75,11 +75,7 @@ pub use proposed_changes_editor::{
 };
 pub use text::Bias;
 
-use ::git::{
-    Restore,
-    blame::BlameEntry,
-    commit::ParsedCommitMessage,
-};
+use ::git::{Restore, blame::BlameEntry, commit::ParsedCommitMessage};
 use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
