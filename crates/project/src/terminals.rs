@@ -374,7 +374,8 @@ impl Project {
                     }
                     None => {
                         if let Some(venv_path) = &python_venv_directory {
-                            add_environment_path(&mut env, &venv_path.join("bin")).log_err();
+                            add_environment_path(&mut env, &venv_path.join(PYTHON_VENV_BIN_DIR))
+                                .log_err();
                         }
 
                         let shell = if let Some(program) = spawn_task.command {
