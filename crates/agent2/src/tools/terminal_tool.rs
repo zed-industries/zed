@@ -413,16 +413,7 @@ mod tests {
             cx.run_until_parked();
             let event = stream_rx.try_next();
             if let Ok(Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth)))) = event {
-                auth.response
-                    .send(
-                        auth.options
-                            .iter()
-                            .find_map(|option| {
-                                (option.id.0.as_ref() == "allow").then_some(option.id.clone())
-                            })
-                            .unwrap(),
-                    )
-                    .unwrap();
+                auth.response.send(auth.options[0].id.clone()).unwrap();
             }
 
             cx.spawn(async move |_| {
