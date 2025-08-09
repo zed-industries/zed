@@ -336,6 +336,7 @@ impl Platform for TestPlatform {
     fn prompt_for_new_path(
         &self,
         directory: &std::path::Path,
+        _suggested_name: Option<&str>,
     ) -> oneshot::Receiver<Result<Option<std::path::PathBuf>>> {
         let (tx, rx) = oneshot::channel();
         self.background_executor()
