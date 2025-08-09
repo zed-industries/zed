@@ -17,6 +17,7 @@ test-support = []
 
 [dependencies]
 anthropic = { workspace = true, features = ["schemars"] }
+open_router.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 client.workspace = true
