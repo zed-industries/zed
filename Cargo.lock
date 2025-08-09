@@ -4004,6 +4004,7 @@ dependencies = [
  "log",
  "minidumper",
  "paths",
+ "release_channel",
  "smol",
  "workspace-hack",
 ]
