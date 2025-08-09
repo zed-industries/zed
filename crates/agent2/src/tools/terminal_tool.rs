@@ -121,7 +121,7 @@ impl AgentTool for TerminalTool {
         let language_registry = self.project.read(cx).languages().clone();
         let working_dir = match working_dir(&input, &self.project, cx) {
             Ok(dir) => dir,
-            Err(err) => return Task::ready(Err(err)).into(),
+            Err(err) => return Task::ready(Err(err)),
         };
         let program = self.determine_shell.clone();
         let command = if cfg!(windows) {
@@ -212,7 +212,7 @@ impl AgentTool for TerminalTool {
                     })
                     .log_err();
 
-                Ok(processed_content.into())
+                Ok(processed_content)
             }
         })
     }
