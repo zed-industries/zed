@@ -14,6 +14,12 @@ pub struct GitStash {
     pub entries: Arc<[StashEntry]>,
 }
 
+impl GitStash {
+    pub fn apply(&mut self, other: GitStash) {
+        self.entries = other.entries;
+    }
+}
+
 impl FromStr for GitStash {
     type Err = anyhow::Error;
 
