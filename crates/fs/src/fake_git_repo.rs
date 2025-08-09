@@ -402,11 +402,11 @@ impl GitRepository for FakeGitRepository {
         &self,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
-    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
