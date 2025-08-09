@@ -121,6 +121,7 @@ message UpdateRepository {
     uint64 scan_id = 9;
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
+    repeated StashEntry stash_entries = 12;
 }
 
 message RemoveRepository {
@@ -270,6 +271,12 @@ message StatusEntry {
     // Can be removed once collab's min version is >=0.171.0.
     GitStatus simple_status = 2;
     GitFileStatus status = 3;
+}
+
+message StashEntry {
+    bytes oid = 1;
+    string message = 2;
+    int64 index = 3;
 }
 
 message Stage {
