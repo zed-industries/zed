@@ -121,6 +121,7 @@ message UpdateRepository {
     uint64 scan_id = 9;
     bool is_last_update = 10;
     optional GitCommitDetails head_commit_details = 11;
+    repeated StashEntry stash_entries = 12;
 }
 
 message RemoveRepository {
@@ -272,6 +273,12 @@ message StatusEntry {
     GitFileStatus status = 3;
 }
 
+message StashEntry {
+    bytes oid = 1;
+    string message = 2;
+    int64 index = 3;
+}
+
 message Stage {
     uint64 project_id = 1;
     reserved 2;
@@ -295,6 +302,13 @@ message Stash {
 message StashPop {
     uint64 project_id = 1;
     uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
+}
+
+message StashDrop {
+    uint64 project_id = 1;
+    uint64 repository_id = 2;
+    optional uint64 stash_index = 3;
 }
 
 message Commit {
