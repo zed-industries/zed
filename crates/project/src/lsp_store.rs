@@ -768,6 +768,39 @@ impl LocalLspStore {
                                         anyhow::Ok(())
                                     })??;
                                 }
+                                "textDocument/codeAction" => {
+                                    this.read_with(&mut cx, |this, _| {
+                                        if let Some(server) = this.language_server_for_id(server_id)
+                                        {
+                                            let options =
+                                                reg.register_options
+                                                    .map(|options| {
+                                                        serde_json::from_value::<
+                                                            lsp::CodeActionOptions,
+                                                        >(
+                                                            options
+                                                        )
+                                                    })
+                                                    .transpose()?;
+                                            let provider_capability = match options {
+                                                None => {
+                                                    lsp::CodeActionProviderCapability::Simple(true)
+                                                }
+                                                Some(options) => {
+                                                    lsp::CodeActionProviderCapability::Options(
+                                                        options,
+                                                    )
+                                                }
+                                            };
+
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.code_action_provider =
+                                                    Some(provider_capability);
+                                            })
+                                        }
+                                        anyhow::Ok(())
+                                    })??;
+                                }
                                 _ => log::warn!("unhandled capability registration: {reg:?}"),
                             }
                         }
@@ -846,6 +879,16 @@ impl LocalLspStore {
                                                 capabilities.document_formatting_provider = None;
                                             });
                                             notify_server_capabilities_updated(&server, cx);
+                                        }
+                                    })?;
+                                }
+                                "textDocument/codeAction" => {
+                                    this.read_with(&mut cx, |this, _| {
+                                        if let Some(server) = this.language_server_for_id(server_id)
+                                        {
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.code_action_provider = None;
+                                            })
                                         }
                                     })?;
                                 }
