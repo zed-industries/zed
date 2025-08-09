@@ -8,11 +8,12 @@ use crate::{
     },
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Result, anyhow};
 use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
@@ -36,7 +37,6 @@ use project::{
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
 };
 use prompt_store::{ModelContext, PromptBuilder};
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -49,7 +49,6 @@ use std::{
 use thiserror::Error;
 use util::{ResultExt as _, post_inc};
 use uuid::Uuid;
-use zed_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 
 const MAX_RETRY_ATTEMPTS: u8 = 4;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -1681,7 +1680,7 @@ impl Thread {
 
         let completion_mode = request
             .mode
-            .unwrap_or(zed_llm_client::CompletionMode::Normal);
+            .unwrap_or(cloud_llm_client::CompletionMode::Normal);
 
         self.last_received_chunk_at = Some(Instant::now());
 
@@ -2113,12 +2112,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_prompt.txt");
-
         let request = self.to_summarize_request(
             &model.model,
             CompletionIntent::ThreadSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_PROMPT.into(),
             cx,
         );
 
@@ -3255,8 +3252,10 @@ impl Thread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            project.user_store().update(cx, |user_store, cx| {
+        self.project
+            .read(cx)
+            .user_store()
+            .update(cx, |user_store, cx| {
                 user_store.update_model_request_usage(
                     ModelRequestUsage(RequestUsage {
                         amount: amount as i32,
@@ -3264,8 +3263,7 @@ impl Thread {
                     }),
                     cx,
                 )
-            })
-        });
+            });
     }
 
     pub fn deny_tool_use(
@@ -4047,8 +4045,8 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Brief");
-        fake_model.stream_last_completion_response(" Introduction");
+        fake_model.send_last_completion_stream_text_chunk("Brief");
+        fake_model.send_last_completion_stream_text_chunk(" Introduction");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4141,7 +4139,7 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("A successful summary");
+        fake_model.send_last_completion_stream_text_chunk("A successful summary");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4774,7 +4772,7 @@ fn main() {{
             !pending.is_empty(),
             "Should have a pending completion after retry"
         );
-        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.send_completion_stream_text_chunk(&pending[0], "Success!");
         fake_model.end_completion_stream(&pending[0]);
         cx.run_until_parked();
 
@@ -4942,7 +4940,7 @@ fn main() {{
 
         // Check for pending completions and complete them
         if let Some(pending) = inner_fake.pending_completions().first() {
-            inner_fake.stream_completion_response(pending, "Success!");
+            inner_fake.send_completion_stream_text_chunk(pending, "Success!");
             inner_fake.end_completion_stream(pending);
         }
         cx.run_until_parked();
@@ -5427,7 +5425,7 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response");
+        fake_model.send_last_completion_stream_text_chunk("Assistant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }

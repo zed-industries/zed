@@ -324,20 +324,6 @@ impl CollabPanel {
             )
             .detach();
 
-            let entity = cx.entity().downgrade();
-            let list_state = ListState::new(
-                0,
-                gpui::ListAlignment::Top,
-                px(1000.),
-                move |ix, window, cx| {
-                    if let Some(entity) = entity.upgrade() {
-                        entity.update(cx, |this, cx| this.render_list_entry(ix, window, cx))
-                    } else {
-                        div().into_any()
-                    }
-                },
-            );
-
             let mut this = Self {
                 width: None,
                 focus_handle: cx.focus_handle(),
@@ -345,7 +331,7 @@ impl CollabPanel {
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),
                 context_menu: None,
-                list_state,
+                list_state: ListState::new(0, gpui::ListAlignment::Top, px(1000.)),
                 channel_name_editor,
                 filter_editor,
                 entries: Vec::default(),
@@ -940,7 +926,7 @@ impl CollabPanel {
             room.read(cx).local_participant().role == proto::ChannelRole::Admin
         });
 
-        ListItem::new(SharedString::from(user.github_login.clone()))
+        ListItem::new(user.github_login.clone())
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
             .toggle_state(is_selected)
@@ -1124,7 +1110,7 @@ impl CollabPanel {
                     .relative()
                     .gap_1()
                     .child(render_tree_branch(false, false, window, cx))
-                    .child(IconButton::new(0, IconName::MessageBubbles))
+                    .child(IconButton::new(0, IconName::Chat))
                     .children(has_messages_notification.then(|| {
                         div()
                             .w_1p5()
@@ -2331,7 +2317,7 @@ impl CollabPanel {
                                 let client = this.client.clone();
                                 cx.spawn_in(window, async move |_, cx| {
                                     client
-                                        .authenticate_and_connect(true, &cx)
+                                        .connect(true, &cx)
                                         .await
                                         .into_response()
                                         .notify_async_err(cx);
@@ -2431,7 +2417,13 @@ impl CollabPanel {
         });
         v_flex()
             .size_full()
-            .child(list(self.list_state.clone()).size_full())
+            .child(
+                list(
+                    self.list_state.clone(),
+                    cx.processor(Self::render_list_entry),
+                )
+                .size_full(),
+            )
             .child(
                 v_flex()
                     .child(div().mx_2().border_primary(cx).border_t_1())
@@ -2583,7 +2575,7 @@ impl CollabPanel {
     ) -> impl IntoElement {
         let online = contact.online;
         let busy = contact.busy || calling;
-        let github_login = SharedString::from(contact.user.github_login.clone());
+        let github_login = contact.user.github_login.clone();
         let item = ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
@@ -2605,7 +2597,7 @@ impl CollabPanel {
                                     let contact = contact.clone();
                                     move |this, event: &ClickEvent, window, cx| {
                                         this.deploy_contact_context_menu(
-                                            event.down.position,
+                                            event.position(),
                                             contact.clone(),
                                             window,
                                             cx,
@@ -2662,7 +2654,7 @@ impl CollabPanel {
         is_selected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let github_login = SharedString::from(user.github_login.clone());
+        let github_login = user.github_login.clone();
         let user_id = user.id;
         let is_response_pending = self.user_store.read(cx).is_contact_request_pending(user);
         let color = if is_response_pending {
@@ -2923,7 +2915,7 @@ impl CollabPanel {
                         .gap_1()
                         .px_1()
                         .child(
-                            IconButton::new("channel_chat", IconName::MessageBubbles)
+                            IconButton::new("channel_chat", IconName::Chat)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
@@ -2939,7 +2931,7 @@ impl CollabPanel {
                                 .visible_on_hover(""),
                         )
                         .child(
-                            IconButton::new("channel_notes", IconName::File)
+                            IconButton::new("channel_notes", IconName::Reader)
                                 .style(ButtonStyle::Filled)
                                 .shape(ui::IconButtonShape::Square)
                                 .icon_size(IconSize::Small)
@@ -3061,7 +3053,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::move_channel_down))
             .track_focus(&self.focus_handle)
             .size_full()
-            .child(if self.user_store.read(cx).current_user().is_none() {
+            .child(if !self.client.status().borrow().is_connected() {
                 self.render_signed_out(cx)
             } else {
                 self.render_signed_in(window, cx)

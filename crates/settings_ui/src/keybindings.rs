@@ -11,11 +11,10 @@ use editor::{CompletionProvider, Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, Animation, AnimationExt, AppContext as _, AsyncApp, Axis, ClickEvent, Context,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Global, IsZero,
-    KeyContext, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Point, ScrollStrategy,
-    ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
-    actions, anchored, deferred, div,
+    Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, Global, IsZero, KeyContext, Keystroke, MouseButton,
+    Point, ScrollStrategy, ScrollWheelEvent, Stateful, StyledText, Subscription, Task,
+    TextStyleRefinement, WeakEntity, actions, anchored, deferred, div,
 };
 use language::{Language, LanguageConfig, ToOffset as _};
 use notifications::status_toast::{StatusToast, ToastIcon};
@@ -35,7 +34,10 @@ use workspace::{
 
 use crate::{
     keybindings::persistence::KEYBINDING_EDITORS,
-    ui_components::table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
+    ui_components::{
+        keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
+        table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
+    },
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
@@ -69,18 +71,6 @@ actions!(
         ToggleExactKeystrokeMatching,
         /// Shows matching keystrokes for the currently selected binding
         ShowMatchingKeybinds
-    ]
-);
-
-actions!(
-    keystroke_input,
-    [
-        /// Starts recording keystrokes
-        StartRecording,
-        /// Stops recording keystrokes
-        StopRecording,
-        /// Clears the recorded keystrokes
-        ClearKeystrokes,
     ]
 );
 
@@ -384,6 +374,14 @@ impl Focusable for KeymapEditor {
         }
     }
 }
+/// Helper function to check if two keystroke sequences match exactly
+fn keystrokes_match_exactly(keystrokes1: &[Keystroke], keystrokes2: &[Keystroke]) -> bool {
+    keystrokes1.len() == keystrokes2.len()
+        && keystrokes1
+            .iter()
+            .zip(keystrokes2)
+            .all(|(k1, k2)| k1.key == k2.key && k1.modifiers == k2.modifiers)
+}
 
 impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -393,7 +391,7 @@ impl KeymapEditor {
 
         let keystroke_editor = cx.new(|cx| {
             let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
-            keystroke_editor.search = true;
+            keystroke_editor.set_search(true);
             keystroke_editor
         });
 
@@ -559,13 +557,7 @@ impl KeymapEditor {
                             .keystrokes()
                             .is_some_and(|keystrokes| {
                                 if exact_match {
-                                    keystroke_query.len() == keystrokes.len()
-                                        && keystroke_query.iter().zip(keystrokes).all(
-                                            |(query, keystroke)| {
-                                                query.key == keystroke.key
-                                                    && query.modifiers == keystroke.modifiers
-                                            },
-                                        )
+                                    keystrokes_match_exactly(&keystroke_query, keystrokes)
                                 } else if keystroke_query.len() > keystrokes.len() {
                                     return false;
                                 } else {
@@ -1865,7 +1857,7 @@ impl Render for KeymapEditor {
                                         .on_click(cx.listener(
                                             move |this, event: &ClickEvent, window, cx| {
                                                 this.select_index(row_index, None, window, cx);
-                                                if event.up.click_count == 2 {
+                                                if event.click_count() == 2 {
                                                     this.open_edit_keybinding_modal(
                                                         false, window, cx,
                                                     );
@@ -2350,8 +2342,50 @@ impl KeybindingEditorModal {
         self.save_or_display_error(cx);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(DismissEvent)
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn get_matching_bindings_count(&self, cx: &Context<Self>) -> usize {
+        let current_keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        if current_keystrokes.is_empty() {
+            return 0;
+        }
+
+        self.keymap_editor
+            .read(cx)
+            .keybindings
+            .iter()
+            .enumerate()
+            .filter(|(idx, binding)| {
+                // Don't count the binding we're currently editing
+                if !self.creating && *idx == self.editing_keybind_idx {
+                    return false;
+                }
+
+                binding
+                    .keystrokes()
+                    .map(|keystrokes| keystrokes_match_exactly(keystrokes, &current_keystrokes))
+                    .unwrap_or(false)
+            })
+            .count()
+    }
+
+    fn show_matching_bindings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let keystrokes = self.keybind_editor.read(cx).keystrokes().to_vec();
+
+        // Dismiss the modal
+        cx.emit(DismissEvent);
+
+        // Update the keymap editor to show matching keystrokes
+        self.keymap_editor.update(cx, |editor, cx| {
+            editor.filter_state = FilterState::All;
+            editor.search_mode = SearchMode::KeyStroke { exact_match: true };
+            editor.keystroke_editor.update(cx, |keystroke_editor, cx| {
+                keystroke_editor.set_keystrokes(keystrokes, cx);
+            });
+        });
     }
 }
 
@@ -2366,6 +2400,7 @@ fn remove_key_char(Keystroke { modifiers, key, .. }: Keystroke) -> Keystroke {
 impl Render for KeybindingEditorModal {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().colors();
+        let matching_bindings_count = self.get_matching_bindings_count(cx);
 
         v_flex()
             .w(rems(34.))
@@ -2380,6 +2415,7 @@ impl Render for KeybindingEditorModal {
                     .header(
                         ModalHeader::new().child(
                             v_flex()
+                                .w_full()
                                 .pb_1p5()
                                 .mb_1()
                                 .gap_0p5()
@@ -2403,17 +2439,55 @@ impl Render for KeybindingEditorModal {
                     .section(
                         Section::new().child(
                             v_flex()
-                                .gap_2()
+                                .gap_2p5()
                                 .child(
                                     v_flex()
-                                        .child(Label::new("Edit Keystroke"))
                                         .gap_1()
-                                        .child(self.keybind_editor.clone()),
+                                        .child(Label::new("Edit Keystroke"))
+                                        .child(self.keybind_editor.clone())
+                                        .child(h_flex().gap_px().when(
+                                            matching_bindings_count > 0,
+                                            |this| {
+                                                let label = format!(
+                                                    "There {} {} {} with the same keystrokes.",
+                                                    if matching_bindings_count == 1 {
+                                                        "is"
+                                                    } else {
+                                                        "are"
+                                                    },
+                                                    matching_bindings_count,
+                                                    if matching_bindings_count == 1 {
+                                                        "binding"
+                                                    } else {
+                                                        "bindings"
+                                                    }
+                                                );
+
+                                                this.child(
+                                                    Label::new(label)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .child(
+                                                    Button::new("show_matching", "View")
+                                                        .label_size(LabelSize::Small)
+                                                        .icon(IconName::ArrowUpRight)
+                                                        .icon_color(Color::Muted)
+                                                        .icon_size(IconSize::Small)
+                                                        .on_click(cx.listener(
+                                                            |this, _, window, cx| {
+                                                                this.show_matching_bindings(
+                                                                    window, cx,
+                                                                );
+                                                            },
+                                                        )),
+                                                )
+                                            },
+                                        )),
                                 )
                                 .when_some(self.action_arguments_editor.clone(), |this, editor| {
                                     this.child(
                                         v_flex()
-                                            .mt_1p5()
                                             .gap_1()
                                             .child(Label::new("Edit Arguments"))
                                             .child(editor),
@@ -2424,14 +2498,7 @@ impl Render for KeybindingEditorModal {
                                     this.child(
                                         Banner::new()
                                             .severity(error.severity)
-                                            // For some reason, the div overflows its container to the
-                                            //right. The padding accounts for that.
-                                            .child(
-                                                div()
-                                                    .size_full()
-                                                    .pr_2()
-                                                    .child(Label::new(error.content.clone())),
-                                            ),
+                                            .child(Label::new(error.content.clone())),
                                     )
                                 }),
                         ),
@@ -2977,524 +3044,6 @@ async fn remove_keybinding(
         source = source
     );
     Ok(())
-}
-
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-enum CloseKeystrokeResult {
-    Partial,
-    Close,
-    None,
-}
-
-struct KeystrokeInput {
-    keystrokes: Vec<Keystroke>,
-    placeholder_keystrokes: Option<Vec<Keystroke>>,
-    outer_focus_handle: FocusHandle,
-    inner_focus_handle: FocusHandle,
-    intercept_subscription: Option<Subscription>,
-    _focus_subscriptions: [Subscription; 2],
-    search: bool,
-    /// Handles tripe escape to stop recording
-    close_keystrokes: Option<Vec<Keystroke>>,
-    close_keystrokes_start: Option<usize>,
-    previous_modifiers: Modifiers,
-}
-
-impl KeystrokeInput {
-    const KEYSTROKE_COUNT_MAX: usize = 3;
-
-    fn new(
-        placeholder_keystrokes: Option<Vec<Keystroke>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let outer_focus_handle = cx.focus_handle();
-        let inner_focus_handle = cx.focus_handle();
-        let _focus_subscriptions = [
-            cx.on_focus_in(&inner_focus_handle, window, Self::on_inner_focus_in),
-            cx.on_focus_out(&inner_focus_handle, window, Self::on_inner_focus_out),
-        ];
-        Self {
-            keystrokes: Vec::new(),
-            placeholder_keystrokes,
-            inner_focus_handle,
-            outer_focus_handle,
-            intercept_subscription: None,
-            _focus_subscriptions,
-            search: false,
-            close_keystrokes: None,
-            close_keystrokes_start: None,
-            previous_modifiers: Modifiers::default(),
-        }
-    }
-
-    fn set_keystrokes(&mut self, keystrokes: Vec<Keystroke>, cx: &mut Context<Self>) {
-        self.keystrokes = keystrokes;
-        self.keystrokes_changed(cx);
-    }
-
-    fn dummy(modifiers: Modifiers) -> Keystroke {
-        return Keystroke {
-            modifiers,
-            key: "".to_string(),
-            key_char: None,
-        };
-    }
-
-    fn keystrokes_changed(&self, cx: &mut Context<Self>) {
-        cx.emit(());
-        cx.notify();
-    }
-
-    fn key_context() -> KeyContext {
-        let mut key_context = KeyContext::default();
-        key_context.add("KeystrokeInput");
-        key_context
-    }
-
-    fn handle_possible_close_keystroke(
-        &mut self,
-        keystroke: &Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> CloseKeystrokeResult {
-        let Some(keybind_for_close_action) = window
-            .highest_precedence_binding_for_action_in_context(&StopRecording, Self::key_context())
-        else {
-            log::trace!("No keybinding to stop recording keystrokes in keystroke input");
-            self.close_keystrokes.take();
-            self.close_keystrokes_start.take();
-            return CloseKeystrokeResult::None;
-        };
-        let action_keystrokes = keybind_for_close_action.keystrokes();
-
-        if let Some(mut close_keystrokes) = self.close_keystrokes.take() {
-            let mut index = 0;
-
-            while index < action_keystrokes.len() && index < close_keystrokes.len() {
-                if !close_keystrokes[index].should_match(&action_keystrokes[index]) {
-                    break;
-                }
-                index += 1;
-            }
-            if index == close_keystrokes.len() {
-                if index >= action_keystrokes.len() {
-                    self.close_keystrokes_start.take();
-                    return CloseKeystrokeResult::None;
-                }
-                if keystroke.should_match(&action_keystrokes[index]) {
-                    if action_keystrokes.len() >= 1 && index == action_keystrokes.len() - 1 {
-                        self.stop_recording(&StopRecording, window, cx);
-                        return CloseKeystrokeResult::Close;
-                    } else {
-                        close_keystrokes.push(keystroke.clone());
-                        self.close_keystrokes = Some(close_keystrokes);
-                        return CloseKeystrokeResult::Partial;
-                    }
-                } else {
-                    self.close_keystrokes_start.take();
-                    return CloseKeystrokeResult::None;
-                }
-            }
-        } else if let Some(first_action_keystroke) = action_keystrokes.first()
-            && keystroke.should_match(first_action_keystroke)
-        {
-            self.close_keystrokes = Some(vec![keystroke.clone()]);
-            return CloseKeystrokeResult::Partial;
-        }
-        self.close_keystrokes_start.take();
-        return CloseKeystrokeResult::None;
-    }
-
-    fn on_modifiers_changed(
-        &mut self,
-        event: &ModifiersChangedEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let keystrokes_len = self.keystrokes.len();
-
-        if self.previous_modifiers.modified()
-            && event.modifiers.is_subset_of(&self.previous_modifiers)
-        {
-            self.previous_modifiers &= event.modifiers;
-            cx.stop_propagation();
-            return;
-        }
-
-        if let Some(last) = self.keystrokes.last_mut()
-            && last.key.is_empty()
-            && keystrokes_len <= Self::KEYSTROKE_COUNT_MAX
-        {
-            if self.search {
-                if self.previous_modifiers.modified() {
-                    last.modifiers |= event.modifiers;
-                    self.previous_modifiers |= event.modifiers;
-                } else {
-                    self.keystrokes.push(Self::dummy(event.modifiers));
-                    self.previous_modifiers |= event.modifiers;
-                }
-            } else if !event.modifiers.modified() {
-                self.keystrokes.pop();
-            } else {
-                last.modifiers = event.modifiers;
-            }
-
-            self.keystrokes_changed(cx);
-        } else if keystrokes_len < Self::KEYSTROKE_COUNT_MAX {
-            self.keystrokes.push(Self::dummy(event.modifiers));
-            if self.search {
-                self.previous_modifiers |= event.modifiers;
-            }
-            self.keystrokes_changed(cx);
-        }
-        cx.stop_propagation();
-    }
-
-    fn handle_keystroke(
-        &mut self,
-        keystroke: &Keystroke,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let close_keystroke_result = self.handle_possible_close_keystroke(keystroke, window, cx);
-        if close_keystroke_result != CloseKeystrokeResult::Close {
-            let key_len = self.keystrokes.len();
-            if let Some(last) = self.keystrokes.last_mut()
-                && last.key.is_empty()
-                && key_len <= Self::KEYSTROKE_COUNT_MAX
-            {
-                if self.search {
-                    last.key = keystroke.key.clone();
-                    if close_keystroke_result == CloseKeystrokeResult::Partial
-                        && self.close_keystrokes_start.is_none()
-                    {
-                        self.close_keystrokes_start = Some(self.keystrokes.len() - 1);
-                    }
-                    if self.search {
-                        self.previous_modifiers = keystroke.modifiers;
-                    }
-                    self.keystrokes_changed(cx);
-                    cx.stop_propagation();
-                    return;
-                } else {
-                    self.keystrokes.pop();
-                }
-            }
-            if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-                if close_keystroke_result == CloseKeystrokeResult::Partial
-                    && self.close_keystrokes_start.is_none()
-                {
-                    self.close_keystrokes_start = Some(self.keystrokes.len());
-                }
-                self.keystrokes.push(keystroke.clone());
-                if self.search {
-                    self.previous_modifiers = keystroke.modifiers;
-                } else if self.keystrokes.len() < Self::KEYSTROKE_COUNT_MAX {
-                    self.keystrokes.push(Self::dummy(keystroke.modifiers));
-                }
-            } else if close_keystroke_result != CloseKeystrokeResult::Partial {
-                self.clear_keystrokes(&ClearKeystrokes, window, cx);
-            }
-        }
-        self.keystrokes_changed(cx);
-        cx.stop_propagation();
-    }
-
-    fn on_inner_focus_in(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.intercept_subscription.is_none() {
-            let listener = cx.listener(|this, event: &gpui::KeystrokeEvent, window, cx| {
-                this.handle_keystroke(&event.keystroke, window, cx);
-            });
-            self.intercept_subscription = Some(cx.intercept_keystrokes(listener))
-        }
-    }
-
-    fn on_inner_focus_out(
-        &mut self,
-        _event: gpui::FocusOutEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.intercept_subscription.take();
-        cx.notify();
-    }
-
-    fn keystrokes(&self) -> &[Keystroke] {
-        if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
-            && self.keystrokes.is_empty()
-        {
-            return placeholders;
-        }
-        if !self.search
-            && self
-                .keystrokes
-                .last()
-                .map_or(false, |last| last.key.is_empty())
-        {
-            return &self.keystrokes[..self.keystrokes.len() - 1];
-        }
-        return &self.keystrokes;
-    }
-
-    fn render_keystrokes(&self, is_recording: bool) -> impl Iterator<Item = Div> {
-        let keystrokes = if let Some(placeholders) = self.placeholder_keystrokes.as_ref()
-            && self.keystrokes.is_empty()
-        {
-            if is_recording {
-                &[]
-            } else {
-                placeholders.as_slice()
-            }
-        } else {
-            &self.keystrokes
-        };
-        keystrokes.iter().map(move |keystroke| {
-            h_flex().children(ui::render_keystroke(
-                keystroke,
-                Some(Color::Default),
-                Some(rems(0.875).into()),
-                ui::PlatformStyle::platform(),
-                false,
-            ))
-        })
-    }
-
-    fn start_recording(&mut self, _: &StartRecording, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.inner_focus_handle);
-        self.clear_keystrokes(&ClearKeystrokes, window, cx);
-        self.previous_modifiers = window.modifiers();
-        cx.stop_propagation();
-    }
-
-    fn stop_recording(&mut self, _: &StopRecording, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.inner_focus_handle.is_focused(window) {
-            return;
-        }
-        window.focus(&self.outer_focus_handle);
-        if let Some(close_keystrokes_start) = self.close_keystrokes_start.take()
-            && close_keystrokes_start < self.keystrokes.len()
-        {
-            self.keystrokes.drain(close_keystrokes_start..);
-        }
-        self.close_keystrokes.take();
-        cx.notify();
-    }
-
-    fn clear_keystrokes(
-        &mut self,
-        _: &ClearKeystrokes,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.keystrokes.clear();
-        self.keystrokes_changed(cx);
-    }
-}
-
-impl EventEmitter<()> for KeystrokeInput {}
-
-impl Focusable for KeystrokeInput {
-    fn focus_handle(&self, _cx: &App) -> FocusHandle {
-        self.outer_focus_handle.clone()
-    }
-}
-
-impl Render for KeystrokeInput {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors();
-        let is_focused = self.outer_focus_handle.contains_focused(window, cx);
-        let is_recording = self.inner_focus_handle.is_focused(window);
-
-        let horizontal_padding = rems_from_px(64.);
-
-        let recording_bg_color = colors
-            .editor_background
-            .blend(colors.text_accent.opacity(0.1));
-
-        let recording_pulse = |color: Color| {
-            Icon::new(IconName::Circle)
-                .size(IconSize::Small)
-                .color(Color::Error)
-                .with_animation(
-                    "recording-pulse",
-                    Animation::new(std::time::Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(gpui::pulsating_between(0.4, 0.8)),
-                    {
-                        let color = color.color(cx);
-                        move |this, delta| this.color(Color::Custom(color.opacity(delta)))
-                    },
-                )
-        };
-
-        let recording_indicator = h_flex()
-            .h_4()
-            .pr_1()
-            .gap_0p5()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors
-                .editor_background
-                .blend(colors.text_accent.opacity(0.1)))
-            .rounded_sm()
-            .child(recording_pulse(Color::Error))
-            .child(
-                Label::new("REC")
-                    .size(LabelSize::XSmall)
-                    .weight(FontWeight::SEMIBOLD)
-                    .color(Color::Error),
-            );
-
-        let search_indicator = h_flex()
-            .h_4()
-            .pr_1()
-            .gap_0p5()
-            .border_1()
-            .border_color(colors.border)
-            .bg(colors
-                .editor_background
-                .blend(colors.text_accent.opacity(0.1)))
-            .rounded_sm()
-            .child(recording_pulse(Color::Accent))
-            .child(
-                Label::new("SEARCH")
-                    .size(LabelSize::XSmall)
-                    .weight(FontWeight::SEMIBOLD)
-                    .color(Color::Accent),
-            );
-
-        let record_icon = if self.search {
-            IconName::MagnifyingGlass
-        } else {
-            IconName::PlayFilled
-        };
-
-        h_flex()
-            .id("keystroke-input")
-            .track_focus(&self.outer_focus_handle)
-            .py_2()
-            .px_3()
-            .gap_2()
-            .min_h_10()
-            .w_full()
-            .flex_1()
-            .justify_between()
-            .rounded_lg()
-            .overflow_hidden()
-            .map(|this| {
-                if is_recording {
-                    this.bg(recording_bg_color)
-                } else {
-                    this.bg(colors.editor_background)
-                }
-            })
-            .border_1()
-            .border_color(colors.border_variant)
-            .when(is_focused, |parent| {
-                parent.border_color(colors.border_focused)
-            })
-            .key_context(Self::key_context())
-            .on_action(cx.listener(Self::start_recording))
-            .on_action(cx.listener(Self::clear_keystrokes))
-            .child(
-                h_flex()
-                    .w(horizontal_padding)
-                    .gap_0p5()
-                    .justify_start()
-                    .flex_none()
-                    .when(is_recording, |this| {
-                        this.map(|this| {
-                            if self.search {
-                                this.child(search_indicator)
-                            } else {
-                                this.child(recording_indicator)
-                            }
-                        })
-                    }),
-            )
-            .child(
-                h_flex()
-                    .id("keystroke-input-inner")
-                    .track_focus(&self.inner_focus_handle)
-                    .on_modifiers_changed(cx.listener(Self::on_modifiers_changed))
-                    .size_full()
-                    .when(!self.search, |this| {
-                        this.focus(|mut style| {
-                            style.border_color = Some(colors.border_focused);
-                            style
-                        })
-                    })
-                    .w_full()
-                    .min_w_0()
-                    .justify_center()
-                    .flex_wrap()
-                    .gap(ui::DynamicSpacing::Base04.rems(cx))
-                    .children(self.render_keystrokes(is_recording)),
-            )
-            .child(
-                h_flex()
-                    .w(horizontal_padding)
-                    .gap_0p5()
-                    .justify_end()
-                    .flex_none()
-                    .map(|this| {
-                        if is_recording {
-                            this.child(
-                                IconButton::new("stop-record-btn", IconName::StopFilled)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .map(|this| {
-                                        this.tooltip(Tooltip::for_action_title(
-                                            if self.search {
-                                                "Stop Searching"
-                                            } else {
-                                                "Stop Recording"
-                                            },
-                                            &StopRecording,
-                                        ))
-                                    })
-                                    .icon_color(Color::Error)
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.stop_recording(&StopRecording, window, cx);
-                                    })),
-                            )
-                        } else {
-                            this.child(
-                                IconButton::new("record-btn", record_icon)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .map(|this| {
-                                        this.tooltip(Tooltip::for_action_title(
-                                            if self.search {
-                                                "Start Searching"
-                                            } else {
-                                                "Start Recording"
-                                            },
-                                            &StartRecording,
-                                        ))
-                                    })
-                                    .when(!is_focused, |this| this.icon_color(Color::Muted))
-                                    .on_click(cx.listener(|this, _event, window, cx| {
-                                        this.start_recording(&StartRecording, window, cx);
-                                    })),
-                            )
-                        }
-                    })
-                    .child(
-                        IconButton::new("clear-btn", IconName::Delete)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title(
-                                "Clear Keystrokes",
-                                &ClearKeystrokes,
-                            ))
-                            .when(!is_recording || !is_focused, |this| {
-                                this.icon_color(Color::Muted)
-                            })
-                            .on_click(cx.listener(|this, _event, window, cx| {
-                                this.clear_keystrokes(&ClearKeystrokes, window, cx);
-                            })),
-                    ),
-            )
-    }
 }
 
 fn collect_contexts_from_assets() -> Vec<SharedString> {

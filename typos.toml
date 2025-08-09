@@ -71,6 +71,10 @@ extend-ignore-re = [
     # Not an actual typo but an intentionally invalid color, in `color_extractor`
     "#fof",
     # Stripped version of reserved keyword `type`
-    "typ"
+    "typ",
+    # AMD GPU Services
+    "ags",
+    # AMD GPU Services
+    "AGS"
 ]
 check-filename = true

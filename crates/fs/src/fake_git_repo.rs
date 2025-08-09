@@ -11,7 +11,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -491,6 +491,10 @@ impl GitRepository for FakeGitRepository {
         _base_checkpoint: GitRepositoryCheckpoint,
         _target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>> {
+        unimplemented!()
+    }
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
     }
 }
