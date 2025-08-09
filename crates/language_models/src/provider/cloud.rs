@@ -6,7 +6,7 @@ use client::{Client, ModelRequestUsage, UserStore, zed_urls};
 use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
-    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE,
+    EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan,
     SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
     TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
@@ -27,7 +27,6 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken,
     ModelRequestLimitReachedError, PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
-use proto::Plan;
 use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -137,11 +136,11 @@ impl State {
         cx: &mut Context<Self>,
     ) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
-
+        let mut current_user = user_store.read(cx).watch_current_user();
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store,
+            user_store: user_store.clone(),
             status,
             accept_terms_of_service_task: None,
             models: Vec::new(),
@@ -153,21 +152,14 @@ impl State {
                     let (client, llm_api_token) = this
                         .read_with(cx, |this, _cx| (client.clone(), this.llm_api_token.clone()))?;
 
-                    loop {
-                        let status = this.read_with(cx, |this, _cx| this.status)?;
-                        if matches!(status, client::Status::Connected { .. }) {
-                            break;
-                        }
-
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
+                    while current_user.borrow().is_none() {
+                        current_user.next().await;
                     }
 
-                    let response = Self::fetch_models(client, llm_api_token).await?;
-                    this.update(cx, |this, cx| {
-                        this.update_models(response, cx);
-                    })
+                    let response =
+                        Self::fetch_models(client.clone(), llm_api_token.clone()).await?;
+                    this.update(cx, |this, cx| this.update_models(response, cx))?;
+                    anyhow::Ok(())
                 })
                 .await
                 .context("failed to fetch Zed models")
@@ -194,26 +186,20 @@ impl State {
         }
     }
 
-    fn is_signed_out(&self) -> bool {
-        self.status.is_signed_out()
+    fn is_signed_out(&self, cx: &App) -> bool {
+        self.user_store.read(cx).current_user().is_none()
     }
 
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client
-                .authenticate_and_connect(true, &cx)
-                .await
-                .into_response()?;
+            client.sign_in_with_optional_connect(true, &cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }
 
     fn has_accepted_terms_of_service(&self, cx: &App) -> bool {
-        self.user_store
-            .read(cx)
-            .current_user_has_accepted_terms()
-            .unwrap_or(false)
+        self.user_store.read(cx).has_accepted_terms_of_service()
     }
 
     fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
@@ -398,7 +384,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn is_authenticated(&self, cx: &App) -> bool {
         let state = self.state.read(cx);
-        !state.is_signed_out() && state.has_accepted_terms_of_service(cx)
+        !state.is_signed_out(cx) && state.has_accepted_terms_of_service(cx)
     }
 
     fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
@@ -451,7 +437,7 @@ fn render_accept_terms(
         .style(ButtonStyle::Subtle)
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
-        .icon_size(IconSize::XSmall)
+        .icon_size(IconSize::Small)
         .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
@@ -613,11 +599,6 @@ impl CloudLanguageModel {
                         .and_then(|plan| plan.to_str().ok())
                         .and_then(|plan| cloud_llm_client::Plan::from_str(plan).ok())
                     {
-                        let plan = match plan {
-                            cloud_llm_client::Plan::ZedFree => Plan::Free,
-                            cloud_llm_client::Plan::ZedPro => Plan::ZedPro,
-                            cloud_llm_client::Plan::ZedProTrial => Plan::ZedProTrial,
-                        };
                         return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                     }
                 }
@@ -1118,7 +1099,7 @@ fn response_lines<T: DeserializeOwned>(
 #[derive(IntoElement, RegisterComponent)]
 struct ZedAiConfiguration {
     is_connected: bool,
-    plan: Option<proto::Plan>,
+    plan: Option<Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
     has_accepted_terms_of_service: bool,
@@ -1132,15 +1113,15 @@ impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let young_account_banner = YoungAccountBanner;
 
-        let is_pro = self.plan == Some(proto::Plan::ZedPro);
+        let is_pro = self.plan == Some(Plan::ZedPro);
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(proto::Plan::ZedPro), Some(_)) => {
+            (Some(Plan::ZedPro), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(proto::Plan::ZedProTrial), Some(_)) => {
+            (Some(Plan::ZedProTrial), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(proto::Plan::Free), Some(_)) => {
+            (Some(Plan::ZedFree), Some(_)) => {
                 "You have basic access to Zed's hosted models through the Free plan."
             }
             _ => {
@@ -1265,8 +1246,8 @@ impl Render for ConfigurationView {
         let user_store = state.user_store.read(cx);
 
         ZedAiConfiguration {
-            is_connected: !state.is_signed_out(),
-            plan: user_store.current_plan(),
+            is_connected: !state.is_signed_out(cx),
+            plan: user_store.plan(),
             subscription_period: user_store.subscription_period(),
             eligible_for_trial: user_store.trial_started_at().is_none(),
             has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
@@ -1279,14 +1260,22 @@ impl Render for ConfigurationView {
 }
 
 impl Component for ZedAiConfiguration {
+    fn name() -> &'static str {
+        "AI Configuration Content"
+    }
+
+    fn sort_name() -> &'static str {
+        "AI Configuration Content"
+    }
+
     fn scope() -> ComponentScope {
-        ComponentScope::Agent
+        ComponentScope::Onboarding
     }
 
     fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
         fn configuration(
             is_connected: bool,
-            plan: Option<proto::Plan>,
+            plan: Option<Plan>,
             eligible_for_trial: bool,
             account_too_young: bool,
             has_accepted_terms_of_service: bool,
@@ -1330,15 +1319,15 @@ impl Component for ZedAiConfiguration {
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(proto::Plan::Free), true, false, true),
+                        configuration(true, Some(Plan::ZedFree), true, false, true),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(proto::Plan::ZedProTrial), true, false, true),
+                        configuration(true, Some(Plan::ZedProTrial), true, false, true),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(proto::Plan::ZedPro), true, false, true),
+                        configuration(true, Some(Plan::ZedPro), true, false, true),
                     ),
                 ])
                 .into_any_element(),

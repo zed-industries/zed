@@ -1041,7 +1041,7 @@ impl OutlinePanel {
 
     fn open_excerpts(
         &mut self,
-        action: &editor::OpenExcerpts,
+        action: &editor::actions::OpenExcerpts,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1057,7 +1057,7 @@ impl OutlinePanel {
 
     fn open_excerpts_split(
         &mut self,
-        action: &editor::OpenExcerptsSplit,
+        action: &editor::actions::OpenExcerptsSplit,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2570,11 +2570,11 @@ impl OutlinePanel {
             .on_click({
                 let clicked_entry = rendered_entry.clone();
                 cx.listener(move |outline_panel, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right || event.down.first_mouse {
+                    if event.is_right_click() || event.first_focus() {
                         return;
                     }
 
-                    let change_focus = event.down.click_count > 1;
+                    let change_focus = event.click_count() > 1;
                     outline_panel.toggle_expanded(&clicked_entry, window, cx);
 
                     outline_panel.scroll_editor_to_entry(
@@ -5958,7 +5958,7 @@ mod tests {
         });
 
         outline_panel.update_in(cx, |outline_panel, window, cx| {
-            outline_panel.open_excerpts(&editor::OpenExcerpts, window, cx);
+            outline_panel.open_excerpts(&editor::actions::OpenExcerpts, window, cx);
         });
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

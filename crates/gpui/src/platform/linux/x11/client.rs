@@ -1004,12 +1004,13 @@ impl X11Client {
                     let mut keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
-
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Down);
+
                     if let Some(mut compose_state) = state.compose_state.take() {
                         compose_state.feed(keysym);
                         match compose_state.status() {
@@ -1067,12 +1068,13 @@ impl X11Client {
                     let keystroke = crate::Keystroke::from_xkb(&state.xkb, modifiers, code);
                     let keysym = state.xkb.key_get_one_sym(code);
 
-                    // should be called after key_get_one_sym
-                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
-
                     if keysym.is_modifier_key() {
                         return Some(());
                     }
+
+                    // should be called after key_get_one_sym
+                    state.xkb.update_key(code, xkbc::KeyDirection::Up);
+
                     keystroke
                 };
                 drop(state);
@@ -1793,6 +1795,7 @@ impl X11ClientState {
                             drop(state);
                             window.refresh(RequestFrameOptions {
                                 require_presentation: expose_event_received,
+                                force_render: false,
                             });
                         }
                         xcb_connection

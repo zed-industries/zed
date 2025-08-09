@@ -17,7 +17,7 @@ use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, actions,
+    Window, actions, rems,
 };
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
@@ -350,7 +350,7 @@ impl FileFinder {
 
     pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
-        let small_width = Pixels(545.);
+        let small_width = rems(34.).to_pixels(window.rem_size());
 
         match width_setting {
             None | Some(FileFinderWidth::Small) => small_width,

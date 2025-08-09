@@ -40,8 +40,8 @@ util.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
-libwebrtc = { rev = "383e5377f8b7de1f8627ee16f0cf11c5293337bd", git = "https://github.com/zed-industries/livekit-rust-sdks" }
-livekit = { rev = "383e5377f8b7de1f8627ee16f0cf11c5293337bd", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
+libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }
+livekit = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks", features = [
     "__rustls-tls"
 ] }
 
