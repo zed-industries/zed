@@ -491,8 +491,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream =
-                thread.update(cx, |thread, cx| thread.send(model, message, cx))?;
+            let mut response_stream = thread.update(cx, |thread, cx| thread.send(message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = response_stream.next().await {
