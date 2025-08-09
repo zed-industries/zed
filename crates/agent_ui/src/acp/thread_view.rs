@@ -1,19 +1,13 @@
+use acp_thread::{
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
+    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+};
 use acp_thread::{AgentConnection, Plan};
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
-use audio::{Audio, Sound};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::process::ExitStatus;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
-use terminal::Terminal;
-use terminal_view::TerminalView;
-
-use agent_client_protocol as acp;
 use assistant_tool::ActionLog;
+use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -34,6 +28,11 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::Project;
 use settings::{Settings as _, SettingsStore};
+use std::{
+    cell::RefCell, collections::BTreeMap, path::Path, process::ExitStatus, rc::Rc, sync::Arc,
+    time::Duration,
+};
+use terminal_view::TerminalView;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
@@ -42,11 +41,6 @@ use ui::{
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
-
-use ::acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-};
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
@@ -65,7 +59,7 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
-    terminals: HashMap<EntityId, Entity<TerminalView>>,
+    terminal_views: HashMap<EntityId, Entity<TerminalView>>,
     message_editor: Entity<Editor>,
     message_set_from_history: Option<BufferSnapshot>,
     _message_editor_subscription: Subscription,
@@ -196,7 +190,7 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
-            terminals: Default::default(),
+            terminal_views: Default::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
@@ -761,13 +755,13 @@ impl AcpThreadView {
         let terminals = terminals.collect::<Vec<_>>();
 
         for terminal in terminals {
-            if self.terminals.contains_key(&terminal.entity_id()) {
+            if self.terminal_views.contains_key(&terminal.entity_id()) {
                 return;
             }
 
             let terminal_view = cx.new(|cx| {
                 let mut view = TerminalView::new(
-                    terminal.clone(),
+                    terminal.read(cx).inner().clone(),
                     self.workspace.clone(),
                     None,
                     self.project.downgrade(),
@@ -780,11 +774,11 @@ impl AcpThreadView {
 
             let entity_id = terminal.entity_id();
             cx.observe_release(&terminal, move |this, _, _| {
-                this.terminals.remove(&entity_id);
+                this.terminal_views.remove(&entity_id);
             })
             .detach();
 
-            self.terminals.insert(entity_id, terminal_view);
+            self.terminal_views.insert(entity_id, terminal_view);
         }
     }
 
@@ -792,7 +786,7 @@ impl AcpThreadView {
         &self,
         entry_ix: usize,
         cx: &App,
-    ) -> Option<impl Iterator<Item = Entity<Terminal>>> {
+    ) -> Option<impl Iterator<Item = Entity<acp_thread::Terminal>>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
         Some(entry.terminals().map(|terminal| terminal.clone()))
     }
@@ -1164,7 +1158,7 @@ impl AcpThreadView {
             _ => tool_call
                 .content
                 .iter()
-                .any(|content| matches!(content, ToolCallContent::Diff { .. })),
+                .any(|content| matches!(content, ToolCallContent::Diff(_))),
         };
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
@@ -1361,7 +1355,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::ContentBlock { content } => {
+            ToolCallContent::ContentBlock(content) => {
                 if let Some(md) = content.markdown() {
                     div()
                         .p_2()
@@ -1376,10 +1370,8 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff { diff, .. } => {
-                self.render_diff_editor(&diff.read(cx).multibuffer())
-            }
-            ToolCallContent::Terminal { terminal } => self.render_terminal(terminal),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(&diff.read(cx).multibuffer()),
+            ToolCallContent::Terminal(terminal) => self.render_terminal(terminal),
         }
     }
 
@@ -1448,12 +1440,14 @@ impl AcpThreadView {
             .into_any()
     }
 
-    fn render_terminal(&self, terminal: &Entity<Terminal>) -> AnyElement {
+    fn render_terminal(&self, terminal: &Entity<acp_thread::Terminal>) -> AnyElement {
         v_flex()
             .h_72()
             .child(
-                if let Some(terminal) = self.terminals.get(&terminal.entity_id()) {
-                    terminal.clone().into_any_element()
+                if let Some(terminal_view) = self.terminal_views.get(&terminal.entity_id()) {
+                    // TODO: terminal has all the state we need to reproduce
+                    // what we had in the terminal card.
+                    terminal_view.clone().into_any_element()
                 } else {
                     Empty.into_any()
                 },

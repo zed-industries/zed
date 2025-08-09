@@ -1,8 +1,10 @@
 mod connection;
 mod diff;
+mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+pub use terminal::*;
 
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -25,7 +27,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use terminal::Terminal;
 use ui::App;
 use util::ResultExt;
 
@@ -259,17 +260,17 @@ impl ToolCall {
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Diff { diff } => Some(diff),
-            ToolCallContent::ContentBlock { .. } => None,
-            ToolCallContent::Terminal { .. } => None,
+            ToolCallContent::Diff(diff) => Some(diff),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Terminal(_) => None,
         })
     }
 
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
         self.content.iter().filter_map(|content| match content {
-            ToolCallContent::Terminal { terminal } => Some(terminal),
-            ToolCallContent::ContentBlock { .. } => None,
-            ToolCallContent::Diff { .. } => None,
+            ToolCallContent::Terminal(terminal) => Some(terminal),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Diff(_) => None,
         })
     }
 
@@ -405,9 +406,9 @@ impl ContentBlock {
 
 #[derive(Debug)]
 pub enum ToolCallContent {
-    ContentBlock { content: ContentBlock },
-    Diff { diff: Entity<Diff> },
-    Terminal { terminal: Entity<Terminal> },
+    ContentBlock(ContentBlock),
+    Diff(Entity<Diff>),
+    Terminal(Entity<Terminal>),
 }
 
 impl ToolCallContent {
@@ -417,22 +418,20 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::Content { content } => Self::ContentBlock {
-                content: ContentBlock::new(content, &language_registry, cx),
-            },
-            acp::ToolCallContent::Diff { diff } => Self::Diff {
-                diff: cx.new(|cx| Diff::from_acp(diff, language_registry, cx)),
-            },
+            acp::ToolCallContent::Content { content } => {
+                Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
+            }
+            acp::ToolCallContent::Diff { diff } => {
+                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
+            }
         }
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
-            Self::Diff { diff } => diff.read(cx).to_markdown(cx),
-            Self::Terminal { terminal } => {
-                format!("Terminal:\n```\n{}\n```\n", terminal.read(cx).get_content())
-            }
+            Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
+            Self::Diff(diff) => diff.read(cx).to_markdown(cx),
+            Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
         }
     }
 }
@@ -796,13 +795,13 @@ impl AcpThread {
                 current_call.content.clear();
                 current_call
                     .content
-                    .push(ToolCallContent::Diff { diff: update.diff });
+                    .push(ToolCallContent::Diff(update.diff));
             }
             ToolCallUpdate::UpdateTerminal(update) => {
                 current_call.content.clear();
-                current_call.content.push(ToolCallContent::Terminal {
-                    terminal: update.terminal,
-                });
+                current_call
+                    .content
+                    .push(ToolCallContent::Terminal(update.terminal));
             }
         }
 

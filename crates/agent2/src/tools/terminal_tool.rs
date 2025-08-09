@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
 };
-use util::{get_system_shell, markdown::MarkdownInlineCode};
+use util::{get_system_shell, markdown::MarkdownInlineCode, ResultExt};
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -108,6 +107,7 @@ impl AgentTool for TerminalTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let language_registry = self.project.read(cx).languages().clone();
         let working_dir = match working_dir(&input, &self.project, cx) {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
@@ -160,8 +160,16 @@ impl AgentTool for TerminalTool {
                         )
                     })?
                     .await?;
-
-                let start_instant = Instant::now();
+                let acp_terminal = cx.new(|cx| {
+                    acp_thread::Terminal::new(
+                        input.command.clone(),
+                        working_dir.clone(),
+                        terminal.clone(),
+                        language_registry,
+                        cx,
+                    )
+                })?;
+                event_stream.update_terminal(acp_terminal.clone());
 
                 let exit_status = terminal
                     .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
@@ -170,17 +178,26 @@ impl AgentTool for TerminalTool {
                     (terminal.get_content(), terminal.total_lines())
                 })?;
 
-                let original_content_len = content.len();
                 let (processed_content, finished_with_empty_output) = process_content(
                     &content,
                     &input.command,
                     exit_status.map(portable_pty::ExitStatus::from),
                 );
 
-                let was_content_truncated = processed_content.len() < original_content_len;
-                let elapsed_time = start_instant.elapsed();
+                acp_terminal
+                    .update(cx, |terminal, cx| {
+                        terminal.finish(
+                            exit_status,
+                            content.len(),
+                            processed_content.len(),
+                            content_line_count,
+                            finished_with_empty_output,
+                            cx,
+                        );
+                    })
+                    .log_err();
 
-                Ok(processed_content)
+                Ok(processed_content.into())
             }
         })
     }
@@ -300,7 +317,7 @@ mod tests {
     use settings::{Settings, SettingsStore};
     use terminal::terminal_settings::TerminalSettings;
     use theme::ThemeSettings;
-    use util::{test::TempTree, ResultExt as _};
+    use util::test::TempTree;
 
     use super::*;
 
