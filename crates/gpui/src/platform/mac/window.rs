@@ -1,11 +1,12 @@
 use super::{BoolExt, MacDisplay, NSRange, NSStringExt, ns_string, renderer};
 use crate::{
     AnyWindowHandle, Bounds, Capslock, DisplayLink, ExternalPaths, FileDropEvent,
-    ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler, point, px, size,
+    ForegroundExecutor, KeyDownEvent, Keystroke, LayoutDirection, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, ScaledPixels, Size, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowKind, WindowParams, platform::PlatformInputHandler,
+    point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -367,6 +368,7 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    layout_direction: LayoutDirection,
     transparent_titlebar: bool,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
@@ -406,13 +408,24 @@ impl MacWindowState {
                 let mut min_button_frame: CGRect = msg_send![min_button, frame];
                 let mut zoom_button_frame: CGRect = msg_send![zoom_button, frame];
                 let mut origin = point(
-                    traffic_light_position.x,
+                    match self.layout_direction {
+                        LayoutDirection::LeftToRight => traffic_light_position.x,
+                        LayoutDirection::RightToLeft => {
+                            self.window_bounds().get_bounds().size.width
+                                - traffic_light_position.x
+                                - px(close_button_frame.size.width as f32)
+                        }
+                    },
                     titlebar_height
                         - traffic_light_position.y
                         - px(close_button_frame.size.height as f32),
                 );
                 let button_spacing =
-                    px((min_button_frame.origin.x - close_button_frame.origin.x) as f32);
+                    px(((min_button_frame.origin.x - close_button_frame.origin.x) as f32).abs())
+                        * match self.layout_direction {
+                            LayoutDirection::LeftToRight => 1.,
+                            LayoutDirection::RightToLeft => -1.,
+                        };
 
                 close_button_frame.origin = CGPoint::new(origin.x.into(), origin.y.into());
                 let _: () = msg_send![close_button, setFrame: close_button_frame];
@@ -534,6 +547,7 @@ impl MacWindow {
             show,
             display_id,
             window_min_size,
+            layout_direction,
         }: WindowParams,
         executor: ForegroundExecutor,
         renderer_context: renderer::Context,
@@ -660,6 +674,7 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
+                layout_direction: layout_direction,
             })));
 
             (*native_window).set_ivar(

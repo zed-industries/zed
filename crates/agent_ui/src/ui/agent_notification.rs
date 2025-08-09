@@ -1,5 +1,5 @@
 use gpui::{
-    App, Context, EventEmitter, IntoElement, PlatformDisplay, Size, Window,
+    App, Context, EventEmitter, IntoElement, LayoutDirection, PlatformDisplay, Size, Window,
     WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowOptions,
     linear_color_stop, linear_gradient, point,
 };
@@ -61,6 +61,7 @@ impl AgentNotification {
             window_background: WindowBackgroundAppearance::Transparent,
             app_id: Some(app_id.to_owned()),
             window_min_size: None,
+            layout_direction: LayoutDirection::LeftToRight,
             window_decorations: Some(WindowDecorations::Client),
         }
     }
