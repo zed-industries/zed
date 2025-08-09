@@ -212,6 +212,7 @@ pub struct LanguageNotFound;
 
 impl std::fmt::Display for LanguageNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // FIXME this should mention the name of the language
         write!(f, "language not found")
     }
 }
