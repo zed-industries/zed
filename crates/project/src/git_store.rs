@@ -1890,7 +1890,7 @@ impl GitStore {
             sha: commit.sha.into(),
             message: commit
                 .message
-                .and_then(|msg| Some(msg.deref().to_string()))
+                .map(|msg| msg.deref().to_string())
                 .unwrap_or_default(),
             commit_timestamp: commit.commit_timestamp,
             author_email: commit.author_email.into(),
@@ -4743,7 +4743,7 @@ fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
         message: commit
             .message
             .as_ref()
-            .and_then(|msg| Some(msg.deref().to_string()))
+            .map(|msg| msg.deref().to_string())
             .unwrap_or_default(),
         commit_timestamp: commit.commit_timestamp,
         author_email: commit.author_email.to_string(),

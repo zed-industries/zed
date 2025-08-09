@@ -1602,9 +1602,7 @@ impl GitPanel {
                         buffer.edit(
                             [(
                                 start..end,
-                                message
-                                    .and_then(|msg| Some(msg.message))
-                                    .unwrap_or_default(),
+                                message.map(|msg| msg.message).unwrap_or_default(),
                             )],
                             None,
                             cx,
@@ -1781,7 +1779,7 @@ impl GitPanel {
                             editor.set_text(
                                 prior_commit
                                     .message
-                                    .and_then(|msg| Some(msg.message))
+                                    .map(|msg| msg.message)
                                     .unwrap_or_default(),
                                 window,
                                 cx,

@@ -4,8 +4,9 @@ use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
     blame::Blame,
+    commit::CommitDetails,
     repository::{
-        AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
+        AskPassDelegate, Branch, CommitOptions, FetchOptions, GitRepository,
         GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
