@@ -335,6 +335,8 @@ mod tests {
     use theme::ThemeSettings;
     use util::test::TempTree;
 
+    use crate::AgentResponseEvent;
+
     use super::*;
 
     fn init_test(executor: &BackgroundExecutor, cx: &mut TestAppContext) {
@@ -403,56 +405,64 @@ mod tests {
         let project: Entity<Project> =
             Project::test(fs, [tree.path().join("project").as_path()], cx).await;
 
-        let check = |input, expected, cx: &mut App| {
-            let result = Arc::new(TerminalTool::new(project.clone(), cx)).run(
-                input,
-                ToolCallEventStream::test().0,
-                cx,
-            );
+        let check = |input, expected, cx: &mut TestAppContext| {
+            let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
+            let result = cx.update(|cx| {
+                Arc::new(TerminalTool::new(project.clone(), cx)).run(input, stream_tx, cx)
+            });
+            cx.run_until_parked();
+            let event = stream_rx.try_next();
+            if let Ok(Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth)))) = event {
+                auth.response
+                    .send(
+                        auth.options
+                            .iter()
+                            .find_map(|option| {
+                                (option.id.0.as_ref() == "allow").then_some(option.id.clone())
+                            })
+                            .unwrap(),
+                    )
+                    .unwrap();
+            }
+
             cx.spawn(async move |_| {
                 let output = result.await;
                 assert_eq!(output.ok(), expected);
             })
         };
 
-        cx.update(|cx| {
-            check(
-                TerminalToolInput {
-                    command: "pwd".into(),
-                    cd: ".".into(),
-                },
-                Some(format!(
-                    "```\n{}\n```",
-                    tree.path().join("project").display()
-                )),
-                cx,
-            )
-        })
+        check(
+            TerminalToolInput {
+                command: "pwd".into(),
+                cd: ".".into(),
+            },
+            Some(format!(
+                "```\n{}\n```",
+                tree.path().join("project").display()
+            )),
+            cx,
+        )
         .await;
 
-        cx.update(|cx| {
-            check(
-                TerminalToolInput {
-                    command: "pwd".into(),
-                    cd: "other-project".into(),
-                },
-                None, // other-project is a dir, but *not* a worktree (yet)
-                cx,
-            )
-        })
+        check(
+            TerminalToolInput {
+                command: "pwd".into(),
+                cd: "other-project".into(),
+            },
+            None, // other-project is a dir, but *not* a worktree (yet)
+            cx,
+        )
         .await;
 
         // Absolute path above the worktree root
-        cx.update(|cx| {
-            check(
-                TerminalToolInput {
-                    command: "pwd".into(),
-                    cd: tree.path().to_string_lossy().into(),
-                },
-                None,
-                cx,
-            )
-        })
+        check(
+            TerminalToolInput {
+                command: "pwd".into(),
+                cd: tree.path().to_string_lossy().into(),
+            },
+            None,
+            cx,
+        )
         .await;
 
         project
@@ -462,31 +472,27 @@ mod tests {
             .await
             .unwrap();
 
-        cx.update(|cx| {
-            check(
-                TerminalToolInput {
-                    command: "pwd".into(),
-                    cd: "other-project".into(),
-                },
-                Some(format!(
-                    "```\n{}\n```",
-                    tree.path().join("other-project").display()
-                )),
-                cx,
-            )
-        })
+        check(
+            TerminalToolInput {
+                command: "pwd".into(),
+                cd: "other-project".into(),
+            },
+            Some(format!(
+                "```\n{}\n```",
+                tree.path().join("other-project").display()
+            )),
+            cx,
+        )
         .await;
 
-        cx.update(|cx| {
-            check(
-                TerminalToolInput {
-                    command: "pwd".into(),
-                    cd: ".".into(),
-                },
-                None,
-                cx,
-            )
-        })
+        check(
+            TerminalToolInput {
+                command: "pwd".into(),
+                cd: ".".into(),
+            },
+            None,
+            cx,
+        )
         .await;
     }
 }
