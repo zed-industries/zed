@@ -22456,7 +22456,7 @@ async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     );
 
     cx.update(|_, cx| {
-        workspace::reload(&workspace::Reload::default(), cx);
+        workspace::reload(cx);
     });
     assert_language_servers_count(
         1,

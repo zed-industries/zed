@@ -224,6 +224,8 @@ actions!(
         ResetActiveDockSize,
         /// Resets all open docks to their default sizes.
         ResetOpenDocksSize,
+        /// Reloads the application
+        Reload,
         /// Saves the current file with a new name.
         SaveAs,
         /// Saves without formatting.
@@ -339,14 +341,6 @@ pub struct CloseInactiveTabsAndPanes {
 #[derive(Clone, Deserialize, PartialEq, JsonSchema, Action)]
 #[action(namespace = workspace)]
 pub struct SendKeystrokes(pub String);
-
-/// Reloads the active item or workspace.
-#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema, Action)]
-#[action(namespace = workspace)]
-#[serde(deny_unknown_fields)]
-pub struct Reload {
-    pub binary_path: Option<PathBuf>,
-}
 
 actions!(
     project_symbols,
@@ -555,8 +549,8 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
     toast_layer::init(cx);
     history_manager::init(cx);
 
-    cx.on_action(Workspace::close_global);
-    cx.on_action(reload);
+    cx.on_action(|_: &CloseWindow, cx| Workspace::close_global(cx));
+    cx.on_action(|_: &Reload, cx| reload(cx));
 
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
@@ -2184,7 +2178,7 @@ impl Workspace {
         }
     }
 
-    pub fn close_global(_: &CloseWindow, cx: &mut App) {
+    pub fn close_global(cx: &mut App) {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
@@ -7642,7 +7636,7 @@ pub fn join_in_room_project(
     })
 }
 
-pub fn reload(reload: &Reload, cx: &mut App) {
+pub fn reload(cx: &mut App) {
     let should_confirm = WorkspaceSettings::get_global(cx).confirm_quit;
     let mut workspace_windows = cx
         .windows()
@@ -7669,7 +7663,6 @@ pub fn reload(reload: &Reload, cx: &mut App) {
             .ok();
     }
 
-    let binary_path = reload.binary_path.clone();
     cx.spawn(async move |cx| {
         if let Some(prompt) = prompt {
             let answer = prompt.await?;
@@ -7688,8 +7681,7 @@ pub fn reload(reload: &Reload, cx: &mut App) {
                 }
             }
         }
-
-        cx.update(|cx| cx.restart(binary_path))
+        cx.update(|cx| cx.restart())
     })
     .detach_and_log_err(cx);
 }
