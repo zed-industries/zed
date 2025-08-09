@@ -851,3 +851,12 @@ jobs:
         run: gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create Sentry release
+        uses: getsentry/action-release@526942b68292201ac6bbb99b9a0747d4abee354c # v3
+        env:
+          SENTRY_ORG: zed-dev
+          SENTRY_PROJECT: zed
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        with:
+          environment: production
