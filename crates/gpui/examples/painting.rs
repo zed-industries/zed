@@ -328,7 +328,6 @@ impl Render for PaintingViewer {
         let dashed = self.dashed;
 
         div()
-            .font_family(".SystemUIFont")
             .bg(gpui::white())
             .size_full()
             .p_4()
