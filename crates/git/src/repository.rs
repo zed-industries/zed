@@ -132,6 +132,32 @@ pub struct RemoteCommandOutput {
     pub stderr: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct GitCommandOutput {
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl std::fmt::Display for GitCommandOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stderr = self.stderr.trim();
+        let message = if stderr.is_empty() {
+            self.stdout.trim()
+        } else {
+            stderr
+        };
+        write!(f, "{}", message)
+    }
+}
+
+impl std::error::Error for GitCommandOutput {}
+
+impl GitCommandOutput {
+    pub fn is_empty(&self) -> bool {
+        self.stdout.is_empty() && self.stderr.is_empty()
+    }
+}
+
 impl RemoteCommandOutput {
     pub fn is_empty(&self) -> bool {
         self.stdout.is_empty() && self.stderr.is_empty()
@@ -344,6 +370,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1046,19 +1073,22 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         let executor = self.executor.clone();
+        let name_clone = name.clone();
         let branch = self.executor.spawn(async move {
             let repo = repo.lock();
-            let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
+            let branch = if let Ok(branch) = repo.find_branch(&name_clone, BranchType::Local) {
                 branch
-            } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
-                let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
+            } else if let Ok(revision) = repo.find_branch(&name_clone, BranchType::Remote) {
+                let (_, branch_name) = name_clone
+                    .split_once("/")
+                    .context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
                 let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
-                branch.set_upstream(Some(&name))?;
+                branch.set_upstream(Some(&name_clone))?;
                 branch
             } else {
-                anyhow::bail!("Branch not found");
+                anyhow::bail!("Branch '{}' not found", name_clone);
             };
 
             Ok(branch
@@ -1071,11 +1101,18 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let branch = branch.await?;
 
-                GitBinary::new(git_binary_path, working_directory?, executor)
-                    .run(&["checkout", &branch])
-                    .await?;
-
-                anyhow::Ok(())
+                match GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run_with_output(&["checkout", &branch])
+                    .await
+                {
+                    Ok(_) => anyhow::Ok(()),
+                    Err(e) => {
+                        if let Some(git_error) = e.downcast_ref::<GitBinaryCommandError>() {
+                            anyhow::bail!("{}", git_error.stderr.trim());
+                        }
+                        Err(e)
+                    }
+                }
             })
             .boxed()
     }
@@ -1088,6 +1125,29 @@ impl GitRepository for RealGitRepository {
                 let current_commit = repo.head()?.peel_to_commit()?;
                 repo.branch(&name, &current_commit, false)?;
                 Ok(())
+            })
+            .boxed()
+    }
+
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                match GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run_with_output(&["branch", "-m", &branch, &new_name])
+                    .await
+                {
+                    Ok(_) => Ok(()),
+                    Err(e) => {
+                        if let Some(git_error) = e.downcast_ref::<GitBinaryCommandError>() {
+                            anyhow::bail!("{}", git_error.stderr.trim());
+                        }
+                        Err(e)
+                    }
+                }
             })
             .boxed()
     }
@@ -1805,6 +1865,31 @@ impl GitBinary {
         Ok(stdout)
     }
 
+    pub async fn run_with_output<S>(
+        &self,
+        args: impl IntoIterator<Item = S>,
+    ) -> Result<GitCommandOutput>
+    where
+        S: AsRef<OsStr>,
+    {
+        let mut command = self.build_command(args);
+        let output = command.output().await?;
+
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if !output.status.success() {
+            return Err(GitBinaryCommandError {
+                stdout: stdout.clone(),
+                stderr: stderr.clone(),
+                status: output.status,
+            }
+            .into());
+        }
+
+        Ok(GitCommandOutput { stdout, stderr })
+    }
+
     /// Returns the result of the command without trimming the trailing newline.
     pub async fn run_raw<S>(&self, args: impl IntoIterator<Item = S>) -> Result<String>
     where
@@ -1816,6 +1901,7 @@ impl GitBinary {
             output.status.success(),
             GitBinaryCommandError {
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 status: output.status,
             }
         );
@@ -1838,10 +1924,21 @@ impl GitBinary {
 }
 
 #[derive(Error, Debug)]
-#[error("Git command failed: {stdout}")]
+#[error("Git command failed: {}", .stderr.trim().if_empty(.stdout.trim()))]
 struct GitBinaryCommandError {
     stdout: String,
+    stderr: String,
     status: ExitStatus,
+}
+
+trait StringExt {
+    fn if_empty<'a>(&'a self, fallback: &'a str) -> &'a str;
+}
+
+impl StringExt for str {
+    fn if_empty<'a>(&'a self, fallback: &'a str) -> &'a str {
+        if self.is_empty() { fallback } else { self }
+    }
 }
 
 async fn run_git_command(
