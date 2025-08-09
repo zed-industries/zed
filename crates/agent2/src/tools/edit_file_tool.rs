@@ -942,7 +942,7 @@ mod tests {
             )
         });
 
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 1 (local settings)");
 
         // Test 2: Path outside project should require confirmation
@@ -959,7 +959,7 @@ mod tests {
             )
         });
 
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 2");
 
         // Test 3: Relative path without .zed should not require confirmation
@@ -992,7 +992,7 @@ mod tests {
                 cx,
             )
         });
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 4 (local settings)");
 
         // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
@@ -1088,7 +1088,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1192,7 +1192,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1276,7 +1276,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1339,7 +1339,7 @@ mod tests {
                 )
             });
 
-            stream_rx.expect_tool_authorization().await;
+            stream_rx.expect_authorization().await;
 
             // Test outside path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1355,7 +1355,7 @@ mod tests {
                 )
             });
 
-            stream_rx.expect_tool_authorization().await;
+            stream_rx.expect_authorization().await;
 
             // Test normal path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();

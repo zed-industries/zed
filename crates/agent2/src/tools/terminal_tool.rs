@@ -5,6 +5,7 @@ use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{terminals::TerminalKind, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -60,6 +61,21 @@ impl TerminalTool {
             determine_shell: determine_shell.shared(),
         }
     }
+
+    fn authorize(
+        &self,
+        input: &TerminalToolInput,
+        event_stream: &ToolCallEventStream,
+        cx: &App,
+    ) -> Task<Result<()>> {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return Task::ready(Ok(()));
+        }
+
+        // TODO: do we want to have a special title here?
+        cx.foreground_executor()
+            .spawn(event_stream.authorize(self.initial_title(Ok(input.clone())).to_string()))
+    }
 }
 
 impl AgentTool for TerminalTool {
@@ -69,11 +85,6 @@ impl AgentTool for TerminalTool {
     fn name(&self) -> SharedString {
         "terminal".into()
     }
-
-    //todo!
-    // fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
-    //     true
-    // }
 
     fn kind(&self) -> acp::ToolKind {
         acp::ToolKind::Execute
@@ -141,8 +152,12 @@ impl AgentTool for TerminalTool {
             env
         });
 
+        let authorize = self.authorize(&input, &event_stream, cx);
+
         cx.spawn({
             async move |cx| {
+                authorize.await?;
+
                 let program = program.await;
                 let env = env.await;
                 let terminal = self
@@ -309,6 +324,7 @@ fn working_dir(
 
 #[cfg(test)]
 mod tests {
+    use agent_settings::AgentSettings;
     use editor::EditorSettings;
     use fs::RealFs;
     use gpui::{BackgroundExecutor, TestAppContext};
@@ -333,6 +349,7 @@ mod tests {
             ThemeSettings::register(cx);
             TerminalSettings::register(cx);
             EditorSettings::register(cx);
+            AgentSettings::register(cx);
         });
     }
 
@@ -360,15 +377,14 @@ mod tests {
                 .to_string_lossy()
                 .to_string(),
         };
-        let result = cx.update(|cx| {
-            Arc::new(TerminalTool::new(project, cx)).run(input, ToolCallEventStream::test().0, cx)
-        });
+        let (event_stream_tx, mut event_stream_rx) = ToolCallEventStream::test();
+        let result = cx
+            .update(|cx| Arc::new(TerminalTool::new(project, cx)).run(input, event_stream_tx, cx));
 
-        let output = match result.await {
-            Ok(output) => output,
-            Err(err) => panic!("Command failed: {}", err),
-        };
-        assert_eq!(output, "Command executed successfully.");
+        let auth = event_stream_rx.expect_authorization().await;
+        auth.response.send(auth.options[0].id.clone()).unwrap();
+        event_stream_rx.expect_terminal().await;
+        assert_eq!(result.await.unwrap(), "Command executed successfully.");
     }
 
     #[gpui::test]

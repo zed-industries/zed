@@ -999,12 +999,24 @@ pub struct ToolCallEventStreamReceiver(
 
 #[cfg(test)]
 impl ToolCallEventStreamReceiver {
-    pub async fn expect_tool_authorization(&mut self) -> ToolCallAuthorization {
+    pub async fn expect_authorization(&mut self) -> ToolCallAuthorization {
         let event = self.0.next().await;
         if let Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth))) = event {
             auth
         } else {
             panic!("Expected ToolCallAuthorization but got: {:?}", event);
+        }
+    }
+
+    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
+        let event = self.0.next().await;
+        if let Some(Ok(AgentResponseEvent::ToolCallUpdate(
+            acp_thread::ToolCallUpdate::UpdateTerminal(update),
+        ))) = event
+        {
+            update.terminal
+        } else {
+            panic!("Expected terminal but got: {:?}", event);
         }
     }
 }
