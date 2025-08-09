@@ -1,5 +1,5 @@
 use crate::welcome::{ShowWelcome, WelcomePage};
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
@@ -78,7 +78,9 @@ actions!(
         /// Finish the onboarding process.
         Finish,
         /// Sign in while in the onboarding flow.
-        SignIn
+        SignIn,
+        /// Open the user account in zed.dev while in the onboarding flow.
+        OpenAccount
     ]
 );
 
@@ -420,11 +422,40 @@ impl Onboarding {
             )
             .child(
                 if let Some(user) = self.user_store.read(cx).current_user() {
-                    h_flex()
-                        .pl_1p5()
-                        .gap_2()
-                        .child(Avatar::new(user.avatar_uri.clone()))
-                        .child(Label::new(user.github_login.clone()))
+                    v_flex()
+                        .gap_1()
+                        .child(
+                            h_flex()
+                                .ml_2()
+                                .gap_2()
+                                .max_w_full()
+                                .w_full()
+                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .child(Label::new(user.github_login.clone()).truncate()),
+                        )
+                        .child(
+                            ButtonLike::new("open_account")
+                                .size(ButtonSize::Medium)
+                                .child(
+                                    h_flex()
+                                        .ml_1()
+                                        .w_full()
+                                        .justify_between()
+                                        .child(Label::new("Open Account"))
+                                        .children(
+                                            KeyBinding::for_action_in(
+                                                &OpenAccount,
+                                                &self.focus_handle,
+                                                window,
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(rems_from_px(12.))),
+                                        ),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(OpenAccount.boxed_clone(), cx);
+                                }),
+                        )
                         .into_any_element()
                 } else {
                     Button::new("sign_in", "Sign In")
@@ -458,6 +489,10 @@ impl Onboarding {
                     .notify_async_err(cx);
             })
             .detach();
+    }
+
+    fn handle_open_account(_: &OpenAccount, _: &mut Window, cx: &mut App) {
+        cx.open_url(&zed_urls::account_url(cx))
     }
 
     fn render_page(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -495,6 +530,7 @@ impl Render for Onboarding {
             .bg(cx.theme().colors().editor_background)
             .on_action(Self::on_finish)
             .on_action(Self::handle_sign_in)
+            .on_action(Self::handle_open_account)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
                 this.set_page(SelectedPage::Basics, cx);
             }))
