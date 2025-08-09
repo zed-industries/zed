@@ -10,8 +10,7 @@ pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use edit_prediction::DataCollectionState;
 pub use init::*;
-use license_detection::LICENSE_FILES_TO_CHECK;
-pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LicenseDetectionWatcher;
 pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -33,7 +32,6 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use postage::watch;
 use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
@@ -253,11 +251,10 @@ impl Zeta {
 
         this.update(cx, move |this, cx| {
             if let Some(worktree) = worktree {
-                worktree.update(cx, |worktree, cx| {
-                    this.license_detection_watchers
-                        .entry(worktree.id())
-                        .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(worktree, cx)));
-                });
+                let worktree_id = worktree.read(cx).id();
+                this.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
             }
         });
 
@@ -1102,59 +1099,6 @@ pub struct PerformPredictEditsParams {
 )]
 pub struct ZedUpdateRequiredError {
     minimum_version: SemanticVersion,
-}
-
-struct LicenseDetectionWatcher {
-    is_open_source_rx: watch::Receiver<bool>,
-    _is_open_source_task: Task<()>,
-}
-
-impl LicenseDetectionWatcher {
-    pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
-        let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
-
-        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
-        let task = if worktree.abs_path().is_file() {
-            Task::ready(())
-        } else {
-            let loaded_files = LICENSE_FILES_TO_CHECK
-                .iter()
-                .map(Path::new)
-                .map(|file| worktree.load_file(file, cx))
-                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
-
-            cx.background_spawn(async move {
-                for loaded_file in loaded_files.into_iter() {
-                    let Ok(loaded_file) = loaded_file.await else {
-                        continue;
-                    };
-
-                    let path = &loaded_file.file.path;
-                    if is_license_eligible_for_data_collection(&loaded_file.text) {
-                        log::info!("detected '{path:?}' as open source license");
-                        *is_open_source_tx.borrow_mut() = true;
-                    } else {
-                        log::info!("didn't detect '{path:?}' as open source license");
-                    }
-
-                    // stop on the first license that successfully read
-                    return;
-                }
-
-                log::debug!("didn't find a license file to check, assuming closed source");
-            })
-        };
-
-        Self {
-            is_open_source_rx,
-            _is_open_source_task: task,
-        }
-    }
-
-    /// Answers false until we find out it's open source
-    pub fn is_project_open_source(&self) -> bool {
-        *self.is_open_source_rx.borrow()
-    }
 }
 
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
