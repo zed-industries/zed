@@ -23,23 +23,38 @@ runs:
     - name: Configure crash dumps
       shell: powershell
       run: |
-        # Create crash dump directory
-        New-Item -ItemType Directory -Force -Path "C:\dumps"
+        # Record the start time for this CI run
+        $runStartTime = Get-Date
+        $runStartTimeStr = $runStartTime.ToString("yyyy-MM-dd HH:mm:ss")
+        Write-Host "CI run started at: $runStartTimeStr"
 
-        # Configure Windows Error Reporting to capture dumps
-        Write-Host "Configuring Windows Error Reporting for crash dumps..."
-        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f
-        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpFolder /t REG_EXPAND_SZ /d "C:\dumps" /f
-        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpCount /t REG_DWORD /d 50 /f
-        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpType /t REG_DWORD /d 2 /f
+        # Save the timestamp for later use
+        echo "CI_RUN_START_TIME=$($runStartTime.Ticks)" >> $env:GITHUB_ENV
 
-        Write-Host "Crash dumps will be saved to C:\dumps"
+        # Create crash dump directory in workspace (non-persistent)
+        $dumpPath = "$env:GITHUB_WORKSPACE\crash_dumps"
+        New-Item -ItemType Directory -Force -Path $dumpPath | Out-Null
+
+        Write-Host "Setting up crash dump detection..."
+        Write-Host "Workspace dump path: $dumpPath"
+
+        # Note: We're NOT modifying registry on stateful runners
+        # Instead, we'll check default Windows crash locations after tests
 
     - name: Run tests
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
       run: |
         $env:RUST_BACKTRACE = "full"
+
+        # Enable Windows debugging features
+        $env:_NT_SYMBOL_PATH = "srv*https://msdl.microsoft.com/download/symbols"
+
+        # .NET crash dump environment variables (ephemeral)
+        $env:COMPlus_DbgEnableMiniDump = "1"
+        $env:COMPlus_DbgMiniDumpType = "4"
+        $env:COMPlus_CreateDumpDiagnostics = "1"
+
         cargo nextest run --workspace --no-fail-fast
       continue-on-error: true
 
@@ -48,7 +63,34 @@ runs:
       shell: powershell
       run: |
         Write-Host "Checking for crash dumps..."
-        $dumps = Get-ChildItem "C:\dumps\*.dmp" -ErrorAction SilentlyContinue
+
+        # Get the CI run start time from the environment
+        $runStartTime = [DateTime]::new([long]$env:CI_RUN_START_TIME)
+        Write-Host "Only analyzing dumps created after: $($runStartTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+
+        # Check all possible crash dump locations
+        $searchPaths = @(
+            "$env:GITHUB_WORKSPACE\crash_dumps",
+            "$env:LOCALAPPDATA\CrashDumps",
+            "$env:TEMP",
+            "$env:GITHUB_WORKSPACE",
+            "$env:USERPROFILE\AppData\Local\CrashDumps",
+            "C:\Windows\System32\config\systemprofile\AppData\Local\CrashDumps"
+        )
+
+        $dumps = @()
+        foreach ($path in $searchPaths) {
+            if (Test-Path $path) {
+                Write-Host "Searching in: $path"
+                $found = Get-ChildItem "$path\*.dmp" -ErrorAction SilentlyContinue | Where-Object {
+                    $_.CreationTime -gt $runStartTime
+                }
+                if ($found) {
+                    $dumps += $found
+                    Write-Host "  Found $($found.Count) dump(s) from this CI run"
+                }
+            }
+        }
 
         if ($dumps) {
           Write-Host "Found $($dumps.Count) crash dump(s)"
@@ -105,8 +147,22 @@ runs:
           }
 
           Write-Host "`n⚠️  Crash dumps detected! Download the 'crash-dumps' artifact for detailed analysis."
+
+          # Copy dumps to workspace for artifact upload
+          $artifactPath = "$env:GITHUB_WORKSPACE\crash_dumps_collected"
+          New-Item -ItemType Directory -Force -Path $artifactPath | Out-Null
+
+          foreach ($dump in $dumps) {
+            $destName = "$($dump.Directory.Name)_$($dump.Name)"
+            Copy-Item $dump.FullName -Destination "$artifactPath\$destName"
+            if (Test-Path "$($dump.FullName).analysis.txt") {
+              Copy-Item "$($dump.FullName).analysis.txt" -Destination "$artifactPath\$destName.analysis.txt"
+            }
+          }
+
+          Write-Host "Copied $($dumps.Count) dump(s) to artifact directory"
         } else {
-          Write-Host "No crash dumps found in C:\dumps"
+          Write-Host "No crash dumps from this CI run found"
         }
 
     - name: Upload crash dumps
@@ -115,8 +171,8 @@ runs:
       with:
         name: crash-dumps-${{ github.run_id }}-${{ github.run_attempt }}
         path: |
-          C:\dumps\*.dmp
-          C:\dumps\*.txt
+          crash_dumps_collected/*.dmp
+          crash_dumps_collected/*.txt
         if-no-files-found: ignore
         retention-days: 7
 
