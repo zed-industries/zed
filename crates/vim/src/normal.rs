@@ -535,7 +535,7 @@ impl Vim {
                 |s| {
                     s.move_cursors_with(|map, cursor, goal| {
                         motion
-                            .move_point(map, cursor, goal, times, &text_layout_details)
+                            .move_point(map, cursor, goal, times, &text_layout_details, false)
                             .unwrap_or((cursor, goal))
                     })
                 },
@@ -708,6 +708,7 @@ impl Vim {
                             goal,
                             None,
                             &text_layout_details,
+                            false,
                         )
                     });
                 });
