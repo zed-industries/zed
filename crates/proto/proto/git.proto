@@ -239,6 +239,18 @@ message GitShow {
     string commit = 4;
 }
 
+message GitLog {
+    uint64 project_id = 1;
+    reserved 2;
+    uint64 repository_id = 3;
+    uint64 skip = 4;
+    uint64 max_count = 5;
+}
+
+message GitLogResponse {
+    repeated GitCommitDetails commits = 1;
+}
+
 message GitCommitDetails {
     string sha = 1;
     string message = 2;

@@ -404,6 +404,10 @@ pub trait GitRepository: Send + Sync {
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
 
+    /// Returns the git commit log returning at most `max_count` commits from
+    /// the current branch, skipping `skip` results
+    fn git_log(&self, skip: u64, max_count: u64) -> BoxFuture<'_, Result<Vec<CommitDetails>>>;
+
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
@@ -672,6 +676,57 @@ impl GitRepository for RealGitRepository {
                     author_email,
                     author_name,
                 })
+            })
+            .boxed()
+    }
+
+    fn git_log(&self, skip: u64, max_size: u64) -> BoxFuture<'_, Result<Vec<CommitDetails>>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let output = new_std_command("git")
+                    .current_dir(&working_directory)
+                    .args([
+                        "--no-pager",
+                        "--no-optional-locks",
+                        "log",
+                        "--skip",
+                        &skip.to_string(),
+                        "--max-count",
+                        &max_size.to_string(),
+                        "--format=%H%x00%B%x00%at%x00%ae%x00%an%x00",
+                    ])
+                    .output()?;
+
+                let output = std::str::from_utf8(&output.stdout)?
+                    .trim()
+                    .trim_end_matches('\0');
+                let parts: Vec<&str> = output.split('\0').map(|value| value.trim()).collect();
+
+                if parts.len() % 5 != 0 {
+                    bail!("unexpected git log output length: {}", parts.len());
+                }
+
+                let mut commits = Vec::with_capacity(parts.len() / 5);
+
+                for chunk in parts.chunks(5) {
+                    let sha = chunk[0].to_string().into();
+                    let message = chunk[1].to_string().into();
+                    let commit_timestamp = chunk[2].parse()?;
+                    let author_email = chunk[3].to_string().into();
+                    let author_name = chunk[4].to_string().into();
+
+                    commits.push(CommitDetails {
+                        sha,
+                        message,
+                        commit_timestamp,
+                        author_email,
+                        author_name,
+                    });
+                }
+
+                Ok(commits)
             })
             .boxed()
     }

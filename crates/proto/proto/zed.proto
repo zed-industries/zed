@@ -418,7 +418,10 @@ message Envelope {
 
         GitRenameBranch git_rename_branch = 380;
 
-        RemoteStarted remote_started = 381; // current max
+        RemoteStarted remote_started = 381;
+
+        GitLog git_log = 382;
+        GitLogResponse git_log_response = 383; // current max
     }
 
     reserved 87 to 88;

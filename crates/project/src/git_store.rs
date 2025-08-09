@@ -3544,6 +3544,41 @@ impl Repository {
         })
     }
 
+    pub fn git_log(
+        &mut self,
+        skip: u64,
+        max_count: u64,
+    ) -> oneshot::Receiver<Result<Vec<CommitDetails>>> {
+        let id = self.id;
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local { backend, .. } => backend.git_log(skip, max_count).await,
+                RepositoryState::Remote { project_id, client } => {
+                    let resp = client
+                        .request(proto::GitLog {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            skip,
+                            max_count,
+                        })
+                        .await?;
+
+                    Ok(resp
+                        .commits
+                        .into_iter()
+                        .map(|commit| CommitDetails {
+                            sha: commit.sha.into(),
+                            message: commit.message.into(),
+                            commit_timestamp: commit.commit_timestamp,
+                            author_email: commit.author_email.into(),
+                            author_name: commit.author_name.into(),
+                        })
+                        .collect())
+                }
+            }
+        })
+    }
+
     pub fn load_commit_diff(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDiff>> {
         let id = self.id;
         self.send_job(None, move |git_repo, cx| async move {
