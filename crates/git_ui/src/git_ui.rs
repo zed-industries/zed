@@ -36,6 +36,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod stash_picker;
 pub mod text_diff_view;
 
 actions!(
@@ -62,6 +63,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
+        stash_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
