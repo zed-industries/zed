@@ -406,6 +406,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_stash);
         client.add_entity_request_handler(Self::handle_stash_pop);
+        client.add_entity_request_handler(Self::handle_stash_drop);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -1746,10 +1747,29 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.and_then(|i| Some(i as usize));
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_pop(cx)
+                repository_handle.stash_pop(stash_index, cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash_drop(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StashDrop>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.and_then(|i| Some(i as usize));
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_drop(stash_index, cx)
             })?
             .await?;
 
@@ -3700,7 +3720,11 @@ impl Repository {
         })
     }
 
-    pub fn stash_pop(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_pop(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let id = self.id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |this, _| {
@@ -3710,12 +3734,47 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        } => backend.stash_pop(environment).await,
+                        } => backend.stash_pop(index, environment).await,
                         RepositoryState::Remote { project_id, client } => {
                             client
                                 .request(proto::StashPop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
+                                    stash_index: index.and_then(|i| Some(i as u64)),
+                                })
+                                .await
+                                .context("sending stash pop request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_drop(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.stash_drop(index, environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::StashDrop {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    stash_index: index.and_then(|i| Some(i as u64)),
                                 })
                                 .await
                                 .context("sending stash pop request")?;
