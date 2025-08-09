@@ -3,15 +3,46 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
+
 use language::language_settings::{EditPredictionProvider, all_language_settings};
-use settings::SettingsStore;
+use language_models::AllLanguageModelSettings;
+use ollama::{OllamaCompletionProvider, OllamaService, SettingsModel};
+use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use ui::Window;
 use workspace::Workspace;
+use zed_actions;
 use zeta::{ProviderDataCollection, ZetaEditPredictionProvider};
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
+    // Initialize global Ollama service
+    let (api_url, settings_models) = {
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+        let api_url = settings.api_url.clone();
+        let settings_models: Vec<SettingsModel> = settings
+            .available_models
+            .iter()
+            .map(|model| SettingsModel {
+                name: model.name.clone(),
+                display_name: model.display_name.clone(),
+                max_tokens: model.max_tokens,
+                supports_tools: model.supports_tools,
+                supports_images: model.supports_images,
+                supports_thinking: model.supports_thinking,
+            })
+            .collect();
+        (api_url, settings_models)
+    };
+
+    let ollama_service = OllamaService::new(client.http_client(), api_url, cx);
+
+    ollama_service.update(cx, |service, cx| {
+        service.set_settings_models(settings_models, cx);
+    });
+
+    OllamaService::set_global(ollama_service, cx);
+
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
         let editors = editors.clone();
@@ -119,8 +150,30 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         }
                         EditPredictionProvider::None
                         | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        | EditPredictionProvider::Supermaven
+                        | EditPredictionProvider::Ollama => {}
                     }
+                }
+            } else if provider == EditPredictionProvider::Ollama {
+                // Update global Ollama service when settings change
+                let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+                if let Some(service) = OllamaService::global(cx) {
+                    let settings_models: Vec<SettingsModel> = settings
+                        .available_models
+                        .iter()
+                        .map(|model| SettingsModel {
+                            name: model.name.clone(),
+                            display_name: model.display_name.clone(),
+                            max_tokens: model.max_tokens,
+                            supports_tools: model.supports_tools,
+                            supports_images: model.supports_images,
+                            supports_thinking: model.supports_thinking,
+                        })
+                        .collect();
+
+                    service.update(cx, |service, cx| {
+                        service.set_settings_models(settings_models, cx);
+                    });
                 }
             }
         }
@@ -262,6 +315,28 @@ fn assign_edit_prediction_provider(
 
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
+        }
+        EditPredictionProvider::Ollama => {
+            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+            let api_key = std::env::var("OLLAMA_API_KEY").ok();
+
+            // Get model from settings or use discovered models
+            let model = if let Some(first_model) = settings.available_models.first() {
+                first_model.name.clone()
+            } else if let Some(service) = OllamaService::global(cx) {
+                // Use first discovered model
+                service
+                    .read(cx)
+                    .available_models()
+                    .first()
+                    .map(|m| m.name.clone())
+                    .unwrap_or_else(|| "qwen2.5-coder:3b".to_string())
+            } else {
+                "qwen2.5-coder:3b".to_string()
+            };
+
+            let provider = cx.new(|cx| OllamaCompletionProvider::new(model, api_key, cx));
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
         }
     }
 }
