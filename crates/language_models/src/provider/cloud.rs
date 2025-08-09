@@ -942,6 +942,7 @@ impl LanguageModel for CloudLanguageModel {
                     model.id(),
                     model.supports_parallel_tool_calls(),
                     None,
+                    None,
                 );
                 let llm_api_token = self.llm_api_token.clone();
                 let future = self.request_limiter.stream(async move {
