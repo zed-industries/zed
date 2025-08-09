@@ -805,7 +805,11 @@
       "down": "editor::ContextMenuNext",
       "ctrl-n": "editor::ContextMenuNext",
       "pageup": "editor::ContextMenuFirst",
-      "pagedown": "editor::ContextMenuLast"
+      "pagedown": "editor::ContextMenuLast",
+      "ctrl-d": ["editor::ContextMenuScrollAside", { "pages": 0.5 }],
+      "ctrl-u": ["editor::ContextMenuScrollAside", { "pages": -0.5 }],
+      "ctrl-e": ["editor::ContextMenuScrollAside", { "lines": 1.0 }],
+      "ctrl-y": ["editor::ContextMenuScrollAside", { "lines": -1.0 }]
     }
   },
   {

@@ -73,6 +73,7 @@ pub use multi_buffer::{
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
+use scroll::ScrollAmount;
 pub use text::Bias;
 
 use ::git::{
@@ -12783,6 +12784,23 @@ impl Editor {
     ) {
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             context_menu.select_next(self.completion_provider.as_deref(), window, cx);
+        }
+    }
+
+    pub fn context_menu_scroll_aside(
+        &mut self,
+        event: &ContextMenuScrollAside,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let scroll_amount = match (event.pages, event.lines) {
+            (pages, _) if pages != 0.0 => ScrollAmount::Page(pages),
+            (_, lines) if lines != 0.0 => ScrollAmount::Line(lines),
+            (_, _) => ScrollAmount::Page(0.0),
+        };
+
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            context_menu.scroll_aside(scroll_amount, window, cx);
         }
     }
 
