@@ -1718,7 +1718,18 @@ impl Thread {
                                     ));
                             }
                             LanguageModelCompletionEvent::Stop(reason) => {
-                                stop_reason = reason;
+                                // Prioritize ToolUse over EndTurn to handle providers that send
+                                // both finish_reason="tool_calls" and finish_reason="stop"
+                                match (stop_reason, reason) {
+                                    // Keep ToolUse if we already have it, don't let EndTurn override it
+                                    (StopReason::ToolUse, StopReason::EndTurn) => {
+                                        // Keep the existing ToolUse stop_reason
+                                    }
+                                    // For all other cases, update to the new reason
+                                    _ => {
+                                        stop_reason = reason;
+                                    }
+                                }
                             }
                             LanguageModelCompletionEvent::UsageUpdate(token_usage) => {
                                 thread.update_token_usage_at_last_message(token_usage);
