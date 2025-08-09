@@ -20,7 +20,112 @@ runs:
       with:
         node-version: "18"
 
+    - name: Configure crash dumps
+      shell: powershell
+      run: |
+        # Create crash dump directory
+        New-Item -ItemType Directory -Force -Path "C:\dumps"
+
+        # Configure Windows Error Reporting to capture dumps
+        Write-Host "Configuring Windows Error Reporting for crash dumps..."
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpFolder /t REG_EXPAND_SZ /d "C:\dumps" /f
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpCount /t REG_DWORD /d 50 /f
+        reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /v DumpType /t REG_DWORD /d 2 /f
+
+        Write-Host "Crash dumps will be saved to C:\dumps"
+
     - name: Run tests
       shell: powershell
       working-directory: ${{ inputs.working-directory }}
-      run: cargo nextest run --workspace --no-fail-fast
+      run: |
+        $env:RUST_BACKTRACE = "full"
+        cargo nextest run --workspace --no-fail-fast
+      continue-on-error: true
+
+    - name: Analyze crash dumps
+      if: always()
+      shell: powershell
+      run: |
+        Write-Host "Checking for crash dumps..."
+        $dumps = Get-ChildItem "C:\dumps\*.dmp" -ErrorAction SilentlyContinue
+
+        if ($dumps) {
+          Write-Host "Found $($dumps.Count) crash dump(s)"
+
+          # Install debugging tools if not present
+          $cdbPath = "C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe"
+          if (-not (Test-Path $cdbPath)) {
+            Write-Host "Installing Windows Debugging Tools..."
+            $url = "https://go.microsoft.com/fwlink/?linkid=2237387"
+            Invoke-WebRequest -Uri $url -OutFile winsdksetup.exe
+            Start-Process -Wait winsdksetup.exe -ArgumentList "/features OptionId.WindowsDesktopDebuggers /quiet"
+          }
+
+          foreach ($dump in $dumps) {
+            Write-Host "`n=================================="
+            Write-Host "Analyzing crash dump: $($dump.Name)"
+            Write-Host "Size: $([math]::Round($dump.Length / 1MB, 2)) MB"
+            Write-Host "Time: $($dump.CreationTime)"
+            Write-Host "=================================="
+
+            # Set symbol path
+            $env:_NT_SYMBOL_PATH = "srv*C:\symbols*https://msdl.microsoft.com/download/symbols"
+
+            # Run analysis
+            $analysisOutput = & $cdbPath -z $dump.FullName -c "!analyze -v; ~*k; lm; q" 2>&1 | Out-String
+
+            # Extract key information
+            if ($analysisOutput -match "ExceptionCode:\s*([\w]+)") {
+              Write-Host "Exception Code: $($Matches[1])"
+              if ($Matches[1] -eq "c0000005") {
+                Write-Host "Exception Type: ACCESS VIOLATION"
+              }
+            }
+
+            if ($analysisOutput -match "EXCEPTION_RECORD:\s*(.+)") {
+              Write-Host "Exception Record: $($Matches[1])"
+            }
+
+            if ($analysisOutput -match "FAULTING_IP:\s*\n(.+)") {
+              Write-Host "Faulting Instruction: $($Matches[1])"
+            }
+
+            # Save full analysis
+            $analysisFile = "$($dump.FullName).analysis.txt"
+            $analysisOutput | Out-File -FilePath $analysisFile
+            Write-Host "`nFull analysis saved to: $analysisFile"
+
+            # Print stack trace section
+            Write-Host "`n--- Stack Trace Preview ---"
+            $stackSection = $analysisOutput -split "STACK_TEXT:" | Select-Object -Last 1
+            $stackLines = $stackSection -split "`n" | Select-Object -First 20
+            $stackLines | ForEach-Object { Write-Host $_ }
+            Write-Host "--- End Stack Trace Preview ---"
+          }
+
+          Write-Host "`n⚠️  Crash dumps detected! Download the 'crash-dumps' artifact for detailed analysis."
+        } else {
+          Write-Host "No crash dumps found in C:\dumps"
+        }
+
+    - name: Upload crash dumps
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: crash-dumps-${{ github.run_id }}-${{ github.run_attempt }}
+        path: |
+          C:\dumps\*.dmp
+          C:\dumps\*.txt
+        if-no-files-found: ignore
+        retention-days: 7
+
+    - name: Check test results
+      shell: powershell
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        # Re-check test results to fail the job if tests failed
+        if ($LASTEXITCODE -ne 0) {
+          Write-Host "Tests failed with exit code: $LASTEXITCODE"
+          exit $LASTEXITCODE
+        }
