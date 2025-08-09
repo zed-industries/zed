@@ -794,6 +794,7 @@ impl Database {
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
+                            stash_entries: Vec::new(),
                         });
                     }
                 }
