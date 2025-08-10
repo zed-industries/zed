@@ -1196,17 +1196,7 @@ impl BufferSearchBar {
             SearchEvent::MatchesInvalidated => {
                 drop(self.update_matches(false, window, cx));
             }
-            SearchEvent::ActiveMatchChanged => {
-                self.update_match_index(window, cx);
-                if let Some(active_item) = self.active_searchable_item.as_ref() {
-                    if let Some(matches) = self
-                        .searchable_items_with_matches
-                        .get(&active_item.downgrade())
-                    {
-                        active_item.update_matches(matches, window, cx);
-                    }
-                }
-            }
+            SearchEvent::ActiveMatchChanged => self.update_match_index(window, cx),
         }
     }
 
