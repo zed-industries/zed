@@ -132,10 +132,13 @@ impl GitCommitList {
                 .collect();
 
             this.update(cx, |this: &mut GitCommitList, cx| {
+                let count = commits.len();
                 this.commits_loading = false;
                 this.commits.extend(commits);
-                this.commits_list
-                    .splice(0..this.commits_list.item_count(), this.commits.len());
+                this.commits_list.splice(
+                    this.commits_list.item_count()..this.commits_list.item_count(),
+                    count,
+                );
                 cx.notify();
             })
         })
