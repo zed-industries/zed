@@ -45,10 +45,10 @@ impl GitCommitList {
             cx.subscribe_in(
                 &git_store,
                 window,
-                move |this: &mut GitCommitList, _git_store, event, _window, cx| match event {
+                move |this: &mut GitCommitList, _git_store, event, window, cx| match event {
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
-                        // TODO: Reset state and reload commits,
                         this.active_repository = this.project.read(cx).active_repository(cx);
+                        this.reload_history(window, cx)
                     }
                     _ => {}
                 },
@@ -77,6 +77,14 @@ impl GitCommitList {
 
             this
         })
+    }
+
+    fn reload_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commits.clear();
+        self.commits_loading = false;
+        self.commits_list.reset(0);
+
+        self.load_next_history_page(window, cx);
     }
 
     // We probabbly have a next page if the length of all pages matches the per page amount
