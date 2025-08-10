@@ -38,7 +38,7 @@ impl Vim {
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), window, cx);
 
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 editor.dismiss_menus_and_popups(false, window, cx);
 
                 if !HelixModeSetting::get_global(cx).0 {
