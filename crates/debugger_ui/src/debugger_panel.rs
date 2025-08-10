@@ -692,7 +692,6 @@ impl DebugPanel {
                                                     IconName::DebugPause,
                                                 )
                                                 .icon_size(IconSize::Small)
-                                                .shape(ui::IconButtonShape::Square)
                                                 .on_click(window.listener_for(
                                                     &running_state,
                                                     |this, _, _window, cx| {
@@ -719,7 +718,6 @@ impl DebugPanel {
                                                     IconName::DebugContinue,
                                                 )
                                                 .icon_size(IconSize::Small)
-                                                .shape(ui::IconButtonShape::Square)
                                                 .on_click(window.listener_for(
                                                     &running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
@@ -743,7 +741,6 @@ impl DebugPanel {
                                     .child(
                                         IconButton::new("debug-step-over", IconName::ArrowRight)
                                             .icon_size(IconSize::Small)
-                                            .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
                                                 &running_state,
                                                 |this, _, _window, cx| {
@@ -770,7 +767,6 @@ impl DebugPanel {
                                             IconName::ArrowDownRight,
                                         )
                                         .icon_size(IconSize::Small)
-                                        .shape(ui::IconButtonShape::Square)
                                         .on_click(window.listener_for(
                                             &running_state,
                                             |this, _, _window, cx| {
@@ -794,7 +790,6 @@ impl DebugPanel {
                                     .child(
                                         IconButton::new("debug-step-out", IconName::ArrowUpRight)
                                             .icon_size(IconSize::Small)
-                                            .shape(ui::IconButtonShape::Square)
                                             .on_click(window.listener_for(
                                                 &running_state,
                                                 |this, _, _window, cx| {
