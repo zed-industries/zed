@@ -14,7 +14,7 @@ use util::ResultExt as _;
 use worktree::ChildEntriesOptions;
 
 /// Matches the most common license locations, with US and UK English spelling.
-const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
+static LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| {
     regex::bytes::RegexBuilder::new(
         "^ \
         (?: license | licence) \
@@ -29,7 +29,7 @@ const LICENSE_FILE_NAME_REGEX: LazyLock<regex::bytes::Regex> = LazyLock::new(|| 
 });
 
 fn is_license_eligible_for_data_collection(license: &str) -> bool {
-    const LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    static LICENSE_REGEXES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         [
             include_str!("license_detection/apache.regex"),
             include_str!("license_detection/isc.regex"),
@@ -47,7 +47,7 @@ fn is_license_eligible_for_data_collection(license: &str) -> bool {
 
 /// Canonicalizes the whitespace of license text and license regexes.
 fn canonicalize_license_text(license: &str) -> String {
-    const PARAGRAPH_SEPARATOR_REGEX: LazyLock<Regex> =
+    static PARAGRAPH_SEPARATOR_REGEX: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\s*\n\s*\n\s*").unwrap());
 
     PARAGRAPH_SEPARATOR_REGEX
