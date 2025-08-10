@@ -3,7 +3,7 @@ name: Run Unit Evals
 on:
   schedule:
     # GitHub might drop jobs at busy times, so we choose a random time in the middle of the night.
-    - cron: "47 1 * * *"
+    - cron: "47 1 * * 2"
   workflow_dispatch:
 
 concurrency:
