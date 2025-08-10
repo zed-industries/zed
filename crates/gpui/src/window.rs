@@ -3688,7 +3688,8 @@ impl Window {
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx)
+            self.replay_pending_input(match_result.to_replay, cx);
+            cx.propagate_event = true;
         }
 
         if !match_result.pending.is_empty() {
