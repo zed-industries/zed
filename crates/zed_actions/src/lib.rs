@@ -182,7 +182,7 @@ pub mod git {
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
             Branch,
             /// Opens the git stash selector.
-            Stash
+            StashEntries
         ]
     );
 }

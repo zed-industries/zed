@@ -2,17 +2,27 @@ use fuzzy::StringMatchCandidate;
 
 use git::stash::StashEntry;
 use gpui::{
-    App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render, SharedString, Styled,
-    Subscription, Task, Window, rems,
+    Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
 use std::sync::Arc;
-use ui::{HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
+
+use crate::stash_picker;
+
+actions!(
+    stash_picker,
+    [
+        /// Drop the selected stash entry.
+        DropStashItem,
+    ]
+);
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(open);
@@ -20,7 +30,7 @@ pub fn register(workspace: &mut Workspace) {
 
 pub fn open(
     workspace: &mut Workspace,
-    _: &zed_actions::git::Stash,
+    _: &zed_actions::git::StashEntries,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -52,6 +62,7 @@ enum StashListStyle {
 pub struct StashList {
     width: Rems,
     pub picker: Entity<Picker<StashListDelegate>>,
+    picker_focus_handle: FocusHandle,
     _subscription: Subscription,
 }
 
@@ -83,8 +94,12 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository.clone(), style);
+        let delegate = StashListDelegate::new(repository.clone(), style, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker_focus_handle = picker.focus_handle(cx);
+        picker.update(cx, |picker, _| {
+            picker.delegate.focus_handle = picker_focus_handle.clone();
+        });
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
             cx.emit(DismissEvent);
@@ -92,9 +107,24 @@ impl StashList {
 
         Self {
             picker,
+            picker_focus_handle,
             width,
             _subscription,
         }
+    }
+
+    fn handle_drop_stash(
+        &mut self,
+        _: &DropStashItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .drop_stash_at(picker.delegate.selected_index(), window, cx);
+        });
+        cx.notify();
     }
 
     fn handle_modifiers_changed(
@@ -110,27 +140,20 @@ impl StashList {
 
 impl ModalView for StashList {}
 impl EventEmitter<DismissEvent> for StashList {}
-
 impl Focusable for StashList {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.picker.focus_handle(cx)
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.picker_focus_handle.clone()
     }
 }
 
 impl Render for StashList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .key_context("GitStashSelector")
+            .key_context("StashList")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_drop_stash))
             .child(self.picker.clone())
-            .on_mouse_down_out({
-                cx.listener(move |this, _, window, cx| {
-                    this.picker.update(cx, |this, cx| {
-                        this.cancel(&Default::default(), window, cx);
-                    })
-                })
-            })
     }
 }
 
@@ -148,10 +171,16 @@ pub struct StashListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
+    focus_handle: FocusHandle,
 }
 
 impl StashListDelegate {
-    fn new(repo: Option<Entity<Repository>>, style: StashListStyle) -> Self {
+    fn new(
+        repo: Option<Entity<Repository>>,
+        style: StashListStyle,
+        _window: &mut Window,
+        cx: &mut Context<StashList>,
+    ) -> Self {
         Self {
             matches: vec![],
             repo,
@@ -160,10 +189,15 @@ impl StashListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
+            focus_handle: cx.focus_handle(),
         }
     }
 
-    fn drop_stash(&self, stash_index: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn drop_stash_at(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(entry_match) = self.matches.get(ix) else {
+            return;
+        };
+        let stash_index = entry_match.entry.index;
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -176,7 +210,6 @@ impl StashListDelegate {
         .detach_and_prompt_err("Failed to apply stash", window, cx, |e, _, _| {
             Some(e.to_string())
         });
-        cx.emit(DismissEvent);
     }
 
     fn pop_stash(&self, stash_index: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -286,20 +319,12 @@ impl PickerDelegate for StashListDelegate {
         })
     }
 
-    fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry_match) = self.matches.get(self.selected_index()) else {
             return;
         };
-
         let stash_index = entry_match.entry.index;
-
-        if secondary {
-            // Secondary action: remove stash (remove from stash list)
-            self.drop_stash(stash_index, window, cx);
-        } else {
-            // Primary action: apply stash (keep in stash list)
-            self.pop_stash(stash_index, window, cx);
-        }
+        self.pop_stash(stash_index, window, cx);
     }
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -332,25 +357,55 @@ impl PickerDelegate for StashListDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
                 .child(
-                    v_flex()
-                        .w_full()
-                        .overflow_hidden()
-                        .child(
-                            h_flex()
-                                .gap_6()
-                                .justify_between()
-                                .overflow_x_hidden()
-                                .child(stash_name)
-                                .child(stash_index_label.into_element()),
-                        )
-                        .when(self.style == StashListStyle::Modal, |el| {
-                            el.child(div().max_w_96())
-                        }),
+                    v_flex().w_full().overflow_hidden().child(
+                        h_flex()
+                            .gap_6()
+                            .justify_between()
+                            .overflow_x_hidden()
+                            .child(stash_name)
+                            .child(stash_index_label.into_element()),
+                    ),
                 ),
         )
     }
 
     fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
         Some("No stashes found".into())
+    }
+
+    fn render_footer(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let focus_handle = self.focus_handle.clone();
+
+        Some(
+            h_flex()
+                .w_full()
+                .p_1p5()
+                .justify_between()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .child(
+                    h_flex().gap_0p5().child(
+                        Button::new("drop-stash-item", "Drop")
+                            .key_binding(
+                                KeyBinding::for_action_in(
+                                    &stash_picker::DropStashItem,
+                                    &focus_handle,
+                                    window,
+                                    cx,
+                                )
+                                .map(|kb| kb.size(rems_from_px(12.))),
+                            )
+                            .on_click(|_, window, cx| {
+                                window
+                                    .dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
+                            }),
+                    ),
+                )
+                .into_any(),
+        )
     }
 }

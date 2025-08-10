@@ -1076,6 +1076,12 @@
     }
   },
   {
+    "context": "StashList || (StashList > Picker > Editor)",
+    "bindings": {
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+    }
+  },
+  {
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
