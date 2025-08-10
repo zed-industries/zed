@@ -1792,7 +1792,7 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let stash_index = envelope.payload.stash_index.and_then(|i| Some(i as usize));
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -1810,7 +1810,7 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let stash_index = envelope.payload.stash_index.and_then(|i| Some(i as usize));
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -2807,7 +2807,7 @@ impl RepositorySnapshot {
                 .stash_entries
                 .entries
                 .iter()
-                .map(|entry| stash_to_proto(entry))
+                .map(stash_to_proto)
                 .collect(),
         }
     }
@@ -2875,7 +2875,7 @@ impl RepositorySnapshot {
                 .stash_entries
                 .entries
                 .iter()
-                .map(|entry| stash_to_proto(entry))
+                .map(stash_to_proto)
                 .collect(),
         }
     }
@@ -3788,7 +3788,7 @@ impl Repository {
                                 .request(proto::StashPop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
-                                    stash_index: index.and_then(|i| Some(i as u64)),
+                                    stash_index: index.map(|i| i as u64),
                                 })
                                 .await
                                 .context("sending stash pop request")?;
@@ -3822,7 +3822,7 @@ impl Repository {
                                 .request(proto::StashDrop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
-                                    stash_index: index.and_then(|i| Some(i as u64)),
+                                    stash_index: index.map(|i| i as u64),
                                 })
                                 .await
                                 .context("sending stash pop request")?;
