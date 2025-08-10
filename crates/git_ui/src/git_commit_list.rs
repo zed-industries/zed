@@ -156,7 +156,7 @@ impl GitCommitList {
             return Task::ready(Err(anyhow::anyhow!("no active repo")));
         };
         repo.update(cx, |repo, cx| {
-            let git_log = repo.git_log(skip, max_count);
+            let git_log = repo.log(skip, max_count);
             cx.spawn(async move |_, _| git_log.await?)
         })
     }
