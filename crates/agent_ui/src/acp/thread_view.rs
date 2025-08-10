@@ -3,10 +3,10 @@ use acp_thread::{
     LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
-use assistant_tool::ActionLog;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
@@ -26,7 +26,7 @@ use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::Project;
+use project::{CompletionIntent, Project};
 use settings::{Settings as _, SettingsStore};
 use std::{
     cell::RefCell, collections::BTreeMap, path::Path, process::ExitStatus, rc::Rc, sync::Arc,
@@ -408,7 +408,7 @@ impl AcpThreadView {
                 }
 
                 if ix < text.len() {
-                    let last_chunk = text[ix..].trim();
+                    let last_chunk = text[ix..].trim_end();
                     if !last_chunk.is_empty() {
                         chunks.push(last_chunk.into());
                     }
@@ -1146,7 +1146,7 @@ impl AcpThreadView {
                 status: acp::ToolCallStatus::Failed,
                 ..
             } => Some(
-                Icon::new(IconName::X)
+                Icon::new(IconName::Close)
                     .color(Color::Error)
                     .size(IconSize::Small)
                     .into_any_element(),
@@ -1402,10 +1402,10 @@ impl AcpThreadView {
                             this.icon(IconName::CheckDouble).icon_color(Color::Success)
                         }
                         acp::PermissionOptionKind::RejectOnce => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                         acp::PermissionOptionKind::RejectAlways => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                     })
                     .icon_position(IconPosition::Start)
@@ -2184,7 +2184,7 @@ impl AcpThreadView {
                             .hover(|this| this.opacity(1.0))
                             .child(
                                 IconButton::new("toggle-height", expand_icon)
-                                    .icon_size(IconSize::XSmall)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip({
                                         let focus_handle = focus_handle.clone();
@@ -2234,7 +2234,7 @@ impl AcpThreadView {
                 }))
                 .into_any_element()
         } else {
-            IconButton::new("stop-generation", IconName::StopFilled)
+            IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
                 .style(ButtonStyle::Tinted(ui::TintColor::Error))
                 .tooltip(move |window, cx| {
@@ -2603,7 +2603,7 @@ impl AcpThreadView {
     }
 
     fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -2614,7 +2614,7 @@ impl AcpThreadView {
                 }
             }));
 
-        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUpAlt)
+        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
@@ -2626,6 +2626,7 @@ impl AcpThreadView {
             .w_full()
             .mr_1()
             .pb_2()
+            .gap_1()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
@@ -2674,6 +2675,61 @@ impl AcpThreadView {
                 diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 cx.notify();
             })
+        }
+    }
+
+    pub(crate) fn insert_dragged_files(
+        &self,
+        paths: Vec<project::ProjectPath>,
+        _added_worktrees: Vec<Entity<project::Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let buffer = self.message_editor.read(cx).buffer().clone();
+        let Some((&excerpt_id, _, _)) = buffer.read(cx).snapshot(cx).as_singleton() else {
+            return;
+        };
+        let Some(buffer) = buffer.read(cx).as_singleton() else {
+            return;
+        };
+        for path in paths {
+            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+                continue;
+            };
+            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+                continue;
+            };
+
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+            let path_prefix = abs_path
+                .file_name()
+                .unwrap_or(path.path.as_os_str())
+                .display()
+                .to_string();
+            let completion = ContextPickerCompletionProvider::completion_for_path(
+                path,
+                &path_prefix,
+                false,
+                entry.is_dir(),
+                excerpt_id,
+                anchor..anchor,
+                self.message_editor.clone(),
+                self.mention_set.clone(),
+                cx,
+            );
+
+            self.message_editor.update(cx, |message_editor, cx| {
+                message_editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        completion.new_text,
+                    )],
+                    cx,
+                );
+            });
+            if let Some(confirm) = completion.confirm.clone() {
+                confirm(CompletionIntent::Complete, window, cx);
+            }
         }
     }
 }

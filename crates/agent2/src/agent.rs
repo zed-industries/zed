@@ -1,11 +1,11 @@
-use crate::{templates::Templates, AgentResponseEvent, Thread};
+use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
     EditFileTool, FindPathTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization,
 };
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use futures::{future, StreamExt};
+use anyhow::{Context as _, Result, anyhow};
+use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
@@ -494,8 +494,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream =
-                thread.update(cx, |thread, cx| thread.send(model, message, cx))?;
+            let mut response_stream = thread.update(cx, |thread, cx| thread.send(message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = response_stream.next().await {

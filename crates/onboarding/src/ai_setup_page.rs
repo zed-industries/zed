@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use ai_onboarding::AiUpsellCard;
-use client::{Client, UserStore};
+use client::{Client, UserStore, zed_urls};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
@@ -42,10 +42,16 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> impl IntoElement {
-    let privacy_badge = || {
-        Badge::new("Privacy")
-            .icon(IconName::ShieldCheck)
-            .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into())
+    let (title, description) = if disabled {
+        (
+            "AI is disabled across Zed",
+            "Re-enable it any time in Settings.",
+        )
+    } else {
+        (
+            "Privacy is the default for Zed",
+            "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
+        )
     };
 
     v_flex()
@@ -60,62 +66,41 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
         .bg(cx.theme().colors().surface_background.opacity(0.3))
         .rounded_lg()
         .overflow_hidden()
-        .map(|this| {
-            if disabled {
-                this.child(
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_between()
+                .child(Label::new(title))
+                .child(
                     h_flex()
-                        .gap_2()
-                        .justify_between()
+                        .gap_1()
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("AI is disabled across Zed"))
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .color(Color::Success)
-                                        .size(IconSize::XSmall),
-                                ),
+                            Badge::new("Privacy")
+                                .icon(IconName::ShieldCheck)
+                                .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into()),
                         )
-                        .child(privacy_badge()),
-                )
-                .child(
-                    Label::new("Re-enable it any time in Settings.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            } else {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(Label::new("Privacy is the default for Zed"))
                         .child(
-                            h_flex().gap_1().child(privacy_badge()).child(
-                                Button::new("learn_more", "Learn More")
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
-                                    })
-                                    .tab_index({
-                                        *tab_index += 1;
-                                        *tab_index - 1
-                                    }),
-                            ),
+                            Button::new("learn_more", "Learn More")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::ArrowUpRight)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .on_click(|_, _, cx| {
+                                    cx.open_url(&zed_urls::ai_privacy_and_security(cx))
+                                })
+                                .tab_index({
+                                    *tab_index += 1;
+                                    *tab_index - 1
+                                }),
                         ),
-                )
-                .child(
-                    Label::new(
-                        "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-            }
-        })
+                ),
+        )
+        .child(
+            Label::new(description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
 }
 
 fn render_llm_provider_card(

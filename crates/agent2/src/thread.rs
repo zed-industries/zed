@@ -1,7 +1,8 @@
 use crate::{SystemPromptTemplate, Template, Templates};
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::{adapt_schema_to_format, ActionLog};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{
@@ -22,7 +23,7 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, collections::BTreeMap, fmt::Write, future::Future, rc::Rc, sync::Arc};
-use util::{markdown::MarkdownCodeBlock, ResultExt};
+use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {
@@ -199,11 +200,11 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send(
         &mut self,
-        model: Arc<dyn LanguageModel>,
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
         let content = content.into();
+        let model = self.selected_model.clone();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
 

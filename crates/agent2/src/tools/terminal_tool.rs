@@ -1,8 +1,8 @@
 use agent_client_protocol as acp;
 use anyhow::Result;
-use futures::{future::Shared, FutureExt as _};
+use futures::{FutureExt as _, future::Shared};
 use gpui::{App, AppContext, Entity, SharedString, Task};
-use project::{terminals::TerminalKind, Project};
+use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -10,7 +10,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{get_system_shell, markdown::MarkdownInlineCode, ResultExt};
+use util::{ResultExt, get_system_shell, markdown::MarkdownInlineCode};
 
 use crate::{AgentTool, ToolCallEventStream};
 
