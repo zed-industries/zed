@@ -62,6 +62,12 @@ pub(crate) async fn download_server_binary(
                     format!("saving archive contents into the temporary file for {url}",)
                 })?;
             let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
+
+            // Strip "sha256:" prefix for comparison
+            let expected_sha_256 = expected_sha_256
+                .strip_prefix("sha256:")
+                .unwrap_or(expected_sha_256);
+
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
                 "{url} asset got SHA-256 mismatch. Expected: {expected_sha_256}, Got: {asset_sha_256}",
