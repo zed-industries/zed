@@ -59,8 +59,6 @@ impl GitCommitList {
             commits_list.set_scroll_handler(cx.listener(
                 |this: &mut Self, event: &ListScrollEvent, window, cx| {
                     if event.visible_range.end >= this.commits.len() - 5 && this.has_next_page() {
-                        println!("Scroll to next page");
-                        println!("{}", this.commits.len());
                         this.load_next_history_page(window, cx);
                     }
                 },
@@ -177,7 +175,7 @@ impl GitCommitList {
                         h_flex()
                             .items_center()
                             .h_8()
-                            .text_sm()
+                            .text_xs()
                             .text_color(Color::Default.color(cx))
                             .child(commit_summary.subject.clone()),
                     )
@@ -185,7 +183,7 @@ impl GitCommitList {
                         h_flex()
                             .items_center()
                             .h_8()
-                            .text_sm()
+                            .text_xs()
                             .text_color(Color::Hidden.color(cx))
                             .child(commit.author_name.clone())
                             .ml_1(),
@@ -214,17 +212,23 @@ impl GitCommitList {
 
 impl Render for GitCommitList {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().flex_shrink().h_48().w_full().child(
-            list(
-                self.commits_list.clone(),
-                cx.processor(move |list, index, window, cx| {
-                    let item: &CommitDetails = &list.commits[index];
+        v_flex()
+            .border_t_1()
+            .border_color(cx.theme().colors().border.opacity(0.8))
+            .flex_shrink()
+            .h_48()
+            .w_full()
+            .child(
+                list(
+                    self.commits_list.clone(),
+                    cx.processor(move |list, index, window, cx| {
+                        let item: &CommitDetails = &list.commits[index];
 
-                    list.render_element(ElementId::Name(item.sha.clone()), item, window, cx)
-                        .into_any_element()
-                }),
+                        list.render_element(ElementId::Name(item.sha.clone()), item, window, cx)
+                            .into_any_element()
+                    }),
+                )
+                .size_full(),
             )
-            .size_full(),
-        )
     }
 }

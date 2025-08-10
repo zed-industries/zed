@@ -4281,13 +4281,13 @@ impl Render for GitPanel {
                         }
                     })
                     .children(self.render_footer(window, cx))
-                    .child(self.history.clone())
                     .when(self.amend_pending, |this| {
                         this.child(self.render_pending_amend(cx))
                     })
                     .when(!self.amend_pending, |this| {
                         this.children(self.render_previous_commit(cx))
                     })
+                    .child(self.history.clone())
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
