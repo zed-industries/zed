@@ -11,7 +11,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{fmt::Write, sync::Arc};
-use text::Point;
 
 use crate::{AgentTool, ToolCallEventStream};
 

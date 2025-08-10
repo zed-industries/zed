@@ -1,7 +1,7 @@
 use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use assistant_tools::edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;

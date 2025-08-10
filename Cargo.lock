@@ -212,6 +212,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
+ "regex",
  "reqwest_client",
  "rust-embed",
  "schemars",
@@ -13554,6 +13555,7 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "askpass",
  "assistant_tool",
