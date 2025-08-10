@@ -417,13 +417,14 @@ pub(crate) fn new_debugger_pane(
                     .map_or(false, |item| item.read(cx).hovered);
 
                 h_flex()
-                    .group(pane_group_id.clone())
-                    .justify_between()
-                    .bg(cx.theme().colors().tab_bar_background)
-                    .border_b_1()
-                    .px_2()
-                    .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .group(pane_group_id.clone())
+                    .pl_1p5()
+                    .pr_1()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
                             return;
@@ -512,6 +513,7 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
+
                         h_flex()
                             .visible_on_hover(pane_group_id)
                             .when(is_hovered, |this| this.visible())
@@ -535,7 +537,7 @@ pub(crate) fn new_debugger_pane(
                                         IconName::Maximize
                                     },
                                 )
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |pane, _, _, cx| {
                                     let is_zoomed = pane.is_zoomed();
                                     pane.set_zoomed(!is_zoomed, cx);
@@ -590,10 +592,11 @@ impl DebugTerminal {
 }
 
 impl gpui::Render for DebugTerminal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
             .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .children(self.terminal.clone())
     }
 }
