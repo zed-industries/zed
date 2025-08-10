@@ -212,7 +212,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "prompt_store",
- "regex",
  "reqwest_client",
  "rust-embed",
  "schemars",
