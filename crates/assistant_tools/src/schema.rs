@@ -25,6 +25,10 @@ fn schema_to_json(
 fn root_schema_for<T: JsonSchema>(format: LanguageModelToolSchemaFormat) -> Schema {
     let mut generator = match format {
         LanguageModelToolSchemaFormat::JsonSchema => SchemaSettings::draft07().into_generator(),
+        LanguageModelToolSchemaFormat::JsonSchemaMinimal => SchemaSettings::draft07()
+            .with_transform(MininmalJsonSchemaTransform)
+            .with_transform(ToJsonSchemaSubsetTransform)
+            .into_generator(),
         LanguageModelToolSchemaFormat::JsonSchemaSubset => SchemaSettings::openapi3()
             .with(|settings| {
                 settings.meta_schema = None;
@@ -55,6 +59,18 @@ impl Transform for ToJsonSchemaSubsetTransform {
         if let Some(one_of) = schema.remove("oneOf") {
             schema.insert("anyOf".to_string(), one_of);
         }
+
+        transform_subschemas(self, schema);
+    }
+}
+
+#[derive(Clone)]
+struct MininmalJsonSchemaTransform;
+
+impl Transform for MininmalJsonSchemaTransform {
+    fn transform(&mut self, schema: &mut Schema) {
+        schema.remove("minimum");
+        schema.remove("nullable");
 
         transform_subschemas(self, schema);
     }
