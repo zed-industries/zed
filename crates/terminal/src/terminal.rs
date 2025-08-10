@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod integration_tests;
+
 pub mod mappings;
 
 pub use alacritty_terminal;
@@ -720,7 +723,7 @@ impl TaskStatus {
 
 impl Terminal {
     fn process_event(&mut self, event: AlacTermEvent, cx: &mut Context<Self>) {
-        match event {
+        match dbg!(event) {
             AlacTermEvent::Title(title) => {
                 // ignore default shell program title change as windows always sends those events
                 // and it would end up showing the shell executable path in breadcrumbs
