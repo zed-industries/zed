@@ -4,9 +4,9 @@ mod diff;
 pub use connection::*;
 pub use diff::*;
 
+use action_log::ActionLog;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
-use assistant_tool::ActionLog;
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};

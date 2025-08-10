@@ -10,8 +10,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{

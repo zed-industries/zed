@@ -4,11 +4,11 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
