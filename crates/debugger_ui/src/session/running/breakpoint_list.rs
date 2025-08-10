@@ -23,11 +23,8 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div,
-    Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
-    Tooltip, Window, div, h_flex, px, v_flex,
+    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render, Scrollbar,
+    ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
 };
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
