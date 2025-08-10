@@ -411,22 +411,41 @@ impl PickerDelegate for StashListDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    h_flex().gap_0p5().child(
-                        Button::new("drop-stash-item", "Drop")
-                            .key_binding(
-                                KeyBinding::for_action_in(
-                                    &stash_picker::DropStashItem,
-                                    &focus_handle,
-                                    window,
-                                    cx,
+                    h_flex()
+                        .gap_0p5()
+                        .child(
+                            Button::new("drop-stash", "Drop")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &stash_picker::DropStashItem,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
-                                .map(|kb| kb.size(rems_from_px(12.))),
-                            )
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
-                            }),
-                    ),
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        stash_picker::DropStashItem.boxed_clone(),
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .child(
+                            Button::new("pop-stash", "Pop")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::Confirm,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                                }),
+                        ),
                 )
                 .into_any(),
         )
