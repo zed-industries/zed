@@ -233,7 +233,7 @@ impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Select stash&".into()
+        "Select a stash…".into()
     }
 
     fn editor_position(&self) -> PickerEditorPosition {
