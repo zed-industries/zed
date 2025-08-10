@@ -3832,6 +3832,7 @@ impl Repository {
                 })
             })?
             .await??;
+            this.update(cx, |_, cx| cx.notify())?;
             Ok(())
         })
     }
