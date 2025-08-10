@@ -1,11 +1,12 @@
+use action_log::{ActionLog};
+use assistant_tool::outline;
 use agent_client_protocol::{self as acp};
-use anyhow::{anyhow, Context, Result};
-use assistant_tool::{outline, ActionLog};
+use anyhow::{Context, Result, anyhow};
 use gpui::{Entity, Task};
 use indoc::formatdoc;
 use language::{Anchor, Point};
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
-use project::{image_store, AgentLocation, ImageItem, Project, WorktreeSettings};
+use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -270,7 +271,7 @@ impl AgentTool for ReadFileTool {
 mod test {
     use super::*;
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
-    use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;

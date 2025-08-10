@@ -457,7 +457,7 @@ mod tests {
     use crate::Templates;
 
     use super::*;
-    use assistant_tool::ActionLog;
+    use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
     use gpui::{TestAppContext, UpdateGlobal};

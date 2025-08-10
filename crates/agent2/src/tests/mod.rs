@@ -1,17 +1,17 @@
 use super::*;
 use acp_thread::AgentConnection;
+use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use client::{Client, UserStore};
 use fs::FakeFs;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{http_client::FakeHttpClient, AppContext, Entity, Task, TestAppContext};
+use gpui::{AppContext, Entity, Task, TestAppContext, http_client::FakeHttpClient};
 use indoc::indoc;
 use language_model::{
-    fake_provider::FakeLanguageModel, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelToolResult,
-    LanguageModelToolUse, MessageContent, Role, StopReason,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
+    StopReason, fake_provider::FakeLanguageModel,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -149,19 +149,21 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .await;
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
     thread.update(cx, |thread, _cx| {
-        assert!(thread
-            .messages()
-            .last()
-            .unwrap()
-            .content
-            .iter()
-            .any(|content| {
-                if let MessageContent::Text(text) = content {
-                    text.contains("Ding")
-                } else {
-                    false
-                }
-            }));
+        assert!(
+            thread
+                .messages()
+                .last()
+                .unwrap()
+                .content
+                .iter()
+                .any(|content| {
+                    if let MessageContent::Text(text) = content {
+                        text.contains("Ding")
+                    } else {
+                        false
+                    }
+                })
+        );
     });
 }
 
@@ -333,7 +335,7 @@ async fn expect_tool_call_update_fields(
         .unwrap();
     match event {
         AgentResponseEvent::ToolCallUpdate(acp_thread::ToolCallUpdate::UpdateFields(update)) => {
-            return update
+            return update;
         }
         event => {
             panic!("Unexpected event {event:?}");
