@@ -2,9 +2,10 @@ use std::{sync::Arc, time::Duration};
 
 use crate::schema::json_schema_for;
 use crate::ui::ToolCallCardHeader;
+use action_log::ActionLog;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use cloud_llm_client::{WebSearchResponse, WebSearchResult};
 use futures::{Future, FutureExt, TryFutureExt};

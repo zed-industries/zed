@@ -1,8 +1,9 @@
 use crate::{SystemPromptTemplate, Template, Templates};
 use acp_thread::Diff;
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::{adapt_schema_to_format, ActionLog};
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{
@@ -23,7 +24,7 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, collections::BTreeMap, fmt::Write, future::Future, rc::Rc, sync::Arc};
-use util::{markdown::MarkdownCodeBlock, ResultExt};
+use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {

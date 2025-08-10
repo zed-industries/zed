@@ -7,7 +7,7 @@ use gpui::{App, Entity, Task};
 use project::Project;
 use prompt_store::PromptStore;
 
-use crate::{templates::Templates, NativeAgent, NativeAgentConnection};
+use crate::{NativeAgent, NativeAgentConnection, templates::Templates};
 
 #[derive(Clone)]
 pub struct NativeAgentServer;

@@ -1,9 +1,9 @@
-use crate::{templates::Templates, AgentResponseEvent, Thread};
+use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{EditFileTool, FindPathTool, ReadFileTool, ThinkingTool, ToolCallAuthorization};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use futures::{future, StreamExt};
+use anyhow::{Context as _, Result, anyhow};
+use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
