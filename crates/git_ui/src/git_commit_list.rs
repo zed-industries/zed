@@ -1,18 +1,18 @@
-use crate::{commit_view::CommitView, git_panel::GitPanel};
-use futures::Future;
-use git::{GitRemote, blame::ParsedCommitMessage, repository::CommitSummary};
+use crate::commit_view::CommitView;
+use git::{blame::ParsedCommitMessage, repository::CommitSummary};
 use gpui::{
-    App, Asset, Element, Entity, ListHorizontalSizingBehavior, ListSizingBehavior, ParentElement,
-    Render, Stateful, Task, UniformListScrollHandle, WeakEntity, prelude::*, uniform_list,
+    App, Entity, ListScrollEvent, ListState, ParentElement, Render, Task, WeakEntity, list,
+    prelude::*,
 };
 use project::{
     Project,
     git_store::{GitStoreEvent, Repository},
 };
-use std::hash::Hash;
 use time::OffsetDateTime;
-use ui::{Avatar, ListItem, Scrollbar, ScrollbarState, prelude::*};
+use ui::{ListItem, prelude::*};
 use workspace::Workspace;
+
+const COMMITS_PER_PAGE: u64 = 20;
 
 #[derive(Clone, Debug)]
 pub struct CommitDetails {
@@ -28,11 +28,10 @@ pub struct GitCommitList {
     pub(crate) project: Entity<Project>,
     pub(crate) workspace: WeakEntity<Workspace>,
 
-    expanded: bool,
-    history: Vec<CommitDetails>,
-    scroll_handle: UniformListScrollHandle,
-    vertical_scrollbar_state: ScrollbarState,
-    horizontal_scrollbar_state: ScrollbarState,
+    commits: Vec<CommitDetails>,
+    commits_loading: bool,
+
+    commits_list: ListState,
 }
 
 impl GitCommitList {
@@ -40,47 +39,15 @@ impl GitCommitList {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
+        let workspace = workspace.weak_handle();
 
         cx.new(|cx| {
-            cx.spawn_in(window, async move |this, cx| {
-                let details = this.update(cx, |list: &mut GitCommitList, cx| {
-                    list.load_commit_history(cx, 0, 50)
-                })?;
-                println!("Request history");
-
-                let details = details.await?;
-
-                let commit_details: Vec<crate::git_commit_list::CommitDetails> = details
-                    .into_iter()
-                    .map(|commit| CommitDetails {
-                        sha: commit.sha.clone(),
-                        author_name: commit.author_name.clone(),
-                        author_email: commit.author_email.clone(),
-                        commit_time: OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
-                            // TODO: Handle properly
-                            .unwrap(),
-                        message: Some(ParsedCommitMessage {
-                            message: commit.message.clone(),
-                            ..Default::default()
-                        }),
-                    })
-                    .collect();
-                println!("Got history : {}", commit_details.len());
-
-                this.update(cx, |this: &mut GitCommitList, cx| {
-                    println!("Updating history : {}", commit_details.len());
-
-                    this.history = commit_details;
-                    cx.notify();
-                })
-            })
-            .detach();
-
             cx.subscribe_in(
                 &git_store,
                 window,
-                move |this, _git_store, event, window, cx| match event {
+                move |this: &mut GitCommitList, _git_store, event, _window, cx| match event {
                     GitStoreEvent::ActiveRepositoryChanged(_) => {
+                        // TODO: Reset state and reload commits,
                         this.active_repository = this.project.read(cx).active_repository(cx);
                     }
                     _ => {}
@@ -88,21 +55,78 @@ impl GitCommitList {
             )
             .detach();
 
-            let scroll_handle = UniformListScrollHandle::new();
+            let commits_list = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
+            commits_list.set_scroll_handler(cx.listener(
+                |this: &mut Self, event: &ListScrollEvent, window, cx| {
+                    if event.visible_range.end >= this.commits.len() - 5 && this.has_next_page() {
+                        println!("Scroll to next page");
+                        println!("{}", this.commits.len());
+                        this.load_next_history_page(window, cx);
+                    }
+                },
+            ));
 
-            Self {
-                history: Vec::new(),
-                scroll_handle: scroll_handle.clone(),
-                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
-                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
-                expanded: false,
+            let this = Self {
                 active_repository,
                 project,
-                workspace: workspace.weak_handle(),
-            }
+                workspace,
+                commits: Vec::new(),
+                commits_loading: false,
+                commits_list,
+            };
+
+            this.load_next_history_page(window, cx);
+
+            this
         })
+    }
+
+    // We probabbly have a next page if the length of all pages matches the per page amount
+    fn has_next_page(&self) -> bool {
+        self.commits.len() % (COMMITS_PER_PAGE as usize) == 0
+    }
+
+    fn load_next_history_page(&self, window: &mut Window, cx: &mut Context<Self>) {
+        // Skip if already loading a page
+        if self.commits_loading {
+            return;
+        }
+
+        let skip = self.commits.len() as u64;
+
+        cx.spawn_in(window, async move |this, cx| {
+            let details = this.update(cx, |list: &mut GitCommitList, cx| {
+                list.commits_loading = true;
+                list.load_commit_history(cx, skip, COMMITS_PER_PAGE)
+            })?;
+
+            let details = details.await?;
+
+            let commits: Vec<crate::git_commit_list::CommitDetails> = details
+                .into_iter()
+                .map(|commit| CommitDetails {
+                    sha: commit.sha.clone(),
+                    author_name: commit.author_name.clone(),
+                    author_email: commit.author_email.clone(),
+                    commit_time: OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
+                        // TODO: Handle properly
+                        .unwrap(),
+                    message: Some(ParsedCommitMessage {
+                        message: commit.message.clone(),
+                        ..Default::default()
+                    }),
+                })
+                .collect();
+
+            this.update(cx, |this: &mut GitCommitList, cx| {
+                this.commits_loading = false;
+                this.commits.extend(commits);
+                this.commits_list
+                    .splice(0..this.commits_list.item_count(), this.commits.len());
+                cx.notify();
+            })
+        })
+        .detach();
     }
 
     fn load_commit_history(
@@ -124,7 +148,7 @@ impl GitCommitList {
         &self,
         item_id: ElementId,
         commit: &CommitDetails,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let commit_summary = CommitSummary {
@@ -186,103 +210,21 @@ impl GitCommitList {
                 }
             })
     }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        Some(
-            div()
-                .occlude()
-                .id("project-panel-vertical-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.vertical_scrollbar_state.clone())),
-        )
-    }
-
-    fn render_horizontal_scrollbar(
-        &self,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Stateful<Div>> {
-        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
-            div()
-                .occlude()
-                .id("project-panel-horizontal-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .w_full()
-                .absolute()
-                .right_1()
-                .left_1()
-                .bottom_0()
-                .h(px(12.))
-                .cursor_default()
-                .child(scrollbar)
-        })
-    }
 }
 
 impl Render for GitCommitList {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let list_contents = uniform_list(
-            "git_history",
-            self.history.len(),
-            cx.processor(move |panel, range, window, cx| {
-                let history = panel.history.get(range);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex().flex_shrink().h_48().w_full().child(
+            list(
+                self.commits_list.clone(),
+                cx.processor(move |list, index, window, cx| {
+                    let item: &CommitDetails = &list.commits[index];
 
-                history
-                    .map(|entries: &[CommitDetails]| entries.to_vec())
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|item| {
-                        panel
-                            .render_element(ElementId::Name(item.sha.clone()), item, window, cx)
-                            .into_any_element()
-                    })
-                    .collect()
-            }),
-        )
-        .with_sizing_behavior(ListSizingBehavior::Infer)
-        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-        .track_scroll(self.scroll_handle.clone());
-
-        v_flex()
-            .flex_shrink()
-            .h_48()
-            .w_full()
-            .child(list_contents)
-            .children(self.render_vertical_scrollbar(cx))
-            .when_some(
-                self.render_horizontal_scrollbar(window, cx),
-                |this, scrollbar| this.pb_4().child(scrollbar),
+                    list.render_element(ElementId::Name(item.sha.clone()), item, window, cx)
+                        .into_any_element()
+                }),
             )
+            .size_full(),
+        )
     }
 }
