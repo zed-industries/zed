@@ -2,7 +2,7 @@
 use gpui::{Hsla, Length};
 use std::{
     cell::LazyCell,
-    sync::{Arc, OnceLock},
+    sync::{Arc, LazyLock, OnceLock},
 };
 use theme::{Theme, ThemeColors, ThemeRegistry};
 use ui::{
@@ -25,17 +25,14 @@ pub struct ThemePreviewTile {
     style: ThemePreviewStyle,
 }
 
-fn child_radius() -> Pixels {
-    static CHILD_RADIUS: OnceLock<Pixels> = OnceLock::new();
-    *CHILD_RADIUS.get_or_init(|| {
-        inner_corner_radius(
-            ThemePreviewTile::ROOT_RADIUS,
-            ThemePreviewTile::ROOT_BORDER,
-            ThemePreviewTile::ROOT_PADDING,
-            ThemePreviewTile::CHILD_BORDER,
-        )
-    })
-}
+static CHILD_RADIUS: LazyLock<Pixels> = LazyLock::new(|| {
+    inner_corner_radius(
+        ThemePreviewTile::ROOT_RADIUS,
+        ThemePreviewTile::ROOT_BORDER,
+        ThemePreviewTile::ROOT_PADDING,
+        ThemePreviewTile::CHILD_BORDER,
+    )
+});
 
 impl ThemePreviewTile {
     pub const SKELETON_HEIGHT_DEFAULT: Pixels = px(2.);
@@ -229,7 +226,7 @@ impl ThemePreviewTile {
             .child(
                 div()
                     .size_full()
-                    .rounded(child_radius())
+                    .rounded(*CHILD_RADIUS)
                     .border(Self::CHILD_BORDER)
                     .border_color(theme.colors().border)
                     .child(Self::render_editor(
@@ -257,7 +254,7 @@ impl ThemePreviewTile {
                 h_flex()
                     .size_full()
                     .relative()
-                    .rounded(child_radius())
+                    .rounded(*CHILD_RADIUS)
                     .border(Self::CHILD_BORDER)
                     .border_color(border_color)
                     .overflow_hidden()
