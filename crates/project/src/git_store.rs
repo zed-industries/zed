@@ -3817,7 +3817,6 @@ impl Repository {
                 })
             })?
             .await??;
-            this.update(cx, |_, cx| cx.notify())?;
             Ok(())
         })
     }
@@ -4641,7 +4640,6 @@ impl Repository {
         updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
         cx: &mut Context<Self>,
     ) {
-        println!("paths changed with updates_tx: {:?}", updates_tx);
         self.paths_needing_status_update.extend(paths);
 
         let this = cx.weak_entity();
