@@ -4,7 +4,7 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, Window, actions, rems,
+    SharedString, Styled, Subscription, Task, Window, actions, px, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
@@ -94,7 +94,7 @@ impl StashList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = StashListDelegate::new(repository.clone(), style, window, cx);
+        let delegate = StashListDelegate::new(repository.clone(), style, width, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -171,6 +171,7 @@ pub struct StashListDelegate {
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
+    max_width: Rems,
     focus_handle: FocusHandle,
 }
 
@@ -178,6 +179,7 @@ impl StashListDelegate {
     fn new(
         repo: Option<Entity<Repository>>,
         style: StashListStyle,
+        max_width: Rems,
         _window: &mut Window,
         cx: &mut Context<StashList>,
     ) -> Self {
@@ -189,6 +191,7 @@ impl StashListDelegate {
             selected_index: 0,
             last_query: Default::default(),
             modifiers: Default::default(),
+            max_width,
             focus_handle: cx.focus_handle(),
         }
     }
@@ -335,17 +338,37 @@ impl PickerDelegate for StashListDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _: &mut Window,
-        _: &mut Context<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
-        let stash_name = HighlightedLabel::new(
-            entry_match.entry.message.clone(),
-            entry_match.positions.clone(),
-        )
-        .truncate()
-        .into_any_element();
+        let mut stash_message = entry_match.entry.message.clone();
+        let mut positions = entry_match.positions.clone();
+
+        if stash_message.is_ascii() {
+            let max_width = self.max_width.to_pixels(window.rem_size());
+            let normal_em = {
+                let style = window.text_style();
+                let font_id = window.text_system().resolve_font(&style.font());
+                let font_size = ui::TextSize::Default.rems(cx).to_pixels(window.rem_size());
+                let normal = cx
+                    .text_system()
+                    .em_width(font_id, font_size)
+                    .unwrap_or(px(16.));
+                normal
+            };
+
+            let max_chars = ((max_width * 0.8) / normal_em) as usize;
+
+            if stash_message.len() > max_chars && max_chars > 3 {
+                stash_message.truncate(max_chars - 3);
+                stash_message.push_str("…");
+                positions.retain(|&pos| pos < max_chars - 3);
+            }
+        }
+
+        let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
 
         let stash_index_label = Label::new(format!("stash@{{{}}}", entry_match.entry.index))
             .size(LabelSize::Small)
