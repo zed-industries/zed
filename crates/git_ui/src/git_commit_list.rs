@@ -1,15 +1,15 @@
 use crate::commit_view::CommitView;
 use git::{blame::ParsedCommitMessage, repository::CommitSummary};
 use gpui::{
-    App, Entity, ListScrollEvent, ListState, ParentElement, Render, Task, WeakEntity, list,
-    prelude::*,
+    App, Entity, ListScrollEvent, ListState, MouseButton, ParentElement, Render, Stateful, Task,
+    WeakEntity, list, prelude::*,
 };
 use project::{
     Project,
     git_store::{GitStoreEvent, Repository},
 };
 use time::OffsetDateTime;
-use ui::{ListItem, prelude::*};
+use ui::{ListItem, Scrollbar, ScrollbarState, prelude::*};
 use workspace::Workspace;
 
 const COMMITS_PER_PAGE: u64 = 20;
@@ -32,6 +32,7 @@ pub struct GitCommitList {
     commits_loading: bool,
 
     commits_list: ListState,
+    scrollbar_state: ScrollbarState,
 }
 
 impl GitCommitList {
@@ -50,7 +51,9 @@ impl GitCommitList {
                         this.active_repository = this.project.read(cx).active_repository(cx);
                         this.reload_history(window, cx)
                     }
-                    _ => {}
+
+                    // Reload the history for any other changes
+                    _ => this.reload_history(window, cx),
                 },
             )
             .detach();
@@ -64,6 +67,9 @@ impl GitCommitList {
                 },
             ));
 
+            let scrollbar_state =
+                ScrollbarState::new(commits_list.clone()).parent_entity(&cx.entity());
+
             let this = Self {
                 active_repository,
                 project,
@@ -71,6 +77,7 @@ impl GitCommitList {
                 commits: Vec::new(),
                 commits_loading: false,
                 commits_list,
+                scrollbar_state,
             };
 
             this.load_next_history_page(window, cx);
@@ -216,6 +223,39 @@ impl GitCommitList {
                 }
             })
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("git-history-scrollbar")
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
+    }
 }
 
 impl Render for GitCommitList {
@@ -238,5 +278,6 @@ impl Render for GitCommitList {
                 )
                 .size_full(),
             )
+            .child(self.render_vertical_scrollbar(cx))
     }
 }
