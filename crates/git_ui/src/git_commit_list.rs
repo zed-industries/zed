@@ -4,6 +4,7 @@ use gpui::{
     App, Entity, ListScrollEvent, ListState, MouseButton, ParentElement, Render, Stateful, Task,
     WeakEntity, list, prelude::*,
 };
+use itertools::Itertools;
 use project::{
     Project,
     git_store::{GitStoreEvent, Repository},
@@ -115,30 +116,30 @@ impl GitCommitList {
 
             let details = details.await?;
 
-            let commits: Vec<crate::git_commit_list::CommitDetails> = details
+            let commits: Vec<CommitDetails> = details
                 .into_iter()
-                .map(|commit| CommitDetails {
-                    sha: commit.sha.clone(),
-                    author_name: commit.author_name.clone(),
-                    author_email: commit.author_email.clone(),
-                    commit_time: OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)
-                        // TODO: Handle properly
-                        .unwrap(),
-                    message: Some(ParsedCommitMessage {
-                        message: commit.message.clone(),
-                        ..Default::default()
-                    }),
+                .map(|commit| {
+                    anyhow::Ok(CommitDetails {
+                        sha: commit.sha.clone(),
+                        author_name: commit.author_name.clone(),
+                        author_email: commit.author_email.clone(),
+                        commit_time: OffsetDateTime::from_unix_timestamp(commit.commit_timestamp)?,
+                        message: Some(ParsedCommitMessage {
+                            message: commit.message.clone(),
+                            ..Default::default()
+                        }),
+                    })
                 })
-                .collect();
+                .try_collect()?;
 
             this.update(cx, |this: &mut GitCommitList, cx| {
                 let count = commits.len();
+                let current_count = this.commits_list.item_count();
+
                 this.commits_loading = false;
                 this.commits.extend(commits);
-                this.commits_list.splice(
-                    this.commits_list.item_count()..this.commits_list.item_count(),
-                    count,
-                );
+                this.commits_list
+                    .splice(current_count..current_count, count);
                 cx.notify();
             })
         })
