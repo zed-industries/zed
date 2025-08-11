@@ -312,8 +312,7 @@ impl WindowsPlatform {
         let windows_version = self.windows_version;
         let all_windows = self.raw_window_handles.clone();
         std::thread::spawn(move || {
-            let vsync_provider =
-                VSyncProvider::new(windows_version).expect("Failed to create VSyncProvider");
+            let vsync_provider = VSyncProvider::new(windows_version);
             loop {
                 vsync_provider.wait_for_vsync();
                 for hwnd in all_windows.read().iter() {

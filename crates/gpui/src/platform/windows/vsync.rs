@@ -3,7 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use util::ResultExt;
 use windows::Win32::{
     Foundation::HWND,
     Graphics::{
@@ -27,6 +28,7 @@ static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
 });
 
 const VSYNC_INTERVAL_THRESHOLD: Duration = Duration::from_millis(1);
+const DEFAULT_VSYNC_INTERVAL: Duration = Duration::from_micros(16_666); // ~60Hz
 
 pub(crate) struct VSyncProvider {
     interval: Duration,
@@ -34,21 +36,27 @@ pub(crate) struct VSyncProvider {
 }
 
 impl VSyncProvider {
-    pub(crate) fn new(windows_version: WindowsVersion) -> Result<Self> {
+    pub(crate) fn new(windows_version: WindowsVersion) -> Self {
         let interval: Duration;
         let f: Box<dyn Fn() -> bool>;
         match windows_version {
             WindowsVersion::Win10 => {
-                interval = get_dwm_interval()?;
+                interval = get_dwm_interval()
+                    .context("Failed to get DWM interval")
+                    .log_err()
+                    .unwrap_or(DEFAULT_VSYNC_INTERVAL);
                 f = Box::new(|| unsafe { DwmFlush().is_ok() });
             }
             WindowsVersion::Win11 => {
-                interval = get_dwm_interval_from_direct_composition()?;
+                interval = get_dwm_interval_from_direct_composition()
+                    .context("Failed to get DWM interval")
+                    .log_err()
+                    .unwrap_or(DEFAULT_VSYNC_INTERVAL);
                 f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
             }
         }
         log::info!("VSyncProvider initialized with interval: {:?}", interval);
-        Ok(Self { interval, f })
+        Self { interval, f }
     }
 
     pub(crate) fn wait_for_vsync(&self) {
