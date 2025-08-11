@@ -2306,20 +2306,10 @@ impl LocalLspStore {
         };
         let delegate: Arc<dyn ManifestDelegate> = Arc::new(ManifestQueryDelegate::new(snapshot));
 
-        let toolchain_store = self
-            .toolchain_store
-            .update(cx, |this, cx| this.as_local_trait_object(cx));
-        for node in self.lsp_tree.walk(
-            path,
-            language.name(),
-            language.manifest(),
-            &delegate,
-            toolchain_store,
-            cx,
-        ) {
-            let Some(server_id) = node.server_id() else {
-                continue;
-            };
+        for server_id in
+            self.lsp_tree
+                .get(path, language.name(), language.manifest(), &delegate, cx)
+        {
             let server = self
                 .language_servers
                 .get(&server_id)
