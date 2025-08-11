@@ -62,9 +62,24 @@ impl AgentTool for WebSearchTool {
 
         let search_task = provider.search(input.query, cx);
         cx.background_spawn(async move {
-            let response = search_task.await?;
+            let response = match search_task.await {
+                Ok(response) => response,
+                Err(err) => {
+                    event_stream.update_fields(acp::ToolCallUpdateFields {
+                        title: Some("Web Search Failed".to_string()),
+                        ..Default::default()
+                    });
+                    return Err(err);
+                }
+            };
 
+            let result_text = if response.results.len() == 1 {
+                "1 result".to_string()
+            } else {
+                format!("{} results", response.results.len())
+            };
             event_stream.update_fields(acp::ToolCallUpdateFields {
+                title: Some(format!("Searched the web: {result_text}")),
                 content: Some(
                     response
                         .results
