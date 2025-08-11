@@ -420,6 +420,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         thread.add_tool(FindPathTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(NowTool);
                         thread.add_tool(TerminalTool::new(project.clone(), cx));
                         thread
                     });
