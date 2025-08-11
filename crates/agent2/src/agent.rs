@@ -1,6 +1,7 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    EditFileTool, FindPathTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization,
+    CreateDirectoryTool, EditFileTool, FindPathTool, ReadFileTool, TerminalTool, ThinkingTool,
+    ToolCallAuthorization,
 };
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
@@ -416,6 +417,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log.clone(), agent.templates.clone(), default_model);
+                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(FindPathTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
