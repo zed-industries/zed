@@ -612,18 +612,15 @@ impl DispatchTree {
 #[cfg(test)]
 mod tests {
     use crate::{
-        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId,
-        ParentElement, Style,
+        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, Style,
     };
     use core::panic;
-    use std::{cell::RefCell, ops::Range, ptr::replace, rc::Rc};
-
-    use usvg::filter::Input;
+    use std::{cell::RefCell, ops::Range, rc::Rc};
 
     use crate::{
-        Action, ActionRegistry, AnyElement, App, Bounds, Context, DispatchTree, FocusHandle,
-        InputHandler, InteractiveElement, IntoElement, KeyBinding, KeyContext, Keymap, Pixels,
-        Point, Render, TestAppContext, UTF16Selection, Window, div,
+        Action, ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler,
+        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, TestAppContext,
+        UTF16Selection, Window,
     };
 
     #[derive(PartialEq, Eq)]
