@@ -46,17 +46,7 @@ pub struct DiagnosticsToolInput {
     ///
     /// If you wanna access diagnostics for `dolor.txt` in `ipsum`, you should use the path `ipsum/dolor.txt`.
     /// </example>
-    #[serde(deserialize_with = "deserialize_path")]
     pub path: Option<String>,
-}
-
-fn deserialize_path<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = Option::<String>::deserialize(deserializer)?;
-    // The model passes an empty string sometimes
-    Ok(opt.filter(|s| !s.is_empty()))
 }
 
 pub struct DiagnosticsTool {
@@ -183,32 +173,5 @@ impl AgentTool for DiagnosticsTool {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json;
-
-    #[test]
-    fn test_deserialize_path_none() {
-        let json = r#"{"path": null}"#;
-        let input: DiagnosticsToolInput = serde_json::from_str(json).unwrap();
-        assert_eq!(input.path, None);
-    }
-
-    #[test]
-    fn test_deserialize_path_empty_string() {
-        let json = r#"{"path": ""}"#;
-        let input: DiagnosticsToolInput = serde_json::from_str(json).unwrap();
-        assert_eq!(input.path, None);
-    }
-
-    #[test]
-    fn test_deserialize_path_some_path() {
-        let json = r#"{"path": "src/main.rs"}"#;
-        let input: DiagnosticsToolInput = serde_json::from_str(json).unwrap();
-        assert_eq!(input.path, Some("src/main.rs".to_string()));
     }
 }
