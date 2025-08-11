@@ -68,10 +68,13 @@ impl FetchTool {
         let content_type = content_type
             .to_str()
             .context("invalid Content-Type header")?;
-        let content_type = match content_type {
-            "text/html" | "application/xhtml+xml" => ContentType::Html,
-            "application/json" => ContentType::Json,
-            _ => ContentType::Plaintext,
+
+        let content_type = if content_type.starts_with("text/plain") {
+            ContentType::Plaintext
+        } else if content_type.starts_with("application/json") {
+            ContentType::Json
+        } else {
+            ContentType::Html
         };
 
         match content_type {
