@@ -1,5 +1,7 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
-use crate::{EditFileTool, FindPathTool, ReadFileTool, ThinkingTool, ToolCallAuthorization};
+use crate::{
+    EditFileTool, FindPathTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization,
+};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -418,6 +420,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         thread.add_tool(FindPathTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(TerminalTool::new(project.clone(), cx));
                         thread
                     });
 
