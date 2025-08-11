@@ -153,6 +153,15 @@ impl GitRepository for FakeGitRepository {
         .boxed()
     }
 
+    fn log(&self, _skip: u64, _max_count: u64) -> BoxFuture<'_, Result<Vec<CommitDetails>>> {
+        async {
+            Ok(vec![CommitDetails {
+                ..Default::default()
+            }])
+        }
+        .boxed()
+    }
+
     fn reset(
         &self,
         _commit: String,

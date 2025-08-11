@@ -2,6 +2,7 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
+use crate::git_commit_list::GitCommitList;
 use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
@@ -370,6 +371,7 @@ pub struct GitPanel {
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
     _settings_subscription: Subscription,
+    history: Entity<GitCommitList>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -520,6 +522,8 @@ impl GitPanel {
             )
             .detach();
 
+            let history = GitCommitList::new(workspace, window, cx);
+
             let mut this = Self {
                 active_repository,
                 commit_editor,
@@ -559,6 +563,7 @@ impl GitPanel {
                 vertical_scrollbar,
                 bulk_staging: None,
                 _settings_subscription,
+                history,
             };
 
             this.schedule_update(false, window, cx);
@@ -4475,6 +4480,9 @@ impl Render for GitPanel {
                     })
                     .when(!self.amend_pending, |this| {
                         this.children(self.render_previous_commit(cx))
+                    })
+                    .when(GitPanelSettings::get_global(cx).commit_history, |this| {
+                        this.child(self.history.clone())
                     })
                     .into_any_element(),
             )

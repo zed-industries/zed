@@ -26,6 +26,7 @@ pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
+pub mod git_commit_list;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
