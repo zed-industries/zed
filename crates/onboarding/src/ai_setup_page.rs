@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use ai_onboarding::{AiUpsellCard, SignInStatus};
-use client::UserStore;
+use ai_onboarding::AiUpsellCard;
+use client::{Client, UserStore, zed_urls};
 use fs::Fs;
 use gpui::{
     Action, AnyView, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
@@ -12,8 +12,8 @@ use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageMod
 use project::DisableAiSettings;
 use settings::{Settings, update_settings_file};
 use ui::{
-    Badge, ButtonLike, Divider, Modal, ModalFooter, ModalHeader, Section, SwitchField, ToggleState,
-    prelude::*, tooltip_container,
+    Badge, ButtonLike, Divider, KeyBinding, Modal, ModalFooter, ModalHeader, Section, SwitchField,
+    ToggleState, prelude::*, tooltip_container,
 };
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -42,10 +42,16 @@ fn render_llm_provider_section(
 }
 
 fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> impl IntoElement {
-    let privacy_badge = || {
-        Badge::new("Privacy")
-            .icon(IconName::ShieldCheck)
-            .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into())
+    let (title, description) = if disabled {
+        (
+            "AI is disabled across Zed",
+            "Re-enable it any time in Settings.",
+        )
+    } else {
+        (
+            "Privacy is the default for Zed",
+            "Any use or storage of your data is with your explicit, single-use, opt-in consent.",
+        )
     };
 
     v_flex()
@@ -60,62 +66,41 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
         .bg(cx.theme().colors().surface_background.opacity(0.3))
         .rounded_lg()
         .overflow_hidden()
-        .map(|this| {
-            if disabled {
-                this.child(
+        .child(
+            h_flex()
+                .gap_2()
+                .justify_between()
+                .child(Label::new(title))
+                .child(
                     h_flex()
-                        .gap_2()
-                        .justify_between()
+                        .gap_1()
                         .child(
-                            h_flex()
-                                .gap_1()
-                                .child(Label::new("AI is disabled across Zed"))
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .color(Color::Success)
-                                        .size(IconSize::XSmall),
-                                ),
+                            Badge::new("Privacy")
+                                .icon(IconName::ShieldCheck)
+                                .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into()),
                         )
-                        .child(privacy_badge()),
-                )
-                .child(
-                    Label::new("Re-enable it any time in Settings.")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-            } else {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .justify_between()
-                        .child(Label::new("We don't train models using your data"))
                         .child(
-                            h_flex().gap_1().child(privacy_badge()).child(
-                                Button::new("learn_more", "Learn More")
-                                    .style(ButtonStyle::Outlined)
-                                    .label_size(LabelSize::Small)
-                                    .icon(IconName::ArrowUpRight)
-                                    .icon_size(IconSize::XSmall)
-                                    .icon_color(Color::Muted)
-                                    .on_click(|_, _, cx| {
-                                        cx.open_url("https://zed.dev/docs/ai/privacy-and-security");
-                                    })
-                                    .tab_index({
-                                        *tab_index += 1;
-                                        *tab_index - 1
-                                    }),
-                            ),
+                            Button::new("learn_more", "Learn More")
+                                .style(ButtonStyle::Outlined)
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::ArrowUpRight)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .on_click(|_, _, cx| {
+                                    cx.open_url(&zed_urls::ai_privacy_and_security(cx))
+                                })
+                                .tab_index({
+                                    *tab_index += 1;
+                                    *tab_index - 1
+                                }),
                         ),
-                )
-                .child(
-                    Label::new(
-                        "Feel confident in the security and privacy of your projects using Zed.",
-                    )
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-            }
-        })
+                ),
+        )
+        .child(
+            Label::new(description)
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
 }
 
 fn render_llm_provider_card(
@@ -240,6 +225,7 @@ fn render_llm_provider_card(
 pub(crate) fn render_ai_setup_page(
     workspace: WeakEntity<Workspace>,
     user_store: Entity<UserStore>,
+    client: Arc<Client>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
@@ -283,14 +269,16 @@ pub(crate) fn render_ai_setup_page(
             v_flex()
                 .mt_2()
                 .gap_6()
-                .child(AiUpsellCard {
-                    sign_in_status: SignInStatus::SignedIn,
-                    sign_in: Arc::new(|_, _| {}),
-                    user_plan: user_store.read(cx).plan(),
-                    tab_index: Some({
+                .child({
+                    let mut ai_upsell_card =
+                        AiUpsellCard::new(client, &user_store, user_store.read(cx).plan(), cx);
+
+                    ai_upsell_card.tab_index = Some({
                         tab_index += 1;
                         tab_index - 1
-                    }),
+                    });
+
+                    ai_upsell_card
                 })
                 .child(render_llm_provider_section(
                     &mut tab_index,
@@ -335,6 +323,10 @@ impl AiConfigurationModal {
             selected_provider,
         }
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
 }
 
 impl ModalView for AiConfigurationModal {}
@@ -348,11 +340,15 @@ impl Focusable for AiConfigurationModal {
 }
 
 impl Render for AiConfigurationModal {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
+            .key_context("OnboardingAiConfigurationModal")
             .w(rems(34.))
             .elevation_3(cx)
             .track_focus(&self.focus_handle)
+            .on_action(
+                cx.listener(|this, _: &menu::Cancel, _window, cx| this.cancel(&menu::Cancel, cx)),
+            )
             .child(
                 Modal::new("onboarding-ai-setup-modal", None)
                     .header(
@@ -367,18 +363,19 @@ impl Render for AiConfigurationModal {
                     .section(Section::new().child(self.configuration_view.clone()))
                     .footer(
                         ModalFooter::new().end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Button::new("onboarding-closing-cancel", "Cancel")
-                                        .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
+                            Button::new("ai-onb-modal-Done", "Done")
+                                .key_binding(
+                                    KeyBinding::for_action_in(
+                                        &menu::Cancel,
+                                        &self.focus_handle.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                    .map(|kb| kb.size(rems_from_px(12.))),
                                 )
-                                .child(Button::new("save-btn", "Done").on_click(cx.listener(
-                                    |_, _, window, cx| {
-                                        window.dispatch_action(menu::Confirm.boxed_clone(), cx);
-                                        cx.emit(DismissEvent);
-                                    },
-                                ))),
+                                .on_click(cx.listener(|this, _event, _window, cx| {
+                                    this.cancel(&menu::Cancel, cx)
+                                })),
                         ),
                     ),
             )
@@ -395,7 +392,7 @@ impl AiPrivacyTooltip {
 
 impl Render for AiPrivacyTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        const DESCRIPTION: &'static str = "One of Zed's most important principles is transparency. This is why we are and value open-source so much. And it wouldn't be any different with AI.";
+        const DESCRIPTION: &'static str = "We believe in opt-in data sharing as the default for building AI products, rather than opt-out. We'll only use or store your data if you affirmatively send it to us. ";
 
         tooltip_container(window, cx, move |this, _, _| {
             this.child(
@@ -406,7 +403,7 @@ impl Render for AiPrivacyTooltip {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new("Privacy Principle")),
+                    .child(Label::new("Privacy First")),
             )
             .child(
                 div().max_w_64().child(

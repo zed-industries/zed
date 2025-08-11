@@ -1,26 +1,33 @@
 use std::{sync::Arc, time::Duration};
 
-use client::{Client, zed_urls};
+use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, IntoElement, RenderOnce, Transformation, Window,
-    percentage,
+    Animation, AnimationExt, AnyElement, App, Entity, IntoElement, RenderOnce, Transformation,
+    Window, percentage,
 };
 use ui::{Divider, Vector, VectorName, prelude::*};
 
-use crate::{SignInStatus, plan_definitions::PlanDefinitions};
+use crate::{SignInStatus, YoungAccountBanner, plan_definitions::PlanDefinitions};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct AiUpsellCard {
     pub sign_in_status: SignInStatus,
     pub sign_in: Arc<dyn Fn(&mut Window, &mut App)>,
+    pub account_too_young: bool,
     pub user_plan: Option<Plan>,
     pub tab_index: Option<isize>,
 }
 
 impl AiUpsellCard {
-    pub fn new(client: Arc<Client>, user_plan: Option<Plan>) -> Self {
+    pub fn new(
+        client: Arc<Client>,
+        user_store: &Entity<UserStore>,
+        user_plan: Option<Plan>,
+        cx: &mut App,
+    ) -> Self {
         let status = *client.status().borrow();
+        let store = user_store.read(cx);
 
         Self {
             user_plan,
@@ -32,6 +39,7 @@ impl AiUpsellCard {
                 })
                 .detach_and_log_err(cx);
             }),
+            account_too_young: store.account_too_young(),
             tab_index: None,
         }
     }
@@ -40,6 +48,7 @@ impl AiUpsellCard {
 impl RenderOnce for AiUpsellCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let plan_definitions = PlanDefinitions;
+        let young_account_banner = YoungAccountBanner;
 
         let pro_section = v_flex()
             .flex_grow()
@@ -128,7 +137,7 @@ impl RenderOnce for AiUpsellCard {
             .size(rems_from_px(72.))
             .child(
                 Vector::new(
-                    VectorName::CertifiedUserStamp,
+                    VectorName::ProUserStamp,
                     rems_from_px(72.),
                     rems_from_px(72.),
                 )
@@ -158,36 +167,70 @@ impl RenderOnce for AiUpsellCard {
             SignInStatus::SignedIn => match self.user_plan {
                 None | Some(Plan::ZedFree) => card
                     .child(Label::new("Try Zed AI").size(LabelSize::Large))
-                    .child(
-                        div()
-                            .max_w_3_4()
-                            .mb_2()
-                            .child(Label::new(description).color(Color::Muted)),
-                    )
-                    .child(plans_section)
-                    .child(
-                        footer_container
-                            .child(
-                                Button::new("start_trial", "Start 14-day Free Pro Trial")
-                                    .full_width()
-                                    .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                    .when_some(self.tab_index, |this, tab_index| {
-                                        this.tab_index(tab_index)
-                                    })
-                                    .on_click(move |_, _window, cx| {
-                                        telemetry::event!(
-                                            "Start Trial Clicked",
-                                            state = "post-sign-in"
-                                        );
-                                        cx.open_url(&zed_urls::start_trial_url(cx))
-                                    }),
+                    .map(|this| {
+                        if self.account_too_young {
+                            this.child(young_account_banner).child(
+                                v_flex()
+                                    .mt_2()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                Label::new("Pro")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Accent)
+                                                    .buffer_font(cx),
+                                            )
+                                            .child(Divider::horizontal()),
+                                    )
+                                    .child(plan_definitions.pro_plan(true))
+                                    .child(
+                                        Button::new("pro", "Get Started")
+                                            .full_width()
+                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                            .on_click(move |_, _window, cx| {
+                                                telemetry::event!(
+                                                    "Upgrade To Pro Clicked",
+                                                    state = "young-account"
+                                                );
+                                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
+                                            }),
+                                    ),
                             )
+                        } else {
+                            this.child(
+                                div()
+                                    .max_w_3_4()
+                                    .mb_2()
+                                    .child(Label::new(description).color(Color::Muted)),
+                            )
+                            .child(plans_section)
                             .child(
-                                Label::new("No credit card required")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            ),
-                    ),
+                                footer_container
+                                    .child(
+                                        Button::new("start_trial", "Start 14-day Free Pro Trial")
+                                            .full_width()
+                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                            .when_some(self.tab_index, |this, tab_index| {
+                                                this.tab_index(tab_index)
+                                            })
+                                            .on_click(move |_, _window, cx| {
+                                                telemetry::event!(
+                                                    "Start Trial Clicked",
+                                                    state = "post-sign-in"
+                                                );
+                                                cx.open_url(&zed_urls::start_trial_url(cx))
+                                            }),
+                                    )
+                                    .child(
+                                        Label::new("No credit card required")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        }
+                    }),
                 Some(Plan::ZedProTrial) => card
                     .child(pro_trial_stamp)
                     .child(Label::new("You're in the Zed Pro Trial").size(LabelSize::Large))
@@ -255,48 +298,68 @@ impl Component for AiUpsellCard {
         Some(
             v_flex()
                 .gap_4()
-                .children(vec![example_group(vec![
-                    single_example(
-                        "Signed Out State",
-                        AiUpsellCard {
-                            sign_in_status: SignInStatus::SignedOut,
-                            sign_in: Arc::new(|_, _| {}),
-                            user_plan: None,
-                            tab_index: Some(0),
-                        }
-                        .into_any_element(),
-                    ),
-                    single_example(
-                        "Free Plan",
-                        AiUpsellCard {
-                            sign_in_status: SignInStatus::SignedIn,
-                            sign_in: Arc::new(|_, _| {}),
-                            user_plan: Some(Plan::ZedFree),
-                            tab_index: Some(1),
-                        }
-                        .into_any_element(),
-                    ),
-                    single_example(
-                        "Pro Trial",
-                        AiUpsellCard {
-                            sign_in_status: SignInStatus::SignedIn,
-                            sign_in: Arc::new(|_, _| {}),
-                            user_plan: Some(Plan::ZedProTrial),
-                            tab_index: Some(1),
-                        }
-                        .into_any_element(),
-                    ),
-                    single_example(
-                        "Pro Plan",
-                        AiUpsellCard {
-                            sign_in_status: SignInStatus::SignedIn,
-                            sign_in: Arc::new(|_, _| {}),
-                            user_plan: Some(Plan::ZedPro),
-                            tab_index: Some(1),
-                        }
-                        .into_any_element(),
-                    ),
-                ])])
+                .items_center()
+                .max_w_4_5()
+                .child(single_example(
+                    "Signed Out State",
+                    AiUpsellCard {
+                        sign_in_status: SignInStatus::SignedOut,
+                        sign_in: Arc::new(|_, _| {}),
+                        account_too_young: false,
+                        user_plan: None,
+                        tab_index: Some(0),
+                    }
+                    .into_any_element(),
+                ))
+                .child(example_group_with_title(
+                    "Signed In States",
+                    vec![
+                        single_example(
+                            "Free Plan",
+                            AiUpsellCard {
+                                sign_in_status: SignInStatus::SignedIn,
+                                sign_in: Arc::new(|_, _| {}),
+                                account_too_young: false,
+                                user_plan: Some(Plan::ZedFree),
+                                tab_index: Some(1),
+                            }
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Free Plan but Young Account",
+                            AiUpsellCard {
+                                sign_in_status: SignInStatus::SignedIn,
+                                sign_in: Arc::new(|_, _| {}),
+                                account_too_young: true,
+                                user_plan: Some(Plan::ZedFree),
+                                tab_index: Some(1),
+                            }
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Pro Trial",
+                            AiUpsellCard {
+                                sign_in_status: SignInStatus::SignedIn,
+                                sign_in: Arc::new(|_, _| {}),
+                                account_too_young: false,
+                                user_plan: Some(Plan::ZedProTrial),
+                                tab_index: Some(1),
+                            }
+                            .into_any_element(),
+                        ),
+                        single_example(
+                            "Pro Plan",
+                            AiUpsellCard {
+                                sign_in_status: SignInStatus::SignedIn,
+                                sign_in: Arc::new(|_, _| {}),
+                                account_too_young: false,
+                                user_plan: Some(Plan::ZedPro),
+                                tab_index: Some(1),
+                            }
+                            .into_any_element(),
+                        ),
+                    ],
+                ))
                 .into_any_element(),
         )
     }

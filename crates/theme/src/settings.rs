@@ -4,6 +4,7 @@ use crate::{
     ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
 };
 use anyhow::Result;
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
@@ -117,7 +118,9 @@ pub struct ThemeSettings {
     /// Manual overrides for the active theme.
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
-    pub theme_overrides: Option<ThemeStyleContent>,
+    pub experimental_theme_overrides: Option<ThemeStyleContent>,
+    /// Manual overrides per theme
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
     /// The current icon theme selection.
     pub icon_theme_selection: Option<IconThemeSelection>,
     /// The active icon theme.
@@ -425,7 +428,13 @@ pub struct ThemeSettingsContent {
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
-    pub theme_overrides: Option<ThemeStyleContent>,
+    pub experimental_theme_overrides: Option<ThemeStyleContent>,
+
+    /// Overrides per theme
+    ///
+    /// These values will override the ones on the specified theme
+    #[serde(default)]
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
 }
 
 fn default_font_features() -> Option<FontFeatures> {
@@ -647,30 +656,39 @@ impl ThemeSettings {
 
     /// Applies the theme overrides, if there are any, to the current theme.
     pub fn apply_theme_overrides(&mut self) {
-        if let Some(theme_overrides) = &self.theme_overrides {
-            let mut base_theme = (*self.active_theme).clone();
-
-            if let Some(window_background_appearance) = theme_overrides.window_background_appearance
-            {
-                base_theme.styles.window_background_appearance =
-                    window_background_appearance.into();
-            }
-
-            base_theme
-                .styles
-                .colors
-                .refine(&theme_overrides.theme_colors_refinement());
-            base_theme
-                .styles
-                .status
-                .refine(&theme_overrides.status_colors_refinement());
-            base_theme.styles.player.merge(&theme_overrides.players);
-            base_theme.styles.accents.merge(&theme_overrides.accents);
-            base_theme.styles.syntax =
-                SyntaxTheme::merge(base_theme.styles.syntax, theme_overrides.syntax_overrides());
-
-            self.active_theme = Arc::new(base_theme);
+        // Apply the old overrides setting first, so that the new setting can override those.
+        if let Some(experimental_theme_overrides) = &self.experimental_theme_overrides {
+            let mut theme = (*self.active_theme).clone();
+            ThemeSettings::modify_theme(&mut theme, experimental_theme_overrides);
+            self.active_theme = Arc::new(theme);
         }
+
+        if let Some(theme_overrides) = self.theme_overrides.get(self.active_theme.name.as_ref()) {
+            let mut theme = (*self.active_theme).clone();
+            ThemeSettings::modify_theme(&mut theme, theme_overrides);
+            self.active_theme = Arc::new(theme);
+        }
+    }
+
+    fn modify_theme(base_theme: &mut Theme, theme_overrides: &ThemeStyleContent) {
+        if let Some(window_background_appearance) = theme_overrides.window_background_appearance {
+            base_theme.styles.window_background_appearance = window_background_appearance.into();
+        }
+
+        base_theme
+            .styles
+            .colors
+            .refine(&theme_overrides.theme_colors_refinement());
+        base_theme
+            .styles
+            .status
+            .refine(&theme_overrides.status_colors_refinement());
+        base_theme.styles.player.merge(&theme_overrides.players);
+        base_theme.styles.accents.merge(&theme_overrides.accents);
+        base_theme.styles.syntax = SyntaxTheme::merge(
+            base_theme.styles.syntax.clone(),
+            theme_overrides.syntax_overrides(),
+        );
     }
 
     /// Switches to the icon theme with the given name, if it exists.
@@ -848,7 +866,8 @@ impl settings::Settings for ThemeSettings {
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
-            theme_overrides: None,
+            experimental_theme_overrides: None,
+            theme_overrides: HashMap::default(),
             icon_theme_selection: defaults.icon_theme.clone(),
             active_icon_theme: defaults
                 .icon_theme
@@ -867,6 +886,7 @@ impl settings::Settings for ThemeSettings {
             .user
             .into_iter()
             .chain(sources.release_channel)
+            .chain(sources.operating_system)
             .chain(sources.profile)
             .chain(sources.server)
         {
@@ -917,6 +937,8 @@ impl settings::Settings for ThemeSettings {
                 }
             }
 
+            this.experimental_theme_overrides
+                .clone_from(&value.experimental_theme_overrides);
             this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
 
