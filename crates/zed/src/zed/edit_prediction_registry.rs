@@ -4,6 +4,7 @@ use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use ninetyfive::{NinetyFive, NinetyFiveCompletionProvider};
 use settings::SettingsStore;
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -119,7 +120,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         }
                         EditPredictionProvider::None
                         | EditPredictionProvider::Copilot
-                        | EditPredictionProvider::Supermaven => {}
+                        | EditPredictionProvider::Supermaven
+                        | EditPredictionProvider::NinetyFive => {}
                     }
                 }
             }
@@ -218,6 +220,12 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            }
+        }
+        EditPredictionProvider::NinetyFive => {
+            if let Some(ninetyfive) = NinetyFive::global(cx) {
+                let provider = cx.new(|cx| NinetyFiveCompletionProvider::new(ninetyfive, cx));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }

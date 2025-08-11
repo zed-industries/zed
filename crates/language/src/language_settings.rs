@@ -4,16 +4,16 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
-    Properties as EditorconfigProperties,
     property::{FinalNewline, IndentSize, IndentStyle, TabWidth, TrimTrailingWs},
+    Properties as EditorconfigProperties,
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::{JsonSchema, json_schema};
+use schemars::{json_schema, JsonSchema};
 use serde::{
-    Deserialize, Deserializer, Serialize,
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer, Serialize,
 };
 
 use settings::{
@@ -215,6 +215,7 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    NinetyFive,
 }
 
 impl EditPredictionProvider {
@@ -223,7 +224,8 @@ impl EditPredictionProvider {
             EditPredictionProvider::Zed => true,
             EditPredictionProvider::None
             | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
+            | EditPredictionProvider::Supermaven
+            | EditPredictionProvider::NinetyFive => false,
         }
     }
 }

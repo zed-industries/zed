@@ -1,0 +1,29 @@
+[package]
+name = "ninetyfive"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/ninetyfive.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-tungstenite = { workspace = true, features = ["tokio", "tokio-rustls-manual-roots"] }
+client.workspace = true
+chrono.workspace = true
+edit_prediction.workspace = true
+futures.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+http_client_tls.workspace = true
+language.workspace = true
+log.workspace = true
+project.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+tokio.workspace = true
+url.workspace = true
+
+[dev-dependencies]
