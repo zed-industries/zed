@@ -16,19 +16,19 @@ To add an existing API key to a given provider, go to the Agent Panel settings (
 
 Here's all the supported LLM providers for which you can use your own API keys:
 
-- Amazon Bedrock](#amazon-bedrock)
-- Anthropic](#anthropic)
-- DeepSeek](#deepseek)
-- GitHub Copilot Chat](#github-copilot-chat)
-- Google AI](#google-ai)
-- LM Studio](#lmstudio)
-- Mistral](#mistral)
-- Ollama](#ollama)
-- OpenAI](#openai)
-- OpenAI API Compatible](#openai-api-compatible)
-- OpenRouter](#openrouter)
-- Vercel](#vercel-v0)
-- xAI](#xai)
+- [Amazon Bedrock](#amazon-bedrock)
+- [Anthropic](#anthropic)
+- [DeepSeek](#deepseek)
+- [GitHub Copilot Chat](#github-copilot-chat)
+- [Google AI](#google-ai)
+- [LM Studio](#lmstudio)
+- [Mistral](#mistral)
+- [Ollama](#ollama)
+- [OpenAI](#openai)
+- [OpenAI API Compatible](#openai-api-compatible)
+- [OpenRouter](#openrouter)
+- [Vercel](#vercel-v0)
+- [xAI](#xai)
 
 ### Amazon Bedrock {#amazon-bedrock}
 
