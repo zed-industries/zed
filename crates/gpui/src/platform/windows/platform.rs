@@ -134,21 +134,6 @@ impl WindowsPlatform {
         })
     }
 
-    fn redraw_all(&self) {
-        for handle in self.raw_window_handles.read().iter() {
-            unsafe {
-                RedrawWindow(
-                    Some(handle.as_raw()),
-                    None,
-                    None,
-                    RDW_INVALIDATE | RDW_UPDATENOW,
-                )
-                .ok()
-                .log_err();
-            }
-        }
-    }
-
     pub fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         self.raw_window_handles
             .read()
@@ -323,10 +308,12 @@ impl WindowsPlatform {
             .map(|hwnd| hwnd.as_raw())
     }
 
-    fn start_vsync(&self) {
-        let vsync_provider = VSyncProvider::new().expect("Failed to create VSyncProvider");
+    fn begin_vsync_thread(&self) {
+        let windows_version = self.windows_version;
         let all_windows = self.raw_window_handles.clone();
         std::thread::spawn(move || {
+            let vsync_provider =
+                VSyncProvider::new(windows_version).expect("Failed to create VSyncProvider");
             loop {
                 vsync_provider.wait_for_vsync();
                 for hwnd in all_windows.read().iter() {
@@ -368,7 +355,7 @@ impl Platform for WindowsPlatform {
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        self.start_vsync();
+        self.begin_vsync_thread();
         self.handle_events();
 
         if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {

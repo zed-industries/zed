@@ -5,12 +5,18 @@ use std::{
 
 use anyhow::Result;
 use windows::Win32::{
-    Graphics::DirectComposition::{
-        COMPOSITION_FRAME_ID_COMPLETED, COMPOSITION_FRAME_STATS, DCompositionGetFrameId,
-        DCompositionGetStatistics, DCompositionWaitForCompositorClock,
+    Foundation::HWND,
+    Graphics::{
+        DirectComposition::{
+            COMPOSITION_FRAME_ID_COMPLETED, COMPOSITION_FRAME_STATS, DCompositionGetFrameId,
+            DCompositionGetStatistics, DCompositionWaitForCompositorClock,
+        },
+        Dwm::{DWM_TIMING_INFO, DwmFlush, DwmGetCompositionTimingInfo},
     },
     System::{Performance::QueryPerformanceFrequency, Threading::INFINITE},
 };
+
+use crate::WindowsVersion;
 
 static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     let mut frequency = 0;
@@ -24,13 +30,24 @@ const VSYNC_INTERVAL_THRESHOLD: Duration = Duration::from_millis(1);
 
 pub(crate) struct VSyncProvider {
     interval: Duration,
-    f: Box<dyn Fn() -> bool + Send>,
+    f: Box<dyn Fn() -> bool>,
 }
 
 impl VSyncProvider {
-    pub(crate) fn new() -> Result<Self> {
-        let interval = get_dwm_interval_from_direct_composition()?;
-        let f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
+    pub(crate) fn new(windows_version: WindowsVersion) -> Result<Self> {
+        let interval: Duration;
+        let f: Box<dyn Fn() -> bool>;
+        match windows_version {
+            WindowsVersion::Win10 => {
+                interval = get_dwm_interval()?;
+                f = Box::new(|| unsafe { DwmFlush().is_ok() });
+            }
+            WindowsVersion::Win11 => {
+                interval = get_dwm_interval_from_direct_composition()?;
+                f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
+            }
+        }
+        log::info!("VSyncProvider initialized with interval: {:?}", interval);
         Ok(Self { interval, f })
     }
 
@@ -56,10 +73,30 @@ fn get_dwm_interval_from_direct_composition() -> Result<Duration> {
     let frame_id = unsafe { DCompositionGetFrameId(COMPOSITION_FRAME_ID_COMPLETED) }?;
     let mut stats = COMPOSITION_FRAME_STATS::default();
     unsafe { DCompositionGetStatistics(frame_id, &mut stats, 0, None, None) }?;
-    Ok(duration_from_qpc(stats.framePeriod))
+    Ok(retrieve_duration(stats.framePeriod, *QPC_TICKS_PER_SECOND))
 }
 
-fn duration_from_qpc(qpc: u64) -> Duration {
-    let dwm_ticks_per_microsecond = *QPC_TICKS_PER_SECOND / 1_000_000;
-    Duration::from_micros(qpc / dwm_ticks_per_microsecond)
+fn get_dwm_interval() -> Result<Duration> {
+    let mut timing_info = DWM_TIMING_INFO {
+        cbSize: std::mem::size_of::<DWM_TIMING_INFO>() as u32,
+        ..Default::default()
+    };
+    unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut timing_info) }?;
+    let interval = retrieve_duration(timing_info.qpcRefreshPeriod, *QPC_TICKS_PER_SECOND);
+    // Check for interval values that are impossibly low. A 29 microsecond
+    // interval was seen (from a qpcRefreshPeriod of 60).
+    if interval < VSYNC_INTERVAL_THRESHOLD {
+        Ok(retrieve_duration(
+            timing_info.rateRefresh.uiDenominator as u64,
+            timing_info.rateRefresh.uiNumerator as u64,
+        ))
+    } else {
+        Ok(interval)
+    }
+}
+
+#[inline]
+fn retrieve_duration(counts: u64, ticks_per_second: u64) -> Duration {
+    let ticks_per_microsecond = ticks_per_second / 1_000_000;
+    Duration::from_micros(counts / ticks_per_microsecond)
 }
