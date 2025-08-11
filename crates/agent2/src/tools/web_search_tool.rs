@@ -57,7 +57,7 @@ impl AgentTool for WebSearchTool {
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let Some(provider) = WebSearchRegistry::read_global(cx).active_provider() else {
-            return Task::ready(Err(anyhow!("Web search is not available."))).into();
+            return Task::ready(Err(anyhow!("Web search is not available.")));
         };
 
         let search_task = provider.search(input.query, cx);

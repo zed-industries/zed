@@ -116,7 +116,7 @@ impl AgentTool for GrepTool {
         ) {
             Ok(matcher) => matcher,
             Err(error) => {
-                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}"))).into();
+                return Task::ready(Err(anyhow!("invalid include glob pattern: {error}")));
             }
         };
 
@@ -132,7 +132,7 @@ impl AgentTool for GrepTool {
             match PathMatcher::new(exclude_patterns) {
                 Ok(matcher) => matcher,
                 Err(error) => {
-                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}"))).into();
+                    return Task::ready(Err(anyhow!("invalid exclude pattern: {error}")));
                 }
             }
         };
@@ -149,7 +149,7 @@ impl AgentTool for GrepTool {
             None,
         ) {
             Ok(query) => query,
-            Err(error) => return Task::ready(Err(error)).into(),
+            Err(error) => return Task::ready(Err(error)),
         };
 
         let results = self
@@ -309,7 +309,7 @@ impl AgentTool for GrepTool {
             });
 
             Ok(output)
-        }).into()
+        })
     }
 }
 
