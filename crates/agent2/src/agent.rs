@@ -1,7 +1,7 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    CopyPathTool, CreateDirectoryTool, EditFileTool, FindPathTool, GrepTool, ListDirectoryTool,
-    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool,
+    CopyPathTool, CreateDirectoryTool, EditFileTool, FetchTool, FindPathTool, GrepTool,
+    ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool,
     ToolCallAuthorization, WebSearchTool,
 };
 use acp_thread::ModelSelector;
@@ -425,6 +425,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         thread.add_tool(OpenTool::new(project.clone()));
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
                         thread.add_tool(GrepTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
