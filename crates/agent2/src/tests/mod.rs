@@ -6,7 +6,7 @@ use anyhow::Result;
 use client::{Client, UserStore};
 use fs::FakeFs;
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{AppContext, Entity, Task, TestAppContext, http_client::FakeHttpClient};
+use gpui::{AppContext, Entity, Task, TestAppContext, UpdateGlobal, http_client::FakeHttpClient};
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
@@ -19,6 +19,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
@@ -831,14 +832,38 @@ impl TestModel {
 
 async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+
     cx.update(|cx| {
         settings::init(cx);
+        cx.spawn({
+            let fs = fs.clone();
+            async move |cx| {
+                let mut new_settings_content_rx = settings::watch_config_file(
+                    cx.background_executor(),
+                    fs,
+                    paths::settings_file().clone(),
+                );
+
+                while let Some(new_settings_content) = new_settings_content_rx.next().await {
+                    cx.update(|cx| {
+                        SettingsStore::update_global(cx, |settings, cx| {
+                            settings.set_user_settings(&new_settings_content, cx)
+                        })
+                        .unwrap();
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+
         Project::init_settings(cx);
         agent_settings::init(cx);
     });
     let templates = Templates::new();
 
-    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
