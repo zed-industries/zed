@@ -438,7 +438,7 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::Hammer).color(Color::Muted))
+                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
                                 .action("Dismiss", |_, _| {})
                         },
                     );
@@ -567,7 +567,7 @@ impl ConfigureContextServerModal {
                         Button::new("open-repository", "Open Repository")
                             .icon(IconName::ArrowUpRight)
                             .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |window, cx| {

@@ -226,17 +226,35 @@ impl UserStore {
                     match status {
                         Status::Authenticated | Status::Connected { .. } => {
                             if let Some(user_id) = client.user_id() {
-                                let response = client.cloud_client().get_authenticated_user().await;
-                                let mut current_user = None;
+                                let response = client
+                                    .cloud_client()
+                                    .get_authenticated_user()
+                                    .await
+                                    .log_err();
+
+                                let current_user_and_response = if let Some(response) = response {
+                                    let user = Arc::new(User {
+                                        id: user_id,
+                                        github_login: response.user.github_login.clone().into(),
+                                        avatar_uri: response.user.avatar_url.clone().into(),
+                                        name: response.user.name.clone(),
+                                    });
+
+                                    Some((user, response))
+                                } else {
+                                    None
+                                };
+                                current_user_tx
+                                    .send(
+                                        current_user_and_response
+                                            .as_ref()
+                                            .map(|(user, _)| user.clone()),
+                                    )
+                                    .await
+                                    .ok();
+
                                 cx.update(|cx| {
-                                    if let Some(response) = response.log_err() {
-                                        let user = Arc::new(User {
-                                            id: user_id,
-                                            github_login: response.user.github_login.clone().into(),
-                                            avatar_uri: response.user.avatar_url.clone().into(),
-                                            name: response.user.name.clone(),
-                                        });
-                                        current_user = Some(user.clone());
+                                    if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
                                             this.by_github_login
                                                 .insert(user.github_login.clone(), user_id);
@@ -247,7 +265,6 @@ impl UserStore {
                                         anyhow::Ok(())
                                     }
                                 })??;
-                                current_user_tx.send(current_user).await.ok();
 
                                 this.update(cx, |_, cx| cx.notify())?;
                             }

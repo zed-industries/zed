@@ -869,7 +869,7 @@ impl Render for ConfigurationView {
             .child(
                 Button::new("docs", "Learn More")
                     .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(move |_, _window, cx| {
                         cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")

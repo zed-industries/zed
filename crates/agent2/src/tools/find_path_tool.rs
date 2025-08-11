@@ -1,14 +1,14 @@
+use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use gpui::{App, AppContext, Entity, SharedString, Task};
+use language_model::LanguageModelToolResultContent;
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
-
-use crate::{AgentTool, ToolCallEventStream};
 
 /// Fast file path pattern matching tool that works with any codebase size
 ///
@@ -39,8 +39,35 @@ pub struct FindPathToolInput {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct FindPathToolOutput {
-    paths: Vec<PathBuf>,
+pub struct FindPathToolOutput {
+    offset: usize,
+    current_matches_page: Vec<PathBuf>,
+    all_matches_len: usize,
+}
+
+impl From<FindPathToolOutput> for LanguageModelToolResultContent {
+    fn from(output: FindPathToolOutput) -> Self {
+        if output.current_matches_page.is_empty() {
+            "No matches found".into()
+        } else {
+            let mut llm_output = format!("Found {} total matches.", output.all_matches_len);
+            if output.all_matches_len > RESULTS_PER_PAGE {
+                write!(
+                    &mut llm_output,
+                    "\nShowing results {}-{} (provide 'offset' parameter for more results):",
+                    output.offset + 1,
+                    output.offset + output.current_matches_page.len()
+                )
+                .unwrap();
+            }
+
+            for mat in output.current_matches_page {
+                write!(&mut llm_output, "\n{}", mat.display()).unwrap();
+            }
+
+            llm_output.into()
+        }
+    }
 }
 
 const RESULTS_PER_PAGE: usize = 50;
@@ -57,6 +84,7 @@ impl FindPathTool {
 
 impl AgentTool for FindPathTool {
     type Input = FindPathToolInput;
+    type Output = FindPathToolOutput;
 
     fn name(&self) -> SharedString {
         "find_path".into()
@@ -66,8 +94,12 @@ impl AgentTool for FindPathTool {
         acp::ToolKind::Search
     }
 
-    fn initial_title(&self, input: Self::Input) -> SharedString {
-        format!("Find paths matching “`{}`”", input.glob).into()
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        let mut title = "Find paths".to_string();
+        if let Ok(input) = input {
+            title.push_str(&format!(" matching “`{}`”", input.glob));
+        }
+        title.into()
     }
 
     fn run(
@@ -75,7 +107,7 @@ impl AgentTool for FindPathTool {
         input: Self::Input,
         event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<FindPathToolOutput>> {
         let search_paths_task = search_paths(&input.glob, self.project.clone(), cx);
 
         cx.background_spawn(async move {
@@ -83,7 +115,7 @@ impl AgentTool for FindPathTool {
             let paginated_matches: &[PathBuf] = &matches[cmp::min(input.offset, matches.len())
                 ..cmp::min(input.offset + RESULTS_PER_PAGE, matches.len())];
 
-            event_stream.send_update(acp::ToolCallUpdateFields {
+            event_stream.update_fields(acp::ToolCallUpdateFields {
                 title: Some(if paginated_matches.len() == 0 {
                     "No matches".into()
                 } else if paginated_matches.len() == 1 {
@@ -113,26 +145,11 @@ impl AgentTool for FindPathTool {
                 ..Default::default()
             });
 
-            if matches.is_empty() {
-                Ok("No matches found".into())
-            } else {
-                let mut message = format!("Found {} total matches.", matches.len());
-                if matches.len() > RESULTS_PER_PAGE {
-                    write!(
-                        &mut message,
-                        "\nShowing results {}-{} (provide 'offset' parameter for more results):",
-                        input.offset + 1,
-                        input.offset + paginated_matches.len()
-                    )
-                    .unwrap();
-                }
-
-                for mat in matches.iter().skip(input.offset).take(RESULTS_PER_PAGE) {
-                    write!(&mut message, "\n{}", mat.display()).unwrap();
-                }
-
-                Ok(message)
-            }
+            Ok(FindPathToolOutput {
+                offset: input.offset,
+                current_matches_page: paginated_matches.to_vec(),
+                all_matches_len: matches.len(),
+            })
         })
     }
 }

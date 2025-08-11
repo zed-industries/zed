@@ -7768,12 +7768,19 @@ impl LspStore {
     pub(crate) fn set_language_server_statuses_from_proto(
         &mut self,
         language_servers: Vec<proto::LanguageServer>,
+        server_capabilities: Vec<String>,
     ) {
         self.language_server_statuses = language_servers
             .into_iter()
-            .map(|server| {
+            .zip(server_capabilities)
+            .map(|(server, server_capabilities)| {
+                let server_id = LanguageServerId(server.id as usize);
+                if let Ok(server_capabilities) = serde_json::from_str(&server_capabilities) {
+                    self.lsp_server_capabilities
+                        .insert(server_id, server_capabilities);
+                }
                 (
-                    LanguageServerId(server.id as usize),
+                    server_id,
                     LanguageServerStatus {
                         name: LanguageServerName::from_proto(server.name),
                         pending_work: Default::default(),
