@@ -4491,6 +4491,7 @@ mod tests {
                 "search",
                 "settings_profile_selector",
                 "snippets",
+                "stash_picker",
                 "supermaven",
                 "svg",
                 "tab_switcher",
