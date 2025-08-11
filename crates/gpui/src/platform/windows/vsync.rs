@@ -17,8 +17,6 @@ use windows::Win32::{
     System::{Performance::QueryPerformanceFrequency, Threading::INFINITE},
 };
 
-use crate::WindowsVersion;
-
 static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     let mut frequency = 0;
     // On systems that run Windows XP or later, the function will always succeed and
@@ -36,27 +34,20 @@ pub(crate) struct VSyncProvider {
 }
 
 impl VSyncProvider {
-    pub(crate) fn new(windows_version: WindowsVersion) -> Self {
-        let interval: Duration;
-        let f: Box<dyn Fn() -> bool>;
-        match windows_version {
-            WindowsVersion::Win10 => {
-                interval = get_dwm_interval()
-                    .context("Failed to get DWM interval")
-                    .log_err()
-                    .unwrap_or(DEFAULT_VSYNC_INTERVAL);
-                f = Box::new(|| unsafe { DwmFlush().is_ok() });
-            }
-            WindowsVersion::Win11 => {
-                interval = get_dwm_interval_from_direct_composition()
-                    .context("Failed to get DWM interval")
-                    .log_err()
-                    .unwrap_or(DEFAULT_VSYNC_INTERVAL);
-                f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
-            }
+    pub(crate) fn new() -> Self {
+        if let Ok(interval) = get_dwm_interval_from_direct_composition() {
+            log::info!("DWM interval from DirectComposition: {:?}", interval);
+            let f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
+            Self { interval, f }
+        } else {
+            let interval = get_dwm_interval()
+                .context("Failed to get DWM interval")
+                .log_err()
+                .unwrap_or(DEFAULT_VSYNC_INTERVAL);
+            log::info!("DWM interval: {:?}", interval);
+            let f = Box::new(|| unsafe { DwmFlush().is_ok() });
+            Self { interval, f }
         }
-        log::info!("VSyncProvider initialized with interval: {:?}", interval);
-        Self { interval, f }
     }
 
     pub(crate) fn wait_for_vsync(&self) {
