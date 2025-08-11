@@ -2100,57 +2100,74 @@ impl GitPanel {
                 .to_owned();
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
-            let result_toast = match fs.git_clone(&repo, path.as_path()).await {
-                Ok(_) => cx.update(|_, cx| {
-                    StatusToast::new(
-                        format!(
-                            "repo: {}, has been cloned in {}",
-                            &repo,
-                            path.to_string_lossy()
-                        ),
+
+            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+                Ok(_) => cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Info,
+                        "Git Clone",
+                        None,
+                        &["Add repo to project", "Open repo in new project"],
                         cx,
-                        |this, _| {
-                            this.icon(ToastIcon::new(IconName::Check).color(Color::Success))
-                                .action("Add repo to project", {
-                                    path.push(repo_name);
-                                    move |_, cx| {
-                                        workspace
-                                            .update(cx, |workspace, cx| {
-                                                workspace
-                                                    .project()
-                                                    .update(cx, |project, cx| {
-                                                        project.create_worktree(
-                                                            path.as_path(),
-                                                            true,
-                                                            cx,
-                                                        )
-                                                    })
-                                                    .detach();
-                                            })
-                                            .ok();
-                                    }
-                                })
-                                .dismiss_button(true)
-                        },
                     )
                 }),
-                Err(e) => cx.update(|_, cx| {
-                    StatusToast::new(e.to_string(), cx, |this, _| {
-                        this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
-                            .dismiss_button(true)
+                Err(e) => {
+                    this.update(cx, |this: &mut GitPanel, cx| {
+                        let toast = StatusToast::new(e.to_string(), cx, |this, _| {
+                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                .dismiss_button(true)
+                        });
+
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            })
+                            .ok();
                     })
-                }),
+                    .ok()?;
+
+                    return None;
+                }
             }
             .ok()?;
 
-            this.update(cx, |this, cx| {
-                this.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.toggle_status_toast(result_toast, cx);
-                    })
-                    .ok();
-            })
-            .ok();
+            path.push(repo_name);
+            match prompt_answer.await.ok()? {
+                0 => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .project()
+                                .update(cx, |project, cx| {
+                                    project.create_worktree(path.as_path(), true, cx)
+                                })
+                                .detach();
+                        })
+                        .ok();
+                }
+                1 => {
+                    workspace
+                        .update(cx, move |workspace, cx| {
+                            workspace::open_new(
+                                Default::default(),
+                                workspace.app_state().clone(),
+                                cx,
+                                move |workspace, _, cx| {
+                                    cx.activate(true);
+                                    workspace
+                                        .project()
+                                        .update(cx, |project, cx| {
+                                            project.create_worktree(&path, true, cx)
+                                        })
+                                        .detach();
+                                },
+                            )
+                            .detach();
+                        })
+                        .ok();
+                }
+                _ => {}
+            }
 
             Some(())
         })
