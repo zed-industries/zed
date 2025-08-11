@@ -117,6 +117,14 @@ actions!(
     ]
 );
 
+actions!(
+    dev,
+    [
+        /// Record 10s of audio from your current microphone
+        CaptureAudio
+    ]
+);
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -897,7 +905,38 @@ fn register_actions(
                     .detach();
                 }
             }
+        })
+        .register_action(|workspace, _: &CaptureAudio, _, cx| {
+            struct CaptureAudioNotification {
+                audio_capture_task: Task<()>,
+                current_seconds_remaining: usize,
+            }
+
+            impl Render for CaptureAudioNotification {
+                fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+                    // let mut text = format!(
+                    //     "Recording audio for {} seconds",
+                    //     self.current_seconds_remaining
+                    // );
+                    // if self.current_seconds_remaining == 0 {
+                    //     text = "Recording audio".to_string();
+                    // }
+                    // cx.text(&text);
+                }
+            }
+
+            workspace.show_notification(NotificationId::unique::<CaptureAudio>(), cx, |cx| {
+                cx.new(|cx| {
+                    // MessageNotification::new("Failed to load the database file.", cx)
+                    //     .primary_message("File an Issue")
+                    //     .primary_icon(IconName::Plus)
+                    //     .primary_on_click(|window, cx| {
+                    //         window.dispatch_action(Box::new(FileBugReport), cx)
+                    //     })
+                })
+            });
         });
+
     if workspace.project().read(cx).is_via_ssh() {
         workspace.register_action({
             move |workspace, _: &OpenServerSettings, window, cx| {

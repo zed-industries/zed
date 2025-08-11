@@ -261,8 +261,7 @@ impl AudioStack {
                             &config.config(),
                             config.sample_format(),
                             move |data, _: &_| {
-                                let data =
-                                    Self::get_sample_data(config.sample_format(), data).log_err();
+                                let data = get_sample_data(config.sample_format(), data).log_err();
                                 let Some(data) = data else {
                                     return;
                                 };
@@ -320,25 +319,9 @@ impl AudioStack {
             drop(end_on_drop_tx)
         }
     }
+}
 
-    fn get_sample_data(sample_format: SampleFormat, data: &Data) -> Result<Vec<i16>> {
-        match sample_format {
-            SampleFormat::I8 => Ok(Self::convert_sample_data::<i8, i16>(data)),
-            SampleFormat::I16 => Ok(data.as_slice::<i16>().unwrap().to_vec()),
-            SampleFormat::I24 => Ok(Self::convert_sample_data::<I24, i16>(data)),
-            SampleFormat::I32 => Ok(Self::convert_sample_data::<i32, i16>(data)),
-            SampleFormat::I64 => Ok(Self::convert_sample_data::<i64, i16>(data)),
-            SampleFormat::U8 => Ok(Self::convert_sample_data::<u8, i16>(data)),
-            SampleFormat::U16 => Ok(Self::convert_sample_data::<u16, i16>(data)),
-            SampleFormat::U32 => Ok(Self::convert_sample_data::<u32, i16>(data)),
-            SampleFormat::U64 => Ok(Self::convert_sample_data::<u64, i16>(data)),
-            SampleFormat::F32 => Ok(Self::convert_sample_data::<f32, i16>(data)),
-            SampleFormat::F64 => Ok(Self::convert_sample_data::<f64, i16>(data)),
-            _ => anyhow::bail!("Unsupported sample format"),
-        }
-    }
-
-    fn convert_sample_data<TSource: SizedSample, TDest: SizedSample + FromSample<TSource>>(
+pub(super) fn convert_sample_data<TSource: SizedSample, TDest: SizedSample + FromSample<TSource>>(
         data: &Data,
     ) -> Vec<TDest> {
         data.as_slice::<TSource>()
@@ -346,6 +329,22 @@ impl AudioStack {
             .iter()
             .map(|e| e.to_sample::<TDest>())
             .collect()
+    }
+
+pub(super) fn get_sample_data(sample_format: SampleFormat, data: &Data) -> Result<Vec<i16>> {
+    match sample_format {
+        SampleFormat::I8 => Ok(convert_sample_data::<i8, i16>(data)),
+        SampleFormat::I16 => Ok(data.as_slice::<i16>().unwrap().to_vec()),
+        SampleFormat::I24 => Ok(convert_sample_data::<I24, i16>(data)),
+        SampleFormat::I32 => Ok(convert_sample_data::<i32, i16>(data)),
+        SampleFormat::I64 => Ok(convert_sample_data::<i64, i16>(data)),
+        SampleFormat::U8 => Ok(convert_sample_data::<u8, i16>(data)),
+        SampleFormat::U16 => Ok(convert_sample_data::<u16, i16>(data)),
+        SampleFormat::U32 => Ok(convert_sample_data::<u32, i16>(data)),
+        SampleFormat::U64 => Ok(convert_sample_data::<u64, i16>(data)),
+        SampleFormat::F32 => Ok(convert_sample_data::<f32, i16>(data)),
+        SampleFormat::F64 => Ok(convert_sample_data::<f64, i16>(data)),
+        _ => anyhow::bail!("Unsupported sample format"),
     }
 }
 
@@ -393,7 +392,7 @@ pub(crate) async fn capture_local_video_track(
     ))
 }
 
-fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
+pub(super) fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
     let device;
     let config;
     if input {
