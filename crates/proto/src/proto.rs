@@ -316,6 +316,8 @@ messages!(
     (PullWorkspaceDiagnostics, Background),
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
+    (GitClone, Background),
+    (GitCloneResponse, Background)
 );
 
 request_messages!(
@@ -484,6 +486,7 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
+    (GitClone, GitCloneResponse)
 );
 
 entity_messages!(
@@ -615,7 +618,8 @@ entity_messages!(
     LogToDebugConsole,
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
-    GetDefaultBranch
+    GetDefaultBranch,
+    GitClone
 );
 
 entity_messages!(
