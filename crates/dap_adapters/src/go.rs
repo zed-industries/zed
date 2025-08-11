@@ -547,6 +547,7 @@ async fn handle_envs(
         }
     };
 
+    let mut env_vars = HashMap::default();
     for path in env_files {
         let Some(path) = path
             .and_then(|s| PathBuf::from_str(s).ok())
@@ -556,13 +557,33 @@ async fn handle_envs(
         };
 
         if let Ok(file) = fs.open_sync(&path).await {
-            envs.extend(dotenvy::from_read_iter(file).filter_map(Result::ok))
+            let file_envs: HashMap<String, String> = dotenvy::from_read_iter(file)
+                .filter_map(Result::ok)
+                .collect();
+            envs.extend(file_envs.iter().map(|(k, v)| (k.clone(), v.clone())));
+            env_vars.extend(file_envs);
         } else {
             warn!("While starting Go debug session: failed to read env file {path:?}");
         };
     }
 
+    let mut env_obj: serde_json::Map<String, Value> = serde_json::Map::new();
+
+    for (k, v) in env_vars {
+        env_obj.insert(k, Value::String(v));
+    }
+
+    if let Some(existing_env) = config.get("env").and_then(|v| v.as_object()) {
+        for (k, v) in existing_env {
+            env_obj.insert(k.clone(), v.clone());
+        }
+    }
+
+    if !env_obj.is_empty() {
+        config.insert("env".to_string(), Value::Object(env_obj));
+    }
+
     // remove envFile now that it's been handled
-    config.remove("entry");
+    config.remove("envFile");
     Some(())
 }

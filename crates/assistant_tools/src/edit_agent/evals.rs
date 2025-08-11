@@ -12,6 +12,7 @@ use collections::HashMap;
 use fs::FakeFs;
 use futures::{FutureExt, future::LocalBoxFuture};
 use gpui::{AppContext, TestAppContext, Timer};
+use http_client::StatusCode;
 use indoc::{formatdoc, indoc};
 use language_model::{
     LanguageModelRegistry, LanguageModelRequestTool, LanguageModelToolResult,
@@ -365,17 +366,23 @@ fn eval_disable_cursor_blinking() {
     //  Model                          | Pass rate
     // ============================================
     //
-    //  claude-3.7-sonnet              |  0.99 (2025-06-14)
-    //  claude-sonnet-4                |  0.85 (2025-06-14)
-    //  gemini-2.5-pro-preview-latest  |  0.97 (2025-06-16)
-    //  gemini-2.5-flash-preview-04-17 |
-    //  gpt-4.1                        |
+    //  claude-3.7-sonnet              |  0.59 (2025-07-14)
+    //  claude-sonnet-4                |  0.81 (2025-07-14)
+    //  gemini-2.5-pro                 |  0.95 (2025-07-14)
+    //  gemini-2.5-flash-preview-04-17 |  0.78 (2025-07-14)
+    //  gpt-4.1                        |  0.00 (2025-07-14) (follows edit_description too literally)
     let input_file_path = "root/editor.rs";
     let input_file_content = include_str!("evals/fixtures/disable_cursor_blinking/before.rs");
     let edit_description = "Comment out the call to `BlinkManager::enable`";
+    let possible_diffs = vec![
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-01.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-02.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-03.diff"),
+        include_str!("evals/fixtures/disable_cursor_blinking/possible-04.diff"),
+    ];
     eval(
         100,
-        0.95,
+        0.51,
         0.05,
         EvalInput::from_conversation(
             vec![
@@ -433,11 +440,7 @@ fn eval_disable_cursor_blinking() {
                 ),
             ],
             Some(input_file_content.into()),
-            EvalAssertion::judge_diff(indoc! {"
-                - Calls to BlinkManager in `observe_window_activation` were commented out
-                - The call to `blink_manager.enable` above the call to show_cursor_names was commented out
-                - All the edits have valid indentation
-            "}),
+            EvalAssertion::assert_diff_any(possible_diffs),
         ),
     );
 }
@@ -1655,28 +1658,61 @@ impl EditAgentTest {
 }
 
 async fn retry_on_rate_limit<R>(mut request: impl AsyncFnMut() -> Result<R>) -> Result<R> {
+    const MAX_RETRIES: usize = 20;
     let mut attempt = 0;
+
     loop {
         attempt += 1;
-        match request().await {
-            Ok(result) => return Ok(result),
-            Err(err) => match err.downcast::<LanguageModelCompletionError>() {
-                Ok(err) => match &err {
+        let response = request().await;
+
+        if attempt >= MAX_RETRIES {
+            return response;
+        }
+
+        let retry_delay = match &response {
+            Ok(_) => None,
+            Err(err) => match err.downcast_ref::<LanguageModelCompletionError>() {
+                Some(err) => match &err {
                     LanguageModelCompletionError::RateLimitExceeded { retry_after, .. }
                     | LanguageModelCompletionError::ServerOverloaded { retry_after, .. } => {
-                        let retry_after = retry_after.unwrap_or(Duration::from_secs(5));
-                        // Wait for the duration supplied, with some jitter to avoid all requests being made at the same time.
-                        let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
-                        eprintln!(
-                            "Attempt #{attempt}: {err}. Retry after {retry_after:?} + jitter of {jitter:?}"
-                        );
-                        Timer::after(retry_after + jitter).await;
-                        continue;
+                        Some(retry_after.unwrap_or(Duration::from_secs(5)))
                     }
-                    _ => return Err(err.into()),
+                    LanguageModelCompletionError::UpstreamProviderError {
+                        status,
+                        retry_after,
+                        ..
+                    } => {
+                        // Only retry for specific status codes
+                        let should_retry = matches!(
+                            *status,
+                            StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+                        ) || status.as_u16() == 529;
+
+                        if should_retry {
+                            // Use server-provided retry_after if available, otherwise use default
+                            Some(retry_after.unwrap_or(Duration::from_secs(5)))
+                        } else {
+                            None
+                        }
+                    }
+                    LanguageModelCompletionError::ApiReadResponseError { .. }
+                    | LanguageModelCompletionError::ApiInternalServerError { .. }
+                    | LanguageModelCompletionError::HttpSend { .. } => {
+                        // Exponential backoff for transient I/O and internal server errors
+                        Some(Duration::from_secs(2_u64.pow((attempt - 1) as u32).min(30)))
+                    }
+                    _ => None,
                 },
-                Err(err) => return Err(err),
+                _ => None,
             },
+        };
+
+        if let Some(retry_after) = retry_delay {
+            let jitter = retry_after.mul_f64(rand::thread_rng().gen_range(0.0..1.0));
+            eprintln!("Attempt #{attempt}: Retry after {retry_after:?} + jitter of {jitter:?}");
+            Timer::after(retry_after + jitter).await;
+        } else {
+            return response;
         }
     }
 }

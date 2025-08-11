@@ -1,7 +1,7 @@
-use crate::FakeFs;
+use crate::{FakeFs, Fs};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
-use futures::future::{self, BoxFuture};
+use futures::future::{self, BoxFuture, join_all};
 use git::{
     blame::Blame,
     repository::{
@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -356,17 +356,57 @@ impl GitRepository for FakeGitRepository {
 
     fn stage_paths(
         &self,
+        paths: Vec<RepoPath>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        Box::pin(async move {
+            let contents = paths
+                .into_iter()
+                .map(|path| {
+                    let abs_path = self.dot_git_path.parent().unwrap().join(&path);
+                    Box::pin(async move { (path.clone(), self.fs.load(&abs_path).await.ok()) })
+                })
+                .collect::<Vec<_>>();
+            let contents = join_all(contents).await;
+            self.with_state_async(true, move |state| {
+                for (path, content) in contents {
+                    if let Some(content) = content {
+                        state.index_contents.insert(path, content);
+                    } else {
+                        state.index_contents.remove(&path);
+                    }
+                }
+                Ok(())
+            })
+            .await
+        })
+    }
+
+    fn unstage_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        _env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, move |state| {
+            for path in paths {
+                match state.head_contents.get(&path) {
+                    Some(content) => state.index_contents.insert(path, content.clone()),
+                    None => state.index_contents.remove(&path),
+                };
+            }
+            Ok(())
+        })
+    }
+
+    fn stash_paths(
+        &self,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
-    fn unstage_paths(
-        &self,
-        _paths: Vec<RepoPath>,
-        _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<'_, Result<()>> {
+    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -375,10 +415,8 @@ impl GitRepository for FakeGitRepository {
         _message: gpui::SharedString,
         _name_and_email: Option<(gpui::SharedString, gpui::SharedString)>,
         _options: CommitOptions,
-        _ask_pass: AskPassDelegate,
         _env: Arc<HashMap<String, String>>,
-        _cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -451,6 +489,10 @@ impl GitRepository for FakeGitRepository {
         _base_checkpoint: GitRepositoryCheckpoint,
         _target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>> {
+        unimplemented!()
+    }
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
     }
 }

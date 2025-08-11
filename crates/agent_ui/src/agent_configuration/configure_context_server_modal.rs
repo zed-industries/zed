@@ -1,4 +1,5 @@
 use std::{
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -188,7 +189,7 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
         }
         None => (
             "some-mcp-server".to_string(),
-            "".to_string(),
+            PathBuf::new(),
             "[]".to_string(),
             "{}".to_string(),
         ),
@@ -199,13 +200,14 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
   /// The name of your MCP server
   "{name}": {{
     /// The command which runs the MCP server
-    "command": "{command}",
+    "command": "{}",
     /// The arguments to pass to the MCP server
     "args": {args},
     /// The environment variables to set
     "env": {env}
   }}
-}}"#
+}}"#,
+        command.display()
     )
 }
 
@@ -436,7 +438,7 @@ impl ConfigureContextServerModal {
                         format!("{} configured successfully.", id.0),
                         cx,
                         |this, _cx| {
-                            this.icon(ToastIcon::new(IconName::Hammer).color(Color::Muted))
+                            this.icon(ToastIcon::new(IconName::ToolHammer).color(Color::Muted))
                                 .action("Dismiss", |_, _| {})
                         },
                     );
@@ -565,7 +567,7 @@ impl ConfigureContextServerModal {
                         Button::new("open-repository", "Open Repository")
                             .icon(IconName::ArrowUpRight)
                             .icon_color(Color::Muted)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .tooltip({
                                 let repository_url = repository_url.clone();
                                 move |window, cx| {

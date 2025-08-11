@@ -907,12 +907,12 @@ mod tests {
         let inlays = (0..buffer_snapshot.len())
             .flat_map(|offset| {
                 [
-                    Inlay::inline_completion(
+                    Inlay::edit_prediction(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_at(offset, Bias::Left),
                         "test",
                     ),
-                    Inlay::inline_completion(
+                    Inlay::edit_prediction(
                         post_inc(&mut id),
                         buffer_snapshot.anchor_at(offset, Bias::Right),
                         "test",

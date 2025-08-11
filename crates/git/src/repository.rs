@@ -96,6 +96,7 @@ impl Upstream {
 #[derive(Clone, Copy, Default)]
 pub struct CommitOptions {
     pub amend: bool,
+    pub signoff: bool,
 }
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
@@ -391,12 +392,16 @@ pub trait GitRepository: Send + Sync {
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        askpass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-        // This method takes an AsyncApp to ensure it's invoked on the main thread,
-        // otherwise git-credentials-manager won't work.
-        cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<()>>;
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
 
     fn push(
         &self,
@@ -458,6 +463,8 @@ pub trait GitRepository: Send + Sync {
         base_checkpoint: GitRepositoryCheckpoint,
         target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>>;
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>>;
 }
 
 pub enum DiffType {
@@ -839,14 +846,12 @@ impl GitRepository for RealGitRepository {
                         .stdin(Stdio::piped())
                         .stdout(Stdio::piped())
                         .spawn()?;
-                    child
-                        .stdin
-                        .take()
-                        .unwrap()
-                        .write_all(content.as_bytes())
-                        .await?;
+                    let mut stdin = child.stdin.take().unwrap();
+                    stdin.write_all(content.as_bytes()).await?;
+                    stdin.flush().await?;
+                    drop(stdin);
                     let output = child.output().await?.stdout;
-                    let sha = String::from_utf8(output)?;
+                    let sha = str::from_utf8(&output)?.trim();
 
                     log::debug!("indexing SHA: {sha}, path {path:?}");
 
@@ -864,6 +869,7 @@ impl GitRepository for RealGitRepository {
                         String::from_utf8_lossy(&output.stderr)
                     );
                 } else {
+                    log::debug!("removing path {path:?} from the index");
                     let output = new_smol_command(&git_binary_path)
                         .current_dir(&working_directory)
                         .envs(env.iter())
@@ -914,6 +920,7 @@ impl GitRepository for RealGitRepository {
                 for rev in &revs {
                     write!(&mut stdin, "{rev}\n")?;
                 }
+                stdin.flush()?;
                 drop(stdin);
 
                 let output = process.wait_with_output()?;
@@ -1192,73 +1199,94 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
+    fn stash_paths(
+        &self,
+        paths: Vec<RepoPath>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "push", "--quiet"])
+                    .arg("--include-untracked");
+
+                cmd.args(paths.iter().map(|p| p.as_ref()));
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["stash", "pop"]);
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash pop:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
     fn commit(
         &self,
         message: SharedString,
         name_and_email: Option<(SharedString, SharedString)>,
         options: CommitOptions,
-        ask_pass: AskPassDelegate,
         env: Arc<HashMap<String, String>>,
-        cx: AsyncApp,
-    ) -> BoxFuture<'static, Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
-        let executor = cx.background_executor().clone();
-        async move {
-            let working_directory = working_directory?;
-            let have_user_git_askpass = env.contains_key("GIT_ASKPASS");
-            let mut command = new_smol_command("git");
-            command.current_dir(&working_directory).envs(env.iter());
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(["commit", "--quiet", "-m"])
+                    .arg(&message.to_string())
+                    .arg("--cleanup=strip");
 
-            let ask_pass = if have_user_git_askpass {
-                None
-            } else {
-                Some(AskPassSession::new(&executor, ask_pass).await?)
-            };
+                if options.amend {
+                    cmd.arg("--amend");
+                }
 
-            if let Some(program) = ask_pass
-                .as_ref()
-                .and_then(|ask_pass| ask_pass.gpg_script_path())
-            {
-                command.arg("-c").arg(format!(
-                    "gpg.program={}",
-                    program.as_ref().to_string_lossy()
-                ));
-            }
+                if options.signoff {
+                    cmd.arg("--signoff");
+                }
 
-            command
-                .args(["commit", "-m"])
-                .arg(message.to_string())
-                .arg("--cleanup=strip")
-                .stdin(smol::process::Stdio::null())
-                .stdout(smol::process::Stdio::piped())
-                .stderr(smol::process::Stdio::piped());
+                if let Some((name, email)) = name_and_email {
+                    cmd.arg("--author").arg(&format!("{name} <{email}>"));
+                }
 
-            if options.amend {
-                command.arg("--amend");
-            }
+                let output = cmd.output().await?;
 
-            if let Some((name, email)) = name_and_email {
-                command.arg("--author").arg(&format!("{name} <{email}>"));
-            }
-
-            if let Some(ask_pass) = ask_pass {
-                command.env("GIT_ASKPASS", ask_pass.script_path());
-                let git_process = command.spawn()?;
-
-                run_askpass_command(ask_pass, git_process).await?;
-                Ok(())
-            } else {
-                let git_process = command.spawn()?;
-                let output = git_process.output().await?;
                 anyhow::ensure!(
                     output.status.success(),
-                    "{}",
+                    "Failed to commit:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())
-            }
-        }
-        .boxed()
+            })
+            .boxed()
     }
 
     fn push(
@@ -1578,6 +1606,37 @@ impl GitRepository for RealGitRepository {
                     &target_checkpoint.commit_sha.to_string(),
                 ])
                 .await
+            })
+            .boxed()
+    }
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
+        let working_directory = self.working_directory();
+        let git_binary_path = self.git_binary_path.clone();
+
+        let executor = self.executor.clone();
+        self.executor
+            .spawn(async move {
+                let working_directory = working_directory?;
+                let git = GitBinary::new(git_binary_path, working_directory, executor);
+
+                if let Ok(output) = git
+                    .run(&["symbolic-ref", "refs/remotes/upstream/HEAD"])
+                    .await
+                {
+                    let output = output
+                        .strip_prefix("refs/remotes/upstream/")
+                        .map(|s| SharedString::from(s.to_owned()));
+                    return Ok(output);
+                }
+
+                let output = git
+                    .run(&["symbolic-ref", "refs/remotes/origin/HEAD"])
+                    .await?;
+
+                Ok(output
+                    .strip_prefix("refs/remotes/origin/")
+                    .map(|s| SharedString::from(s.to_owned())))
             })
             .boxed()
     }
@@ -2082,16 +2141,12 @@ mod tests {
         )
         .await
         .unwrap();
-        cx.spawn(|cx| {
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new_always_failing(),
-                Arc::new(checkpoint_author_envs()),
-                cx,
-            )
-        })
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            Arc::new(checkpoint_author_envs()),
+        )
         .await
         .unwrap();
 
@@ -2115,16 +2170,12 @@ mod tests {
         )
         .await
         .unwrap();
-        cx.spawn(|cx| {
-            repo.commit(
-                "Commit after checkpoint".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new_always_failing(),
-                Arc::new(checkpoint_author_envs()),
-                cx,
-            )
-        })
+        repo.commit(
+            "Commit after checkpoint".into(),
+            None,
+            CommitOptions::default(),
+            Arc::new(checkpoint_author_envs()),
+        )
         .await
         .unwrap();
 
@@ -2257,16 +2308,12 @@ mod tests {
         )
         .await
         .unwrap();
-        cx.spawn(|cx| {
-            repo.commit(
-                "Initial commit".into(),
-                None,
-                CommitOptions::default(),
-                AskPassDelegate::new_always_failing(),
-                Arc::new(checkpoint_author_envs()),
-                cx,
-            )
-        })
+        repo.commit(
+            "Initial commit".into(),
+            None,
+            CommitOptions::default(),
+            Arc::new(checkpoint_author_envs()),
+        )
         .await
         .unwrap();
 

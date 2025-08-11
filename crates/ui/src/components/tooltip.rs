@@ -274,7 +274,7 @@ impl Render for LinkPreview {
 
 impl Component for Tooltip {
     fn scope() -> ComponentScope {
-        ComponentScope::None
+        ComponentScope::DataDisplay
     }
 
     fn description() -> Option<&'static str> {

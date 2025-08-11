@@ -308,7 +308,12 @@ mod tests {
             unimplemented!()
         }
 
-        fn needs_confirmation(&self, _input: &serde_json::Value, _cx: &App) -> bool {
+        fn needs_confirmation(
+            &self,
+            _input: &serde_json::Value,
+            _project: &Entity<Project>,
+            _cx: &App,
+        ) -> bool {
             unimplemented!()
         }
 
@@ -321,7 +326,7 @@ mod tests {
             _input: serde_json::Value,
             _request: Arc<language_model::LanguageModelRequest>,
             _project: Entity<Project>,
-            _action_log: Entity<assistant_tool::ActionLog>,
+            _action_log: Entity<action_log::ActionLog>,
             _model: Arc<dyn language_model::LanguageModel>,
             _window: Option<gpui::AnyWindowHandle>,
             _cx: &mut App,

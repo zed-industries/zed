@@ -1,16 +1,17 @@
 pub(crate) mod breakpoint_list;
 pub(crate) mod console;
 pub(crate) mod loaded_source_list;
+pub(crate) mod memory_view;
 pub(crate) mod module_list;
 pub mod stack_frame_list;
 pub mod variable_list;
-
 use std::{any::Any, ops::ControlFlow, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     ToggleExpandItem,
     new_process_modal::resolve_path,
     persistence::{self, DebuggerPaneItem, SerializedLayout},
+    session::running::memory_view::MemoryView,
 };
 
 use super::DebugPanelItemEvent;
@@ -34,7 +35,7 @@ use loaded_source_list::LoadedSourceList;
 use module_list::ModuleList;
 use project::{
     DebugScenarioContext, Project, WorktreeId,
-    debugger::session::{Session, SessionEvent, ThreadId, ThreadStatus},
+    debugger::session::{self, Session, SessionEvent, SessionStateEvent, ThreadId, ThreadStatus},
     terminals::TerminalKind,
 };
 use rpc::proto::ViewId;
@@ -47,10 +48,8 @@ use task::{
 };
 use terminal_view::TerminalView;
 use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon as _, Clickable as _, Context, FluentBuilder,
-    IconButton, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon as _,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Tab, Tooltip,
-    VisibleOnHover, VisualContext, Window, div, h_flex, v_flex,
+    FluentBuilder, IntoElement, Render, StatefulInteractiveElement, Tab, Tooltip, VisibleOnHover,
+    VisualContext, prelude::*,
 };
 use util::ResultExt;
 use variable_list::VariableList;
@@ -81,6 +80,7 @@ pub struct RunningState {
     _schedule_serialize: Option<Task<()>>,
     pub(crate) scenario: Option<DebugScenario>,
     pub(crate) scenario_context: Option<DebugScenarioContext>,
+    memory_view: Entity<MemoryView>,
 }
 
 impl RunningState {
@@ -417,13 +417,14 @@ pub(crate) fn new_debugger_pane(
                     .map_or(false, |item| item.read(cx).hovered);
 
                 h_flex()
-                    .group(pane_group_id.clone())
-                    .justify_between()
-                    .bg(cx.theme().colors().tab_bar_background)
-                    .border_b_1()
-                    .px_2()
-                    .border_color(cx.theme().colors().border)
                     .track_focus(&focus_handle)
+                    .group(pane_group_id.clone())
+                    .pl_1p5()
+                    .pr_1()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().tab_bar_background)
                     .on_action(|_: &menu::Cancel, window, cx| {
                         if cx.stop_active_drag(window) {
                             return;
@@ -512,6 +513,7 @@ pub(crate) fn new_debugger_pane(
                     )
                     .child({
                         let zoomed = pane.is_zoomed();
+
                         h_flex()
                             .visible_on_hover(pane_group_id)
                             .when(is_hovered, |this| this.visible())
@@ -535,7 +537,7 @@ pub(crate) fn new_debugger_pane(
                                         IconName::Maximize
                                     },
                                 )
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .on_click(cx.listener(move |pane, _, _, cx| {
                                     let is_zoomed = pane.is_zoomed();
                                     pane.set_zoomed(!is_zoomed, cx);
@@ -590,10 +592,11 @@ impl DebugTerminal {
 }
 
 impl gpui::Render for DebugTerminal {
-    fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .size_full()
             .track_focus(&self.focus_handle)
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
             .children(self.terminal.clone())
     }
 }
@@ -676,14 +679,36 @@ impl RunningState {
         let session_id = session.read(cx).session_id();
         let weak_state = cx.weak_entity();
         let stack_frame_list = cx.new(|cx| {
-            StackFrameList::new(workspace.clone(), session.clone(), weak_state, window, cx)
+            StackFrameList::new(
+                workspace.clone(),
+                session.clone(),
+                weak_state.clone(),
+                window,
+                cx,
+            )
         });
 
         let debug_terminal =
             parent_terminal.unwrap_or_else(|| cx.new(|cx| DebugTerminal::empty(window, cx)));
-
-        let variable_list =
-            cx.new(|cx| VariableList::new(session.clone(), stack_frame_list.clone(), window, cx));
+        let memory_view = cx.new(|cx| {
+            MemoryView::new(
+                session.clone(),
+                workspace.clone(),
+                stack_frame_list.downgrade(),
+                window,
+                cx,
+            )
+        });
+        let variable_list = cx.new(|cx| {
+            VariableList::new(
+                session.clone(),
+                stack_frame_list.clone(),
+                memory_view.clone(),
+                weak_state.clone(),
+                window,
+                cx,
+            )
+        });
 
         let module_list = cx.new(|cx| ModuleList::new(session.clone(), workspace.clone(), cx));
 
@@ -770,6 +795,15 @@ impl RunningState {
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 this.serialize_layout(window, cx);
             }),
+            cx.subscribe(
+                &session,
+                |this, session, event: &SessionStateEvent, cx| match event {
+                    SessionStateEvent::Shutdown if session.read(cx).is_building() => {
+                        this.shutdown(cx);
+                    }
+                    _ => {}
+                },
+            ),
         ];
 
         let mut pane_close_subscriptions = HashMap::default();
@@ -786,6 +820,7 @@ impl RunningState {
                 &breakpoint_list,
                 &loaded_source_list,
                 &debug_terminal,
+                &memory_view,
                 &mut pane_close_subscriptions,
                 window,
                 cx,
@@ -814,6 +849,7 @@ impl RunningState {
         let active_pane = panes.first_pane();
 
         Self {
+            memory_view,
             session,
             workspace,
             focus_handle,
@@ -884,6 +920,7 @@ impl RunningState {
         let weak_project = project.downgrade();
         let weak_workspace = workspace.downgrade();
         let is_local = project.read(cx).is_local();
+
         cx.spawn_in(window, async move |this, cx| {
             let DebugScenario {
                 adapter,
@@ -978,10 +1015,9 @@ impl RunningState {
                     ..task.resolved.clone()
                 };
                 let terminal = project
-                    .update_in(cx, |project, window, cx| {
+                    .update(cx, |project, cx| {
                         project.create_terminal(
                             TerminalKind::Task(task_with_shell.clone()),
-                            window.window_handle(),
                             cx,
                         )
                     })?
@@ -1153,9 +1189,7 @@ impl RunningState {
         let workspace = self.workspace.clone();
         let weak_project = project.downgrade();
 
-        let terminal_task = project.update(cx, |project, cx| {
-            project.create_terminal(kind, window.window_handle(), cx)
-        });
+        let terminal_task = project.update(cx, |project, cx| project.create_terminal(kind, cx));
         let terminal_task = cx.spawn_in(window, async move |_, cx| {
             let terminal = terminal_task.await?;
 
@@ -1221,6 +1255,12 @@ impl RunningState {
             DebuggerPaneItem::Terminal => Box::new(SubView::new(
                 self.debug_terminal.focus_handle(cx),
                 self.debug_terminal.clone().into(),
+                item_kind,
+                cx,
+            )),
+            DebuggerPaneItem::MemoryView => Box::new(SubView::new(
+                self.memory_view.focus_handle(cx),
+                self.memory_view.clone().into(),
                 item_kind,
                 cx,
             )),
@@ -1408,7 +1448,14 @@ impl RunningState {
         &self.module_list
     }
 
-    pub(crate) fn activate_item(&self, item: DebuggerPaneItem, window: &mut Window, cx: &mut App) {
+    pub(crate) fn activate_item(
+        &mut self,
+        item: DebuggerPaneItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.ensure_pane_item(item, window, cx);
+
         let (variable_list_position, pane) = self
             .panes
             .panes()
@@ -1420,9 +1467,10 @@ impl RunningState {
                     .map(|view| (view, pane))
             })
             .unwrap();
+
         pane.update(cx, |this, cx| {
             this.activate_item(variable_list_position, true, true, window, cx);
-        })
+        });
     }
 
     #[cfg(test)]
@@ -1459,7 +1507,7 @@ impl RunningState {
         }
     }
 
-    pub(crate) fn selected_thread_id(&self) -> Option<ThreadId> {
+    pub fn selected_thread_id(&self) -> Option<ThreadId> {
         self.thread_id
     }
 
@@ -1599,9 +1647,21 @@ impl RunningState {
             })
             .log_err();
 
-        self.session.update(cx, |session, cx| {
+        let is_building = self.session.update(cx, |session, cx| {
             session.shutdown(cx).detach();
-        })
+            matches!(session.mode, session::SessionState::Booting(_))
+        });
+
+        if is_building {
+            self.debug_terminal.update(cx, |terminal, cx| {
+                if let Some(view) = terminal.terminal.as_ref() {
+                    view.update(cx, |view, cx| {
+                        view.terminal()
+                            .update(cx, |terminal, _| terminal.kill_active_task())
+                    })
+                }
+            })
+        }
     }
 
     pub fn stop_thread(&self, cx: &mut Context<Self>) {

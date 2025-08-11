@@ -26,7 +26,22 @@ use ui::{
 };
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
-type CheckboxClickedCallback = Arc<Box<dyn Fn(bool, Range<usize>, &mut Window, &mut App)>>;
+pub struct CheckboxClickedEvent {
+    pub checked: bool,
+    pub source_range: Range<usize>,
+}
+
+impl CheckboxClickedEvent {
+    pub fn source_range(&self) -> Range<usize> {
+        self.source_range.clone()
+    }
+
+    pub fn checked(&self) -> bool {
+        self.checked
+    }
+}
+
+type CheckboxClickedCallback = Arc<Box<dyn Fn(&CheckboxClickedEvent, &mut Window, &mut App)>>;
 
 #[derive(Clone)]
 pub struct RenderContext {
@@ -80,7 +95,7 @@ impl RenderContext {
 
     pub fn with_checkbox_clicked_callback(
         mut self,
-        callback: impl Fn(bool, Range<usize>, &mut Window, &mut App) + 'static,
+        callback: impl Fn(&CheckboxClickedEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.checkbox_clicked_callback = Some(Arc::new(Box::new(callback)));
         self
@@ -229,7 +244,14 @@ fn render_markdown_list_item(
                                 };
 
                                 if window.modifiers().secondary() {
-                                    callback(checked, range.clone(), window, cx);
+                                    callback(
+                                        &CheckboxClickedEvent {
+                                            checked,
+                                            source_range: range.clone(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
                                 }
                             }
                         })
