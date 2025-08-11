@@ -972,9 +972,7 @@ impl settings::Settings for DisableAiSettings {
             .iter()
             .chain(sources.user.iter())
             .chain(sources.server.iter())
-            .filter_map(|s| s.as_ref())
-            .copied()
-            .any(|disabled| disabled);
+            .any(|disabled| **disabled == Some(true));
 
         Ok(Self { disable_ai })
     }
