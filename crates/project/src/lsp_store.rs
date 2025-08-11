@@ -638,139 +638,27 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::RegisterCapability, _, _>({
-                let this = this.clone();
+                let lsp_store = this.clone();
                 move |params, cx| {
-                    let lsp_store = this.clone();
+                    let lsp_store = lsp_store.clone();
                     let mut cx = cx.clone();
                     async move {
-                        for reg in params.registrations {
-                            match reg.method.as_str() {
-                                "workspace/didChangeWatchedFiles" => {
-                                    if let Some(options) = reg.register_options {
-                                        let options = serde_json::from_value(options)?;
-                                        lsp_store.update(&mut cx, |this, cx| {
-                                            this.as_local_mut()?.on_lsp_did_change_watched_files(
-                                                server_id, &reg.id, options, cx,
+                        lsp_store
+                            .update(&mut cx, |lsp_store, cx| {
+                                if lsp_store.as_local().is_some() {
+                                    match lsp_store
+                                        .register_server_capabilities(server_id, params, cx)
+                                    {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to register server capabilities: {e:#}"
                                             );
-                                            Some(())
-                                        })?;
-                                    }
-                                }
-                                "textDocument/rangeFormatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            let options = reg
-                                                .register_options
-                                                .map(|options| {
-                                                    serde_json::from_value::<
-                                                        lsp::DocumentRangeFormattingOptions,
-                                                    >(
-                                                        options
-                                                    )
-                                                })
-                                                .transpose()?;
-                                            let provider = match options {
-                                                None => OneOf::Left(true),
-                                                Some(options) => OneOf::Right(options),
-                                            };
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.document_range_formatting_provider =
-                                                    Some(provider);
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
                                         }
-                                        anyhow::Ok(())
-                                    })??;
+                                    };
                                 }
-                                "textDocument/onTypeFormatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            let options = reg
-                                                .register_options
-                                                .map(|options| {
-                                                    serde_json::from_value::<
-                                                        lsp::DocumentOnTypeFormattingOptions,
-                                                    >(
-                                                        options
-                                                    )
-                                                })
-                                                .transpose()?;
-                                            if let Some(options) = options {
-                                                server.update_capabilities(|capabilities| {
-                                                    capabilities
-                                                        .document_on_type_formatting_provider =
-                                                        Some(options);
-                                                });
-                                                notify_server_capabilities_updated(&server, cx);
-                                            }
-                                        }
-                                        anyhow::Ok(())
-                                    })??;
-                                }
-                                "textDocument/formatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            let options = reg
-                                                .register_options
-                                                .map(|options| {
-                                                    serde_json::from_value::<
-                                                        lsp::DocumentFormattingOptions,
-                                                    >(
-                                                        options
-                                                    )
-                                                })
-                                                .transpose()?;
-                                            let provider = match options {
-                                                None => OneOf::Left(true),
-                                                Some(options) => OneOf::Right(options),
-                                            };
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.document_formatting_provider =
-                                                    Some(provider);
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
-                                        }
-                                        anyhow::Ok(())
-                                    })??;
-                                }
-                                "workspace/didChangeConfiguration" => {
-                                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
-                                }
-                                "textDocument/rename" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            let options = reg
-                                                .register_options
-                                                .map(|options| {
-                                                    serde_json::from_value::<lsp::RenameOptions>(
-                                                        options,
-                                                    )
-                                                })
-                                                .transpose()?;
-                                            let options = match options {
-                                                None => OneOf::Left(true),
-                                                Some(options) => OneOf::Right(options),
-                                            };
-
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.rename_provider = Some(options);
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
-                                        }
-                                        anyhow::Ok(())
-                                    })??;
-                                }
-                                _ => log::warn!("unhandled capability registration: {reg:?}"),
-                            }
-                        }
+                            })
+                            .ok();
                         Ok(())
                     }
                 }
@@ -779,79 +667,27 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::UnregisterCapability, _, _>({
-                let this = this.clone();
+                let lsp_store = this.clone();
                 move |params, cx| {
-                    let lsp_store = this.clone();
+                    let lsp_store = lsp_store.clone();
                     let mut cx = cx.clone();
                     async move {
-                        for unreg in params.unregisterations.iter() {
-                            match unreg.method.as_str() {
-                                "workspace/didChangeWatchedFiles" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        lsp_store
-                                            .as_local_mut()?
-                                            .on_lsp_unregister_did_change_watched_files(
-                                                server_id, &unreg.id, cx,
+                        lsp_store
+                            .update(&mut cx, |lsp_store, cx| {
+                                if lsp_store.as_local().is_some() {
+                                    match lsp_store
+                                        .unregister_server_capabilities(server_id, params, cx)
+                                    {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to unregister server capabilities: {e:#}"
                                             );
-                                        Some(())
-                                    })?;
-                                }
-                                "workspace/didChangeConfiguration" => {
-                                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
-                                }
-                                "textDocument/rename" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.rename_provider = None
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
                                         }
-                                    })?;
+                                    }
                                 }
-                                "textDocument/rangeFormatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.document_range_formatting_provider =
-                                                    None
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
-                                        }
-                                    })?;
-                                }
-                                "textDocument/onTypeFormatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.document_on_type_formatting_provider =
-                                                    None;
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
-                                        }
-                                    })?;
-                                }
-                                "textDocument/formatting" => {
-                                    lsp_store.update(&mut cx, |lsp_store, cx| {
-                                        if let Some(server) =
-                                            lsp_store.language_server_for_id(server_id)
-                                        {
-                                            server.update_capabilities(|capabilities| {
-                                                capabilities.document_formatting_provider = None;
-                                            });
-                                            notify_server_capabilities_updated(&server, cx);
-                                        }
-                                    })?;
-                                }
-                                _ => log::warn!("unhandled capability unregistration: {unreg:?}"),
-                            }
-                        }
+                            })
+                            .ok();
                         Ok(())
                     }
                 }
@@ -3519,6 +3355,30 @@ impl LocalLspStore {
 
         Ok(workspace_config)
     }
+
+    fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
+        if let Some(LanguageServerState::Running { server, .. }) = self.language_servers.get(&id) {
+            Some(server.clone())
+        } else if let Some((_, server)) = self.supplementary_language_servers.get(&id) {
+            Some(Arc::clone(server))
+        } else {
+            None
+        }
+    }
+}
+
+fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
+    reg: lsp::Registration,
+) -> anyhow::Result<OneOf<bool, T>> {
+    let caps = match reg
+        .register_options
+        .map(|options| serde_json::from_value::<T>(options))
+        .transpose()?
+    {
+        None => OneOf::Left(true),
+        Some(options) => OneOf::Right(options),
+    };
+    Ok(caps)
 }
 
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
@@ -9434,16 +9294,7 @@ impl LspStore {
     }
 
     pub fn language_server_for_id(&self, id: LanguageServerId) -> Option<Arc<LanguageServer>> {
-        let local_lsp_store = self.as_local()?;
-        if let Some(LanguageServerState::Running { server, .. }) =
-            local_lsp_store.language_servers.get(&id)
-        {
-            Some(server.clone())
-        } else if let Some((_, server)) = local_lsp_store.supplementary_language_servers.get(&id) {
-            Some(Arc::clone(server))
-        } else {
-            None
-        }
+        self.as_local()?.language_server_for_id(id)
     }
 
     fn on_lsp_progress(
@@ -11807,6 +11658,361 @@ impl LspStore {
             )
             .log_err();
         }
+    }
+
+    fn register_server_capabilities(
+        &mut self,
+        server_id: LanguageServerId,
+        params: lsp::RegistrationParams,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let server = self
+            .language_server_for_id(server_id)
+            .with_context(|| format!("no server {server_id} found"))?;
+        for reg in params.registrations {
+            match reg.method.as_str() {
+                "workspace/didChangeWatchedFiles" => {
+                    if let Some(options) = reg.register_options {
+                        let notify = if let Some(local_lsp_store) = self.as_local_mut() {
+                            let caps = serde_json::from_value(options)?;
+                            local_lsp_store
+                                .on_lsp_did_change_watched_files(server_id, &reg.id, caps, cx);
+                            true
+                        } else {
+                            false
+                        };
+                        if notify {
+                            notify_server_capabilities_updated(&server, cx);
+                        }
+                    }
+                }
+                "workspace/didChangeConfiguration" => {
+                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
+                }
+                "workspace/symbol" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.workspace_symbol_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "workspace/fileOperations" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_default()
+                            .file_operations = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "workspace/executeCommand" => {
+                    let options = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    server.update_capabilities(|capabilities| {
+                        capabilities.execute_command_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/rangeFormatting" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_range_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/onTypeFormatting" => {
+                    let options = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_on_type_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/formatting" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_formatting_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/rename" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.rename_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/inlayHint" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.inlay_hint_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/documentSymbol" => {
+                    let options = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_symbol_provider = Some(options);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/codeAction" => {
+                    let options = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?;
+                    let provider_capability = match options {
+                        None => lsp::CodeActionProviderCapability::Simple(true),
+                        Some(options) => lsp::CodeActionProviderCapability::Options(options),
+                    };
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_action_provider = Some(provider_capability);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/definition" => {
+                    let caps = parse_register_capabilities(reg)?;
+                    server.update_capabilities(|capabilities| {
+                        capabilities.definition_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/completion" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    server.update_capabilities(|capabilities| {
+                        capabilities.completion_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/hover" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_else(|| lsp::HoverProviderCapability::Simple(true));
+                    server.update_capabilities(|capabilities| {
+                        capabilities.hover_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/signatureHelp" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_default();
+                    server.update_capabilities(|capabilities| {
+                        capabilities.signature_help_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/synchronization" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_else(|| {
+                            lsp::TextDocumentSyncCapability::Options(
+                                lsp::TextDocumentSyncOptions::default(),
+                            )
+                        });
+                    server.update_capabilities(|capabilities| {
+                        capabilities.text_document_sync = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/codeLens" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_else(|| lsp::CodeLensOptions {
+                            resolve_provider: None,
+                        });
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_lens_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/diagnostic" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_else(|| {
+                            lsp::DiagnosticServerCapabilities::RegistrationOptions(
+                                lsp::DiagnosticRegistrationOptions::default(),
+                            )
+                        });
+                    server.update_capabilities(|capabilities| {
+                        capabilities.diagnostic_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/colorProvider" => {
+                    let caps = reg
+                        .register_options
+                        .map(serde_json::from_value)
+                        .transpose()?
+                        .unwrap_or_else(|| lsp::ColorProviderCapability::Simple(true));
+                    server.update_capabilities(|capabilities| {
+                        capabilities.color_provider = Some(caps);
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                _ => log::warn!("unhandled capability registration: {reg:?}"),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn unregister_server_capabilities(
+        &mut self,
+        server_id: LanguageServerId,
+        params: lsp::UnregistrationParams,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let server = self
+            .language_server_for_id(server_id)
+            .with_context(|| format!("no server {server_id} found"))?;
+        for unreg in params.unregisterations.iter() {
+            match unreg.method.as_str() {
+                "workspace/didChangeWatchedFiles" => {
+                    let notify = if let Some(local_lsp_store) = self.as_local_mut() {
+                        local_lsp_store
+                            .on_lsp_unregister_did_change_watched_files(server_id, &unreg.id, cx);
+                        true
+                    } else {
+                        false
+                    };
+                    if notify {
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
+                "workspace/didChangeConfiguration" => {
+                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
+                }
+                "workspace/symbol" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.workspace_symbol_provider = None
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "workspace/fileOperations" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities
+                            .workspace
+                            .get_or_insert_with(|| lsp::WorkspaceServerCapabilities {
+                                workspace_folders: None,
+                                file_operations: None,
+                            })
+                            .file_operations = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "workspace/executeCommand" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.execute_command_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/rangeFormatting" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_range_formatting_provider = None
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/onTypeFormatting" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_on_type_formatting_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/formatting" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.document_formatting_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/rename" => {
+                    server.update_capabilities(|capabilities| capabilities.rename_provider = None);
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/codeAction" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_action_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/definition" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.definition_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/completion" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.completion_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/hover" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.hover_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/signatureHelp" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.signature_help_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/synchronization" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.text_document_sync = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/codeLens" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.code_lens_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/diagnostic" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.diagnostic_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/colorProvider" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.color_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                _ => log::warn!("unhandled capability unregistration: {unreg:?}"),
+            }
+        }
+
+        Ok(())
     }
 }
 
