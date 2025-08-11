@@ -3187,8 +3187,10 @@ impl AgentPanel {
                     .detach();
                 });
             }
-            ActiveView::ExternalAgentThread { .. } => {
-                unimplemented!()
+            ActiveView::ExternalAgentThread { thread_view } => {
+                thread_view.update(cx, |thread_view, cx| {
+                    thread_view.insert_dragged_files(paths, added_worktrees, window, cx);
+                });
             }
             ActiveView::TextThread { context_editor, .. } => {
                 context_editor.update(cx, |context_editor, cx| {

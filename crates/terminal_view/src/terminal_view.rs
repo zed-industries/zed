@@ -64,8 +64,8 @@ use std::{
 };
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-
 const GIT_DIFF_PATH_PREFIXES: &[&str] = &["a", "b"];
+const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -956,13 +956,12 @@ impl TerminalView {
                 .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
-                .h_full()
                 .absolute()
-                .right_1()
-                .top_1()
+                .top_0()
                 .bottom_0()
-                .w(px(12.))
-                .cursor_default()
+                .right_0()
+                .h_full()
+                .w(TERMINAL_SCROLLBAR_WIDTH)
                 .children(Scrollbar::vertical(self.scrollbar_state.clone())),
         )
     }
@@ -1496,6 +1495,16 @@ impl Render for TerminalView {
 
         let focused = self.focus_handle.is_focused(window);
 
+        // Always calculate scrollbar width to prevent layout shift
+        let scrollbar_width = if Self::should_show_scrollbar(cx)
+            && self.content_mode(window, cx).is_scrollable()
+            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
+        {
+            TERMINAL_SCROLLBAR_WIDTH
+        } else {
+            px(0.)
+        };
+
         div()
             .id("terminal-view")
             .size_full()
@@ -1545,6 +1554,8 @@ impl Render for TerminalView {
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
                     .size_full()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1591,7 +1602,7 @@ impl Item for TerminalView {
         let (icon, icon_color, rerun_button) = match terminal.task() {
             Some(terminal_task) => match &terminal_task.status {
                 TaskStatus::Running => (
-                    IconName::PlayOutlined,
+                    IconName::PlayFilled,
                     Color::Disabled,
                     TerminalView::rerun_button(&terminal_task),
                 ),
@@ -1654,7 +1665,6 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<Self>> {
-        let window_handle = window.window_handle();
         let terminal = self
             .project
             .update(cx, |project, cx| {
@@ -1666,7 +1676,6 @@ impl Item for TerminalView {
                 project.create_terminal_with_venv(
                     TerminalKind::Shell(working_directory),
                     python_venv_directory,
-                    window_handle,
                     cx,
                 )
             })
@@ -1802,7 +1811,6 @@ impl SerializableItem for TerminalView {
         window: &mut Window,
         cx: &mut App,
     ) -> Task<anyhow::Result<Entity<Self>>> {
-        let window_handle = window.window_handle();
         window.spawn(cx, async move |cx| {
             let cwd = cx
                 .update(|_window, cx| {
@@ -1826,7 +1834,7 @@ impl SerializableItem for TerminalView {
 
             let terminal = project
                 .update(cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(cwd), window_handle, cx)
+                    project.create_terminal(TerminalKind::Shell(cwd), cx)
                 })?
                 .await?;
             cx.update(|window, cx| {

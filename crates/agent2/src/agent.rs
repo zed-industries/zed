@@ -1,9 +1,13 @@
-use crate::ToolCallAuthorization;
-use crate::{templates::Templates, AgentResponseEvent, Thread};
+use crate::{AgentResponseEvent, Thread, templates::Templates};
+use crate::{
+    CopyPathTool, CreateDirectoryTool, EditFileTool, FindPathTool, GrepTool, ListDirectoryTool,
+    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool,
+    ToolCallAuthorization, WebSearchTool,
+};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use futures::{future, StreamExt};
+use anyhow::{Context as _, Result, anyhow};
+use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
@@ -412,7 +416,25 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             anyhow!("No default model configured. Please configure a default model in settings.")
                         })?;
 
-                    let thread = cx.new(|_| Thread::new(project, agent.project_context.clone(), action_log, agent.templates.clone(), default_model));
+                    let thread = cx.new(|cx| {
+                        let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log.clone(), agent.templates.clone(), default_model);
+                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
+                        thread.add_tool(CopyPathTool::new(project.clone()));
+                        thread.add_tool(MovePathTool::new(project.clone()));
+                        thread.add_tool(ListDirectoryTool::new(project.clone()));
+                        thread.add_tool(OpenTool::new(project.clone()));
+                        thread.add_tool(ThinkingTool);
+                        thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(GrepTool::new(project.clone()));
+                        thread.add_tool(ReadFileTool::new(project.clone(), action_log));
+                        thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(NowTool);
+                        thread.add_tool(TerminalTool::new(project.clone(), cx));
+                        // TODO: Needs to be conditional based on zed model or not
+                        thread.add_tool(WebSearchTool);
+                        thread
+                    });
+
                     Ok(thread)
                 },
             )??;
@@ -483,8 +505,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream =
-                thread.update(cx, |thread, cx| thread.send(model, message, cx))?;
+            let mut response_stream = thread.update(cx, |thread, cx| thread.send(message, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = response_stream.next().await {
@@ -495,29 +516,27 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         match event {
                             AgentResponseEvent::Text(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::AgentMessageChunk {
-                                            content: acp::ContentBlock::Text(acp::TextContent {
-                                                text,
-                                                annotations: None,
-                                            }),
-                                        },
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        false,
                                         cx,
                                     )
-                                })??;
+                                })?;
                             }
                             AgentResponseEvent::Thinking(text) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::AgentThoughtChunk {
-                                            content: acp::ContentBlock::Text(acp::TextContent {
-                                                text,
-                                                annotations: None,
-                                            }),
-                                        },
+                                    thread.push_assistant_content_block(
+                                        acp::ContentBlock::Text(acp::TextContent {
+                                            text,
+                                            annotations: None,
+                                        }),
+                                        true,
                                         cx,
                                     )
-                                })??;
+                                })?;
                             }
                             AgentResponseEvent::ToolCallAuthorization(ToolCallAuthorization {
                                 tool_call,
@@ -543,18 +562,12 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             }
                             AgentResponseEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::ToolCall(tool_call),
-                                        cx,
-                                    )
-                                })??;
+                                    thread.upsert_tool_call(tool_call, cx)
+                                })?;
                             }
-                            AgentResponseEvent::ToolCallUpdate(tool_call_update) => {
+                            AgentResponseEvent::ToolCallUpdate(update) => {
                                 acp_thread.update(cx, |thread, cx| {
-                                    thread.handle_session_update(
-                                        acp::SessionUpdate::ToolCallUpdate(tool_call_update),
-                                        cx,
-                                    )
+                                    thread.update_tool_call(update, cx)
                                 })??;
                             }
                             AgentResponseEvent::Stop(stop_reason) => {

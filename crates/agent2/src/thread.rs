@@ -1,16 +1,17 @@
-use crate::templates::{SystemPromptTemplate, Template, Templates};
+use crate::{SystemPromptTemplate, Template, Templates};
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::ActionLog;
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
 use futures::{
     channel::{mpsc, oneshot},
     stream::FuturesUnordered,
 };
-use gpui::{App, Context, Entity, ImageFormat, SharedString, Task};
+use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
@@ -19,10 +20,10 @@ use log;
 use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, collections::BTreeMap, fmt::Write, future::Future, rc::Rc, sync::Arc};
-use util::{markdown::MarkdownCodeBlock, ResultExt};
+use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {
@@ -101,7 +102,7 @@ pub enum AgentResponseEvent {
     Text(String),
     Thinking(String),
     ToolCall(acp::ToolCall),
-    ToolCallUpdate(acp::ToolCallUpdate),
+    ToolCallUpdate(acp_thread::ToolCallUpdate),
     ToolCallAuthorization(ToolCallAuthorization),
     Stop(acp::StopReason),
 }
@@ -125,12 +126,13 @@ pub struct Thread {
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
-    _action_log: Entity<ActionLog>,
+    project: Entity<Project>,
+    action_log: Entity<ActionLog>,
 }
 
 impl Thread {
     pub fn new(
-        _project: Entity<Project>,
+        project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
@@ -145,8 +147,17 @@ impl Thread {
             project_context,
             templates,
             selected_model: default_model,
-            _action_log: action_log,
+            project,
+            action_log,
         }
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
+    pub fn action_log(&self) -> &Entity<ActionLog> {
+        &self.action_log
     }
 
     pub fn set_mode(&mut self, mode: CompletionMode) {
@@ -189,11 +200,11 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send(
         &mut self,
-        model: Arc<dyn LanguageModel>,
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
         let content = content.into();
+        let model = self.selected_model.clone();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
 
@@ -276,7 +287,17 @@ impl Thread {
                     while let Some(tool_result) = tool_uses.next().await {
                         log::info!("Tool finished {:?}", tool_result);
 
-                        event_stream.send_tool_call_result(&tool_result);
+                        event_stream.update_tool_call_fields(
+                            &tool_result.tool_use_id,
+                            acp::ToolCallUpdateFields {
+                                status: Some(if tool_result.is_error {
+                                    acp::ToolCallStatus::Failed
+                                } else {
+                                    acp::ToolCallStatus::Completed
+                                }),
+                                ..Default::default()
+                            },
+                        );
                         thread
                             .update(cx, |thread, _cx| {
                                 thread.pending_tool_uses.remove(&tool_result.tool_use_id);
@@ -426,6 +447,8 @@ impl Thread {
     ) -> Option<Task<LanguageModelToolResult>> {
         cx.notify();
 
+        let tool = self.tools.get(tool_use.name.as_ref()).cloned();
+
         self.pending_tool_uses
             .insert(tool_use.id.clone(), tool_use.clone());
         let last_message = self.last_assistant_message();
@@ -443,15 +466,25 @@ impl Thread {
                 true
             }
         });
+
+        let mut title = SharedString::from(&tool_use.name);
+        let mut kind = acp::ToolKind::Other;
+        if let Some(tool) = tool.as_ref() {
+            title = tool.initial_title(tool_use.input.clone());
+            kind = tool.kind();
+        }
+
         if push_new_tool_use {
-            event_stream.send_tool_call(&tool_use);
+            event_stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
             last_message
                 .content
                 .push(MessageContent::ToolUse(tool_use.clone()));
         } else {
-            event_stream.send_tool_call_update(
+            event_stream.update_tool_call_fields(
                 &tool_use.id,
                 acp::ToolCallUpdateFields {
+                    title: Some(title.into()),
+                    kind: Some(kind),
                     raw_input: Some(tool_use.input.clone()),
                     ..Default::default()
                 },
@@ -462,61 +495,54 @@ impl Thread {
             return None;
         }
 
-        if let Some(tool) = self.tools.get(tool_use.name.as_ref()) {
-            let tool_result =
-                self.run_tool(tool.clone(), tool_use.clone(), event_stream.clone(), cx);
-            Some(cx.foreground_executor().spawn(async move {
-                match tool_result.await {
-                    Ok(tool_output) => LanguageModelToolResult {
-                        tool_use_id: tool_use.id,
-                        tool_name: tool_use.name,
-                        is_error: false,
-                        content: LanguageModelToolResultContent::Text(Arc::from(tool_output)),
-                        output: None,
-                    },
-                    Err(error) => LanguageModelToolResult {
-                        tool_use_id: tool_use.id,
-                        tool_name: tool_use.name,
-                        is_error: true,
-                        content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
-                        output: None,
-                    },
-                }
-            }))
-        } else {
+        let Some(tool) = tool else {
             let content = format!("No tool named {} exists", tool_use.name);
-            Some(Task::ready(LanguageModelToolResult {
+            return Some(Task::ready(LanguageModelToolResult {
                 content: LanguageModelToolResultContent::Text(Arc::from(content)),
                 tool_use_id: tool_use.id,
                 tool_name: tool_use.name,
                 is_error: true,
                 output: None,
-            }))
-        }
-    }
+            }));
+        };
 
-    fn run_tool(
-        &self,
-        tool: Arc<dyn AnyAgentTool>,
-        tool_use: LanguageModelToolUse,
-        event_stream: AgentResponseEventStream,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<String>> {
-        let needs_authorization = tool.needs_authorization(tool_use.input.clone(), cx);
-        cx.spawn(async move |_this, cx| {
-            if needs_authorization? {
-                event_stream.authorize_tool_call(&tool_use).await?;
-            }
+        let tool_event_stream =
+            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone());
+        tool_event_stream.update_fields(acp::ToolCallUpdateFields {
+            status: Some(acp::ToolCallStatus::InProgress),
+            ..Default::default()
+        });
+        let supports_images = self.selected_model.supports_images();
+        let tool_result = tool.run(tool_use.input, tool_event_stream, cx);
+        Some(cx.foreground_executor().spawn(async move {
+            let tool_result = tool_result.await.and_then(|output| {
+                if let LanguageModelToolResultContent::Image(_) = &output.llm_output {
+                    if !supports_images {
+                        return Err(anyhow!(
+                            "Attempted to read an image, but this model doesn't support it.",
+                        ));
+                    }
+                }
+                Ok(output)
+            });
 
-            event_stream.send_tool_call_update(
-                &tool_use.id,
-                acp::ToolCallUpdateFields {
-                    status: Some(acp::ToolCallStatus::InProgress),
-                    ..Default::default()
+            match tool_result {
+                Ok(output) => LanguageModelToolResult {
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: false,
+                    content: output.llm_output,
+                    output: Some(output.raw_output),
                 },
-            );
-            cx.update(|cx| tool.run(tool_use.input, cx))?.await
-        })
+                Err(error) => LanguageModelToolResult {
+                    tool_use_id: tool_use.id,
+                    tool_name: tool_use.name,
+                    is_error: true,
+                    content: LanguageModelToolResultContent::Text(Arc::from(error.to_string())),
+                    output: None,
+                },
+            }
+        }))
     }
 
     fn handle_tool_use_json_parse_error_event(
@@ -562,7 +588,7 @@ impl Thread {
         self.messages.last_mut().unwrap()
     }
 
-    fn build_completion_request(
+    pub(crate) fn build_completion_request(
         &self,
         completion_intent: CompletionIntent,
         cx: &mut App,
@@ -584,7 +610,7 @@ impl Thread {
                     name: tool_name,
                     description: tool.description(cx).to_string(),
                     input_schema: tool
-                        .input_schema(LanguageModelToolSchemaFormat::JsonSchema)
+                        .input_schema(self.selected_model.tool_input_format())
                         .log_err()?,
                 })
             })
@@ -651,9 +677,11 @@ pub trait AgentTool
 where
     Self: 'static + Sized,
 {
-    type Input: for<'de> Deserialize<'de> + JsonSchema;
+    type Input: for<'de> Deserialize<'de> + Serialize + JsonSchema;
+    type Output: for<'de> Deserialize<'de> + Serialize + Into<LanguageModelToolResultContent>;
 
     fn name(&self) -> SharedString;
+
     fn description(&self, _cx: &mut App) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
         SharedString::new(
@@ -664,17 +692,23 @@ where
         )
     }
 
+    fn kind(&self) -> acp::ToolKind;
+
+    /// The initial tool title to display. Can be updated during the tool run.
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
+
     /// Returns the JSON schema that describes the tool's input.
-    fn input_schema(&self, _format: LanguageModelToolSchemaFormat) -> Schema {
+    fn input_schema(&self) -> Schema {
         schemars::schema_for!(Self::Input)
     }
 
-    /// Returns true if the tool needs the users's authorization
-    /// before running.
-    fn needs_authorization(&self, input: Self::Input, cx: &App) -> bool;
-
     /// Runs the tool with the provided input.
-    fn run(self: Arc<Self>, input: Self::Input, cx: &mut App) -> Task<Result<String>>;
+    fn run(
+        self: Arc<Self>,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<Self::Output>>;
 
     fn erase(self) -> Arc<dyn AnyAgentTool> {
         Arc::new(Erased(Arc::new(self)))
@@ -683,12 +717,23 @@ where
 
 pub struct Erased<T>(T);
 
+pub struct AgentToolOutput {
+    llm_output: LanguageModelToolResultContent,
+    raw_output: serde_json::Value,
+}
+
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self, cx: &mut App) -> SharedString;
+    fn kind(&self) -> acp::ToolKind;
+    fn initial_title(&self, input: serde_json::Value) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
-    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool>;
-    fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>>;
+    fn run(
+        self: Arc<Self>,
+        input: serde_json::Value,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput>>;
 }
 
 impl<T> AnyAgentTool for Erased<Arc<T>>
@@ -703,24 +748,38 @@ where
         self.0.description(cx)
     }
 
+    fn kind(&self) -> agent_client_protocol::ToolKind {
+        self.0.kind()
+    }
+
+    fn initial_title(&self, input: serde_json::Value) -> SharedString {
+        let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
+        self.0.initial_title(parsed_input)
+    }
+
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        Ok(serde_json::to_value(self.0.input_schema(format))?)
+        let mut json = serde_json::to_value(self.0.input_schema())?;
+        adapt_schema_to_format(&mut json, format)?;
+        Ok(json)
     }
 
-    fn needs_authorization(&self, input: serde_json::Value, cx: &mut App) -> Result<bool> {
-        let parsed_input: Result<T::Input> = serde_json::from_value(input).map_err(Into::into);
-        match parsed_input {
-            Ok(input) => Ok(self.0.needs_authorization(input, cx)),
-            Err(error) => Err(anyhow!(error)),
-        }
-    }
-
-    fn run(self: Arc<Self>, input: serde_json::Value, cx: &mut App) -> Task<Result<String>> {
-        let parsed_input: Result<T::Input> = serde_json::from_value(input).map_err(Into::into);
-        match parsed_input {
-            Ok(input) => self.0.clone().run(input, cx),
-            Err(error) => Task::ready(Err(anyhow!(error))),
-        }
+    fn run(
+        self: Arc<Self>,
+        input: serde_json::Value,
+        event_stream: ToolCallEventStream,
+        cx: &mut App,
+    ) -> Task<Result<AgentToolOutput>> {
+        cx.spawn(async move |cx| {
+            let input = serde_json::from_value(input)?;
+            let output = cx
+                .update(|cx| self.0.clone().run(input, event_stream, cx))?
+                .await?;
+            let raw_output = serde_json::to_value(&output)?;
+            Ok(AgentToolOutput {
+                llm_output: output.into(),
+                raw_output,
+            })
+        })
     }
 }
 
@@ -742,23 +801,168 @@ impl AgentResponseEventStream {
             .ok();
     }
 
-    fn authorize_tool_call(
+    fn send_tool_call(
         &self,
-        tool_use: &LanguageModelToolUse,
-    ) -> impl use<> + Future<Output = Result<()>> {
-        let (response_tx, response_rx) = oneshot::channel();
+        id: &LanguageModelToolUseId,
+        title: SharedString,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
+    ) {
         self.0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCall(Self::initial_tool_call(
+                id,
+                title.to_string(),
+                kind,
+                input,
+            ))))
+            .ok();
+    }
+
+    fn initial_tool_call(
+        id: &LanguageModelToolUseId,
+        title: String,
+        kind: acp::ToolKind,
+        input: serde_json::Value,
+    ) -> acp::ToolCall {
+        acp::ToolCall {
+            id: acp::ToolCallId(id.to_string().into()),
+            title,
+            kind,
+            status: acp::ToolCallStatus::Pending,
+            content: vec![],
+            locations: vec![],
+            raw_input: Some(input),
+            raw_output: None,
+        }
+    }
+
+    fn update_tool_call_fields(
+        &self,
+        tool_use_id: &LanguageModelToolUseId,
+        fields: acp::ToolCallUpdateFields,
+    ) {
+        self.0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp::ToolCallUpdate {
+                    id: acp::ToolCallId(tool_use_id.to_string().into()),
+                    fields,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
+    fn send_stop(&self, reason: StopReason) {
+        match reason {
+            StopReason::EndTurn => {
+                self.0
+                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::EndTurn)))
+                    .ok();
+            }
+            StopReason::MaxTokens => {
+                self.0
+                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::MaxTokens)))
+                    .ok();
+            }
+            StopReason::Refusal => {
+                self.0
+                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::Refusal)))
+                    .ok();
+            }
+            StopReason::ToolUse => {}
+        }
+    }
+
+    fn send_error(&self, error: LanguageModelCompletionError) {
+        self.0.unbounded_send(Err(error)).ok();
+    }
+}
+
+#[derive(Clone)]
+pub struct ToolCallEventStream {
+    tool_use_id: LanguageModelToolUseId,
+    kind: acp::ToolKind,
+    input: serde_json::Value,
+    stream: AgentResponseEventStream,
+}
+
+impl ToolCallEventStream {
+    #[cfg(test)]
+    pub fn test() -> (Self, ToolCallEventStreamReceiver) {
+        let (events_tx, events_rx) =
+            mpsc::unbounded::<Result<AgentResponseEvent, LanguageModelCompletionError>>();
+
+        let stream = ToolCallEventStream::new(
+            &LanguageModelToolUse {
+                id: "test_id".into(),
+                name: "test_tool".into(),
+                raw_input: String::new(),
+                input: serde_json::Value::Null,
+                is_input_complete: true,
+            },
+            acp::ToolKind::Other,
+            AgentResponseEventStream(events_tx),
+        );
+
+        (stream, ToolCallEventStreamReceiver(events_rx))
+    }
+
+    fn new(
+        tool_use: &LanguageModelToolUse,
+        kind: acp::ToolKind,
+        stream: AgentResponseEventStream,
+    ) -> Self {
+        Self {
+            tool_use_id: tool_use.id.clone(),
+            kind,
+            input: tool_use.input.clone(),
+            stream,
+        }
+    }
+
+    pub fn update_fields(&self, fields: acp::ToolCallUpdateFields) {
+        self.stream
+            .update_tool_call_fields(&self.tool_use_id, fields);
+    }
+
+    pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateDiff {
+                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    diff,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
+    pub fn update_terminal(&self, terminal: Entity<acp_thread::Terminal>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateTerminal {
+                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    terminal,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
+    pub fn authorize(&self, title: String) -> impl use<> + Future<Output = Result<()>> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.stream
+            .0
             .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
-                    tool_call: acp::ToolCall {
-                        id: acp::ToolCallId(tool_use.id.to_string().into()),
-                        title: tool_use.name.to_string(),
-                        kind: acp::ToolKind::Other,
-                        status: acp::ToolCallStatus::Pending,
-                        content: vec![],
-                        locations: vec![],
-                        raw_input: Some(tool_use.input.clone()),
-                    },
+                    tool_call: AgentResponseEventStream::initial_tool_call(
+                        &self.tool_use_id,
+                        title,
+                        self.kind.clone(),
+                        self.input.clone(),
+                    ),
                     options: vec![
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("always_allow".into()),
@@ -787,90 +991,49 @@ impl AgentResponseEventStream {
             }
         }
     }
+}
 
-    fn send_tool_call(&self, tool_use: &LanguageModelToolUse) {
-        self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCall(acp::ToolCall {
-                id: acp::ToolCallId(tool_use.id.to_string().into()),
-                title: tool_use.name.to_string(),
-                kind: acp::ToolKind::Other,
-                status: acp::ToolCallStatus::Pending,
-                content: vec![],
-                locations: vec![],
-                raw_input: Some(tool_use.input.clone()),
-            })))
-            .ok();
-    }
+#[cfg(test)]
+pub struct ToolCallEventStreamReceiver(
+    mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>,
+);
 
-    fn send_tool_call_update(
-        &self,
-        tool_use_id: &LanguageModelToolUseId,
-        fields: acp::ToolCallUpdateFields,
-    ) {
-        self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
-                acp::ToolCallUpdate {
-                    id: acp::ToolCallId(tool_use_id.to_string().into()),
-                    fields,
-                },
-            )))
-            .ok();
-    }
-
-    fn send_tool_call_result(&self, tool_result: &LanguageModelToolResult) {
-        let status = if tool_result.is_error {
-            acp::ToolCallStatus::Failed
+#[cfg(test)]
+impl ToolCallEventStreamReceiver {
+    pub async fn expect_authorization(&mut self) -> ToolCallAuthorization {
+        let event = self.0.next().await;
+        if let Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth))) = event {
+            auth
         } else {
-            acp::ToolCallStatus::Completed
-        };
-        let content = match &tool_result.content {
-            LanguageModelToolResultContent::Text(text) => text.to_string().into(),
-            LanguageModelToolResultContent::Image(LanguageModelImage { source, .. }) => {
-                acp::ToolCallContent::Content {
-                    content: acp::ContentBlock::Image(acp::ImageContent {
-                        annotations: None,
-                        data: source.to_string(),
-                        mime_type: ImageFormat::Png.mime_type().to_string(),
-                    }),
-                }
-            }
-        };
-        self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
-                acp::ToolCallUpdate {
-                    id: acp::ToolCallId(tool_result.tool_use_id.to_string().into()),
-                    fields: acp::ToolCallUpdateFields {
-                        status: Some(status),
-                        content: Some(vec![content]),
-                        ..Default::default()
-                    },
-                },
-            )))
-            .ok();
-    }
-
-    fn send_stop(&self, reason: StopReason) {
-        match reason {
-            StopReason::EndTurn => {
-                self.0
-                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::EndTurn)))
-                    .ok();
-            }
-            StopReason::MaxTokens => {
-                self.0
-                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::MaxTokens)))
-                    .ok();
-            }
-            StopReason::Refusal => {
-                self.0
-                    .unbounded_send(Ok(AgentResponseEvent::Stop(acp::StopReason::Refusal)))
-                    .ok();
-            }
-            StopReason::ToolUse => {}
+            panic!("Expected ToolCallAuthorization but got: {:?}", event);
         }
     }
 
-    fn send_error(&self, error: LanguageModelCompletionError) {
-        self.0.unbounded_send(Err(error)).ok();
+    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
+        let event = self.0.next().await;
+        if let Some(Ok(AgentResponseEvent::ToolCallUpdate(
+            acp_thread::ToolCallUpdate::UpdateTerminal(update),
+        ))) = event
+        {
+            update.terminal
+        } else {
+            panic!("Expected terminal but got: {:?}", event);
+        }
+    }
+}
+
+#[cfg(test)]
+impl std::ops::Deref for ToolCallEventStreamReceiver {
+    type Target = mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(test)]
+impl std::ops::DerefMut for ToolCallEventStreamReceiver {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }

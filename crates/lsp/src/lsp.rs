@@ -651,7 +651,7 @@ impl LanguageServer {
             capabilities: ClientCapabilities {
                 general: Some(GeneralClientCapabilities {
                     position_encodings: Some(vec![PositionEncodingKind::UTF16]),
-                    ..Default::default()
+                    ..GeneralClientCapabilities::default()
                 }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
@@ -665,6 +665,7 @@ impl LanguageServer {
                     workspace_folders: Some(true),
                     symbol: Some(WorkspaceSymbolClientCapabilities {
                         resolve_support: None,
+                        dynamic_registration: Some(true),
                         ..WorkspaceSymbolClientCapabilities::default()
                     }),
                     inlay_hint: Some(InlayHintWorkspaceClientCapabilities {
@@ -688,21 +689,21 @@ impl LanguageServer {
                         ..WorkspaceEditClientCapabilities::default()
                     }),
                     file_operations: Some(WorkspaceFileOperationsClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         did_rename: Some(true),
                         will_rename: Some(true),
-                        ..Default::default()
+                        ..WorkspaceFileOperationsClientCapabilities::default()
                     }),
                     apply_edit: Some(true),
                     execute_command: Some(ExecuteCommandClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
-                    ..Default::default()
+                    ..WorkspaceClientCapabilities::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     code_action: Some(CodeActionClientCapabilities {
                         code_action_literal_support: Some(CodeActionLiteralSupport {
@@ -725,7 +726,8 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CodeActionClientCapabilities::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
@@ -751,7 +753,7 @@ impl LanguageServer {
                                 MarkupKind::Markdown,
                                 MarkupKind::PlainText,
                             ]),
-                            ..Default::default()
+                            ..CompletionItemCapability::default()
                         }),
                         insert_text_mode: Some(InsertTextMode::ADJUST_INDENTATION),
                         completion_list: Some(CompletionListCapability {
@@ -764,18 +766,20 @@ impl LanguageServer {
                             ]),
                         }),
                         context_support: Some(true),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..CompletionClientCapabilities::default()
                     }),
                     rename: Some(RenameClientCapabilities {
                         prepare_support: Some(true),
                         prepare_support_default_behavior: Some(
                             PrepareSupportDefaultBehavior::IDENTIFIER,
                         ),
-                        ..Default::default()
+                        dynamic_registration: Some(true),
+                        ..RenameClientCapabilities::default()
                     }),
                     hover: Some(HoverClientCapabilities {
                         content_format: Some(vec![MarkupKind::Markdown]),
-                        dynamic_registration: None,
+                        dynamic_registration: Some(true),
                     }),
                     inlay_hint: Some(InlayHintClientCapabilities {
                         resolve_support: Some(InlayHintResolveClientCapabilities {
@@ -787,7 +791,7 @@ impl LanguageServer {
                                 "label.command".to_string(),
                             ],
                         }),
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                         related_information: Some(true),
@@ -818,26 +822,29 @@ impl LanguageServer {
                             }),
                             active_parameter_support: Some(true),
                         }),
+                        dynamic_registration: Some(true),
                         ..SignatureHelpClientCapabilities::default()
                     }),
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
+                        dynamic_registration: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
+                        dynamic_registration: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
                     }),
                     diagnostic: Some(DiagnosticClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         related_document_support: Some(true),
                     })
                     .filter(|_| pull_diagnostics),
                     color_provider: Some(DocumentColorClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
@@ -850,7 +857,7 @@ impl LanguageServer {
                     show_message: Some(ShowMessageRequestClientCapabilities {
                         message_action_item: None,
                     }),
-                    ..Default::default()
+                    ..WindowClientCapabilities::default()
                 }),
             },
             trace: None,
@@ -862,8 +869,7 @@ impl LanguageServer {
                 }
             }),
             locale: None,
-
-            ..Default::default()
+            ..InitializeParams::default()
         }
     }
 
@@ -1672,7 +1678,7 @@ impl LanguageServer {
             workspace_symbol_provider: Some(OneOf::Left(true)),
             implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
             type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-            ..Default::default()
+            ..ServerCapabilities::default()
         }
     }
 }

@@ -1,17 +1,13 @@
+use acp_thread::{
+    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
+    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+};
 use acp_thread::{AgentConnection, Plan};
+use action_log::ActionLog;
+use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use audio::{Audio, Sound};
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::process::ExitStatus;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::time::Duration;
-
-use agent_client_protocol as acp;
-use assistant_tool::ActionLog;
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -30,8 +26,13 @@ use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
-use project::Project;
-use settings::Settings as _;
+use project::{CompletionIntent, Project};
+use settings::{Settings as _, SettingsStore};
+use std::{
+    cell::RefCell, collections::BTreeMap, path::Path, process::ExitStatus, rc::Rc, sync::Arc,
+    time::Duration,
+};
+use terminal_view::TerminalView;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
@@ -40,11 +41,6 @@ use ui::{
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
-
-use ::acp_thread::{
-    AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk, Diff,
-    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
-};
 
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
@@ -63,6 +59,7 @@ pub struct AcpThreadView {
     project: Entity<Project>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
+    terminal_views: HashMap<EntityId, Entity<TerminalView>>,
     message_editor: Entity<Editor>,
     message_set_from_history: Option<BufferSnapshot>,
     _message_editor_subscription: Subscription,
@@ -80,6 +77,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
     _cancel_task: Option<Task<()>>,
+    _subscriptions: [Subscription; 1],
 }
 
 enum ThreadState {
@@ -178,6 +176,8 @@ impl AcpThreadView {
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
+        let subscription = cx.observe_global_in::<SettingsStore>(window, Self::settings_changed);
+
         Self {
             agent: agent.clone(),
             workspace: workspace.clone(),
@@ -190,6 +190,7 @@ impl AcpThreadView {
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
+            terminal_views: Default::default(),
             list_state: list_state.clone(),
             scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
@@ -200,6 +201,7 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             message_history,
+            _subscriptions: [subscription],
             _cancel_task: None,
         }
     }
@@ -377,6 +379,11 @@ impl AcpThreadView {
             editor.display_map.update(cx, |map, cx| {
                 let snapshot = map.snapshot(cx);
                 for (crease_id, crease) in snapshot.crease_snapshot.creases() {
+                    // Skip creases that have been edited out of the message buffer.
+                    if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+                        continue;
+                    }
+
                     if let Some(project_path) =
                         self.mention_set.lock().path_for_crease_id(crease_id)
                     {
@@ -401,7 +408,7 @@ impl AcpThreadView {
                 }
 
                 if ix < text.len() {
-                    let last_chunk = text[ix..].trim();
+                    let last_chunk = text[ix..].trim_end();
                     if !last_chunk.is_empty() {
                         chunks.push(last_chunk.into());
                     }
@@ -668,6 +675,16 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_diff_multibuffers(entry_ix, window, cx);
+        self.sync_terminals(entry_ix, window, cx);
+    }
+
+    fn sync_diff_multibuffers(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(multibuffers) = self.entry_diff_multibuffers(entry_ix, cx) else {
             return;
         };
@@ -704,15 +721,7 @@ impl AcpThreadView {
                 editor.set_show_code_actions(false, cx);
                 editor.set_show_git_diff_gutter(false, cx);
                 editor.set_expand_all_diff_hunks(cx);
-                editor.set_text_style_refinement(TextStyleRefinement {
-                    font_size: Some(
-                        TextSize::Small
-                            .rems(cx)
-                            .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
-                            .into(),
-                    ),
-                    ..Default::default()
-                });
+                editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
                 editor
             });
             let entity_id = multibuffer.entity_id();
@@ -731,7 +740,55 @@ impl AcpThreadView {
         cx: &App,
     ) -> Option<impl Iterator<Item = Entity<MultiBuffer>>> {
         let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
-        Some(entry.diffs().map(|diff| diff.multibuffer.clone()))
+        Some(
+            entry
+                .diffs()
+                .map(|diff| diff.read(cx).multibuffer().clone()),
+        )
+    }
+
+    fn sync_terminals(&mut self, entry_ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(terminals) = self.entry_terminals(entry_ix, cx) else {
+            return;
+        };
+
+        let terminals = terminals.collect::<Vec<_>>();
+
+        for terminal in terminals {
+            if self.terminal_views.contains_key(&terminal.entity_id()) {
+                return;
+            }
+
+            let terminal_view = cx.new(|cx| {
+                let mut view = TerminalView::new(
+                    terminal.read(cx).inner().clone(),
+                    self.workspace.clone(),
+                    None,
+                    self.project.downgrade(),
+                    window,
+                    cx,
+                );
+                view.set_embedded_mode(None, cx);
+                view
+            });
+
+            let entity_id = terminal.entity_id();
+            cx.observe_release(&terminal, move |this, _, _| {
+                this.terminal_views.remove(&entity_id);
+            })
+            .detach();
+
+            self.terminal_views.insert(entity_id, terminal_view);
+        }
+    }
+
+    fn entry_terminals(
+        &self,
+        entry_ix: usize,
+        cx: &App,
+    ) -> Option<impl Iterator<Item = Entity<acp_thread::Terminal>>> {
+        let entry = self.thread()?.read(cx).entries().get(entry_ix)?;
+        Some(entry.terminals().map(|terminal| terminal.clone()))
     }
 
     fn authenticate(
@@ -1089,7 +1146,7 @@ impl AcpThreadView {
                 status: acp::ToolCallStatus::Failed,
                 ..
             } => Some(
-                Icon::new(IconName::X)
+                Icon::new(IconName::Close)
                     .color(Color::Error)
                     .size(IconSize::Small)
                     .into_any_element(),
@@ -1101,7 +1158,7 @@ impl AcpThreadView {
             _ => tool_call
                 .content
                 .iter()
-                .any(|content| matches!(content, ToolCallContent::Diff { .. })),
+                .any(|content| matches!(content, ToolCallContent::Diff(_))),
         };
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
@@ -1298,7 +1355,7 @@ impl AcpThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         match content {
-            ToolCallContent::ContentBlock { content } => {
+            ToolCallContent::ContentBlock(content) => {
                 if let Some(md) = content.markdown() {
                     div()
                         .p_2()
@@ -1313,10 +1370,8 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff {
-                diff: Diff { multibuffer, .. },
-                ..
-            } => self.render_diff_editor(multibuffer),
+            ToolCallContent::Diff(diff) => self.render_diff_editor(&diff.read(cx).multibuffer()),
+            ToolCallContent::Terminal(terminal) => self.render_terminal(terminal),
         }
     }
 
@@ -1347,10 +1402,10 @@ impl AcpThreadView {
                             this.icon(IconName::CheckDouble).icon_color(Color::Success)
                         }
                         acp::PermissionOptionKind::RejectOnce => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                         acp::PermissionOptionKind::RejectAlways => {
-                            this.icon(IconName::X).icon_color(Color::Error)
+                            this.icon(IconName::Close).icon_color(Color::Error)
                         }
                     })
                     .icon_position(IconPosition::Start)
@@ -1378,6 +1433,21 @@ impl AcpThreadView {
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
+                } else {
+                    Empty.into_any()
+                },
+            )
+            .into_any()
+    }
+
+    fn render_terminal(&self, terminal: &Entity<acp_thread::Terminal>) -> AnyElement {
+        v_flex()
+            .h_72()
+            .child(
+                if let Some(terminal_view) = self.terminal_views.get(&terminal.entity_id()) {
+                    // TODO: terminal has all the state we need to reproduce
+                    // what we had in the terminal card.
+                    terminal_view.clone().into_any_element()
                 } else {
                     Empty.into_any()
                 },
@@ -2114,7 +2184,7 @@ impl AcpThreadView {
                             .hover(|this| this.opacity(1.0))
                             .child(
                                 IconButton::new("toggle-height", expand_icon)
-                                    .icon_size(IconSize::XSmall)
+                                    .icon_size(IconSize::Small)
                                     .icon_color(Color::Muted)
                                     .tooltip({
                                         let focus_handle = focus_handle.clone();
@@ -2164,7 +2234,7 @@ impl AcpThreadView {
                 }))
                 .into_any_element()
         } else {
-            IconButton::new("stop-generation", IconName::StopFilled)
+            IconButton::new("stop-generation", IconName::Stop)
                 .icon_color(Color::Error)
                 .style(ButtonStyle::Tinted(ui::TintColor::Error))
                 .tooltip(move |window, cx| {
@@ -2533,7 +2603,7 @@ impl AcpThreadView {
     }
 
     fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileText)
+        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
@@ -2544,7 +2614,7 @@ impl AcpThreadView {
                 }
             }));
 
-        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUpAlt)
+        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
             .icon_size(IconSize::XSmall)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
@@ -2556,6 +2626,7 @@ impl AcpThreadView {
             .w_full()
             .mr_1()
             .pb_2()
+            .gap_1()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
@@ -2596,6 +2667,70 @@ impl AcpThreadView {
             .w(px(12.))
             .cursor_default()
             .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
+    }
+
+    fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        for diff_editor in self.diff_editors.values() {
+            diff_editor.update(cx, |diff_editor, cx| {
+                diff_editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
+                cx.notify();
+            })
+        }
+    }
+
+    pub(crate) fn insert_dragged_files(
+        &self,
+        paths: Vec<project::ProjectPath>,
+        _added_worktrees: Vec<Entity<project::Worktree>>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let buffer = self.message_editor.read(cx).buffer().clone();
+        let Some((&excerpt_id, _, _)) = buffer.read(cx).snapshot(cx).as_singleton() else {
+            return;
+        };
+        let Some(buffer) = buffer.read(cx).as_singleton() else {
+            return;
+        };
+        for path in paths {
+            let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
+                continue;
+            };
+            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+                continue;
+            };
+
+            let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+            let path_prefix = abs_path
+                .file_name()
+                .unwrap_or(path.path.as_os_str())
+                .display()
+                .to_string();
+            let completion = ContextPickerCompletionProvider::completion_for_path(
+                path,
+                &path_prefix,
+                false,
+                entry.is_dir(),
+                excerpt_id,
+                anchor..anchor,
+                self.message_editor.clone(),
+                self.mention_set.clone(),
+                cx,
+            );
+
+            self.message_editor.update(cx, |message_editor, cx| {
+                message_editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        completion.new_text,
+                    )],
+                    cx,
+                );
+            });
+            if let Some(confirm) = completion.confirm.clone() {
+                confirm(CompletionIntent::Complete, window, cx);
+            }
+        }
     }
 }
 
@@ -2874,6 +3009,18 @@ fn plan_label_markdown_style(
     }
 }
 
+fn diff_editor_text_style_refinement(cx: &mut App) -> TextStyleRefinement {
+    TextStyleRefinement {
+        font_size: Some(
+            TextSize::Small
+                .rems(cx)
+                .to_pixels(ThemeSettings::get_global(cx).agent_font_size(cx))
+                .into(),
+        ),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use agent_client_protocol::SessionId;
@@ -2881,8 +3028,12 @@ mod tests {
     use fs::FakeFs;
     use futures::future::try_join_all;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
+    use lsp::{CompletionContext, CompletionTriggerKind};
+    use project::CompletionIntent;
     use rand::Rng;
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
 
     use super::*;
 
@@ -2962,6 +3113,7 @@ mod tests {
             content: vec!["hi".into()],
             locations: vec![],
             raw_input: None,
+            raw_output: None,
         };
         let connection = StubAgentConnection::new(vec![acp::SessionUpdate::ToolCall(tool_call)])
             .with_permission_requests(HashMap::from_iter([(
@@ -2992,6 +3144,109 @@ mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
+    }
+
+    #[gpui::test]
+    async fn test_crease_removal(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+        let agent = StubAgentServer::default();
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let thread_view = cx.update(|window, cx| {
+            cx.new(|cx| {
+                AcpThreadView::new(
+                    Rc::new(agent),
+                    workspace.downgrade(),
+                    project,
+                    Rc::new(RefCell::new(MessageHistory::default())),
+                    1,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        cx.run_until_parked();
+
+        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
+        let excerpt_id = message_editor.update(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .excerpt_ids()
+                .into_iter()
+                .next()
+                .unwrap()
+        });
+        let completions = message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello @", window, cx);
+            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
+            let completion_provider = editor.completion_provider().unwrap();
+            completion_provider.completions(
+                excerpt_id,
+                &buffer,
+                Anchor::MAX,
+                CompletionContext {
+                    trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+                    trigger_character: Some("@".into()),
+                },
+                window,
+                cx,
+            )
+        });
+        let [_, completion]: [_; 2] = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        message_editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let start = snapshot
+                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
+                .unwrap();
+            let end = snapshot
+                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
+                .unwrap();
+            editor.edit([(start..end, completion.new_text)], cx);
+            (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        // Backspace over the inserted crease (and the following space).
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.backspace(&Default::default(), window, cx);
+            editor.backspace(&Default::default(), window, cx);
+        });
+
+        thread_view.update_in(cx, |thread_view, window, cx| {
+            thread_view.chat(&Chat, window, cx);
+        });
+
+        cx.run_until_parked();
+
+        let content = thread_view.update_in(cx, |thread_view, _window, _cx| {
+            thread_view
+                .message_history
+                .borrow()
+                .items()
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+
+        // We don't send a resource link for the deleted crease.
+        pretty_assertions::assert_matches!(content.as_slice(), [acp::ContentBlock::Text { .. }]);
     }
 
     async fn setup_thread_view(

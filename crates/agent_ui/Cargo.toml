@@ -17,6 +17,7 @@ test-support = ["gpui/test-support", "language/test-support"]
 
 [dependencies]
 acp_thread.workspace = true
+action_log.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
 agent2.workspace = true
