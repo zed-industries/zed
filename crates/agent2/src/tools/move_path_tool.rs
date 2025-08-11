@@ -114,7 +114,10 @@ impl AgentTool for MovePathTool {
             let _ = rename_task.await.with_context(|| {
                 format!("Moving {} to {}", input.source_path, input.destination_path)
             })?;
-            Ok(format!("Moved {} to {}", input.source_path, input.destination_path))
+            Ok(format!(
+                "Moved {} to {}",
+                input.source_path, input.destination_path
+            ))
         })
     }
 }

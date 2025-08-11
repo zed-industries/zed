@@ -113,31 +113,31 @@ impl AgentTool for ListDirectoryTool {
         let global_settings = WorktreeSettings::get_global(cx);
         if global_settings.is_path_excluded(&project_path.path) {
             return Task::ready(Err(anyhow!(
-                    "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
-                    &input.path
-                )));
+                "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
+                &input.path
+            )));
         }
 
         if global_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
-                    "Cannot list directory because its path matches the user's global `private_files` setting: {}",
-                    &input.path
-                )));
+                "Cannot list directory because its path matches the user's global `private_files` setting: {}",
+                &input.path
+            )));
         }
 
         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
         if worktree_settings.is_path_excluded(&project_path.path) {
             return Task::ready(Err(anyhow!(
-                    "Cannot list directory because its path matches the user's worktree`file_scan_exclusions` setting: {}",
-                    &input.path
-                )));
+                "Cannot list directory because its path matches the user's worktree`file_scan_exclusions` setting: {}",
+                &input.path
+            )));
         }
 
         if worktree_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
-                    "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
-                    &input.path
-                )));
+                "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
+                &input.path
+            )));
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();

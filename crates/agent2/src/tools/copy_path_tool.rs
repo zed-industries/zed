@@ -109,7 +109,10 @@ impl AgentTool for CopyPathTool {
                     input.source_path, input.destination_path
                 )
             })?;
-            Ok(format!("Copied {} to {}", input.source_path, input.destination_path))
+            Ok(format!(
+                "Copied {} to {}",
+                input.source_path, input.destination_path
+            ))
         })
     }
 }
