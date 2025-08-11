@@ -1,6 +1,9 @@
 #![allow(unused, dead_code)]
 use gpui::{Hsla, Length};
-use std::sync::Arc;
+use std::{
+    cell::LazyCell,
+    sync::{Arc, LazyLock, OnceLock},
+};
 use theme::{Theme, ThemeColors, ThemeRegistry};
 use ui::{
     IntoElement, RenderOnce, component_prelude::Documented, prelude::*, utils::inner_corner_radius,
@@ -22,6 +25,15 @@ pub struct ThemePreviewTile {
     style: ThemePreviewStyle,
 }
 
+static CHILD_RADIUS: LazyLock<Pixels> = LazyLock::new(|| {
+    inner_corner_radius(
+        ThemePreviewTile::ROOT_RADIUS,
+        ThemePreviewTile::ROOT_BORDER,
+        ThemePreviewTile::ROOT_PADDING,
+        ThemePreviewTile::CHILD_BORDER,
+    )
+});
+
 impl ThemePreviewTile {
     pub const SKELETON_HEIGHT_DEFAULT: Pixels = px(2.);
     pub const SIDEBAR_SKELETON_ITEM_COUNT: usize = 8;
@@ -30,14 +42,6 @@ impl ThemePreviewTile {
     pub const ROOT_BORDER: Pixels = px(2.0);
     pub const ROOT_PADDING: Pixels = px(2.0);
     pub const CHILD_BORDER: Pixels = px(1.0);
-    pub const CHILD_RADIUS: std::cell::LazyCell<Pixels> = std::cell::LazyCell::new(|| {
-        inner_corner_radius(
-            Self::ROOT_RADIUS,
-            Self::ROOT_BORDER,
-            Self::ROOT_PADDING,
-            Self::CHILD_BORDER,
-        )
-    });
 
     pub fn new(theme: Arc<Theme>, seed: f32) -> Self {
         Self {
@@ -222,7 +226,7 @@ impl ThemePreviewTile {
             .child(
                 div()
                     .size_full()
-                    .rounded(*Self::CHILD_RADIUS)
+                    .rounded(*CHILD_RADIUS)
                     .border(Self::CHILD_BORDER)
                     .border_color(theme.colors().border)
                     .child(Self::render_editor(
@@ -250,7 +254,7 @@ impl ThemePreviewTile {
                 h_flex()
                     .size_full()
                     .relative()
-                    .rounded(*Self::CHILD_RADIUS)
+                    .rounded(*CHILD_RADIUS)
                     .border(Self::CHILD_BORDER)
                     .border_color(border_color)
                     .overflow_hidden()

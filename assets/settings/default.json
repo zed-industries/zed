@@ -1210,7 +1210,18 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json"
+    ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.

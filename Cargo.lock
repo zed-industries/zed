@@ -6,9 +6,9 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent-client-protocol",
  "anyhow",
- "assistant_tool",
  "buffer_diff",
  "editor",
  "env_logger 0.11.8",
@@ -27,9 +27,36 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "ui",
  "util",
  "workspace-hack",
+]
+
+[[package]]
+name = "action_log"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer_diff",
+ "clock",
+ "collections",
+ "ctor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "rand 0.8.5",
+ "serde_json",
+ "settings",
+ "text",
+ "util",
+ "watch",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -84,6 +111,7 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_context",
@@ -156,17 +184,20 @@ name = "agent2"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
+ "chrono",
  "client",
  "clock",
  "cloud_llm_client",
  "collections",
  "ctor",
+ "editor",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -180,7 +211,9 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
+ "open",
  "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -191,12 +224,21 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
+ "tempfile",
+ "terminal",
+ "theme",
+ "tree-sitter-rust",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "watch",
+ "web_search",
+ "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -261,6 +303,7 @@ name = "agent_ui"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent",
  "agent-client-protocol",
  "agent2",
@@ -842,13 +885,13 @@ dependencies = [
 name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "buffer_diff",
  "clock",
  "collections",
  "ctor",
  "derive_more 0.99.19",
- "futures 0.3.31",
  "gpui",
  "icons",
  "indoc",
@@ -865,7 +908,6 @@ dependencies = [
  "settings",
  "text",
  "util",
- "watch",
  "workspace",
  "workspace-hack",
  "zlog",
@@ -875,6 +917,7 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_tool",
@@ -4014,6 +4057,7 @@ dependencies = [
  "log",
  "minidumper",
  "paths",
+ "release_channel",
  "smol",
  "workspace-hack",
 ]
@@ -13522,6 +13566,7 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "askpass",
  "assistant_tool",

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/acp_thread",
+    "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
     "crates/agent2",
@@ -229,6 +230,7 @@ edition = "2024"
 #
 
 acp_thread = { path = "crates/acp_thread" }
+action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
 agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
@@ -839,6 +841,7 @@ style = { level = "allow", priority = -1 }
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
+declare_interior_mutable_const = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.
