@@ -5,7 +5,6 @@ use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::{Project, terminals::TerminalKind};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::Settings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -60,21 +59,6 @@ impl TerminalTool {
             project,
             determine_shell: determine_shell.shared(),
         }
-    }
-
-    fn authorize(
-        &self,
-        input: &TerminalToolInput,
-        event_stream: &ToolCallEventStream,
-        cx: &App,
-    ) -> Task<Result<()>> {
-        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
-            return Task::ready(Ok(()));
-        }
-
-        // TODO: do we want to have a special title here?
-        cx.foreground_executor()
-            .spawn(event_stream.authorize(self.initial_title(Ok(input.clone())).to_string()))
     }
 }
 
@@ -152,7 +136,7 @@ impl AgentTool for TerminalTool {
             env
         });
 
-        let authorize = self.authorize(&input, &event_stream, cx);
+        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())), cx);
 
         cx.spawn({
             async move |cx| {
