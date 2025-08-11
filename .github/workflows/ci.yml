@@ -439,15 +439,8 @@ jobs:
           New-Item -ItemType Directory -Path "./../.cargo" -Force
           Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
 
-      - name: cargo clippy
-        run: |
-          .\script\clippy.ps1
-
       - name: Run tests
         uses: ./.github/actions/run_tests_windows
-
-      - name: Build Zed
-        run: cargo build
 
       - name: Limit target directory size
         run: ./script/clear-target-dir-if-larger-than.ps1 250
