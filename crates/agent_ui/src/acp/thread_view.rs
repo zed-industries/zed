@@ -394,7 +394,7 @@ impl AcpThreadView {
                         if let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) {
                             let path_str = abs_path.display().to_string();
                             chunks.push(acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                uri: path_str.clone(),
+                                uri: format!("file://{path_str}"),
                                 name: path_str,
                                 annotations: None,
                                 description: None,
