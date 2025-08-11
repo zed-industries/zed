@@ -295,9 +295,8 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     ));
     fake_model.end_last_completion_stream();
 
-    let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
-
     // Respond by always allowing tools.
+    let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
     tool_call_auth_3
         .response
         .send(tool_call_auth_3.options[0].id.clone())
