@@ -58,7 +58,7 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 
@@ -534,14 +534,14 @@ impl TerminalBuilder {
 
                 'outer: loop {
                     let mut events = Vec::new();
-                    let mut timer = if cfg!(any(test, feature = "test-support")) {
-                        cx.background_spawn(cx.background_executor().simulate_random_delay())
-                            .fuse()
-                    } else {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(4))
-                            .fuse()
-                    };
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    let mut timer = cx.background_executor().simulate_random_delay().fuse();
+                    #[cfg(not(any(test, feature = "test-support")))]
+                    let mut timer = cx
+                        .background_executor()
+                        .timer(std::time::Duration::from_millis(4))
+                        .fuse();
 
                     let mut wakeup = false;
                     loop {
