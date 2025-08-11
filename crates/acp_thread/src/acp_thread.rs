@@ -1057,8 +1057,11 @@ impl AcpThread {
 
         cx.spawn(async move |this, cx| match rx.await {
             Ok(Err(e)) => {
-                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Error))
-                    .log_err();
+                this.update(cx, |this, cx| {
+                    this.send_task.take();
+                    cx.emit(AcpThreadEvent::Error)
+                })
+                .log_err();
                 Err(e)?
             }
             result => {
