@@ -1,7 +1,8 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    CopyPathTool, CreateDirectoryTool, EditFileTool, FindPathTool, ListDirectoryTool, MovePathTool,
-    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization,
+    CopyPathTool, CreateDirectoryTool, EditFileTool, FindPathTool, GrepTool, ListDirectoryTool,
+    MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool, ThinkingTool,
+    ToolCallAuthorization, WebSearchTool,
 };
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
@@ -424,9 +425,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         thread.add_tool(OpenTool::new(project.clone()));
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(GrepTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(NowTool);
                         thread.add_tool(TerminalTool::new(project.clone(), cx));
+                        // TODO: Needs to be conditional based on zed model or not
+                        thread.add_tool(WebSearchTool);
                         thread
                     });
 

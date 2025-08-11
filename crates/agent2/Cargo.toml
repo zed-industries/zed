@@ -20,6 +20,7 @@ agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
+chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 fs.workspace = true
@@ -49,6 +50,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
+web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 
@@ -71,5 +73,7 @@ settings = { workspace = true, "features" = ["test-support"] }
 tempfile.workspace = true
 terminal = { workspace = true, "features" = ["test-support"] }
 theme = { workspace = true, "features" = ["test-support"] }
+tree-sitter-rust.workspace = true
+unindent = { workspace = true }
 worktree = { workspace = true, "features" = ["test-support"] }
 zlog.workspace = true
