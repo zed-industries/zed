@@ -639,7 +639,11 @@ struct GitCloneModal {
 
 impl GitCloneModal {
     pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let repo_input = cx.new(|cx| Editor::single_line(window, cx));
+        let repo_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter repository", cx);
+            editor
+        });
         let focus_handle = repo_input.focus_handle(cx);
 
         window.focus(&focus_handle);
