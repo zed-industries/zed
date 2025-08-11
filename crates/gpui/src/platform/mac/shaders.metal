@@ -114,19 +114,8 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
         content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
         content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
-    float2 mask_size = float2(content_mask.bounds.size.width, content_mask.bounds.size.height);
-    float2 mask_half_size = mask_size / 2.0;
-    float2 mask_center = float2(content_mask.bounds.origin.x, content_mask.bounds.origin.y) + mask_half_size;
-    float2 mask_point = input.position.xy - mask_center;
-    float mask_corner_radius = pick_corner_radius(mask_point, content_mask.corner_radii);
-    float2 clip_center_to_point = fabs(mask_point) - mask_half_size + mask_corner_radius;
-
-    float clip_sdf = quad_sdf_impl(clip_center_to_point, mask_corner_radius);
+    float clip_sdf = quad_sdf(input.position.xy, content_mask.bounds, content_mask.corner_radii);
     float clip_alpha = saturate(antialias_threshold - clip_sdf);
-
-    if (clip_alpha < 0.001) {
-      return float4(0, 1, 0, 1);
-    }
 
     background_color.a *= clip_alpha;
     border_color.a *= clip_alpha;
