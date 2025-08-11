@@ -725,6 +725,7 @@ impl LanguageServer {
                                 "command".to_string(),
                             ],
                         }),
+                        dynamic_registration: Some(true),
                         ..Default::default()
                     }),
                     completion: Some(CompletionClientCapabilities {

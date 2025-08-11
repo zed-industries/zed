@@ -769,8 +769,9 @@ impl LocalLspStore {
                                     })??;
                                 }
                                 "textDocument/codeAction" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             let options =
                                                 reg.register_options
@@ -792,11 +793,11 @@ impl LocalLspStore {
                                                     )
                                                 }
                                             };
-
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.code_action_provider =
                                                     Some(provider_capability);
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                         anyhow::Ok(())
                                     })??;
@@ -883,12 +884,14 @@ impl LocalLspStore {
                                     })?;
                                 }
                                 "textDocument/codeAction" => {
-                                    this.read_with(&mut cx, |this, _| {
-                                        if let Some(server) = this.language_server_for_id(server_id)
+                                    lsp_store.update(&mut cx, |lsp_store, cx| {
+                                        if let Some(server) =
+                                            lsp_store.language_server_for_id(server_id)
                                         {
                                             server.update_capabilities(|capabilities| {
                                                 capabilities.code_action_provider = None;
-                                            })
+                                            });
+                                            notify_server_capabilities_updated(&server, cx);
                                         }
                                     })?;
                                 }
