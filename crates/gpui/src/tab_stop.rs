@@ -514,26 +514,38 @@ mod tests {
                 result
             }
 
+            // Helper function to check navigation and panic with formatted error if it doesn't match
+            fn check_navigation(
+                tree: &TreeNode,
+                error_label: &str,
+                current_id: FocusId,
+                actual_id: Option<FocusId>,
+                expected_id: FocusId,
+            ) {
+                if actual_id != Some(expected_id) {
+                    panic!(
+                        "Tab navigation error!\n\n{}\n\n{}",
+                        error_label,
+                        format_tree_with_navigation(tree, current_id, actual_id, expected_id)
+                    );
+                }
+            }
+
             // Helper function to format tree with navigation annotations
             fn format_tree_with_navigation(
                 node: &TreeNode,
-                label: &str,
-                actual_map: &HashMap<FocusId, usize>,
                 current_id: FocusId,
                 went_to_id: Option<FocusId>,
                 expected_id: FocusId,
-                direction: &str,
             ) -> String {
-                let mut result = format!("{} ({}):\n", label, direction);
+                let mut result = String::new();
 
                 fn format_node_with_nav(
                     node: &TreeNode,
-                    actual_map: &HashMap<FocusId, usize>,
                     indent: usize,
                     current_id: FocusId,
                     went_to_id: Option<FocusId>,
                     expected_id: FocusId,
-                    direction: &str,
                 ) -> String {
                     let mut result = String::new();
                     let indent_str = "  ".repeat(indent);
@@ -544,12 +556,16 @@ mod tests {
 
                             // Add navigation annotations
                             let nav_comment = if let Some(handle) = &node.handle {
-                                if handle.id == current_id {
+                                if handle.id == current_id && current_id != expected_id {
                                     " // <- Started here"
                                 } else if Some(handle.id) == went_to_id {
                                     " // <- Actually went here"
                                 } else if handle.id == expected_id {
-                                    " // <- Expected to go here"
+                                    if went_to_id.is_none() {
+                                        " // <- Expected to go here (but got None)"
+                                    } else {
+                                        " // <- Expected to go here"
+                                    }
                                 } else {
                                     ""
                                 }
@@ -588,12 +604,10 @@ mod tests {
                             for child in children {
                                 result.push_str(&format_node_with_nav(
                                     child,
-                                    actual_map,
                                     indent + 1,
                                     current_id,
                                     went_to_id,
                                     expected_id,
-                                    direction,
                                 ));
                             }
                             result.push_str(&format!("{}</tab-group>\n", indent_str));
@@ -603,12 +617,10 @@ mod tests {
                             for child in children {
                                 result.push_str(&format_node_with_nav(
                                     child,
-                                    actual_map,
                                     indent + 1,
                                     current_id,
                                     went_to_id,
                                     expected_id,
-                                    direction,
                                 ));
                             }
                             result.push_str(&format!("{}</focus-trap>\n", indent_str));
@@ -623,12 +635,10 @@ mod tests {
                     for child in children {
                         result.push_str(&format_node_with_nav(
                             child,
-                            actual_map,
                             0,
                             current_id,
                             went_to_id,
                             expected_id,
-                            direction,
                         ));
                     }
                 }
@@ -697,25 +707,6 @@ mod tests {
                     }
                 }
 
-                // Build expected order from actual_to_handle
-                let mut expected_order = vec![None; actual_to_handle.len()];
-                for (pos, handle) in actual_to_handle.iter() {
-                    expected_order[*pos] = Some(handle.clone());
-                }
-                let expected_handles: Vec<FocusHandle> =
-                    expected_order.into_iter().flatten().collect();
-
-                // Create maps for error display
-                let mut actual_map_got = HashMap::new();
-                for (idx, handle) in tab_order.iter().enumerate() {
-                    actual_map_got.insert(handle.id, idx);
-                }
-
-                let mut actual_map_expected = HashMap::new();
-                for (idx, handle) in expected_handles.iter().enumerate() {
-                    actual_map_expected.insert(handle.id, idx);
-                }
-
                 // Check each position matches the expected handle
                 for (position, handle) in tab_order.iter().enumerate() {
                     let expected_handle = actual_to_handle.get(&position).unwrap_or_else(|| {
@@ -727,11 +718,25 @@ mod tests {
                     });
 
                     if handle.id != expected_handle.id {
-                        panic!(
-                            "Tab order mismatch at position {}!\n\n{}\n{}",
-                            position,
-                            format_tree_structure(tree, "Got", &actual_map_got),
-                            format_tree_structure(tree, "Expected", &actual_map_expected)
+                        // Use navigation-style error formatting
+                        // For position 0, we're testing what should come first
+                        // For other positions, we show the previous position as "started"
+                        let (started_id, went_to_id) = if position > 0 {
+                            // Normal case: show where we started (previous position) and where we went
+                            (tab_order[position - 1].id, Some(handle.id))
+                        } else {
+                            // Position 0: we're testing what should be first
+                            // Don't show "Started here" since we haven't started anywhere yet
+                            // Show the actual first element as "Actually went here"
+                            (expected_handle.id, Some(handle.id))
+                        };
+
+                        check_navigation(
+                            tree,
+                            &format!("Tab order mismatch at position {}:\n\n", position),
+                            started_id,
+                            went_to_id,
+                            expected_handle.id,
                         );
                     }
                 }
@@ -741,17 +746,26 @@ mod tests {
                     // Test next wraps from last to first
                     let last_id = tab_order.last().unwrap().id;
                     let first_id = tab_order.first().unwrap().id;
-                    assert_eq!(
-                        tab_handles.next(Some(&last_id)).map(|h| h.id),
-                        Some(first_id),
-                        "next should wrap from last to first"
+                    // Test next wraps from last to first
+                    let actual_next_from_last = tab_handles.next(Some(&last_id));
+                    let actual_next_id = actual_next_from_last.as_ref().map(|h| h.id);
+                    check_navigation(
+                        tree,
+                        "Expected wrap from last to first (testing next() wrap-around):",
+                        last_id,
+                        actual_next_id,
+                        first_id,
                     );
 
                     // Test prev wraps from first to last
-                    assert_eq!(
-                        tab_handles.prev(Some(&first_id)).map(|h| h.id),
-                        Some(last_id),
-                        "prev should wrap from first to last"
+                    let actual_prev_from_first = tab_handles.prev(Some(&first_id));
+                    let actual_prev_id = actual_prev_from_first.as_ref().map(|h| h.id);
+                    check_navigation(
+                        tree,
+                        "Expected wrap from first to last (testing prev() wrap-around):",
+                        first_id,
+                        actual_prev_id,
+                        last_id,
                     );
                 }
 
@@ -806,67 +820,25 @@ mod tests {
 
                 // Test next navigation
                 let actual_next = tab_handles.next(Some(&current_id));
-                match actual_next {
-                    Some(next_handle) if next_handle.id != expected_next => {
-                        // Build maps for error display
-                        let mut expected_map = HashMap::new();
-                        for ctx in handle_contexts.iter() {
-                            expected_map.insert(ctx.handle.id, ctx.actual);
-                        }
-
-                        panic!(
-                            "Navigation error:\n\n{}",
-                            format_tree_with_navigation(
-                                tree,
-                                "Expected",
-                                &expected_map,
-                                current_id,
-                                Some(next_handle.id),
-                                expected_next,
-                                "testing next()"
-                            )
-                        );
-                    }
-                    None => {
-                        panic!(
-                            "Navigation error at position {}: next() returned None but expected {:?}",
-                            context.actual, expected_next
-                        );
-                    }
-                    _ => {} // Correct navigation
-                }
+                let actual_next_id = actual_next.as_ref().map(|h| h.id);
+                check_navigation(
+                    tree,
+                    "Expected (testing next()):",
+                    current_id,
+                    actual_next_id,
+                    expected_next,
+                );
 
                 // Test prev navigation
                 let actual_prev = tab_handles.prev(Some(&current_id));
-                match actual_prev {
-                    Some(prev_handle) if prev_handle.id != expected_prev => {
-                        // Build maps for error display
-                        let mut expected_map = HashMap::new();
-                        for ctx in handle_contexts.iter() {
-                            expected_map.insert(ctx.handle.id, ctx.actual);
-                        }
-
-                        panic!(
-                            "Navigation error:\n\n{}",
-                            format_tree_with_navigation(
-                                tree,
-                                "Expected",
-                                &expected_map,
-                                current_id,
-                                Some(prev_handle.id),
-                                expected_prev,
-                                "testing prev()"
-                            )
-                        );
-                    }
-                    None => {
-                        panic!(
-                            "Navigation error at position {}: prev() returned None but expected {:?}",
-                            context.actual, expected_prev
-                        );
-                    }
-                    _ => {} // Correct navigation
-                }
+                let actual_prev_id = actual_prev.as_ref().map(|h| h.id);
+                check_navigation(
+                    tree,
+                    "Expected (testing prev()):",
+                    current_id,
+                    actual_prev_id,
+                    expected_prev,
+                );
             }
         }
 
