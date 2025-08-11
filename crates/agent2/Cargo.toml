@@ -27,6 +27,8 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 handlebars = { workspace = true, features = ["rust-embed"] }
+html_to_markdown.workspace = true
+http_client.workspace = true
 indoc.workspace = true
 itertools.workspace = true
 language.workspace = true
