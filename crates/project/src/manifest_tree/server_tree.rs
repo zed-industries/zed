@@ -15,8 +15,8 @@ use std::{
 use collections::IndexMap;
 use gpui::{App, Entity};
 use language::{
-    CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate, ManifestName,
-    language_settings::AllLanguageSettings,
+    CachedLspAdapter, LanguageName, LanguageRegistry, LocalLanguageToolchainStore,
+    ManifestDelegate, ManifestName, Toolchain, language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
@@ -53,6 +53,7 @@ pub(crate) struct LaunchDisposition {
     /// Path to the root directory of a subproject.
     pub(crate) path: ProjectPath,
     pub(crate) settings: Arc<LspSettings>,
+    pub(crate) toolchain: Option<Toolchain>,
 }
 
 impl LanguageServerTreeNode {
@@ -93,13 +94,19 @@ pub struct InnerTreeNode {
 }
 
 impl InnerTreeNode {
-    fn new(server_name: LanguageServerName, path: ProjectPath, settings: LspSettings) -> Self {
+    fn new(
+        server_name: LanguageServerName,
+        path: ProjectPath,
+        settings: LspSettings,
+        toolchain: Option<Toolchain>,
+    ) -> Self {
         InnerTreeNode {
             id: Default::default(),
             disposition: Arc::new(LaunchDisposition {
                 server_name,
                 path,
                 settings: settings.into(),
+                toolchain,
             }),
         }
     }
@@ -138,68 +145,70 @@ impl LanguageServerTree {
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.init_with_adapters(manifest_location, adapters)
+        self.init_with_adapters(manifest_location, language_name, adapters, toolchains, cx)
     }
 
     fn init_with_adapters<'a>(
         &'a mut self,
         root_path: ProjectPath,
-        adapters: IndexMap<
-            LanguageServerName,
-            (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
-        >,
+        language_name: LanguageName,
+        adapters: IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)>,
+        toolchains: Arc<dyn LocalLanguageToolchainStore>,
+        cx: &App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        adapters
-            .into_iter()
-            .map(move |(_, (settings, new_languages, adapter))| {
-                let root_path = root_path.clone();
-                let inner_node = self
-                    .instances
-                    .entry(root_path.worktree_id)
-                    .or_default()
-                    .roots
-                    .entry(root_path.path.clone())
-                    .or_default()
-                    .entry(adapter.name());
-                let (node, languages) = inner_node.or_insert_with(|| {
-                    (
-                        Arc::new(InnerTreeNode::new(
-                            adapter.name(),
-                            root_path.clone(),
-                            settings.clone(),
-                        )),
-                        Default::default(),
-                    )
-                });
-                languages.extend(new_languages.iter().cloned());
-                Arc::downgrade(&node).into()
-            })
+        let mut cx = cx.to_async();
+        adapters.into_iter().map(move |(_, (settings, adapter))| {
+            let root_path = root_path.clone();
+            let inner_node = self
+                .instances
+                .entry(root_path.worktree_id)
+                .or_default()
+                .roots
+                .entry(root_path.path.clone())
+                .or_default()
+                .entry(adapter.name());
+            let (node, languages) = inner_node.or_insert_with(|| {
+                let toolchain = toolchains.clone().active_toolchain(
+                    root_path.worktree_id,
+                    &root_path.path,
+                    language_name.clone(),
+                    &mut cx,
+                );
+                (
+                    Arc::new(InnerTreeNode::new(
+                        adapter.name(),
+                        root_path.clone(),
+                        settings.clone(),
+                        toolchain,
+                    )),
+                    Default::default(),
+                )
+            });
+            languages.insert(language_name.clone());
+            Arc::downgrade(&node).into()
+        })
     }
 
     fn get_with_adapters<'a>(
         &'a self,
         root_path: ProjectPath,
-        adapters: IndexMap<
-            LanguageServerName,
-            (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
-        >,
+        adapters: IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)>,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
-        adapters
-            .into_iter()
-            .filter_map(move |(_, (_, _, adapter))| {
-                let root_path = root_path.clone();
-                let inner_node = self
-                    .instances
-                    .get(&root_path.worktree_id)?
-                    .roots
-                    .get(&root_path.path)?
-                    .get(&adapter.name())?;
-                inner_node.0.id.get().copied()
-            })
+        adapters.into_iter().filter_map(move |(_, (_, adapter))| {
+            let root_path = root_path.clone();
+            let inner_node = self
+                .instances
+                .get(&root_path.worktree_id)?
+                .roots
+                .get(&root_path.path)?
+                .get(&adapter.name())?;
+            inner_node.0.id.get().copied()
+        })
     }
 
     fn manifest_location_for_path(
@@ -221,8 +230,7 @@ impl LanguageServerTree {
         manifest_location: &ProjectPath,
         language_name: &LanguageName,
         cx: &App,
-    ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
-    {
+    ) -> IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)> {
         let settings_location = SettingsLocation {
             worktree_id: manifest_location.worktree_id,
             path: &manifest_location.path,
@@ -267,14 +275,7 @@ impl LanguageServerTree {
                 )
                 .cloned()
                 .unwrap_or_default();
-                Some((
-                    adapter.name(),
-                    (
-                        adapter_settings,
-                        BTreeSet::from_iter([language_name.clone()]),
-                        adapter,
-                    ),
-                ))
+                Some((adapter.name(), (adapter_settings, adapter)))
             })
             .collect::<IndexMap<_, _>>();
         // After starting all the language servers, reorder them to reflect the desired order
@@ -287,7 +288,7 @@ impl LanguageServerTree {
             &language_name,
             adapters_with_settings
                 .values()
-                .map(|(_, _, adapter)| adapter.clone())
+                .map(|(_, adapter)| adapter.clone())
                 .collect(),
         );
 
@@ -383,6 +384,7 @@ impl ServerTreeRebase {
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
         delegate: Arc<dyn ManifestDelegate>,
+        toolchain_delegate: Arc<dyn LocalLanguageToolchainStore>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest =
@@ -393,7 +395,7 @@ impl ServerTreeRebase {
             .adapters_for_language(&manifest, &language_name, cx);
 
         self.new_tree
-            .init_with_adapters(manifest, adapters)
+            .init_with_adapters(manifest, language_name, adapters, toolchain_delegate, cx)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.
@@ -408,7 +410,13 @@ impl ServerTreeRebase {
                     .get(&disposition.path.worktree_id)
                     .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
                     .and_then(|roots| roots.get(&disposition.server_name))
-                    .filter(|(old_node, _)| disposition.settings == old_node.disposition.settings)
+                    .filter(|(old_node, _)| {
+                        (&disposition.toolchain, &disposition.settings)
+                            == (
+                                &old_node.disposition.toolchain,
+                                &old_node.disposition.settings,
+                            )
+                    })
                 else {
                     return Some(node);
                 };

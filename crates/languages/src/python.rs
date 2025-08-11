@@ -325,7 +325,7 @@ impl LspAdapter for PythonLspAdapter {
     ) -> Result<Value> {
         let toolchain = toolchains.active_toolchain(
             adapter.worktree_id(),
-            Arc::from("".as_ref()),
+            &Arc::from("".as_ref()),
             LanguageName::new("Python"),
             cx,
         );
@@ -1056,7 +1056,7 @@ impl LspAdapter for PyLspAdapter {
         } else {
             let venv = toolchains.active_toolchain(
                 delegate.worktree_id(),
-                Arc::from("".as_ref()),
+                &Arc::from("".as_ref()),
                 LanguageName::new("Python"),
                 &mut cx.clone(),
             )?;
@@ -1211,7 +1211,7 @@ impl LspAdapter for PyLspAdapter {
     ) -> Result<Value> {
         let toolchain = toolchains.active_toolchain(
             adapter.worktree_id(),
-            Arc::from("".as_ref()),
+            &Arc::from("".as_ref()),
             LanguageName::new("Python"),
             cx,
         );
@@ -1380,7 +1380,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
         } else {
             let venv = toolchains.active_toolchain(
                 delegate.worktree_id(),
-                Arc::from("".as_ref()),
+                &Arc::from("".as_ref()),
                 LanguageName::new("Python"),
                 &mut cx.clone(),
             )?;
@@ -1536,7 +1536,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
     ) -> Result<Value> {
         let toolchain = toolchains.active_toolchain(
             adapter.worktree_id(),
-            Arc::from("".as_ref()),
+            &Arc::from("".as_ref()),
             LanguageName::new("Python"),
             cx,
         );

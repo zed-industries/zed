@@ -17,7 +17,7 @@ use settings::WorktreeId;
 use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Hash, Eq)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
@@ -68,7 +68,7 @@ pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
     fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        relative_path: Arc<Path>,
+        relative_path: &Arc<Path>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain>;
@@ -83,7 +83,7 @@ impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
-        self.active_toolchain(worktree_id, relative_path, language_name, cx)
+        self.active_toolchain(worktree_id, &relative_path, language_name, cx)
     }
 }
 

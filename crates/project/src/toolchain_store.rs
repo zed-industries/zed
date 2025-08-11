@@ -107,9 +107,11 @@ impl ToolchainStore {
         cx: &App,
     ) -> Task<Option<Toolchain>> {
         match &self.0 {
-            ToolchainStoreInner::Local(local, _) => {
-                Task::ready(local.read(cx).active_toolchain(path, language_name))
-            }
+            ToolchainStoreInner::Local(local, _) => Task::ready(local.read(cx).active_toolchain(
+                path.worktree_id,
+                &path.path,
+                language_name,
+            )),
             ToolchainStoreInner::Remote(remote) => {
                 remote.read(cx).active_toolchain(path, language_name, cx)
             }
@@ -256,13 +258,13 @@ impl language::LocalLanguageToolchainStore for LocalStore {
     fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        path: Arc<Path>,
+        path: &Arc<Path>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
         self.0
             .update(cx, |this, _| {
-                this.active_toolchain(ProjectPath { worktree_id, path }, language_name)
+                this.active_toolchain(worktree_id, path, language_name)
             })
             .ok()?
     }
@@ -291,7 +293,7 @@ impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
     fn active_toolchain(
         self: Arc<Self>,
         _: WorktreeId,
-        _: Arc<Path>,
+        _: &Arc<Path>,
         _: LanguageName,
         _: &mut AsyncApp,
     ) -> Option<Toolchain> {
@@ -397,13 +399,14 @@ impl LocalToolchainStore {
     }
     pub(crate) fn active_toolchain(
         &self,
-        path: ProjectPath,
+        worktree_id: WorktreeId,
+        relative_path: &Arc<Path>,
         language_name: LanguageName,
     ) -> Option<Toolchain> {
-        let ancestors = path.path.ancestors();
+        let ancestors = relative_path.ancestors();
 
         self.active_toolchains
-            .get(&(path.worktree_id, language_name))
+            .get(&(worktree_id, language_name))
             .and_then(|paths| {
                 ancestors
                     .into_iter()

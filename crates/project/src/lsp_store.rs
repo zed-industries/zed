@@ -55,8 +55,8 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate,
-    ManifestDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped, WorkspaceFoldersContent,
+    ManifestDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
+    Transaction, Unclipped, WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -160,7 +160,7 @@ struct UnifiedLanguageServer {
 struct LanguageServerSeed {
     worktree_id: WorktreeId,
     name: LanguageServerName,
-    workspace_configuration: Arc<serde_json::Value>,
+    toolchain: Option<Toolchain>,
     settings: Arc<LspSettings>,
 }
 
@@ -244,7 +244,7 @@ impl LocalLspStore {
             worktree_id: worktree_handle.read(cx).id(),
             name: disposition.server_name.clone(),
             settings: disposition.settings.clone(),
-            workspace_configuration: Arc::new(serde_json::Value::Null),
+            toolchain: disposition.toolchain.clone(),
         };
         if let Some(state) = self.language_server_ids.get_mut(&key) {
             state.project_roots.insert(disposition.path.path.clone());
@@ -2306,10 +2306,17 @@ impl LocalLspStore {
         };
         let delegate: Arc<dyn ManifestDelegate> = Arc::new(ManifestQueryDelegate::new(snapshot));
 
-        for node in self
-            .lsp_tree
-            .walk(path, language.name(), language.manifest(), &delegate, cx)
-        {
+        let toolchain_store = self
+            .toolchain_store
+            .update(cx, |this, cx| this.as_local_trait_object(cx));
+        for node in self.lsp_tree.walk(
+            path,
+            language.name(),
+            language.manifest(),
+            &delegate,
+            toolchain_store,
+            cx,
+        ) {
             let Some(server_id) = node.server_id() else {
                 continue;
             };
@@ -2525,6 +2532,9 @@ impl LocalLspStore {
                 let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let delegate: Arc<dyn ManifestDelegate> =
                     Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
+                let toolchain_store = self
+                    .toolchain_store
+                    .update(cx, |this, cx| this.as_local_trait_object(cx));
                 let servers = self
                     .lsp_tree
                     .walk(
@@ -2532,6 +2542,7 @@ impl LocalLspStore {
                         language.name(),
                         language.manifest(),
                         &delegate,
+                        toolchain_store,
                         cx,
                     )
                     .collect::<Vec<_>>();
@@ -4808,6 +4819,9 @@ impl LspStore {
                     Some((file, language, raw_buffer.remote_id()))
                 })
                 .sorted_by_key(|(file, _, _)| Reverse(file.worktree.read(cx).is_visible()));
+            let toolchain_store = local
+                .toolchain_store
+                .update(cx, |this, cx| this.as_local_trait_object(cx));
             for (file, language, buffer_id) in buffers {
                 let worktree_id = file.worktree_id(cx);
                 let Some(worktree) = local
@@ -4844,6 +4858,7 @@ impl LspStore {
                         language.name(),
                         language.manifest(),
                         delegate.clone(),
+                        toolchain_store.clone(),
                         cx,
                     );
 
@@ -4858,7 +4873,11 @@ impl LspStore {
                                 worktree_id: worktree.read(cx).id(),
                                 name: disposition.server_name.clone(),
                                 settings: disposition.settings.clone(),
-                                workspace_configuration: Arc::new(serde_json::Value::Null),
+                                toolchain: local.toolchain_store.read(cx).active_toolchain(
+                                    path.worktree_id,
+                                    &path.path,
+                                    language.name(),
+                                ),
                             };
                             local.language_server_ids.remove(&key);
 
