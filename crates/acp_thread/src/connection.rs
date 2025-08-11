@@ -1,18 +1,59 @@
-use std::{error::Error, fmt, path::Path, rc::Rc, sync::Arc};
+use std::{error::Error, fmt, path::Path, rc::Rc};
 
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
-use gpui::{AsyncApp, Entity, Task};
-use language_model::LanguageModel;
+use collections::IndexMap;
+use gpui::{AsyncApp, Entity, SharedString, Task};
 use project::Project;
-use ui::App;
+use ui::{App, IconName};
 
 use crate::AcpThread;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LanguageModelId(pub SharedString);
+
+impl std::ops::Deref for LanguageModelId {
+    type Target = SharedString;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Display for LanguageModelId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanguageModelInfo {
+    pub id: LanguageModelId,
+    pub name: SharedString,
+    pub icon: Option<IconName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LanguageModelGroup(pub SharedString);
+
+pub enum LanguageModelInfoList {
+    Flat(Vec<LanguageModelInfo>),
+    Grouped(IndexMap<LanguageModelGroup, Vec<LanguageModelInfo>>),
+}
+
+impl LanguageModelInfoList {
+    pub fn is_empty(&self) -> bool {
+        match self {
+            LanguageModelInfoList::Flat(models) => models.is_empty(),
+            LanguageModelInfoList::Grouped(groups) => groups.is_empty(),
+        }
+    }
+}
 
 /// Trait for agents that support listing, selecting, and querying language models.
 ///
 /// This is an optional capability; agents indicate support via [AgentConnection::model_selector].
-pub trait ModelSelector: 'static {
+pub trait LanguageModelSelector: 'static {
     /// Lists all available language models for this agent.
     ///
     /// # Parameters
@@ -20,7 +61,7 @@ pub trait ModelSelector: 'static {
     ///
     /// # Returns
     /// A task resolving to the list of models or an error (e.g., if no models are configured).
-    fn list_models(&self, cx: &mut AsyncApp) -> Task<Result<Vec<Arc<dyn LanguageModel>>>>;
+    fn list_models(&self, cx: &mut App) -> Task<Result<LanguageModelInfoList>>;
 
     /// Selects a model for a specific session (thread).
     ///
@@ -37,8 +78,8 @@ pub trait ModelSelector: 'static {
     fn select_model(
         &self,
         session_id: acp::SessionId,
-        model: Arc<dyn LanguageModel>,
-        cx: &mut AsyncApp,
+        model_id: LanguageModelId,
+        cx: &mut App,
     ) -> Task<Result<()>>;
 
     /// Retrieves the currently selected model for a specific session (thread).
@@ -52,8 +93,8 @@ pub trait ModelSelector: 'static {
     fn selected_model(
         &self,
         session_id: &acp::SessionId,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<Arc<dyn LanguageModel>>>;
+        cx: &mut App,
+    ) -> Task<Result<LanguageModelInfo>>;
 }
 
 pub trait AgentConnection {
@@ -77,7 +118,7 @@ pub trait AgentConnection {
     ///
     /// If the agent does not support model selection, returns [None].
     /// This allows sharing the selector in UI components.
-    fn model_selector(&self) -> Option<Rc<dyn ModelSelector>> {
+    fn model_selector(&self) -> Option<Rc<dyn LanguageModelSelector>> {
         None // Default impl for agents that don't support it
     }
 }

@@ -102,6 +102,7 @@ pub struct FakeLanguageModel {
 
 impl Default for FakeLanguageModel {
     fn default() -> Self {
+        dbg!("Creating FakeLanguageModel");
         Self {
             provider_id: LanguageModelProviderId::from("fake".to_string()),
             provider_name: LanguageModelProviderName::from("Fake".to_string()),

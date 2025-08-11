@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
+ "collections",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
