@@ -4760,7 +4760,12 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some((chunk, tabs, chars_map)) = self.chunks.peek_tabs() {
+        if let Some(ChunkBitmaps {
+            text: chunk,
+            chars: chars_map,
+            tabs,
+        }) = self.chunks.peek_tabs()
+        {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
@@ -4773,7 +4778,6 @@ impl<'a> Iterator for BufferChunks<'a> {
                 }
             }
 
-            // todo! write a test for this
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
             let bit_end = chunk_end - self.chunks.offset();

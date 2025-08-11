@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
-use text::{Patch, Rope};
+use text::{ChunkBitmaps, Patch, Rope};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
@@ -247,7 +247,7 @@ pub struct InlayChunks<'a> {
     buffer_chunk: Option<Chunk<'a>>,
     inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
     /// text, char bitmap, tabs bitmap
-    inlay_chunk: Option<(&'a str, u128, u128)>,
+    inlay_chunk: Option<ChunkBitmaps<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_styles: HighlightStyles,
@@ -416,7 +416,11 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let chunks = inlay.text.chunks_in_range(start.0..end.0);
                     text::ChunkWithBitmaps(chunks)
                 });
-                let (inlay_chunk, chars, tabs) = self
+                let ChunkBitmaps {
+                    text: inlay_chunk,
+                    chars,
+                    tabs,
+                } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
 

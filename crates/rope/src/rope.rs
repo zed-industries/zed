@@ -595,6 +595,15 @@ impl<'a> Cursor<'a> {
     }
 }
 
+pub struct ChunkBitmaps<'a> {
+    /// A slice of text up to 128 bytes in size
+    pub text: &'a str,
+    /// Bitmap of character locations in text. LSB ordered
+    pub chars: u128,
+    /// Bitmap of tab locations in text. LSB ordered
+    pub tabs: u128,
+}
+
 #[derive(Clone)]
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
@@ -757,7 +766,7 @@ impl<'a> Chunks<'a> {
     }
 
     /// Returns bitmaps that represent character positions and tab positions
-    pub fn peak_with_bitmaps(&self) -> Option<(&'a str, u128, u128)> {
+    pub fn peak_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -779,7 +788,11 @@ impl<'a> Chunks<'a> {
         let chars = (chunk.chars() & bitmask) >> slice_range.start;
         let tabs = (chunk.tabs & bitmask) >> slice_range.start;
 
-        Some((&chunk.text[slice_range.clone()], chars, tabs))
+        Some(ChunkBitmaps {
+            text: &chunk.text[slice_range.clone()],
+            chars,
+            tabs,
+        })
     }
 
     pub fn peek(&self) -> Option<&'a str> {
@@ -802,7 +815,7 @@ impl<'a> Chunks<'a> {
         Some(&chunk.text[slice_range])
     }
 
-    pub fn peek_tabs(&self) -> Option<(&'a str, u128, u128)> {
+    pub fn peek_tabs(&self) -> Option<ChunkBitmaps<'a>> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -825,7 +838,11 @@ impl<'a> Chunks<'a> {
         let shifted_tabs = chunk.tabs >> chunk_start_offset;
         let shifted_chars = chunk.chars() >> chunk_start_offset;
 
-        Some((slice_text, shifted_tabs, shifted_chars))
+        Some(ChunkBitmaps {
+            text: slice_text,
+            chars: shifted_chars,
+            tabs: shifted_tabs,
+        })
     }
 
     pub fn lines(self) -> Lines<'a> {
@@ -877,23 +894,23 @@ pub struct ChunkWithBitmaps<'a>(pub Chunks<'a>);
 
 impl<'a> Iterator for ChunkWithBitmaps<'a> {
     /// text, chars bitmap, tabs bitmap
-    type Item = (&'a str, u128, u128);
+    type Item = ChunkBitmaps<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let chunk = self.0.peak_with_bitmaps()?;
+        let chunk_bitmaps = self.0.peak_with_bitmaps()?;
         if self.0.reversed {
-            self.0.offset -= chunk.0.len();
+            self.0.offset -= chunk_bitmaps.text.len();
             if self.0.offset <= *self.0.chunks.start() {
                 self.0.chunks.prev();
             }
         } else {
-            self.0.offset += chunk.0.len();
+            self.0.offset += chunk_bitmaps.text.len();
             if self.0.offset >= self.0.chunks.end() {
                 self.0.chunks.next();
             }
         }
 
-        Some(chunk)
+        Some(chunk_bitmaps)
     }
 }
 
