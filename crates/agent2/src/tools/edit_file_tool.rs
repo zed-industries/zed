@@ -133,7 +133,7 @@ impl EditFileTool {
         &self,
         input: &EditFileToolInput,
         event_stream: &ToolCallEventStream,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
@@ -147,8 +147,9 @@ impl EditFileTool {
             .components()
             .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
         {
-            return cx.foreground_executor().spawn(
-                event_stream.authorize(format!("{} (local settings)", input.display_description)),
+            return event_stream.authorize(
+                format!("{} (local settings)", input.display_description),
+                cx,
             );
         }
 
@@ -156,9 +157,9 @@ impl EditFileTool {
         // so check for that edge case too.
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
             if canonical_path.starts_with(paths::config_dir()) {
-                return cx.foreground_executor().spawn(
-                    event_stream
-                        .authorize(format!("{} (global settings)", input.display_description)),
+                return event_stream.authorize(
+                    format!("{} (global settings)", input.display_description),
+                    cx,
                 );
             }
         }
@@ -173,8 +174,7 @@ impl EditFileTool {
         if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
-            cx.foreground_executor()
-                .spawn(event_stream.authorize(input.display_description.clone()))
+            event_stream.authorize(&input.display_description, cx)
         }
     }
 }

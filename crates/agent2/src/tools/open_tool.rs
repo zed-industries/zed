@@ -65,7 +65,7 @@ impl AgentTool for OpenTool {
     ) -> Task<Result<Self::Output>> {
         // If path_or_url turns out to be a path in the project, make it absolute.
         let abs_path = to_absolute_path(&input.path_or_url, self.project.clone(), cx);
-        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())).to_string());
+        let authorize = event_stream.authorize(self.initial_title(Ok(input.clone())), cx);
         cx.background_spawn(async move {
             authorize.await?;
 
