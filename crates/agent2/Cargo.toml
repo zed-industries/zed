@@ -49,6 +49,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 watch.workspace = true
+web_search.workspace = true
 which.workspace = true
 workspace-hack.workspace = true
 

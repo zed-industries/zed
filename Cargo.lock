@@ -232,6 +232,7 @@ dependencies = [
  "util",
  "uuid",
  "watch",
+ "web_search",
  "which 6.0.3",
  "workspace-hack",
  "worktree",
