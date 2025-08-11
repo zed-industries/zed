@@ -282,6 +282,65 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
             })
         ]
     );
+
+    // Simulate yet another tool call.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_3".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
+
+    // Respond by always allowing tools.
+    tool_call_auth_3
+        .response
+        .send(tool_call_auth_3.options[0].id.clone())
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![MessageContent::ToolResult(LanguageModelToolResult {
+            tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
+            tool_name: ToolRequiringPermission.name().into(),
+            is_error: false,
+            content: "Allowed".into(),
+            output: Some("Allowed".into())
+        })]
+    );
+
+    println!("==============");
+    // Simulate a final tool call, ensuring we don't trigger authorization.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_4".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![MessageContent::ToolResult(LanguageModelToolResult {
+            tool_use_id: "tool_id_4".into(),
+            tool_name: ToolRequiringPermission.name().into(),
+            is_error: false,
+            content: "Allowed".into(),
+            output: Some("Allowed".into())
+        })]
+    );
 }
 
 #[gpui::test]
@@ -776,6 +835,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.update(|cx| {
         settings::init(cx);
         Project::init_settings(cx);
+        agent_settings::init(cx);
     });
     let templates = Templates::new();
 
