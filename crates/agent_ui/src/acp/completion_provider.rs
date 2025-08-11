@@ -48,7 +48,7 @@ impl MentionSet {
             .iter()
             .map(|(crease_id, uri)| match uri {
                 MentionUri::File(path) => {
-                    let crease_id = crease_id.clone();
+                    let crease_id = *crease_id;
                     let uri = uri.clone();
                     let path = path.to_path_buf();
                     let buffer_task = project.update(cx, |project, cx| {
