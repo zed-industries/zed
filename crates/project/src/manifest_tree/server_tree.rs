@@ -15,14 +15,17 @@ use std::{
 use collections::IndexMap;
 use gpui::{App, Entity};
 use language::{
-    CachedLspAdapter, LanguageName, LanguageRegistry, LocalLanguageToolchainStore,
-    ManifestDelegate, ManifestName, Toolchain, language_settings::AllLanguageSettings,
+    CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate, ManifestName, Toolchain,
+    language_settings::AllLanguageSettings,
 };
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::OnceLock;
 
-use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
+use crate::{
+    LanguageServerId, ProjectPath, project_settings::LspSettings,
+    toolchain_store::LocalToolchainStore,
+};
 
 use super::ManifestTree;
 
@@ -38,6 +41,7 @@ pub struct LanguageServerTree {
     manifest_tree: Entity<ManifestTree>,
     pub(crate) instances: BTreeMap<WorktreeId, ServersForWorktree>,
     languages: Arc<LanguageRegistry>,
+    toolchains: Entity<LocalToolchainStore>,
 }
 
 /// A node in language server tree represents either:
@@ -116,11 +120,13 @@ impl LanguageServerTree {
     pub(crate) fn new(
         manifest_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
+        toolchains: Entity<LocalToolchainStore>,
     ) -> Self {
         Self {
             manifest_tree,
             instances: Default::default(),
             languages,
+            toolchains,
         }
     }
 
@@ -145,12 +151,11 @@ impl LanguageServerTree {
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
-        toolchains: Arc<dyn LocalLanguageToolchainStore>,
-        cx: &mut App,
+        cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.init_with_adapters(manifest_location, language_name, adapters, toolchains, cx)
+        self.init_with_adapters(manifest_location, language_name, adapters, cx)
     }
 
     fn init_with_adapters<'a>(
@@ -158,10 +163,8 @@ impl LanguageServerTree {
         root_path: ProjectPath,
         language_name: LanguageName,
         adapters: IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)>,
-        toolchains: Arc<dyn LocalLanguageToolchainStore>,
-        cx: &App,
+        cx: &'a App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let mut cx = cx.to_async();
         adapters.into_iter().map(move |(_, (settings, adapter))| {
             let root_path = root_path.clone();
             let inner_node = self
@@ -173,11 +176,10 @@ impl LanguageServerTree {
                 .or_default()
                 .entry(adapter.name());
             let (node, languages) = inner_node.or_insert_with(|| {
-                let toolchain = toolchains.clone().active_toolchain(
+                let toolchain = self.toolchains.read(cx).active_toolchain(
                     root_path.worktree_id,
                     &root_path.path,
                     language_name.clone(),
-                    &mut cx,
                 );
                 (
                     Arc::new(InnerTreeNode::new(
@@ -368,8 +370,11 @@ impl ServerTreeRebase {
                 })
             })
             .collect();
-        let new_tree =
-            LanguageServerTree::new(old_tree.manifest_tree.clone(), old_tree.languages.clone());
+        let new_tree = LanguageServerTree::new(
+            old_tree.manifest_tree.clone(),
+            old_tree.languages.clone(),
+            old_tree.toolchains.clone(),
+        );
         Self {
             old_contents,
             all_server_ids,
@@ -384,8 +389,7 @@ impl ServerTreeRebase {
         language_name: LanguageName,
         manifest_name: Option<&ManifestName>,
         delegate: Arc<dyn ManifestDelegate>,
-        toolchain_delegate: Arc<dyn LocalLanguageToolchainStore>,
-        cx: &mut App,
+        cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest =
             self.new_tree
@@ -395,7 +399,7 @@ impl ServerTreeRebase {
             .adapters_for_language(&manifest, &language_name, cx);
 
         self.new_tree
-            .init_with_adapters(manifest, language_name, adapters, toolchain_delegate, cx)
+            .init_with_adapters(manifest, language_name, adapters, cx)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.

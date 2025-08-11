@@ -2522,9 +2522,7 @@ impl LocalLspStore {
                 let lsp_delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let delegate: Arc<dyn ManifestDelegate> =
                     Arc::new(ManifestQueryDelegate::new(worktree.read(cx).snapshot()));
-                let toolchain_store = self
-                    .toolchain_store
-                    .update(cx, |this, cx| this.as_local_trait_object(cx));
+
                 let servers = self
                     .lsp_tree
                     .walk(
@@ -2532,7 +2530,6 @@ impl LocalLspStore {
                         language.name(),
                         language.manifest(),
                         &delegate,
-                        toolchain_store,
                         cx,
                     )
                     .collect::<Vec<_>>();
@@ -3870,7 +3867,7 @@ impl LspStore {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_entity(),
                 worktree_store: worktree_store.clone(),
-                toolchain_store,
+
                 supplementary_language_servers: Default::default(),
                 languages: languages.clone(),
                 language_server_ids: Default::default(),
@@ -3893,7 +3890,12 @@ impl LspStore {
                         .unwrap()
                         .shutdown_language_servers_on_quit(cx)
                 }),
-                lsp_tree: LanguageServerTree::new(manifest_tree, languages.clone()),
+                lsp_tree: LanguageServerTree::new(
+                    manifest_tree,
+                    languages.clone(),
+                    toolchain_store.clone(),
+                ),
+                toolchain_store,
                 registered_buffers: HashMap::default(),
                 buffers_opened_in_servers: HashMap::default(),
                 buffer_pull_diagnostics_result_ids: HashMap::default(),
@@ -4809,9 +4811,7 @@ impl LspStore {
                     Some((file, language, raw_buffer.remote_id()))
                 })
                 .sorted_by_key(|(file, _, _)| Reverse(file.worktree.read(cx).is_visible()));
-            let toolchain_store = local
-                .toolchain_store
-                .update(cx, |this, cx| this.as_local_trait_object(cx));
+
             for (file, language, buffer_id) in buffers {
                 let worktree_id = file.worktree_id(cx);
                 let Some(worktree) = local
@@ -4842,25 +4842,24 @@ impl LspStore {
                         .map(Arc::from)
                         .unwrap_or_else(|| file.path().clone());
                     let worktree_path = ProjectPath { worktree_id, path };
-
-                    let nodes = rebase.walk(
-                        worktree_path,
-                        language.name(),
-                        language.manifest(),
-                        delegate.clone(),
-                        toolchain_store.clone(),
-                        cx,
-                    );
-
                     let abs_path = file.abs_path(cx);
+                    let worktree_root = worktree.read(cx).abs_path();
+                    let nodes = rebase
+                        .walk(
+                            worktree_path,
+                            language.name(),
+                            language.manifest(),
+                            delegate.clone(),
+                            cx,
+                        )
+                        .collect::<Vec<_>>();
 
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri =
-                                Url::from_file_path(worktree.read(cx).abs_path().join(&path.path));
+                            let uri = Url::from_file_path(worktree_root.join(&path.path));
                             let key = LanguageServerSeed {
-                                worktree_id: worktree.read(cx).id(),
+                                worktree_id,
                                 name: disposition.server_name.clone(),
                                 settings: disposition.settings.clone(),
                                 toolchain: local.toolchain_store.read(cx).active_toolchain(
