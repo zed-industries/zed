@@ -10,8 +10,9 @@ use futures::{
     stream::FuturesUnordered,
 };
 use gpui::{App, Context, Entity, SharedString, Task};
+use language::Rope;
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
@@ -29,6 +30,56 @@ use util::{ResultExt, markdown::MarkdownCodeBlock};
 pub struct AgentMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
+}
+
+enum MessageContent {
+    Text(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    File {
+        path: PathBuf,
+        content: Rope,
+    },
+    Symbol {
+        name: String,
+        path: PathBuf,
+        content: Rope,
+    },
+    Thread {
+        name: String,
+        content: String,
+    },
+    Rule {
+        name: String,
+        content: String,
+    },
+    RedactedThinking(String),
+    Image(LanguageModelImage),
+    ToolUse(LanguageModelToolUse),
+    ToolResult(LanguageModelToolResult),
+}
+
+impl Into<language_model::MessageContent> for MessageContent {
+    fn into(self) -> language_model::MessageContent {
+        match self {
+            MessageContent::Text(text) => language_model::MessageContent::Text(text),
+            MessageContent::Thinking { data, signature } => todo!(),
+            MessageContent::File { path, content } => todo!(),
+            MessageContent::Symbol { name } => todo!(),
+            MessageContent::Thread { name, content } => todo!(),
+            MessageContent::Rule { name, content } => todo!(),
+            MessageContent::RedactedThinking(text) => {
+                language_model::MessageContent::RedactedThinking(text)
+            }
+            MessageContent::Image(image) => language_model::MessageContent::Image(image),
+            MessageContent::ToolUse(tool_use) => language_model::MessageContent::ToolUse(tool_use),
+            MessageContent::ToolResult(tool_result) => {
+                language_model::MessageContent::ToolResult(tool_result)
+            }
+        }
+    }
 }
 
 impl AgentMessage {
