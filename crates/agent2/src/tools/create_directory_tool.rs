@@ -1,7 +1,9 @@
 use agent_client_protocol::ToolKind;
-use anyhow::{Result, anyhow};
-use gpui::{App, SharedString, Task};
+use anyhow::{Context as _, Result, anyhow};
+use gpui::{App, Entity, SharedString, Task};
 use project::Project;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -61,7 +63,7 @@ impl AgentTool for CreateDirectoryTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {
@@ -76,7 +78,7 @@ impl AgentTool for CreateDirectoryTool {
             project.create_entry(project_path.clone(), true, cx)
         });
 
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_cx| {
             create_entry
                 .await
                 .with_context(|| format!("Creating directory {destination_path}"))?;

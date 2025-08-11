@@ -1,7 +1,10 @@
 use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
-use anyhow::Result;
-use gpui::{App, SharedString, Task};
+use anyhow::{Context as _, Result, anyhow};
+use gpui::{App, AppContext, Entity, SharedString, Task};
+use project::Project;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
@@ -75,7 +78,7 @@ impl AgentTool for CopyPathTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let copy_task = self.project.update(cx, |project, cx| {
