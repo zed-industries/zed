@@ -95,18 +95,18 @@ impl AgentTool for ListDirectoryTool {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            return Task::ready(Ok(output.into())).into();
+            return Task::ready(Ok(output));
         }
 
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
-            return Task::ready(Err(anyhow!("Path {} not found in project", input.path))).into();
+            return Task::ready(Err(anyhow!("Path {} not found in project", input.path)));
         };
         let Some(worktree) = self
             .project
             .read(cx)
             .worktree_for_id(project_path.worktree_id, cx)
         else {
-            return Task::ready(Err(anyhow!("Worktree not found"))).into();
+            return Task::ready(Err(anyhow!("Worktree not found")));
         };
 
         // Check if the directory whose contents we're listing is itself excluded or private
@@ -115,16 +115,14 @@ impl AgentTool for ListDirectoryTool {
             return Task::ready(Err(anyhow!(
                     "Cannot list directory because its path matches the user's global `file_scan_exclusions` setting: {}",
                     &input.path
-                )))
-                .into();
+                )));
         }
 
         if global_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
                     "Cannot list directory because its path matches the user's global `private_files` setting: {}",
                     &input.path
-                )))
-                .into();
+                )));
         }
 
         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
@@ -132,27 +130,25 @@ impl AgentTool for ListDirectoryTool {
             return Task::ready(Err(anyhow!(
                     "Cannot list directory because its path matches the user's worktree`file_scan_exclusions` setting: {}",
                     &input.path
-                )))
-                .into();
+                )));
         }
 
         if worktree_settings.is_path_private(&project_path.path) {
             return Task::ready(Err(anyhow!(
                     "Cannot list directory because its path matches the user's worktree `private_paths` setting: {}",
                     &input.path
-                )))
-                .into();
+                )));
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
         let worktree_root_name = worktree.read(cx).root_name().to_string();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
-            return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();
+            return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
         };
 
         if !entry.is_dir() {
-            return Task::ready(Err(anyhow!("{} is not a directory.", input.path))).into();
+            return Task::ready(Err(anyhow!("{} is not a directory.", input.path)));
         }
         let worktree_snapshot = worktree.read(cx).snapshot();
 
@@ -207,7 +203,7 @@ impl AgentTool for ListDirectoryTool {
             writeln!(output, "{} is empty.", input.path).unwrap();
         }
 
-        Task::ready(Ok(output.into())).into()
+        Task::ready(Ok(output))
     }
 }
 

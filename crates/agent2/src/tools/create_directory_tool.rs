@@ -69,7 +69,7 @@ impl AgentTool for CreateDirectoryTool {
         let project_path = match self.project.read(cx).find_project_path(&input.path, cx) {
             Some(project_path) => project_path,
             None => {
-                return Task::ready(Err(anyhow!("Path to create was outside the project"))).into();
+                return Task::ready(Err(anyhow!("Path to create was outside the project")));
             }
         };
         let destination_path: Arc<str> = input.path.as_str().into();
@@ -83,8 +83,7 @@ impl AgentTool for CreateDirectoryTool {
                 .await
                 .with_context(|| format!("Creating directory {destination_path}"))?;
 
-            Ok(format!("Created directory {destination_path}").into())
+            Ok(format!("Created directory {destination_path}"))
         })
-        .into()
     }
 }

@@ -71,8 +71,7 @@ impl AgentTool for DeletePathTool {
         let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path} because that path isn't in this project."
-            )))
-            .into();
+            )));
         };
 
         let Some(worktree) = self
@@ -82,8 +81,7 @@ impl AgentTool for DeletePathTool {
         else {
             return Task::ready(Err(anyhow!(
                 "Couldn't delete {path} because that path isn't in this project."
-            )))
-            .into();
+            )));
         };
 
         let worktree_snapshot = worktree.read(cx).snapshot();
