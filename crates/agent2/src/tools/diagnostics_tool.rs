@@ -98,12 +98,10 @@ impl AgentTool for DiagnosticsTool {
         event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
-        dbg!(&input);
         match input.path {
             Some(path) if !path.is_empty() => {
                 let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
-                        .into();
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
                 };
 
                 let buffer = self
@@ -139,12 +137,11 @@ impl AgentTool for DiagnosticsTool {
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string().into())
+                        Ok("File doesn't have errors or warnings!".to_string())
                     } else {
-                        Ok(output.into())
+                        Ok(output)
                     }
                 })
-                .into()
             }
             _ => {
                 let project = self.project.read(cx);
@@ -175,14 +172,14 @@ impl AgentTool for DiagnosticsTool {
                         content: Some(vec![output.clone().into()]),
                         ..Default::default()
                     });
-                    Task::ready(Ok(output.into())).into()
+                    Task::ready(Ok(output))
                 } else {
                     let text = "No errors or warnings found in the project.";
                     event_stream.update_fields(acp::ToolCallUpdateFields {
                         content: Some(vec![text.into()]),
                         ..Default::default()
                     });
-                    Task::ready(Ok(text.into())).into()
+                    Task::ready(Ok(text.into()))
                 }
             }
         }

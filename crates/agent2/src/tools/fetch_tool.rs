@@ -141,20 +141,18 @@ impl AgentTool for FetchTool {
             async move { Self::build_message(http_client, &input.url).await }
         });
 
-        cx.foreground_executor()
-            .spawn(async move {
-                let text = text.await?;
-                if text.trim().is_empty() {
-                    bail!("no textual content found");
-                }
+        cx.foreground_executor().spawn(async move {
+            let text = text.await?;
+            if text.trim().is_empty() {
+                bail!("no textual content found");
+            }
 
-                event_stream.update_fields(acp::ToolCallUpdateFields {
-                    content: Some(vec![text.clone().into()]),
-                    ..Default::default()
-                });
+            event_stream.update_fields(acp::ToolCallUpdateFields {
+                content: Some(vec![text.clone().into()]),
+                ..Default::default()
+            });
 
-                Ok(text.into())
-            })
-            .into()
+            Ok(text)
+        })
     }
 }
