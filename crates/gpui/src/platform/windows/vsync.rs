@@ -14,8 +14,12 @@ use windows::Win32::{
         },
         Dwm::{DWM_TIMING_INFO, DwmFlush, DwmGetCompositionTimingInfo},
     },
-    System::{Performance::QueryPerformanceFrequency, Threading::INFINITE},
+    System::{
+        LibraryLoader::GetProcAddress, Performance::QueryPerformanceFrequency, Threading::INFINITE,
+    },
 };
+
+use crate::with_dll_library;
 
 static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     let mut frequency = 0;
@@ -35,16 +39,34 @@ pub(crate) struct VSyncProvider {
 
 impl VSyncProvider {
     pub(crate) fn new() -> Self {
-        if let Ok(interval) = get_dwm_interval_from_direct_composition() {
-            log::info!("DWM interval from DirectComposition: {:?}", interval);
+        let support_direct_composition =
+            with_dll_library(windows::core::s!("dcomp.dll"), |dcomp| unsafe {
+                let frame_id_fn =
+                    GetProcAddress(dcomp, windows::core::s!("DCompositionGetFrameId")).is_some();
+                let stats_fn =
+                    GetProcAddress(dcomp, windows::core::s!("DCompositionGetStatistics")).is_some();
+                let vsync_fn = GetProcAddress(
+                    dcomp,
+                    windows::core::s!("DCompositionWaitForCompositorClock"),
+                )
+                .is_some();
+                Ok(frame_id_fn && stats_fn && vsync_fn)
+            })
+            .is_ok_and(|result| result);
+        if support_direct_composition {
+            log::info!("DirectComposition is supported for VSync");
+            let interval = get_dwm_interval_from_direct_composition()
+                .context("Failed to get DWM interval from DirectComposition")
+                .log_err()
+                .unwrap_or(DEFAULT_VSYNC_INTERVAL);
             let f = Box::new(|| unsafe { DCompositionWaitForCompositorClock(None, INFINITE) == 0 });
             Self { interval, f }
         } else {
+            log::info!("DirectComposition is not supported for VSync, falling back to DWM");
             let interval = get_dwm_interval()
                 .context("Failed to get DWM interval")
                 .log_err()
                 .unwrap_or(DEFAULT_VSYNC_INTERVAL);
-            log::info!("DWM interval: {:?}", interval);
             let f = Box::new(|| unsafe { DwmFlush().is_ok() });
             Self { interval, f }
         }
