@@ -5,9 +5,11 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use client::{Client, UserStore};
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{AppContext, Entity, Task, TestAppContext, http_client::FakeHttpClient};
+use gpui::{
+    App, AppContext, Entity, Task, TestAppContext, UpdateGlobal, http_client::FakeHttpClient,
+};
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
@@ -20,6 +22,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
@@ -282,6 +285,63 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
                 output: None
             })
         ]
+    );
+
+    // Simulate yet another tool call.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_3".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+
+    // Respond by always allowing tools.
+    let tool_call_auth_3 = next_tool_call_authorization(&mut events).await;
+    tool_call_auth_3
+        .response
+        .send(tool_call_auth_3.options[0].id.clone())
+        .unwrap();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![MessageContent::ToolResult(LanguageModelToolResult {
+            tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
+            tool_name: ToolRequiringPermission.name().into(),
+            is_error: false,
+            content: "Allowed".into(),
+            output: Some("Allowed".into())
+        })]
+    );
+
+    // Simulate a final tool call, ensuring we don't trigger authorization.
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_id_4".into(),
+            name: ToolRequiringPermission.name().into(),
+            raw_input: "{}".into(),
+            input: json!({}),
+            is_input_complete: true,
+        },
+    ));
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+    let completion = fake_model.pending_completions().pop().unwrap();
+    let message = completion.messages.last().unwrap();
+    assert_eq!(
+        message.content,
+        vec![MessageContent::ToolResult(LanguageModelToolResult {
+            tool_use_id: "tool_id_4".into(),
+            tool_name: ToolRequiringPermission.name().into(),
+            is_error: false,
+            content: "Allowed".into(),
+            output: Some("Allowed".into())
+        })]
     );
 }
 
@@ -774,13 +834,17 @@ impl TestModel {
 
 async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+
     cx.update(|cx| {
         settings::init(cx);
+        watch_settings(fs.clone(), cx);
         Project::init_settings(cx);
+        agent_settings::init(cx);
     });
     let templates = Templates::new();
 
-    let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(path!("/test"), json!({})).await;
     let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
@@ -841,4 +905,27 @@ fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::init();
     }
+}
+
+fn watch_settings(fs: Arc<dyn Fs>, cx: &mut App) {
+    let fs = fs.clone();
+    cx.spawn({
+        async move |cx| {
+            let mut new_settings_content_rx = settings::watch_config_file(
+                cx.background_executor(),
+                fs,
+                paths::settings_file().clone(),
+            );
+
+            while let Some(new_settings_content) = new_settings_content_rx.next().await {
+                cx.update(|cx| {
+                    SettingsStore::update_global(cx, |settings, cx| {
+                        settings.set_user_settings(&new_settings_content, cx)
+                    })
+                })
+                .ok();
+            }
+        }
+    })
+    .detach();
 }

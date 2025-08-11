@@ -2,10 +2,12 @@ use crate::{SystemPromptTemplate, Template, Templates};
 use acp_thread::MentionUri;
 use action_log::ActionLog;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
+use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
     stream::FuturesUnordered,
@@ -22,9 +24,10 @@ use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
+use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
 use std::fmt::Write;
-use std::{cell::RefCell, collections::BTreeMap, future::Future, path::Path, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
@@ -529,8 +532,9 @@ impl Thread {
             }));
         };
 
+        let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
-            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone());
+            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone(), Some(fs));
         tool_event_stream.update_fields(acp::ToolCallUpdateFields {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
@@ -917,6 +921,7 @@ pub struct ToolCallEventStream {
     kind: acp::ToolKind,
     input: serde_json::Value,
     stream: AgentResponseEventStream,
+    fs: Option<Arc<dyn Fs>>,
 }
 
 impl ToolCallEventStream {
@@ -935,6 +940,7 @@ impl ToolCallEventStream {
             },
             acp::ToolKind::Other,
             AgentResponseEventStream(events_tx),
+            None,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -944,12 +950,14 @@ impl ToolCallEventStream {
         tool_use: &LanguageModelToolUse,
         kind: acp::ToolKind,
         stream: AgentResponseEventStream,
+        fs: Option<Arc<dyn Fs>>,
     ) -> Self {
         Self {
             tool_use_id: tool_use.id.clone(),
             kind,
             input: tool_use.input.clone(),
             stream,
+            fs,
         }
     }
 
@@ -984,7 +992,11 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn authorize(&self, title: String) -> impl use<> + Future<Output = Result<()>> {
+    pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return Task::ready(Ok(()));
+        }
+
         let (response_tx, response_rx) = oneshot::channel();
         self.stream
             .0
@@ -992,7 +1004,7 @@ impl ToolCallEventStream {
                 ToolCallAuthorization {
                     tool_call: AgentResponseEventStream::initial_tool_call(
                         &self.tool_use_id,
-                        title,
+                        title.into(),
                         self.kind.clone(),
                         self.input.clone(),
                     ),
@@ -1017,12 +1029,22 @@ impl ToolCallEventStream {
                 },
             )))
             .ok();
-        async move {
-            match response_rx.await?.0.as_ref() {
-                "allow" | "always_allow" => Ok(()),
-                _ => Err(anyhow!("Permission to run tool denied by user")),
+        let fs = self.fs.clone();
+        cx.spawn(async move |cx| match response_rx.await?.0.as_ref() {
+            "always_allow" => {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
+                            settings.set_always_allow_tool_actions(true);
+                        });
+                    })?;
+                }
+
+                Ok(())
             }
-        }
+            "allow" => Ok(()),
+            _ => Err(anyhow!("Permission to run tool denied by user")),
+        })
     }
 }
 
