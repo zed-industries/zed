@@ -1168,6 +1168,7 @@ impl AcpThreadView {
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
         );
+
         let is_edit = matches!(tool_call.kind, acp::ToolKind::Edit);
         let has_diff = tool_call
             .content
@@ -1177,8 +1178,10 @@ impl AcpThreadView {
             ToolCallContent::Diff(diff) => diff.read(cx).has_revealed_range(cx),
             _ => false,
         });
+
         let is_collapsible =
             !tool_call.content.is_empty() && !needs_confirmation && !is_edit && !has_diff;
+
         let is_open = tool_call.content.is_empty()
             || needs_confirmation
             || has_nonempty_diff
@@ -1196,6 +1199,31 @@ impl AcpThreadView {
                     linear_color_stop(color, 1.),
                     linear_color_stop(color.opacity(0.2), 0.),
                 ))
+        };
+
+        let tool_output_display = match &tool_call.status {
+            ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
+                .w_full()
+                .children(tool_call.content.iter().map(|content| {
+                    div()
+                        .child(self.render_tool_call_content(content, tool_call, window, cx))
+                        .into_any_element()
+                }))
+                .child(self.render_permission_buttons(
+                    options,
+                    entry_ix,
+                    tool_call.id.clone(),
+                    tool_call.content.is_empty(),
+                    cx,
+                )),
+            ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => v_flex()
+                .w_full()
+                .children(tool_call.content.iter().map(|content| {
+                    div()
+                        .child(self.render_tool_call_content(content, tool_call, window, cx))
+                        .into_any_element()
+                })),
+            ToolCallStatus::Rejected => v_flex().size_0(),
         };
 
         v_flex()
@@ -1230,13 +1258,6 @@ impl AcpThreadView {
                             .group(&card_header_id)
                             .relative()
                             .w_full()
-                            .map(|this| {
-                                if tool_call.locations.len() == 1 {
-                                    this.gap_0()
-                                } else {
-                                    this.gap_1p5()
-                                }
-                            })
                             .text_size(self.tool_name_font_size())
                             .child(self.render_tool_call_icon(
                                 card_header_id,
@@ -1280,6 +1301,7 @@ impl AcpThreadView {
                                     .id("non-card-label-container")
                                     .w_full()
                                     .relative()
+                                    .ml_1p5()
                                     .overflow_hidden()
                                     .child(
                                         h_flex()
@@ -1297,7 +1319,7 @@ impl AcpThreadView {
                                             )),
                                     )
                                     .map(|this| {
-                                        if needs_confirmation {
+                                        if needs_confirmation || is_edit || has_diff {
                                             this.child(gradient_overlay(
                                                 self.tool_card_header_bg(cx),
                                             ))
@@ -1323,54 +1345,7 @@ impl AcpThreadView {
                     )
                     .children(status_icon),
             )
-            .when(is_open, |this| {
-                this.child(
-                    v_flex()
-                        .text_xs()
-                        .when(is_collapsible, |this| {
-                            this.mt_1()
-                                .border_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .bg(cx.theme().colors().editor_background)
-                                .rounded_lg()
-                        })
-                        .map(|this| {
-                            if is_open {
-                                match &tool_call.status {
-                                    ToolCallStatus::WaitingForConfirmation { options, .. } => this
-                                        .children(tool_call.content.iter().map(|content| {
-                                            div()
-                                                .py_1p5()
-                                                .child(self.render_tool_call_content(
-                                                    content, tool_call, window, cx,
-                                                ))
-                                                .into_any_element()
-                                        }))
-                                        .child(self.render_permission_buttons(
-                                            options,
-                                            entry_ix,
-                                            tool_call.id.clone(),
-                                            tool_call.content.is_empty(),
-                                            cx,
-                                        )),
-                                    ToolCallStatus::Allowed { .. } | ToolCallStatus::Canceled => {
-                                        this.children(tool_call.content.iter().map(|content| {
-                                            div()
-                                                .py_1p5()
-                                                .child(self.render_tool_call_content(
-                                                    content, tool_call, window, cx,
-                                                ))
-                                                .into_any_element()
-                                        }))
-                                    }
-                                    ToolCallStatus::Rejected => this,
-                                }
-                            } else {
-                                this
-                            }
-                        }),
-                )
-            })
+            .when(is_open, |this| this.child(tool_output_display))
     }
 
     fn render_tool_call_content(
@@ -1382,16 +1357,10 @@ impl AcpThreadView {
     ) -> AnyElement {
         match content {
             ToolCallContent::ContentBlock(content) => {
-                if let Some(md) = content.markdown() {
-                    div()
-                        .p_2()
-                        .child(
-                            self.render_markdown(
-                                md.clone(),
-                                default_markdown_style(false, window, cx),
-                            ),
-                        )
-                        .into_any_element()
+                if let Some(resource_link) = content.resource_link() {
+                    self.render_resource_link(resource_link, window, cx)
+                } else if let Some(markdown) = content.markdown() {
+                    self.render_markdown_output(markdown.clone(), tool_call.id.clone(), window, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -1401,6 +1370,77 @@ impl AcpThreadView {
                 self.render_terminal_tool_call(terminal, tool_call, window, cx)
             }
         }
+    }
+
+    fn render_markdown_output(
+        &self,
+        markdown: Entity<Markdown>,
+        tool_call_id: acp::ToolCallId,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let button_id = SharedString::from(format!("tool_output-{:?}", tool_call_id.clone()));
+
+        v_flex()
+            .mt_1p5()
+            .ml(px(7.))
+            .px_3p5()
+            .gap_2()
+            .border_l_1()
+            .border_color(self.tool_card_border_color(cx))
+            .text_sm()
+            .text_color(cx.theme().colors().text_muted)
+            .child(self.render_markdown(markdown, default_markdown_style(false, window, cx)))
+            .child(
+                Button::new(button_id, "Collapse Output")
+                    .full_width()
+                    .style(ButtonStyle::Outlined)
+                    .label_size(LabelSize::Small)
+                    .icon(IconName::ChevronUp)
+                    .icon_color(Color::Muted)
+                    .on_click(cx.listener({
+                        let id = tool_call_id.clone();
+                        move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                            this.expanded_tool_calls.remove(&id);
+                            cx.notify();
+                        }
+                    })),
+            )
+            .into_any_element()
+    }
+
+    fn render_resource_link(
+        &self,
+        resource_link: &acp::ResourceLink,
+        _window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let uri = &resource_link.uri;
+
+        let label: SharedString = if let Some(path) = uri.strip_prefix("file://") {
+            path.to_string().into()
+        } else {
+            uri.clone().into()
+        };
+
+        let button_id = SharedString::from(format!("item-{}", uri.clone()));
+
+        div()
+            .ml(px(7.))
+            .pl_2p5()
+            .border_l_1()
+            .border_color(self.tool_card_border_color(cx))
+            .overflow_hidden()
+            .child(
+                Button::new(button_id, label)
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .icon(IconName::ArrowUpRight)
+                    .icon_size(IconSize::XSmall)
+                    .icon_color(Color::Muted)
+                    .truncate(true),
+            )
+            .into_any_element()
     }
 
     fn render_permission_buttons(
@@ -1678,7 +1718,9 @@ impl AcpThreadView {
             .overflow_hidden()
             .child(
                 v_flex()
-                    .p_2()
+                    .pt_1()
+                    .pb_2()
+                    .px_2()
                     .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
