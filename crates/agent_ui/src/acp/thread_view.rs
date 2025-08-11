@@ -1658,7 +1658,7 @@ impl AcpThreadView {
             );
 
         let show_output =
-            self.terminal_expanded && self.terminal_views.get(&terminal.entity_id()).is_some();
+            self.terminal_expanded && self.terminal_views.contains_key(&terminal.entity_id());
 
         v_flex()
             .mb_2()
