@@ -403,7 +403,11 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::HelixNormal => {
+                // In Helix, we don't have a separate visual mode, so we treat it like normal mode
+                self.helix_object(object, count, window, cx);
+            }
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
@@ -745,7 +749,7 @@ fn in_word(
         .buffer_snapshot
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    let start = movement::find_preceding_boundary_display_point(
+    let start = movement::find_preceding_boundary(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
@@ -783,7 +787,7 @@ fn in_subword(
         .unwrap_or(false);
 
     let start = if in_subword {
-        movement::find_preceding_boundary_display_point(
+        movement::find_preceding_boundary(
             map,
             right(map, relative_to, 1),
             movement::FindRange::SingleLine,
@@ -937,7 +941,7 @@ fn around_subword(
         .buffer_snapshot
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
-    let start = movement::find_preceding_boundary_display_point(
+    let start = movement::find_preceding_boundary(
         map,
         right(map, relative_to, 1),
         movement::FindRange::SingleLine,
@@ -997,7 +1001,7 @@ fn around_next_word(
         .char_classifier_at(relative_to.to_point(map))
         .ignore_punctuation(ignore_punctuation);
     // Get the start of the word
-    let start = movement::find_preceding_boundary_display_point(
+    let start = movement::find_preceding_boundary(
         map,
         right(map, relative_to, 1),
         FindRange::SingleLine,
