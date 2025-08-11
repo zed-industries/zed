@@ -29,8 +29,14 @@ impl Terminal {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            command: cx
-                .new(|cx| Markdown::new(command.into(), Some(language_registry.clone()), None, cx)),
+            command: cx.new(|cx| {
+                Markdown::new(
+                    format!("```\n{}\n```", command).into(),
+                    Some(language_registry.clone()),
+                    None,
+                    cx,
+                )
+            }),
             working_dir,
             terminal,
             started_at: Instant::now(),
