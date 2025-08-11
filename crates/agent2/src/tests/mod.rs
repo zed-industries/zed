@@ -1,4 +1,5 @@
 use super::*;
+use crate::MessageContent;
 use acp_thread::AgentConnection;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
@@ -10,8 +11,8 @@ use gpui::{AppContext, Entity, Task, TestAppContext, http_client::FakeHttpClient
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
-    StopReason, fake_provider::FakeLanguageModel,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, Role, StopReason,
+    fake_provider::FakeLanguageModel,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -266,14 +267,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     assert_eq!(
         message.content,
         vec![
-            MessageContent::ToolResult(LanguageModelToolResult {
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
                 tool_name: ToolRequiringPermission.name().into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
-            MessageContent::ToolResult(LanguageModelToolResult {
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
                 tool_name: ToolRequiringPermission.name().into(),
                 is_error: true,
