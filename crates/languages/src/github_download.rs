@@ -18,9 +18,8 @@ impl GithubBinaryMetadata {
         let metadata_content = async_fs::read_to_string(metadata_path)
             .await
             .with_context(|| format!("reading metadata file at {metadata_path:?}"))?;
-        let metadata: GithubBinaryMetadata = serde_json::from_str(&metadata_content)
-            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))?;
-        Ok(metadata)
+        serde_json::from_str(&metadata_content)
+            .with_context(|| format!("parsing metadata file at {metadata_path:?}"))
     }
 
     pub(crate) async fn write_to_file(&self, metadata_path: &Path) -> Result<()> {
@@ -62,11 +61,6 @@ pub(crate) async fn download_server_binary(
                     format!("saving archive contents into the temporary file for {url}",)
                 })?;
             let asset_sha_256 = format!("{:x}", writer.hasher.finalize());
-
-            // Strip "sha256:" prefix for comparison
-            let expected_sha_256 = expected_sha_256
-                .strip_prefix("sha256:")
-                .unwrap_or(expected_sha_256);
 
             anyhow::ensure!(
                 asset_sha_256 == expected_sha_256,
