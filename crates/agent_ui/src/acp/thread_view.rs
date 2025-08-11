@@ -1153,16 +1153,25 @@ impl AcpThreadView {
             ),
         };
 
-        let needs_confirmation = match &tool_call.status {
-            ToolCallStatus::WaitingForConfirmation { .. } => true,
-            _ => tool_call
-                .content
-                .iter()
-                .any(|content| matches!(content, ToolCallContent::Diff(_))),
-        };
-
-        let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let is_open = !is_collapsible || self.expanded_tool_calls.contains(&tool_call.id);
+        let needs_confirmation = matches!(
+            tool_call.status,
+            ToolCallStatus::WaitingForConfirmation { .. }
+        );
+        let is_edit = matches!(tool_call.kind, acp::ToolKind::Edit);
+        let has_diff = tool_call
+            .content
+            .iter()
+            .any(|content| matches!(content, ToolCallContent::Diff { .. }));
+        let has_nonempty_diff = tool_call.content.iter().any(|content| match content {
+            ToolCallContent::Diff(diff) => diff.read(cx).has_revealed_range(cx),
+            _ => false,
+        });
+        let is_collapsible =
+            !tool_call.content.is_empty() && !needs_confirmation && !is_edit && !has_diff;
+        let is_open = tool_call.content.is_empty()
+            || needs_confirmation
+            || has_nonempty_diff
+            || self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_color = cx.theme().colors().panel_background;
         let gradient_overlay = {
@@ -1180,7 +1189,7 @@ impl AcpThreadView {
         };
 
         v_flex()
-            .when(needs_confirmation, |this| {
+            .when(needs_confirmation || is_edit || has_diff, |this| {
                 this.rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
@@ -1194,7 +1203,7 @@ impl AcpThreadView {
                     .gap_1()
                     .justify_between()
                     .map(|this| {
-                        if needs_confirmation {
+                        if needs_confirmation || is_edit || has_diff {
                             this.pl_2()
                                 .pr_1()
                                 .py_1()
@@ -1271,7 +1280,7 @@ impl AcpThreadView {
                                             .child(self.render_markdown(
                                                 tool_call.label.clone(),
                                                 default_markdown_style(
-                                                    needs_confirmation,
+                                                    needs_confirmation || is_edit || has_diff,
                                                     window,
                                                     cx,
                                                 ),
