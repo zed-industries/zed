@@ -238,7 +238,7 @@ impl LspAdapter for RustLspAdapter {
         )
         .await?;
         make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| server_path == path).await;
+        remove_matching(&container_dir, |path| server_path != path).await;
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
