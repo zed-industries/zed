@@ -962,13 +962,23 @@ impl settings::Settings for DisableAiSettings {
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        debug_assert_eq!(
+            sources.default.unwrap_or(false),
+            false,
+            "For security, disable_ai should always be false in default.json. If it's true, that is a bug that should be fixed!"
+        );
+
+        // For security reasons, only trust the user's global settings or server settings for whether to disable AI.
+        // If this could be overridden locally, an attacker could (e.g. by committing to source control and
+        // convincing you to switch branches) modify your project-local settings to enable AI features when
+        // they should be disabled, potentially exposing sensitive information.
         Ok(Self {
             disable_ai: sources
                 .user
                 .or(sources.server)
                 .copied()
                 .flatten()
-                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+                .unwrap_or(false),
         })
     }
 
