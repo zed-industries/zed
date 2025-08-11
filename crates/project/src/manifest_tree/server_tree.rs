@@ -13,7 +13,7 @@ use std::{
 };
 
 use collections::IndexMap;
-use gpui::{App, AppContext as _, Entity, Subscription};
+use gpui::{App, Entity};
 use language::{
     CachedLspAdapter, LanguageName, LanguageRegistry, ManifestDelegate, ManifestName,
     language_settings::AllLanguageSettings,
@@ -24,9 +24,9 @@ use std::sync::OnceLock;
 
 use crate::{LanguageServerId, ProjectPath, project_settings::LspSettings};
 
-use super::{ManifestTree, ManifestTreeEvent};
+use super::ManifestTree;
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct ServersForWorktree {
     pub(crate) roots: BTreeMap<
         Arc<Path>,
@@ -38,7 +38,6 @@ pub struct LanguageServerTree {
     manifest_tree: Entity<ManifestTree>,
     pub(crate) instances: BTreeMap<WorktreeId, ServersForWorktree>,
     languages: Arc<LanguageRegistry>,
-    _subscriptions: Subscription,
 }
 
 /// A node in language server tree represents either:
@@ -110,21 +109,30 @@ impl LanguageServerTree {
     pub(crate) fn new(
         manifest_tree: Entity<ManifestTree>,
         languages: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        cx.new(|cx| Self {
-            _subscriptions: cx.subscribe(&manifest_tree, |_: &mut Self, _, event, _| {
-                if event == &ManifestTreeEvent::Cleared {}
-            }),
+    ) -> Self {
+        Self {
             manifest_tree,
             instances: Default::default(),
-
             languages,
-        })
+        }
+    }
+
+    /// Get all initialized language server IDs for a given path.
+    pub(crate) fn get<'a>(
+        &'a self,
+        path: ProjectPath,
+        language_name: LanguageName,
+        manifest_name: Option<&ManifestName>,
+        delegate: &Arc<dyn ManifestDelegate>,
+        cx: &mut App,
+    ) -> impl Iterator<Item = LanguageServerId> + 'a {
+        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
+        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
+        self.get_with_adapters(manifest_location, adapters)
     }
 
     /// Get all language server root points for a given path and language; the language servers might already be initialized at a given path.
-    pub(crate) fn get<'a>(
+    pub(crate) fn walk<'a>(
         &'a mut self,
         path: ProjectPath,
         language_name: LanguageName,
@@ -134,10 +142,10 @@ impl LanguageServerTree {
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
         let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.get_with_adapters(manifest_location, adapters)
+        self.init_with_adapters(manifest_location, adapters)
     }
 
-    fn get_with_adapters<'a>(
+    fn init_with_adapters<'a>(
         &'a mut self,
         root_path: ProjectPath,
         adapters: IndexMap<
@@ -172,6 +180,28 @@ impl LanguageServerTree {
             })
     }
 
+    fn get_with_adapters<'a>(
+        &'a self,
+        root_path: ProjectPath,
+        adapters: IndexMap<
+            LanguageServerName,
+            (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>),
+        >,
+    ) -> impl Iterator<Item = LanguageServerId> + 'a {
+        adapters
+            .into_iter()
+            .filter_map(move |(_, (_, _, adapter))| {
+                let root_path = root_path.clone();
+                let inner_node = self
+                    .instances
+                    .get(&root_path.worktree_id)?
+                    .roots
+                    .get(&root_path.path)?
+                    .get(&adapter.name())?;
+                inner_node.0.id.get().copied()
+            })
+    }
+
     fn manifest_location_for_path(
         &self,
         path: &ProjectPath,
@@ -185,11 +215,12 @@ impl LanguageServerTree {
             this.root_for_path_or_worktree_root(path, manifest_name, delegate, cx)
         })
     }
+
     fn adapters_for_language(
         &self,
         manifest_location: &ProjectPath,
         language_name: &LanguageName,
-        cx: &mut App,
+        cx: &App,
     ) -> IndexMap<LanguageServerName, (LspSettings, BTreeSet<LanguageName>, Arc<CachedLspAdapter>)>
     {
         let settings_location = SettingsLocation {
@@ -272,7 +303,7 @@ impl LanguageServerTree {
     /// E.g. if the user disables one of their language servers for Python, we don't want to shut down any language servers unaffected by this settings change.
     ///
     /// Thus, [`ServerTreeRebase`] mimicks the interface of a [`ServerTree`], except that it tries to find a matching language server in the old tree before handing out an uninitialized node.
-    pub(crate) fn rebase(&mut self) -> ServerTreeRebase<'_> {
+    pub(crate) fn rebase(&mut self) -> ServerTreeRebase {
         ServerTreeRebase::new(self)
     }
 
@@ -308,9 +339,9 @@ impl LanguageServerTree {
     }
 }
 
-pub(crate) struct ServerTreeRebase<'a> {
+pub(crate) struct ServerTreeRebase {
     old_contents: BTreeMap<WorktreeId, ServersForWorktree>,
-    new_tree: &'a mut LanguageServerTree,
+    new_tree: LanguageServerTree,
     /// All server IDs seen in the old tree.
     all_server_ids: BTreeMap<LanguageServerId, LanguageServerName>,
     /// Server IDs we've preserved for a new iteration of the tree. `all_server_ids - rebased_server_ids` is the
@@ -318,9 +349,9 @@ pub(crate) struct ServerTreeRebase<'a> {
     rebased_server_ids: BTreeSet<LanguageServerId>,
 }
 
-impl<'tree> ServerTreeRebase<'tree> {
-    fn new(new_tree: &'tree mut LanguageServerTree) -> Self {
-        let old_contents = std::mem::take(&mut new_tree.instances);
+impl ServerTreeRebase {
+    fn new(old_tree: &LanguageServerTree) -> Self {
+        let old_contents = old_tree.instances.clone();
         let all_server_ids = old_contents
             .values()
             .flat_map(|nodes| {
@@ -336,15 +367,17 @@ impl<'tree> ServerTreeRebase<'tree> {
                 })
             })
             .collect();
+        let new_tree =
+            LanguageServerTree::new(old_tree.manifest_tree.clone(), old_tree.languages.clone());
         Self {
             old_contents,
-            new_tree,
             all_server_ids,
+            new_tree,
             rebased_server_ids: BTreeSet::new(),
         }
     }
 
-    pub(crate) fn get<'a>(
+    pub(crate) fn walk<'a>(
         &'a mut self,
         path: ProjectPath,
         language_name: LanguageName,
@@ -360,7 +393,7 @@ impl<'tree> ServerTreeRebase<'tree> {
             .adapters_for_language(&manifest, &language_name, cx);
 
         self.new_tree
-            .get_with_adapters(manifest, adapters)
+            .init_with_adapters(manifest, adapters)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.
@@ -389,11 +422,19 @@ impl<'tree> ServerTreeRebase<'tree> {
     }
 
     /// Returns IDs of servers that are no longer referenced (and can be shut down).
-    pub(crate) fn finish(self) -> BTreeMap<LanguageServerId, LanguageServerName> {
-        self.all_server_ids
-            .into_iter()
-            .filter(|(id, _)| !self.rebased_server_ids.contains(id))
-            .collect()
+    pub(crate) fn finish(
+        self,
+    ) -> (
+        LanguageServerTree,
+        BTreeMap<LanguageServerId, LanguageServerName>,
+    ) {
+        (
+            self.new_tree,
+            self.all_server_ids
+                .into_iter()
+                .filter(|(id, _)| !self.rebased_server_ids.contains(id))
+                .collect(),
+        )
     }
 
     pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {

@@ -10,7 +10,7 @@ mod server_tree;
 use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, path::Path, sync::Arc};
 
 use collections::HashMap;
-use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Subscription};
+use gpui::{App, AppContext as _, Context, Entity, Subscription};
 use language::{ManifestDelegate, ManifestName, ManifestQuery};
 pub use manifest_store::ManifestProviders;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
@@ -73,14 +73,6 @@ pub struct ManifestTree {
     _subscriptions: [Subscription; 2],
 }
 
-#[derive(PartialEq)]
-pub(crate) enum ManifestTreeEvent {
-    WorktreeRemoved(WorktreeId),
-    Cleared,
-}
-
-impl EventEmitter<ManifestTreeEvent> for ManifestTree {}
-
 impl ManifestTree {
     pub fn new(worktree_store: Entity<WorktreeStore>, cx: &mut App) -> Entity<Self> {
         cx.new(|cx| Self {
@@ -93,7 +85,6 @@ impl ManifestTree {
                             worktree_roots.roots = RootPathTrie::new();
                         })
                     }
-                    cx.emit(ManifestTreeEvent::Cleared);
                 }),
             ],
             worktree_store,
@@ -203,12 +194,11 @@ impl ManifestTree {
         &mut self,
         _: Entity<WorktreeStore>,
         evt: &WorktreeStoreEvent,
-        cx: &mut Context<Self>,
+        _: &mut Context<Self>,
     ) {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 self.root_points.remove(&worktree_id);
-                cx.emit(ManifestTreeEvent::WorktreeRemoved(*worktree_id));
             }
             _ => {}
         }
