@@ -1,17 +1,36 @@
-use crate::schema::json_schema_for;
-use action_log::ActionLog;
+use crate::{AgentTool, ToolCallEventStream};
+use agent_client_protocol as acp;
 use anyhow::{Result, anyhow};
-use assistant_tool::{Tool, ToolResult};
-use gpui::{AnyWindowHandle, App, Entity, Task};
+use gpui::{App, Entity, Task};
 use language::{DiagnosticSeverity, OffsetRangeExt};
-use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{fmt::Write, path::Path, sync::Arc};
-use ui::IconName;
+use ui::SharedString;
 use util::markdown::MarkdownInlineCode;
 
+/// Get errors and warnings for the project or a specific file.
+///
+/// This tool can be invoked after a series of edits to determine if further edits are necessary, or if the user asks to fix errors or warnings in their codebase.
+///
+/// When a path is provided, shows all diagnostics for that specific file.
+/// When no path is provided, shows a summary of error and warning counts for all files in the project.
+///
+/// <example>
+/// To get diagnostics for a specific file:
+/// {
+///     "path": "src/main.rs"
+/// }
+///
+/// To get a project-wide diagnostic summary:
+/// {}
+/// </example>
+///
+/// <guidelines>
+/// - If you think you can fix a diagnostic, make 1-2 attempts and then give up.
+/// - Don't remove code you've generated just because you can't fix an error. The user can help you fix it.
+/// </guidelines>
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsToolInput {
     /// The path to get diagnostics for. If not provided, returns a project-wide summary.
@@ -27,82 +46,57 @@ pub struct DiagnosticsToolInput {
     ///
     /// If you wanna access diagnostics for `dolor.txt` in `ipsum`, you should use the path `ipsum/dolor.txt`.
     /// </example>
-    #[serde(deserialize_with = "deserialize_path")]
     pub path: Option<String>,
 }
 
-fn deserialize_path<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = Option::<String>::deserialize(deserializer)?;
-    // The model passes an empty string sometimes
-    Ok(opt.filter(|s| !s.is_empty()))
+pub struct DiagnosticsTool {
+    project: Entity<Project>,
 }
 
-pub struct DiagnosticsTool;
+impl DiagnosticsTool {
+    pub fn new(project: Entity<Project>) -> Self {
+        Self { project }
+    }
+}
 
-impl Tool for DiagnosticsTool {
-    fn name(&self) -> String {
+impl AgentTool for DiagnosticsTool {
+    type Input = DiagnosticsToolInput;
+    type Output = String;
+
+    fn name(&self) -> SharedString {
         "diagnostics".into()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
-        false
+    fn kind(&self) -> acp::ToolKind {
+        acp::ToolKind::Read
     }
 
-    fn may_perform_edits(&self) -> bool {
-        false
-    }
-
-    fn description(&self) -> String {
-        include_str!("./diagnostics_tool/description.md").into()
-    }
-
-    fn icon(&self) -> IconName {
-        IconName::ToolDiagnostics
-    }
-
-    fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        json_schema_for::<DiagnosticsToolInput>(format)
-    }
-
-    fn ui_text(&self, input: &serde_json::Value) -> String {
-        if let Some(path) = serde_json::from_value::<DiagnosticsToolInput>(input.clone())
-            .ok()
-            .and_then(|input| match input.path {
-                Some(path) if !path.is_empty() => Some(path),
-                _ => None,
-            })
-        {
-            format!("Check diagnostics for {}", MarkdownInlineCode(&path))
+    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+        if let Some(path) = input.ok().and_then(|input| match input.path {
+            Some(path) if !path.is_empty() => Some(path),
+            _ => None,
+        }) {
+            format!("Check diagnostics for {}", MarkdownInlineCode(&path)).into()
         } else {
-            "Check project diagnostics".to_string()
+            "Check project diagnostics".into()
         }
     }
 
     fn run(
         self: Arc<Self>,
-        input: serde_json::Value,
-        _request: Arc<LanguageModelRequest>,
-        project: Entity<Project>,
-        _action_log: Entity<ActionLog>,
-        _model: Arc<dyn LanguageModel>,
-        _window: Option<AnyWindowHandle>,
+        input: Self::Input,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
-    ) -> ToolResult {
-        match serde_json::from_value::<DiagnosticsToolInput>(input)
-            .ok()
-            .and_then(|input| input.path)
-        {
+    ) -> Task<Result<Self::Output>> {
+        match input.path {
             Some(path) if !path.is_empty() => {
-                let Some(project_path) = project.read(cx).find_project_path(&path, cx) else {
-                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)))
-                        .into();
+                let Some(project_path) = self.project.read(cx).find_project_path(&path, cx) else {
+                    return Task::ready(Err(anyhow!("Could not find path {path} in project",)));
                 };
 
-                let buffer =
-                    project.update(cx, |project, cx| project.open_buffer(project_path, cx));
+                let buffer = self
+                    .project
+                    .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
                 cx.spawn(async move |cx| {
                     let mut output = String::new();
@@ -125,18 +119,22 @@ impl Tool for DiagnosticsTool {
                             range.start.row + 1,
                             entry.diagnostic.message
                         )?;
+
+                        event_stream.update_fields(acp::ToolCallUpdateFields {
+                            content: Some(vec![output.clone().into()]),
+                            ..Default::default()
+                        });
                     }
 
                     if output.is_empty() {
-                        Ok("File doesn't have errors or warnings!".to_string().into())
+                        Ok("File doesn't have errors or warnings!".to_string())
                     } else {
-                        Ok(output.into())
+                        Ok(output)
                     }
                 })
-                .into()
             }
             _ => {
-                let project = project.read(cx);
+                let project = self.project.read(cx);
                 let mut output = String::new();
                 let mut has_diagnostics = false;
 
@@ -160,12 +158,18 @@ impl Tool for DiagnosticsTool {
                 }
 
                 if has_diagnostics {
-                    Task::ready(Ok(output.into())).into()
+                    event_stream.update_fields(acp::ToolCallUpdateFields {
+                        content: Some(vec![output.clone().into()]),
+                        ..Default::default()
+                    });
+                    Task::ready(Ok(output))
                 } else {
-                    Task::ready(Ok("No errors or warnings found in the project."
-                        .to_string()
-                        .into()))
-                    .into()
+                    let text = "No errors or warnings found in the project.";
+                    event_stream.update_fields(acp::ToolCallUpdateFields {
+                        content: Some(vec![text.into()]),
+                        ..Default::default()
+                    });
+                    Task::ready(Ok(text.into()))
                 }
             }
         }
