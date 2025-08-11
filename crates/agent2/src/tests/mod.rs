@@ -4,9 +4,11 @@ use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use client::{Client, UserStore};
-use fs::FakeFs;
+use fs::{FakeFs, Fs};
 use futures::channel::mpsc::UnboundedReceiver;
-use gpui::{AppContext, Entity, Task, TestAppContext, UpdateGlobal, http_client::FakeHttpClient};
+use gpui::{
+    App, AppContext, Entity, Task, TestAppContext, UpdateGlobal, http_client::FakeHttpClient,
+};
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
@@ -316,7 +318,6 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
         })]
     );
 
-    println!("==============");
     // Simulate a final tool call, ensuring we don't trigger authorization.
     fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
         LanguageModelToolUse {
@@ -837,28 +838,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
 
     cx.update(|cx| {
         settings::init(cx);
-        cx.spawn({
-            let fs = fs.clone();
-            async move |cx| {
-                let mut new_settings_content_rx = settings::watch_config_file(
-                    cx.background_executor(),
-                    fs,
-                    paths::settings_file().clone(),
-                );
-
-                while let Some(new_settings_content) = new_settings_content_rx.next().await {
-                    cx.update(|cx| {
-                        SettingsStore::update_global(cx, |settings, cx| {
-                            settings.set_user_settings(&new_settings_content, cx)
-                        })
-                        .unwrap();
-                    })
-                    .ok();
-                }
-            }
-        })
-        .detach();
-
+        watch_settings(fs.clone(), cx);
         Project::init_settings(cx);
         agent_settings::init(cx);
     });
@@ -924,4 +904,27 @@ fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::init();
     }
+}
+
+fn watch_settings(fs: Arc<dyn Fs>, cx: &mut App) {
+    let fs = fs.clone();
+    cx.spawn({
+        async move |cx| {
+            let mut new_settings_content_rx = settings::watch_config_file(
+                cx.background_executor(),
+                fs,
+                paths::settings_file().clone(),
+            );
+
+            while let Some(new_settings_content) = new_settings_content_rx.next().await {
+                cx.update(|cx| {
+                    SettingsStore::update_global(cx, |settings, cx| {
+                        settings.set_user_settings(&new_settings_content, cx)
+                    })
+                })
+                .ok();
+            }
+        }
+    })
+    .detach();
 }

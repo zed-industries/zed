@@ -960,7 +960,7 @@ impl ToolCallEventStream {
     }
 
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
-        if dbg!(agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions) {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
         }
 
@@ -997,13 +997,11 @@ impl ToolCallEventStream {
             )))
             .ok();
         let fs = self.fs.clone();
-        cx.spawn(async move |cx| match dbg!(response_rx.await?.0.as_ref()) {
+        cx.spawn(async move |cx| match response_rx.await?.0.as_ref() {
             "always_allow" => {
-                dbg!(fs.is_some());
                 if let Some(fs) = fs.clone() {
                     cx.update(|cx| {
                         update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
-                            dbg!("setting");
                             settings.set_always_allow_tool_actions(true);
                         });
                     })?;
