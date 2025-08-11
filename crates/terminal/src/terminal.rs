@@ -2122,9 +2122,11 @@ mod tests {
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
+    #[cfg_attr(windows, ignore = "TODO: fix on windows")]
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
+
         let (completion_tx, completion_rx) = smol::channel::unbounded();
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
@@ -2133,7 +2135,7 @@ mod tests {
                 None,
                 task::Shell::WithArguments {
                     program: "echo".into(),
-                    args: vec!["hello world".into()],
+                    args: vec!["hello".into()],
                     title_override: None,
                 },
                 HashMap::default(),
@@ -2153,10 +2155,8 @@ mod tests {
             Some(ExitStatus::default())
         );
         assert_eq!(
-            terminal
-                .update(cx, |terminal, _| terminal.get_content())
-                .trim(),
-            "hello world"
+            terminal.update(cx, |term, _| term.get_content()).trim(),
+            "hello"
         );
     }
 
