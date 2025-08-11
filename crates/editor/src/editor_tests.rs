@@ -25425,6 +25425,101 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Set up document highlights manually (simulating LSP response)
+    cx.update_editor(|editor, _window, cx| {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        // Create highlights for "variable" occurrences
+        let highlight_ranges = [
+            Point::new(0, 4)..Point::new(0, 12),  // First "variable"
+            Point::new(1, 14)..Point::new(1, 22), // Second "variable"
+            Point::new(2, 13)..Point::new(2, 21), // Third "variable"
+        ];
+
+        let anchor_ranges: Vec<_> = highlight_ranges
+            .iter()
+            .map(|range| range.clone().to_anchors(&buffer_snapshot))
+            .collect();
+
+        editor.highlight_background::<DocumentHighlightRead>(
+            &anchor_ranges,
+            |theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    // Go to next highlight - should move to second "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to next highlight - should move to third "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Go to next highlight - should stay at third "variable" (no wrap-around)
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Now test going backwards from third position
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should move to first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should stay on first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+}
+
 #[track_caller]
 fn extract_color_inlays(editor: &Editor, cx: &App) -> Vec<Rgba> {
     editor
