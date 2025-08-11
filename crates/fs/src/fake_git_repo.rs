@@ -321,7 +321,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn stash_entries(&self) -> BoxFuture<'_, Result<git::stash::GitStash>> {
-        unimplemented!()
+        async { Ok(git::stash::GitStash::default()) }.boxed()
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
