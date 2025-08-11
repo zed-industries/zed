@@ -59,10 +59,10 @@ impl MentionUri {
                 format!("file://{}#{}", path.display(), name)
             }
             MentionUri::Thread(thread) => {
-                format!("zed://agent/thread/{}", thread.0)
+                format!("zed:///agent/thread/{}", thread.0)
             }
             MentionUri::Rule(rule) => {
-                format!("zed://agent/rule/{}", rule)
+                format!("zed:///agent/rule/{}", rule)
             }
         }
     }
@@ -96,7 +96,7 @@ mod tests {
         assert_eq!(parsed.to_uri(), symbol_uri);
 
         // Test thread URI
-        let thread_uri = "zed://agent/thread/session123";
+        let thread_uri = "zed:///agent/thread/session123";
         let parsed = MentionUri::parse(thread_uri).unwrap();
         match &parsed {
             MentionUri::Thread(session_id) => assert_eq!(session_id.0.as_ref(), "session123"),
@@ -105,7 +105,7 @@ mod tests {
         assert_eq!(parsed.to_uri(), thread_uri);
 
         // Test rule URI
-        let rule_uri = "zed://agent/rule/my_rule";
+        let rule_uri = "zed:///agent/rule/my_rule";
         let parsed = MentionUri::parse(rule_uri).unwrap();
         match &parsed {
             MentionUri::Rule(rule) => assert_eq!(rule, "my_rule"),
@@ -117,6 +117,6 @@ mod tests {
         assert!(MentionUri::parse("http://example.com").is_err());
 
         // Test invalid zed path
-        assert!(MentionUri::parse("zed://invalid/path").is_err());
+        assert!(MentionUri::parse("zed:///invalid/path").is_err());
     }
 }
