@@ -63,7 +63,7 @@ impl VSyncProvider {
         let vsync_start = Instant::now();
         let wait_succeeded = (self.f)();
         let elapsed = vsync_start.elapsed();
-        // WaitForVBlank and DCompositionWaitForCompositorClock returns very early
+        // DwmFlush and DCompositionWaitForCompositorClock returns very early
         // instead of waiting until vblank when the monitor goes to sleep or is
         // unplugged (nothing to present due to desktop occlusion). We use 1ms as
         // a threshhold for the duration of the wait functions and fallback to
