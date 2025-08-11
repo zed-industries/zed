@@ -40,7 +40,7 @@ impl AgentTool for NowTool {
         acp::ToolKind::Other
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
         "Get current time".into()
     }
 
@@ -57,7 +57,7 @@ impl AgentTool for NowTool {
         let content = format!("The current datetime is {now}.");
 
         event_stream.update_fields(acp::ToolCallUpdateFields {
-            content: Some(vec![content.into()]),
+            content: Some(vec![content.clone().into()]),
             ..Default::default()
         });
 
