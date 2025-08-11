@@ -5,6 +5,7 @@ use arrayvec::ArrayVec;
 pub use cursor::{Cursor, FilterCursor, Iter};
 use rayon::prelude::*;
 use std::borrow::Cow;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::mem;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
@@ -54,7 +55,6 @@ impl Summary for &'static () {
     }
 
     fn add_summary(&mut self, _: &Self, _: &()) {}
-    // fn sub_summary(&mut self, _: &Self, _: &()) {}
 }
 
 /// Each [`Summary`] type can have more than one [`Dimension`] type that it measures.
@@ -214,14 +214,20 @@ impl<T: Item> SumTree<T> {
         let mut iter = iter.into_iter().fuse().peekable();
         while iter.peek().is_some() {
             let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
-            let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                items.iter().map(|item| item.summary(cx)).collect();
-
-            let mut summary = item_summaries[0].clone();
-            for item_summary in &item_summaries[1..] {
-                <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
-            }
-
+            let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> = items
+                .iter()
+                .scan(None, |previous_item, item| {
+                    let summary = item.summary(cx);
+                    let current_item = if let Some(mut base) = previous_item.take() {
+                        <T::Summary as Summary>::add_summary(&mut base, &summary, cx);
+                        base
+                    } else {
+                        summary
+                    };
+                    _ = previous_item.insert(current_item.clone());
+                    Some(current_item)
+                })
+                .collect();
             nodes.push(Node::Leaf {
                 items,
                 item_summaries,
@@ -1189,9 +1195,11 @@ mod tests {
         // Multiple-element tree
         let mut tree = SumTree::default();
         tree.extend(vec![1, 2, 3, 4, 5, 6], &());
+
         let mut cursor = tree.cursor::<IntegersSummary>(&());
 
-        assert_eq!(cursor.slice(&Count(2), Bias::Right).items(&()), [1, 2]);
+        let slice = cursor.slice(&Count(2), Bias::Right);
+        assert_eq!(slice.items(&()), [1, 2]);
         assert_eq!(cursor.item(), Some(&3));
         assert_eq!(cursor.prev_item(), Some(&2));
         assert_eq!(cursor.next_item(), Some(&4));

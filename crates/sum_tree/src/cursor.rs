@@ -205,7 +205,7 @@ where
 
     #[track_caller]
     pub fn prev(&mut self) {
-        self.search_backward(|_| Ordering::Greater)
+        self.search_backward(|_| Ordering::Equal)
     }
 
     #[track_caller]
@@ -283,7 +283,7 @@ where
 
     #[track_caller]
     pub fn next(&mut self) {
-        self.search_forward(|_| Ordering::Less)
+        self.search_forward(|_| Ordering::Equal)
     }
 
     #[track_caller]
@@ -322,25 +322,18 @@ where
                         if entry.index < child_summaries.len() {
                             let index = child_summaries[entry.index..]
                                 .partition_point(|item| filter_node(item).is_lt());
-                            if index < child_summaries.len() - entry.index {
-                                entry.index += index;
-                            }
 
-                            let position = Some(entry.index)
-                                .filter(|index| *index < child_summaries.len())
-                                .unwrap_or(child_summaries.len());
+                            entry.index += index;
 
-                            if let Some(summary) = child_summaries.get(position) {
+                            if let Some(summary) = child_summaries.get(entry.index) {
                                 entry.position.add_summary(summary, self.cx);
                                 self.position.add_summary(summary, self.cx);
                             }
                         }
-                        dbg!((entry.index, child_trees.len()));
 
                         child_trees.get(entry.index)
                     }
                     Node::Leaf { item_summaries, .. } => {
-                        dbg!("Ayo");
                         if !descend {
                             let item_summary = &item_summaries[entry.index];
                             entry.index += 1;
@@ -351,15 +344,10 @@ where
                         if entry.index < item_summaries.len() {
                             let index = item_summaries[entry.index..]
                                 .partition_point(|item| filter_node(item).is_lt());
-                            if index < item_summaries.len() - entry.index {
-                                entry.index += index;
-                            }
-                            entry.index += index;
-                            let position = Some(entry.index)
-                                .filter(|index| *index < item_summaries.len())
-                                .unwrap_or(item_summaries.len());
 
-                            if let Some(summary) = item_summaries.get(position) {
+                            entry.index += index;
+
+                            if let Some(summary) = item_summaries.get(entry.index) {
                                 entry.position.add_summary(summary, self.cx);
                                 self.position.add_summary(summary, self.cx);
                             }

@@ -406,9 +406,9 @@ mod tests {
         map.insert("baa", 3);
         map.insert("baaab", 4);
         map.insert("c", 5);
-        dbg!(&map);
-        let result = map
-            .iter_from(&"ba")
+
+        let items = map.iter_from(&"ba");
+        let result = items
             .take_while(|(key, _)| key.starts_with("ba"))
             .collect::<Vec<_>>();
 
