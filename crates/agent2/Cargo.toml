@@ -67,7 +67,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, "features" = ["test-support"] }
 reqwest_client.workspace = true
 settings = { workspace = true, "features" = ["test-support"] }
-terminal.workspace = true
+terminal = { workspace = true, "features" = ["test-support"] }
 theme = { workspace = true, "features" = ["test-support"] }
 worktree = { workspace = true, "features" = ["test-support"] }
 zlog.workspace = true
