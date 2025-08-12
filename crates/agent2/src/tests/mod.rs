@@ -310,13 +310,15 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let message = completion.messages.last().unwrap();
     assert_eq!(
         message.content,
-        vec![MessageContent::ToolResult(LanguageModelToolResult {
-            tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
-            tool_name: ToolRequiringPermission.name().into(),
-            is_error: false,
-            content: "Allowed".into(),
-            output: Some("Allowed".into())
-        })]
+        vec![language_model::MessageContent::ToolResult(
+            LanguageModelToolResult {
+                tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: Some("Allowed".into())
+            }
+        )]
     );
 
     // Simulate a final tool call, ensuring we don't trigger authorization.
@@ -335,13 +337,15 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let message = completion.messages.last().unwrap();
     assert_eq!(
         message.content,
-        vec![MessageContent::ToolResult(LanguageModelToolResult {
-            tool_use_id: "tool_id_4".into(),
-            tool_name: ToolRequiringPermission.name().into(),
-            is_error: false,
-            content: "Allowed".into(),
-            output: Some("Allowed".into())
-        })]
+        vec![language_model::MessageContent::ToolResult(
+            LanguageModelToolResult {
+                tool_use_id: "tool_id_4".into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: Some("Allowed".into())
+            }
+        )]
     );
 }
 
