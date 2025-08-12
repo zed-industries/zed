@@ -1128,7 +1128,7 @@ impl ExtensionStore {
             })
             .collect::<Vec<_>>();
 
-        telemetry::event!("Extension Loaded", id_and_versions = extension_ids);
+        telemetry::event!("Extensions Loaded", id_and_versions = extension_ids);
 
         let themes_to_remove = old_index
             .themes
