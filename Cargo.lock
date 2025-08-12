@@ -29,6 +29,7 @@ dependencies = [
  "tempfile",
  "terminal",
  "ui",
+ "url",
  "util",
  "workspace-hack",
 ]

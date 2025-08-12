@@ -1,8 +1,8 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
     ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool,
-    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool,
-    ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, WebSearchTool,
+    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MessageContent, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, WebSearchTool,
 };
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
@@ -516,10 +516,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 })?;
             log::debug!("Found session for: {}", session_id);
 
-            // Convert prompt to message
-            let message = convert_prompt_to_message(params.prompt);
+            let message: Vec<MessageContent> = params
+                .prompt
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>();
             log::info!("Converted prompt to message: {} chars", message.len());
-            log::debug!("Message content: {}", message);
+            log::debug!("Message content: {:?}", message);
 
             // Get model using the ModelSelector capability (always available for agent2)
             // Get the selected model from the thread directly
@@ -621,39 +624,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             }
         });
     }
-}
-
-/// Convert ACP content blocks to a message string
-fn convert_prompt_to_message(blocks: Vec<acp::ContentBlock>) -> String {
-    log::debug!("Converting {} content blocks to message", blocks.len());
-    let mut message = String::new();
-
-    for block in blocks {
-        match block {
-            acp::ContentBlock::Text(text) => {
-                log::trace!("Processing text block: {} chars", text.text.len());
-                message.push_str(&text.text);
-            }
-            acp::ContentBlock::ResourceLink(link) => {
-                log::trace!("Processing resource link: {}", link.uri);
-                message.push_str(&format!(" @{} ", link.uri));
-            }
-            acp::ContentBlock::Image(_) => {
-                log::trace!("Processing image block");
-                message.push_str(" [image] ");
-            }
-            acp::ContentBlock::Audio(_) => {
-                log::trace!("Processing audio block");
-                message.push_str(" [audio] ");
-            }
-            acp::ContentBlock::Resource(resource) => {
-                log::trace!("Processing resource block: {:?}", resource.resource);
-                message.push_str(&format!(" [resource: {:?}] ", resource.resource));
-            }
-        }
-    }
-
-    message
 }
 
 #[cfg(test)]

@@ -1,13 +1,15 @@
 mod connection;
 mod diff;
+mod mention;
 mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+pub use mention::*;
 pub use terminal::*;
 
 use action_log::ActionLog;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
@@ -21,12 +23,7 @@ use std::error::Error;
 use std::fmt::Formatter;
 use std::process::ExitStatus;
 use std::rc::Rc;
-use std::{
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
 
@@ -50,38 +47,6 @@ impl UserMessage {
 
     fn to_markdown(&self, cx: &App) -> String {
         format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
-    }
-}
-
-#[derive(Debug)]
-pub struct MentionPath<'a>(&'a Path);
-
-impl<'a> MentionPath<'a> {
-    const PREFIX: &'static str = "@file:";
-
-    pub fn new(path: &'a Path) -> Self {
-        MentionPath(path)
-    }
-
-    pub fn try_parse(url: &'a str) -> Option<Self> {
-        let path = url.strip_prefix(Self::PREFIX)?;
-        Some(MentionPath(Path::new(path)))
-    }
-
-    pub fn path(&self) -> &Path {
-        self.0
-    }
-}
-
-impl Display for MentionPath<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[@{}]({}{})",
-            self.0.file_name().unwrap_or_default().display(),
-            Self::PREFIX,
-            self.0.display()
-        )
     }
 }
 
@@ -374,6 +339,27 @@ impl ContentBlock {
         }
 
         let new_content = self.extract_content_from_block(block);
+        let new_content = match block {
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource:
+                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
+                        uri,
+                        ..
+                    }),
+                ..
+            }) => {
+                if let Some(uri) = MentionUri::parse(&uri).log_err() {
+                    uri.to_link()
+                } else {
+                    uri.clone()
+                }
+            }
+            acp::ContentBlock::Image(_)
+            | acp::ContentBlock::Audio(_)
+            | acp::ContentBlock::Resource(acp::EmbeddedResource { .. })
+            | acp::ContentBlock::ResourceLink(_) => String::new(),
+        };
 
         match self {
             ContentBlock::Empty => {
@@ -1362,7 +1348,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{cell::RefCell, rc::Rc, time::Duration};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
     use util::path;
 
