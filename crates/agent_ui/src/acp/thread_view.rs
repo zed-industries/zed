@@ -2009,25 +2009,25 @@ impl AcpThreadView {
                     .when(self.plan_expanded, |parent| {
                         parent.child(self.render_plan_entries(plan, window, cx))
                     })
+                    .child(Divider::horizontal().color(DividerColor::Border))
             })
             .when(!changed_buffers.is_empty(), |this| {
-                this.child(Divider::horizontal().color(DividerColor::Border))
-                    .child(self.render_edits_summary(
+                this.child(self.render_edits_summary(
+                    action_log,
+                    &changed_buffers,
+                    self.edits_expanded,
+                    pending_edits,
+                    window,
+                    cx,
+                ))
+                .when(self.edits_expanded, |parent| {
+                    parent.child(self.render_edited_files(
                         action_log,
                         &changed_buffers,
-                        self.edits_expanded,
                         pending_edits,
-                        window,
                         cx,
                     ))
-                    .when(self.edits_expanded, |parent| {
-                        parent.child(self.render_edited_files(
-                            action_log,
-                            &changed_buffers,
-                            pending_edits,
-                            cx,
-                        ))
-                    })
+                })
             })
             .into_any()
             .into()
