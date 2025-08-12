@@ -12,7 +12,7 @@ use std::{borrow::Borrow, collections::hash_map::Entry, ops::ControlFlow, path::
 use collections::HashMap;
 use gpui::{App, AppContext as _, Context, Entity, Subscription};
 use language::{ManifestDelegate, ManifestName, ManifestQuery};
-pub use manifest_store::ManifestProviders;
+pub use manifest_store::ManifestProvidersStore;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
 use worktree::{Event as WorktreeEvent, Snapshot, Worktree};
@@ -145,7 +145,7 @@ impl ManifestTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0
-                && let Some(provider) = ManifestProviders::global(cx).get(manifest_name.borrow())
+                && let Some(provider) = ManifestProvidersStore::global(cx).get(manifest_name.borrow())
             {
                 let root = provider.search(ManifestQuery {
                     path: path.clone(),

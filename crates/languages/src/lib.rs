@@ -343,7 +343,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node: NodeRuntime, cx: &mut App) {
         Arc::from(PyprojectTomlManifestProvider),
     ];
     for provider in manifest_providers {
-        project::ManifestProviders::global(cx).register(provider);
+        project::ManifestProvidersStore::global(cx).register(provider);
     }
 }
 
