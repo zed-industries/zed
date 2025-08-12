@@ -19,7 +19,10 @@ impl MentionUri {
                 if let Some(fragment) = url.fragment() {
                     Ok(Self::Symbol(path.into(), fragment.into()))
                 } else {
-                    Ok(Self::File(path.into()))
+                    let file_path =
+                        PathBuf::from(format!("{}{}", url.host_str().unwrap_or(""), path));
+
+                    Ok(Self::File(file_path))
                 }
             }
             "zed" => {

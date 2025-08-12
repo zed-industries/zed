@@ -299,6 +299,7 @@ impl Display for ToolCallStatus {
 pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
+    ResourceLink { resource_link: acp::ResourceLink },
 }
 
 impl ContentBlock {
@@ -330,8 +331,56 @@ impl ContentBlock {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        let new_content = match block {
+        if matches!(self, ContentBlock::Empty) {
+            if let acp::ContentBlock::ResourceLink(resource_link) = block {
+                *self = ContentBlock::ResourceLink { resource_link };
+                return;
+            }
+        }
+
+        let new_content = self.extract_content_from_block(block);
+
+        match self {
+            ContentBlock::Empty => {
+                *self = Self::create_markdown_block(new_content, language_registry, cx);
+            }
+            ContentBlock::Markdown { markdown } => {
+                markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
+            }
+            ContentBlock::ResourceLink { resource_link } => {
+                let existing_content = Self::resource_link_to_content(&resource_link.uri);
+                let combined = format!("{}\n{}", existing_content, new_content);
+
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+        }
+    }
+
+    fn resource_link_to_content(uri: &str) -> String {
+        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+            uri.to_link()
+        } else {
+            uri.to_string().clone()
+        }
+    }
+
+    fn create_markdown_block(
+        content: String,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> ContentBlock {
+        ContentBlock::Markdown {
+            markdown: cx
+                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+        }
+    }
+
+    fn extract_content_from_block(&self, block: acp::ContentBlock) -> String {
+        match block {
             acp::ContentBlock::Text(text_content) => text_content.text.clone(),
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                Self::resource_link_to_content(&resource_link.uri)
+            }
             acp::ContentBlock::Resource(acp::EmbeddedResource {
                 resource:
                     acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
@@ -339,35 +388,10 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => {
-                if let Some(uri) = MentionUri::parse(&uri).log_err() {
-                    uri.to_link()
-                } else {
-                    uri.clone()
-                }
-            }
+            }) => Self::resource_link_to_content(&uri),
             acp::ContentBlock::Image(_)
             | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(acp::EmbeddedResource { .. })
-            | acp::ContentBlock::ResourceLink(_) => String::new(),
-        };
-
-        match self {
-            ContentBlock::Empty => {
-                *self = ContentBlock::Markdown {
-                    markdown: cx.new(|cx| {
-                        Markdown::new(
-                            new_content.into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    }),
-                };
-            }
-            ContentBlock::Markdown { markdown } => {
-                markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
-            }
+            | acp::ContentBlock::Resource(_) => String::new(),
         }
     }
 
@@ -375,6 +399,7 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
         }
     }
 
@@ -382,6 +407,14 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::ResourceLink { .. } => None,
+        }
+    }
+
+    pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
+        match self {
+            ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
         }
     }
 }
