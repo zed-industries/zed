@@ -1,7 +1,7 @@
 use crate::{
     Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
-    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, SelectionEffects,
-    ToPoint as _,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, ReportEditorEvent, SearchWithinRange,
+    SelectionEffects, ToPoint as _,
     display_map::HighlightKey,
     editor_settings::SeedQuerySetting,
     persistence::{DB, SerializedEditor},
@@ -815,9 +815,9 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         // Add meta data tracking # of auto saves
         if options.autosave {
-            self.report_editor_event("Editor Autosaved", None, cx);
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: true }, None, cx);
         } else {
-            self.report_editor_event("Editor Saved", None, cx);
+            self.report_editor_event(ReportEditorEvent::Saved { auto_saved: false }, None, cx);
         }
 
         let buffers = self.buffer().clone().read(cx).all_buffers();
@@ -896,7 +896,11 @@ impl Item for Editor {
             .path
             .extension()
             .map(|a| a.to_string_lossy().to_string());
-        self.report_editor_event("Editor Saved", file_extension, cx);
+        self.report_editor_event(
+            ReportEditorEvent::Saved { auto_saved: false },
+            file_extension,
+            cx,
+        );
 
         project.update(cx, |project, cx| project.save_buffer_as(buffer, path, cx))
     }
