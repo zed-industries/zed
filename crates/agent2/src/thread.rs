@@ -191,6 +191,7 @@ impl Thread {
     }
 
     pub fn cancel(&mut self) {
+        // todo!("do we need to emit a stop::cancel from acp?")
         self.running_turn.take();
 
         let tool_results = self

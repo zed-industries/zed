@@ -940,7 +940,7 @@ struct FakeFsState {
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
-enum FakeFsEntry {
+pub(crate) enum FakeFsEntry {
     File {
         inode: u64,
         mtime: MTime,
@@ -1290,6 +1290,16 @@ impl FakeFs {
 
     pub fn flush_events(&self, count: usize) {
         self.state.lock().flush_events(count);
+    }
+
+    pub(crate) fn entry(&self, path: &Path) -> FakeFsEntry {
+        let path = normalize_path(path);
+        let state = self.state.lock();
+        let (entry, _) = state
+            .try_read_path(&path, false)
+            .expect("path does not exist");
+        let entry = entry.lock();
+        entry.clone()
     }
 
     #[must_use]

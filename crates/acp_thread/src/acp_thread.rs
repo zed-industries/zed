@@ -4,6 +4,7 @@ mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+use project::git_store::GitStoreCheckpoint;
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -33,21 +34,10 @@ use util::ResultExt;
 #[derive(Debug)]
 pub struct UserMessage {
     pub content: ContentBlock,
+    pub checkpoint: Option<GitStoreCheckpoint>,
 }
 
 impl UserMessage {
-    pub fn from_acp(
-        message: impl IntoIterator<Item = acp::ContentBlock>,
-        language_registry: Arc<LanguageRegistry>,
-        cx: &mut App,
-    ) -> Self {
-        let mut content = ContentBlock::Empty;
-        for chunk in message {
-            content.append(chunk, &language_registry, cx)
-        }
-        Self { content: content }
-    }
-
     fn to_markdown(&self, cx: &App) -> String {
         format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
     }
@@ -727,13 +717,19 @@ impl AcpThread {
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::UserMessage(UserMessage { content }) = last_entry
+            && let AgentThreadEntry::UserMessage(UserMessage { content, .. }) = last_entry
         {
             content.append(chunk, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
         } else {
             let content = ContentBlock::new(chunk, &language_registry, cx);
-            self.push_entry(AgentThreadEntry::UserMessage(UserMessage { content }), cx);
+            self.push_entry(
+                AgentThreadEntry::UserMessage(UserMessage {
+                    content,
+                    checkpoint: None,
+                }),
+                cx,
+            );
         }
     }
 
@@ -1031,8 +1027,15 @@ impl AcpThread {
             self.project.read(cx).languages().clone(),
             cx,
         );
+        let git_store = self.project.read(cx).git_store().clone();
+
+        let old_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
+        let entry_ix = self.entries.len();
         self.push_entry(
-            AgentThreadEntry::UserMessage(UserMessage { content: block }),
+            AgentThreadEntry::UserMessage(UserMessage {
+                content: block,
+                checkpoint: None,
+            }),
             cx,
         );
         self.clear_completed_plan_entries(cx);
@@ -1064,33 +1067,66 @@ impl AcpThread {
             .log_err();
         }));
 
-        cx.spawn(async move |this, cx| match rx.await {
-            Ok(Err(e)) => {
-                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Error))
-                    .log_err();
-                Err(e)?
-            }
-            result => {
-                let cancelled = matches!(
-                    result,
-                    Ok(Ok(acp::PromptResponse {
-                        stop_reason: acp::StopReason::Cancelled
-                    }))
-                );
+        cx.spawn(async move |this, cx| {
+            let response = rx.await;
 
-                // We only take the task if the current prompt wasn't cancelled.
-                //
-                // This prompt may have been cancelled because another one was sent
-                // while it was still generating. In these cases, dropping `send_task`
-                // would cause the next generation to be cancelled.
-                if !cancelled {
-                    this.update(cx, |this, _cx| this.send_task.take()).ok();
+            let old_checkpoint = old_checkpoint
+                .await
+                .context("failed to get old checkpoint")
+                .log_err();
+            let new_checkpoint = git_store
+                .update(cx, |git, cx| git.checkpoint(cx))?
+                .await
+                .context("failed to get new checkpoint")
+                .log_err();
+            let checkpoint = if let Some((old_checkpoint, new_checkpoint)) =
+                old_checkpoint.zip(new_checkpoint)
+            {
+                let equal = git_store
+                    .update(cx, |git, cx| {
+                        git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
+                    })?
+                    .await
+                    .unwrap_or(true);
+                if equal { None } else { Some(old_checkpoint) }
+            } else {
+                None
+            };
+
+            this.update(cx, |this, cx| {
+                if let Some(AgentThreadEntry::UserMessage(message)) = this.entries.get_mut(entry_ix)
+                {
+                    message.checkpoint = checkpoint;
+                    cx.emit(AcpThreadEvent::EntryUpdated(entry_ix));
                 }
 
-                this.update(cx, |_, cx| cx.emit(AcpThreadEvent::Stopped))
-                    .log_err();
-                Ok(())
-            }
+                match response {
+                    Ok(Err(e)) => {
+                        cx.emit(AcpThreadEvent::Error);
+                        Err(e)
+                    }
+                    result => {
+                        let cancelled = matches!(
+                            result,
+                            Ok(Ok(acp::PromptResponse {
+                                stop_reason: acp::StopReason::Cancelled
+                            }))
+                        );
+
+                        // We only take the task if the current prompt wasn't cancelled.
+                        //
+                        // This prompt may have been cancelled because another one was sent
+                        // while it was still generating. In these cases, dropping `send_task`
+                        // would cause the next generation to be cancelled.
+                        if !cancelled {
+                            this.send_task.take();
+                        }
+
+                        cx.emit(AcpThreadEvent::Stopped);
+                        Ok(())
+                    }
+                }
+            })?
         })
         .boxed()
     }
@@ -1324,7 +1360,7 @@ mod tests {
     use futures::{channel::mpsc, future::LocalBoxFuture, select};
     use gpui::{AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
-    use project::FakeFs;
+    use project::{FakeFs, Fs};
     use rand::Rng as _;
     use serde_json::json;
     use settings::SettingsStore;
@@ -1738,6 +1774,67 @@ mod tests {
             .unwrap();
 
         assert!(cx.read(|cx| !thread.read(cx).has_pending_edit_tool_calls()));
+    }
+
+    #[gpui::test]
+    async fn test_checkpoints(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {}
+            }),
+        )
+        .await;
+        fs.with_git_state(Path::new("/test/.git"), true, |git| {
+            dbg!();
+        })
+        .unwrap();
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            |_, thread, mut cx| {
+                async move {
+                    thread.update(&mut cx, |thread, cx| {
+                        thread
+                            .handle_session_update(
+                                acp::SessionUpdate::AgentMessageChunk {
+                                    content: "Hey".into(),
+                                },
+                                cx,
+                            )
+                            .unwrap();
+                    })?;
+                    Ok(acp::PromptResponse {
+                        stop_reason: acp::StopReason::EndTurn,
+                    })
+                }
+                .boxed_local()
+            },
+        ));
+        let thread = connection
+            .new_thread(project, Path::new(path!("/test")), &mut cx.to_async())
+            .await
+            .unwrap();
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Hi".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Hi
+
+                    ## Assistant
+
+                    Hey
+
+                "}
+            )
+        });
     }
 
     async fn run_until_first_tool_call(

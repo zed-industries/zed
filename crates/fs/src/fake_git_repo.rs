@@ -1,8 +1,9 @@
-use crate::{FakeFs, Fs};
+use crate::{FakeFs, FakeFsEntry, Fs};
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use futures::future::{self, BoxFuture, join_all};
 use git::{
+    Oid,
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
@@ -12,6 +13,7 @@ use git::{
 };
 use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use ignore::gitignore::GitignoreBuilder;
+use parking_lot::Mutex;
 use rope::Rope;
 use smol::future::FutureExt as _;
 use std::{path::PathBuf, sync::Arc};
@@ -19,6 +21,7 @@ use std::{path::PathBuf, sync::Arc};
 #[derive(Clone)]
 pub struct FakeGitRepository {
     pub(crate) fs: Arc<FakeFs>,
+    pub(crate) checkpoints: Arc<Mutex<HashMap<Oid, FakeFsEntry>>>,
     pub(crate) executor: BackgroundExecutor,
     pub(crate) dot_git_path: PathBuf,
     pub(crate) repository_dir_path: PathBuf,
@@ -466,7 +469,17 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn checkpoint(&self) -> BoxFuture<'static, Result<GitRepositoryCheckpoint>> {
-        unimplemented!()
+        let executor = self.executor.clone();
+        let fs = self.fs.clone();
+        let checkpoints = self.checkpoints.clone();
+        async move {
+            executor.simulate_random_delay().await;
+            let oid = Oid::random(&mut executor.rng());
+            let entry = fs.entry(&self.repository_dir_path);
+            checkpoints.lock().insert(oid, entry);
+            Ok(GitRepositoryCheckpoint { commit_sha: oid })
+        }
+        .boxed()
     }
 
     fn restore_checkpoint(
@@ -494,5 +507,45 @@ impl GitRepository for FakeGitRepository {
 
     fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{FakeFs, Fs};
+    use gpui::BackgroundExecutor;
+    use serde_json::json;
+    use std::path::Path;
+    use util::path;
+
+    #[gpui::test]
+    async fn test_checkpoints(executor: BackgroundExecutor) {
+        let fs = FakeFs::new(executor);
+        fs.insert_tree(
+            path!("/test"),
+            json!({
+                ".git": {},
+                "a": "lorem",
+                "b": "ipsum",
+            }),
+        )
+        .await;
+        fs.with_git_state(Path::new("/test/.git"), true, |_git| {})
+            .unwrap();
+        let repository = fs.open_repo(Path::new("/test/.git")).unwrap();
+
+        let checkpoint_1 = repository.checkpoint().await.unwrap();
+        fs.write(Path::new("b"), b"IPSUM").await.unwrap();
+        fs.write(Path::new("c"), b"dolor").await.unwrap();
+        let checkpoint_2 = repository.checkpoint().await.unwrap();
+
+        assert!(
+            !repository
+                .compare_checkpoints(checkpoint_1.clone(), checkpoint_2.clone())
+                .await
+                .unwrap()
+        );
+        repository.restore_checkpoint(checkpoint_1).await.unwrap();
+        assert_eq!(fs.files_with_contents(Path::new("")), vec![]);
     }
 }
