@@ -2,7 +2,7 @@ mod conflict_set;
 pub mod git_traversal;
 
 use crate::{
-    ProjectEnvironment, ProjectItem, ProjectPath,
+    ProjectEnvironment, ProjectItem, ProjectPath, WorktreeId,
     buffer_store::{BufferStore, BufferStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
@@ -1135,6 +1135,9 @@ impl GitStore {
                 );
                 self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
+            WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
+                self.cleanup_repositories_for_worktree(*worktree_id, downstream.as_ref().map(|d| d.updates_tx.clone()), cx);
+            }
             _ => {}
         }
     }
@@ -1255,6 +1258,49 @@ impl GitStore {
         }
 
         for id in removed_ids {
+            if self.active_repo_id == Some(id) {
+                self.active_repo_id = None;
+                cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+            }
+            self.repositories.remove(&id);
+            if let Some(updates_tx) = updates_tx.as_ref() {
+                updates_tx
+                    .unbounded_send(DownstreamUpdate::RemoveRepository(id))
+                    .ok();
+            }
+        }
+    }
+
+    fn cleanup_repositories_for_worktree(
+        &mut self,
+        removed_worktree_id: WorktreeId,
+        updates_tx: Option<mpsc::UnboundedSender<DownstreamUpdate>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(removed_worktree_id, cx)
+        else {
+            return;
+        };
+
+        let worktree_abs_path = worktree.read(cx).abs_path();
+        
+        let removed_repo_ids: Vec<RepositoryId> = self
+            .repositories
+            .iter()
+            .filter_map(|(repo_id, repo)| {
+                let repo_work_dir = &repo.read(cx).work_directory_abs_path;
+                if repo_work_dir.starts_with(worktree_abs_path) {
+                    Some(*repo_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for id in removed_repo_ids {
             if self.active_repo_id == Some(id) {
                 self.active_repo_id = None;
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
