@@ -126,7 +126,7 @@ fn scroll_editor(
                 ScrollAmount::Line(amount.lines(visible_line_count) - 1.0)
             }
         }
-        _ => amount.clone(),
+        _ => amount,
     };
 
     editor.scroll_screen(&amount, window, cx);
