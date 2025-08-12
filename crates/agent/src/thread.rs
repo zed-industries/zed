@@ -8,12 +8,13 @@ use crate::{
     },
     tool_use::{PendingToolUse, ToolUse, ToolUseMetadata, ToolUseState},
 };
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
+use action_log::ActionLog;
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, SUMMARIZE_THREAD_PROMPT};
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, AnyToolCard, Tool, ToolWorkingSet};
+use assistant_tool::{AnyToolCard, Tool, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use client::{CloudUserStore, ModelRequestUsage, RequestUsage};
-use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
+use client::{ModelRequestUsage, RequestUsage};
+use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, Plan, UsageLimit};
 use collections::HashMap;
 use feature_flags::{self, FeatureFlagAppExt};
 use futures::{FutureExt, StreamExt as _, future::Shared};
@@ -37,7 +38,6 @@ use project::{
     git_store::{GitStore, GitStoreCheckpoint, RepositoryState},
 };
 use prompt_store::{ModelContext, PromptBuilder};
-use proto::Plan;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -374,7 +374,6 @@ pub struct Thread {
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     project: Entity<Project>,
-    cloud_user_store: Entity<CloudUserStore>,
     prompt_builder: Arc<PromptBuilder>,
     tools: Entity<ToolWorkingSet>,
     tool_use: ToolUseState,
@@ -445,7 +444,6 @@ pub struct ExceededWindowError {
 impl Thread {
     pub fn new(
         project: Entity<Project>,
-        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         system_prompt: SharedProjectContext,
@@ -472,7 +470,6 @@ impl Thread {
             completion_count: 0,
             pending_completions: Vec::new(),
             project: project.clone(),
-            cloud_user_store,
             prompt_builder,
             tools: tools.clone(),
             last_restore_checkpoint: None,
@@ -506,7 +503,6 @@ impl Thread {
         id: ThreadId,
         serialized: SerializedThread,
         project: Entity<Project>,
-        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         project_context: SharedProjectContext,
@@ -607,7 +603,6 @@ impl Thread {
             last_restore_checkpoint: None,
             pending_checkpoint: None,
             project: project.clone(),
-            cloud_user_store,
             prompt_builder,
             tools: tools.clone(),
             tool_use,
@@ -2118,12 +2113,10 @@ impl Thread {
             return;
         }
 
-        let added_user_message = include_str!("./prompts/summarize_thread_prompt.txt");
-
         let request = self.to_summarize_request(
             &model.model,
             CompletionIntent::ThreadSummarization,
-            added_user_message.into(),
+            SUMMARIZE_THREAD_PROMPT.into(),
             cx,
         );
 
@@ -2274,6 +2267,15 @@ impl Thread {
                     delay: BASE_RETRY_DELAY,
                     max_attempts: 3,
                 })
+            }
+            Other(err)
+                if err.is::<PaymentRequiredError>()
+                    || err.is::<ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
             }
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
@@ -3260,15 +3262,18 @@ impl Thread {
     }
 
     fn update_model_request_usage(&self, amount: u32, limit: UsageLimit, cx: &mut Context<Self>) {
-        self.cloud_user_store.update(cx, |cloud_user_store, cx| {
-            cloud_user_store.update_model_request_usage(
-                ModelRequestUsage(RequestUsage {
-                    amount: amount as i32,
-                    limit,
-                }),
-                cx,
-            )
-        });
+        self.project
+            .read(cx)
+            .user_store()
+            .update(cx, |user_store, cx| {
+                user_store.update_model_request_usage(
+                    ModelRequestUsage(RequestUsage {
+                        amount: amount as i32,
+                        limit,
+                    }),
+                    cx,
+                )
+            });
     }
 
     pub fn deny_tool_use(
@@ -3886,7 +3891,6 @@ fn main() {{
                     thread.id.clone(),
                     serialized,
                     thread.project.clone(),
-                    thread.cloud_user_store.clone(),
                     thread.tools.clone(),
                     thread.prompt_builder.clone(),
                     thread.project_context.clone(),
@@ -4051,8 +4055,8 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Brief");
-        fake_model.stream_last_completion_response(" Introduction");
+        fake_model.send_last_completion_stream_text_chunk("Brief");
+        fake_model.send_last_completion_stream_text_chunk(" Introduction");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4145,7 +4149,7 @@ fn main() {{
         });
 
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("A successful summary");
+        fake_model.send_last_completion_stream_text_chunk("A successful summary");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
 
@@ -4778,7 +4782,7 @@ fn main() {{
             !pending.is_empty(),
             "Should have a pending completion after retry"
         );
-        fake_model.stream_completion_response(&pending[0], "Success!");
+        fake_model.send_completion_stream_text_chunk(&pending[0], "Success!");
         fake_model.end_completion_stream(&pending[0]);
         cx.run_until_parked();
 
@@ -4946,7 +4950,7 @@ fn main() {{
 
         // Check for pending completions and complete them
         if let Some(pending) = inner_fake.pending_completions().first() {
-            inner_fake.stream_completion_response(pending, "Success!");
+            inner_fake.send_completion_stream_text_chunk(pending, "Success!");
             inner_fake.end_completion_stream(pending);
         }
         cx.run_until_parked();
@@ -5431,7 +5435,7 @@ fn main() {{
 
     fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
         cx.run_until_parked();
-        fake_model.stream_last_completion_response("Assistant response");
+        fake_model.send_last_completion_stream_text_chunk("Assistant response");
         fake_model.end_last_completion_stream();
         cx.run_until_parked();
     }
@@ -5483,16 +5487,10 @@ fn main() {{
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let (client, user_store) =
-            project.read_with(cx, |project, _cx| (project.client(), project.user_store()));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store, cx));
-
         let thread_store = cx
             .update(|_, cx| {
                 ThreadStore::load(
                     project.clone(),
-                    cloud_user_store,
                     cx.new(|_| ToolWorkingSet::default()),
                     None,
                     Arc::new(PromptBuilder::new(None).unwrap()),

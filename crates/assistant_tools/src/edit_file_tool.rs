@@ -4,11 +4,11 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{
-    ActionLog, AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput,
-    ToolUseStatus,
+    AnyToolCard, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
@@ -857,7 +857,7 @@ impl ToolCard for EditFileToolCard {
                     )
                     .child(
                         Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
+                            .size(IconSize::Small)
                             .color(Color::Ignored),
                     ),
             )
@@ -1577,7 +1577,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1641,7 +1641,7 @@ mod tests {
 
             // Stream the unformatted content
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(UNFORMATTED_CONTENT.to_string());
+            model.send_last_completion_stream_text_chunk(UNFORMATTED_CONTENT.to_string());
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1720,7 +1720,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await
@@ -1777,7 +1779,9 @@ mod tests {
 
             // Stream the content with trailing whitespace
             cx.executor().run_until_parked();
-            model.stream_last_completion_response(CONTENT_WITH_TRAILING_WHITESPACE.to_string());
+            model.send_last_completion_stream_text_chunk(
+                CONTENT_WITH_TRAILING_WHITESPACE.to_string(),
+            );
             model.end_last_completion_stream();
 
             edit_task.await

@@ -348,8 +348,8 @@ impl ScrollManager {
         self.show_scrollbars
     }
 
-    pub fn autoscroll_request(&self) -> Option<Autoscroll> {
-        self.autoscroll_request.map(|(autoscroll, _)| autoscroll)
+    pub fn take_autoscroll_request(&mut self) -> Option<(Autoscroll, bool)> {
+        self.autoscroll_request.take()
     }
 
     pub fn active_scrollbar_state(&self) -> Option<&ActiveScrollbarState> {

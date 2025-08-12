@@ -12,7 +12,7 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::command::new_std_command;
+use util::command::{new_smol_command, new_std_command};
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -134,6 +134,7 @@ pub trait Fs: Send + Sync {
     fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
 
@@ -835,6 +836,23 @@ impl Fs for RealFs {
             .args(&["init", "-b"])
             .arg(branch_name.trim())
             .output()?;
+
+        Ok(())
+    }
+
+    async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()> {
+        let output = new_smol_command("git")
+            .current_dir(abs_work_directory)
+            .args(&["clone", repo_url])
+            .output()
+            .await?;
+
+        if !output.status.success() {
+            anyhow::bail!(
+                "git clone failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         Ok(())
     }
@@ -2154,6 +2172,9 @@ impl Fs for FakeFs {
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         self.simulate_random_delay().await;
         let path = normalize_path(path.as_path());
+        if let Some(path) = path.parent() {
+            self.create_dir(path).await?;
+        }
         self.write_file_internal(path, data.into_bytes(), true)?;
         Ok(())
     }
@@ -2350,6 +2371,10 @@ impl Fs for FakeFs {
         _fallback_branch_name: String,
     ) -> Result<()> {
         smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+    }
+
+    async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {
+        anyhow::bail!("Git clone is not supported in fake Fs")
     }
 
     fn is_fake(&self) -> bool {

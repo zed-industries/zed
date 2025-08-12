@@ -7,9 +7,9 @@ use super::{
 use crate::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem, ClipboardString,
     CursorStyle, ForegroundExecutor, Image, ImageFormat, KeyContext, Keymap, MacDispatcher,
-    MacDisplay, MacWindow, Menu, MenuItem, OwnedMenu, PathPromptOptions, Platform, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams, hash,
+    MacDisplay, MacWindow, Menu, MenuItem, OsMenu, OwnedMenu, PathPromptOptions, Platform,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformTextSystem, PlatformWindow, Result,
+    SemanticVersion, SystemMenuType, Task, WindowAppearance, WindowParams, hash,
 };
 use anyhow::{Context as _, anyhow};
 use block::ConcreteBlock;
@@ -47,7 +47,7 @@ use objc::{
 use parking_lot::Mutex;
 use ptr::null_mut;
 use std::{
-    cell::{Cell, LazyCell},
+    cell::Cell,
     convert::TryInto,
     ffi::{CStr, OsStr, c_void},
     os::{raw::c_char, unix::ffi::OsStrExt},
@@ -56,7 +56,7 @@ use std::{
     ptr,
     rc::Rc,
     slice, str,
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 use strum::IntoEnumIterator;
 use util::ResultExt;
@@ -296,18 +296,7 @@ impl MacPlatform {
         actions: &mut Vec<Box<dyn Action>>,
         keymap: &Keymap,
     ) -> id {
-        const DEFAULT_CONTEXT: LazyCell<Vec<KeyContext>> = LazyCell::new(|| {
-            let mut workspace_context = KeyContext::new_with_defaults();
-            workspace_context.add("Workspace");
-            let mut pane_context = KeyContext::new_with_defaults();
-            pane_context.add("Pane");
-            let mut editor_context = KeyContext::new_with_defaults();
-            editor_context.add("Editor");
-
-            pane_context.extend(&editor_context);
-            workspace_context.extend(&pane_context);
-            vec![workspace_context]
-        });
+        static DEFAULT_CONTEXT: OnceLock<Vec<KeyContext>> = OnceLock::new();
 
         unsafe {
             match item {
@@ -323,9 +312,20 @@ impl MacPlatform {
                     let keystrokes = keymap
                         .bindings_for_action(action.as_ref())
                         .find_or_first(|binding| {
-                            binding
-                                .predicate()
-                                .is_none_or(|predicate| predicate.eval(&DEFAULT_CONTEXT))
+                            binding.predicate().is_none_or(|predicate| {
+                                predicate.eval(DEFAULT_CONTEXT.get_or_init(|| {
+                                    let mut workspace_context = KeyContext::new_with_defaults();
+                                    workspace_context.add("Workspace");
+                                    let mut pane_context = KeyContext::new_with_defaults();
+                                    pane_context.add("Pane");
+                                    let mut editor_context = KeyContext::new_with_defaults();
+                                    editor_context.add("Editor");
+
+                                    pane_context.extend(&editor_context);
+                                    workspace_context.extend(&pane_context);
+                                    vec![workspace_context]
+                                }))
+                            })
                         })
                         .map(|binding| binding.keystrokes());
 
@@ -413,9 +413,20 @@ impl MacPlatform {
                     }
                     item.setSubmenu_(submenu);
                     item.setTitle_(ns_string(&name));
-                    if name == "Services" {
-                        let app: id = msg_send![APP_CLASS, sharedApplication];
-                        app.setServicesMenu_(item);
+                    item
+                }
+                MenuItem::SystemMenu(OsMenu { name, menu_type }) => {
+                    let item = NSMenuItem::new(nil).autorelease();
+                    let submenu = NSMenu::new(nil).autorelease();
+                    submenu.setDelegate_(delegate);
+                    item.setSubmenu_(submenu);
+                    item.setTitle_(ns_string(&name));
+
+                    match menu_type {
+                        SystemMenuType::Services => {
+                            let app: id = msg_send![APP_CLASS, sharedApplication];
+                            app.setServicesMenu_(item);
+                        }
                     }
 
                     item

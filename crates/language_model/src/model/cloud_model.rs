@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use client::Client;
-use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Global, ReadGlobal as _,
-};
-use proto::{Plan, TypedEnvelope};
+use cloud_api_types::websocket_protocol::MessageToClient;
+use cloud_llm_client::Plan;
+use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Global, ReadGlobal as _};
 use smol::lock::{RwLock, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use thiserror::Error;
 
@@ -30,7 +29,7 @@ pub struct ModelRequestLimitReachedError {
 impl fmt::Display for ModelRequestLimitReachedError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let message = match self.plan {
-            Plan::Free => "Model request limit reached. Upgrade to Zed Pro for more requests.",
+            Plan::ZedFree => "Model request limit reached. Upgrade to Zed Pro for more requests.",
             Plan::ZedPro => {
                 "Model request limit reached. Upgrade to usage-based billing for more requests."
             }
@@ -81,9 +80,7 @@ impl Global for GlobalRefreshLlmTokenListener {}
 
 pub struct RefreshLlmTokenEvent;
 
-pub struct RefreshLlmTokenListener {
-    _llm_token_subscription: client::Subscription,
-}
+pub struct RefreshLlmTokenListener;
 
 impl EventEmitter<RefreshLlmTokenEvent> for RefreshLlmTokenListener {}
 
@@ -98,17 +95,21 @@ impl RefreshLlmTokenListener {
     }
 
     fn new(client: Arc<Client>, cx: &mut Context<Self>) -> Self {
-        Self {
-            _llm_token_subscription: client
-                .add_message_handler(cx.weak_entity(), Self::handle_refresh_llm_token),
-        }
+        client.add_message_to_client_handler({
+            let this = cx.entity();
+            move |message, cx| {
+                Self::handle_refresh_llm_token(this.clone(), message, cx);
+            }
+        });
+
+        Self
     }
 
-    async fn handle_refresh_llm_token(
-        this: Entity<Self>,
-        _: TypedEnvelope<proto::RefreshLlmToken>,
-        mut cx: AsyncApp,
-    ) -> Result<()> {
-        this.update(&mut cx, |_this, cx| cx.emit(RefreshLlmTokenEvent))
+    fn handle_refresh_llm_token(this: Entity<Self>, message: &MessageToClient, cx: &mut App) {
+        match message {
+            MessageToClient::UserUpdated => {
+                this.update(cx, |_this, cx| cx.emit(RefreshLlmTokenEvent));
+            }
+        }
     }
 }

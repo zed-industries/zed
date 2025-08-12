@@ -17,7 +17,6 @@ use agent::{
 use agent_settings::{AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
-use client::CloudUserStore;
 use cloud_llm_client::CompletionIntent;
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
@@ -78,7 +77,6 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    cloud_user_store: Entity<CloudUserStore>,
     context_store: Entity<ContextStore>,
     prompt_store: Option<Entity<PromptStore>>,
     history_store: Option<WeakEntity<HistoryStore>>,
@@ -158,7 +156,6 @@ impl MessageEditor {
     pub fn new(
         fs: Arc<dyn Fs>,
         workspace: WeakEntity<Workspace>,
-        cloud_user_store: Entity<CloudUserStore>,
         context_store: Entity<ContextStore>,
         prompt_store: Option<Entity<PromptStore>>,
         thread_store: WeakEntity<ThreadStore>,
@@ -230,7 +227,6 @@ impl MessageEditor {
         Self {
             editor: editor.clone(),
             project: thread.read(cx).project().clone(),
-            cloud_user_store,
             thread,
             incompatible_tools_state: incompatible_tools.clone(),
             workspace,
@@ -729,7 +725,7 @@ impl MessageEditor {
                     .when(focus_handle.is_focused(window), |this| {
                         this.child(
                             IconButton::new("toggle-height", expand_icon)
-                                .icon_size(IconSize::XSmall)
+                                .icon_size(IconSize::Small)
                                 .icon_color(Color::Muted)
                                 .tooltip({
                                     let focus_handle = focus_handle.clone();
@@ -835,7 +831,7 @@ impl MessageEditor {
                                                         parent.child(
                                                             IconButton::new(
                                                                 "stop-generation",
-                                                                IconName::StopFilled,
+                                                                IconName::Stop,
                                                             )
                                                             .icon_color(Color::Error)
                                                             .style(ButtonStyle::Tinted(
@@ -1286,16 +1282,14 @@ impl MessageEditor {
             return None;
         }
 
-        let cloud_user_store = self.cloud_user_store.read(cx);
-        if cloud_user_store.is_usage_based_billing_enabled() {
+        let user_store = self.project.read(cx).user_store().read(cx);
+        if user_store.is_usage_based_billing_enabled() {
             return None;
         }
 
-        let plan = cloud_user_store
-            .plan()
-            .unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
 
-        let usage = cloud_user_store.model_request_usage()?;
+        let usage = user_store.model_request_usage()?;
 
         Some(
             div()
@@ -1311,7 +1305,7 @@ impl MessageEditor {
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         let icon = if token_usage_ratio == TokenUsageRatio::Exceeded {
-            Icon::new(IconName::X)
+            Icon::new(IconName::Close)
                 .color(Color::Error)
                 .size(IconSize::XSmall)
         } else {
@@ -1758,7 +1752,6 @@ impl AgentPreview for MessageEditor {
     ) -> Option<AnyElement> {
         if let Some(workspace) = workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
-            let cloud_user_store = workspace.read(cx).app_state().cloud_user_store.clone();
             let project = workspace.read(cx).project().clone();
             let weak_project = project.downgrade();
             let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
@@ -1771,7 +1764,6 @@ impl AgentPreview for MessageEditor {
                 MessageEditor::new(
                     fs,
                     workspace.downgrade(),
-                    cloud_user_store,
                     context_store,
                     None,
                     thread_store.downgrade(),

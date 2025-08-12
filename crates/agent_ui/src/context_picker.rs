@@ -102,7 +102,7 @@ impl ContextPickerAction {
 
     pub fn icon(&self) -> IconName {
         match self {
-            Self::AddSelections => IconName::Context,
+            Self::AddSelections => IconName::Reader,
         }
     }
 }
@@ -147,8 +147,8 @@ impl ContextPickerMode {
         match self {
             Self::File => IconName::File,
             Self::Symbol => IconName::Code,
-            Self::Fetch => IconName::Globe,
-            Self::Thread => IconName::MessageBubbles,
+            Self::Fetch => IconName::ToolWeb,
+            Self::Thread => IconName::Thread,
             Self::Rules => RULES_ICON,
         }
     }

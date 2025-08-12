@@ -315,9 +315,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
-        /// Accepts a partial Copilot suggestion.
-        AcceptPartialCopilotSuggestion,
         /// Accepts a partial edit prediction.
+        #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
         /// Adds a cursor above the current selection.
         AddSelectionAbove,
@@ -746,5 +745,6 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        UnwrapSyntaxNode
     ]
 );

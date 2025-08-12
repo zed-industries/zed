@@ -338,8 +338,8 @@ impl DebugAdapter for CodeLldbDebugAdapter {
         if command.is_none() {
             delegate.output_to_console(format!("Checking latest version of {}...", self.name()));
             let adapter_path = paths::debug_adapters_dir().join(&Self::ADAPTER_NAME);
-            let version_path =
-                if let Ok(version) = self.fetch_latest_adapter_version(delegate).await {
+            let version_path = match self.fetch_latest_adapter_version(delegate).await {
+                Ok(version) => {
                     adapters::download_adapter_from_github(
                         self.name(),
                         version.clone(),
@@ -351,10 +351,26 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                         adapter_path.join(format!("{}_{}", Self::ADAPTER_NAME, version.tag_name));
                     remove_matching(&adapter_path, |entry| entry != version_path).await;
                     version_path
-                } else {
-                    let mut paths = delegate.fs().read_dir(&adapter_path).await?;
-                    paths.next().await.context("No adapter found")??
-                };
+                }
+                Err(e) => {
+                    delegate.output_to_console("Unable to fetch latest version".to_string());
+                    log::error!("Error fetching latest version of {}: {}", self.name(), e);
+                    delegate.output_to_console(format!(
+                        "Searching for adapters in: {}",
+                        adapter_path.display()
+                    ));
+                    let mut paths = delegate
+                        .fs()
+                        .read_dir(&adapter_path)
+                        .await
+                        .context("No cached adapter directory")?;
+                    paths
+                        .next()
+                        .await
+                        .context("No cached adapter found")?
+                        .context("No cached adapter found")?
+                }
+            };
             let adapter_dir = version_path.join("extension").join("adapter");
             let path = adapter_dir.join("codelldb").to_string_lossy().to_string();
             self.path_to_codelldb.set(path.clone()).ok();

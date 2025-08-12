@@ -235,8 +235,8 @@ impl PickerDelegate for KernelPickerDelegate {
                 .gap_4()
                 .child(
                     Button::new("kernel-docs", "Kernel Docs")
-                        .icon(IconName::ExternalLink)
-                        .icon_size(IconSize::XSmall)
+                        .icon(IconName::ArrowUpRight)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::End)
                         .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),

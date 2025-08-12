@@ -15,7 +15,6 @@ mod toast_layer;
 mod toolbar;
 mod workspace_settings;
 
-use client::CloudUserStore;
 pub use toast_layer::{ToastAction, ToastLayer, ToastView};
 
 use anyhow::{Context as _, Result, anyhow};
@@ -49,7 +48,10 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{Buffer, LanguageRegistry, Rope};
+use language::{
+    Buffer, LanguageRegistry, Rope,
+    language_settings::{AllLanguageSettings, all_language_settings},
+};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -75,7 +77,7 @@ use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIde
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::Settings;
+use settings::{Settings, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -234,6 +236,8 @@ actions!(
         ToggleBottomDock,
         /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles edit prediction feature globally for all files.
+        ToggleEditPrediction,
         /// Toggles the left dock.
         ToggleLeftDock,
         /// Toggles the right dock.
@@ -840,7 +844,6 @@ pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub client: Arc<Client>,
     pub user_store: Entity<UserStore>,
-    pub cloud_user_store: Entity<CloudUserStore>,
     pub workspace_store: Entity<WorkspaceStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub build_window_options: fn(Option<Uuid>, &mut App) -> WindowOptions,
@@ -913,8 +916,6 @@ impl AppState {
         let client = Client::new(clock, http_client.clone(), cx);
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         theme::init(theme::LoadThemes::JustBase, cx);
@@ -926,7 +927,6 @@ impl AppState {
             fs,
             languages,
             user_store,
-            cloud_user_store,
             workspace_store,
             node_runtime: NodeRuntime::unavailable(),
             build_window_options: |_, _| Default::default(),
@@ -1086,6 +1086,7 @@ pub struct Workspace {
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
     window_edited: bool,
+    last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -1418,6 +1419,7 @@ impl Workspace {
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            last_window_title: None,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
@@ -1813,10 +1815,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                match latest_project_path_opened {
-                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
-                    None => true,
-                }
+                latest_project_path_opened.map_or(true, |path| path == history_path)
             })
     }
 
@@ -4406,7 +4405,13 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
+        if let Some(last_title) = self.last_window_title.as_ref() {
+            if &title == last_title {
+                return;
+            }
+        }
         window.set_window_title(&title);
+        self.last_window_title = Some(title);
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
@@ -4796,7 +4801,7 @@ impl Workspace {
                             .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
-                        if let Some(id) = id.clone() {
+                        if let Some(id) = id {
                             if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: id.clone(),
@@ -4809,7 +4814,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: id.clone(),
+                                    id,
                                     leader_id: leader_peer_id,
                                 };
                             }
@@ -5551,6 +5556,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
+            .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -5739,16 +5745,12 @@ impl Workspace {
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
-        let cloud_user_store =
-            cx.new(|cx| CloudUserStore::new(client.cloud_client(), user_store.clone(), cx));
-
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         window.activate_window();
         let app_state = Arc::new(AppState {
             languages: project.read(cx).languages().clone(),
             workspace_store,
-            cloud_user_store,
             client,
             user_store,
             fs: project.read(cx).fs().clone(),
@@ -5984,6 +5986,19 @@ impl Workspace {
             } else {
                 bottom_dock.resize_active_panel(Some(size), window, cx);
             }
+        });
+    }
+
+    fn toggle_edit_predictions_all_files(
+        &mut self,
+        _: &ToggleEditPrediction,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project().read(cx).fs().clone();
+        let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
+        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -6947,10 +6962,13 @@ async fn join_channel_internal(
         match status {
             Status::Connecting
             | Status::Authenticating
+            | Status::Authenticated
             | Status::Reconnecting
             | Status::Reauthenticating => continue,
             Status::Connected { .. } => break 'outer,
-            Status::SignedOut => return Err(ErrorCode::SignedOut.into()),
+            Status::SignedOut | Status::AuthenticationError => {
+                return Err(ErrorCode::SignedOut.into());
+            }
             Status::UpgradeRequired => return Err(ErrorCode::UpgradeRequired.into()),
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
                 return Err(ErrorCode::Disconnected.into());

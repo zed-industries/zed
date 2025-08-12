@@ -1275,6 +1275,18 @@ Each option controls displaying of a particular toolbar element. If all elements
 
 `boolean` values
 
+## Status Bar
+
+- Description: Control various elements in the status bar. Note that some items in the status bar have their own settings set elsewhere.
+- Setting: `status_bar`
+- Default:
+
+```json
+"status_bar": {
+  "active_language_button": true,
+},
+```
+
 ## LSP
 
 - Description: Configuration for language servers.
@@ -1795,7 +1807,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "delay_ms": 500
     }
   }
@@ -1808,7 +1819,6 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "show_commit_summary": true
     }
   }
@@ -1821,8 +1831,19 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true,
       "min_column": 80
+    }
+  }
+}
+```
+
+5. Set the padding between the end of the line and the inline blame hint, in ems:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "padding": 10
     }
   }
 }
@@ -3204,7 +3225,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "indent_guides": {
       "show": "always"
     },
-    "hide_root": false
+    "hide_root": false,
+    "starts_open": true
   }
 }
 ```

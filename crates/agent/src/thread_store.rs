@@ -8,7 +8,6 @@ use agent_settings::{AgentProfileId, CompletionMode};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::{Tool, ToolId, ToolWorkingSet};
 use chrono::{DateTime, Utc};
-use client::CloudUserStore;
 use collections::HashMap;
 use context_server::ContextServerId;
 use futures::{
@@ -105,7 +104,6 @@ pub type TextThreadStore = assistant_context::ContextStore;
 
 pub struct ThreadStore {
     project: Entity<Project>,
-    cloud_user_store: Entity<CloudUserStore>,
     tools: Entity<ToolWorkingSet>,
     prompt_builder: Arc<PromptBuilder>,
     prompt_store: Option<Entity<PromptStore>>,
@@ -126,7 +124,6 @@ impl EventEmitter<RulesLoadingError> for ThreadStore {}
 impl ThreadStore {
     pub fn load(
         project: Entity<Project>,
-        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_store: Option<Entity<PromptStore>>,
         prompt_builder: Arc<PromptBuilder>,
@@ -136,14 +133,8 @@ impl ThreadStore {
             let (thread_store, ready_rx) = cx.update(|cx| {
                 let mut option_ready_rx = None;
                 let thread_store = cx.new(|cx| {
-                    let (thread_store, ready_rx) = Self::new(
-                        project,
-                        cloud_user_store,
-                        tools,
-                        prompt_builder,
-                        prompt_store,
-                        cx,
-                    );
+                    let (thread_store, ready_rx) =
+                        Self::new(project, tools, prompt_builder, prompt_store, cx);
                     option_ready_rx = Some(ready_rx);
                     thread_store
                 });
@@ -156,7 +147,6 @@ impl ThreadStore {
 
     fn new(
         project: Entity<Project>,
-        cloud_user_store: Entity<CloudUserStore>,
         tools: Entity<ToolWorkingSet>,
         prompt_builder: Arc<PromptBuilder>,
         prompt_store: Option<Entity<PromptStore>>,
@@ -200,7 +190,6 @@ impl ThreadStore {
 
         let this = Self {
             project,
-            cloud_user_store,
             tools,
             prompt_builder,
             prompt_store,
@@ -418,7 +407,6 @@ impl ThreadStore {
         cx.new(|cx| {
             Thread::new(
                 self.project.clone(),
-                self.cloud_user_store.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
                 self.project_context.clone(),
@@ -437,7 +425,6 @@ impl ThreadStore {
                 ThreadId::new(),
                 serialized,
                 self.project.clone(),
-                self.cloud_user_store.clone(),
                 self.tools.clone(),
                 self.prompt_builder.clone(),
                 self.project_context.clone(),
@@ -469,7 +456,6 @@ impl ThreadStore {
                         id.clone(),
                         thread,
                         this.project.clone(),
-                        this.cloud_user_store.clone(),
                         this.tools.clone(),
                         this.prompt_builder.clone(),
                         this.project_context.clone(),

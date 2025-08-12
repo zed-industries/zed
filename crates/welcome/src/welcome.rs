@@ -1,10 +1,11 @@
-use client::{DisableAiSettings, TelemetrySettings, telemetry::Telemetry};
+use client::{TelemetrySettings, telemetry::Telemetry};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, WeakEntity, Window, actions, svg,
 };
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use project::DisableAiSettings;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{CheckboxWithLabel, ElevationIndex, Tooltip, prelude::*};

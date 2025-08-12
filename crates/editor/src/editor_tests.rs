@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     JoinLines,
     code_context_menus::CodeContextMenu,
-    inline_completion_tests::FakeInlineCompletionProvider,
+    edit_prediction_tests::FakeEditPredictionProvider,
     linked_editing_ranges::LinkedEditingRanges,
     scroll::scroll_amount::ScrollAmount,
     test::{
@@ -7251,12 +7251,12 @@ async fn test_undo_format_scrolls_to_last_edit_pos(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext) {
+async fn test_undo_edit_prediction_scrolls_to_edit_pos(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
 
-    let provider = cx.new(|_| FakeInlineCompletionProvider::default());
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
     cx.update_editor(|editor, window, cx| {
         editor.set_edit_prediction_provider(Some(provider.clone()), window, cx);
     });
@@ -7279,7 +7279,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_inline_completion(Some(inline_completion::InlineCompletion {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
                 id: None,
                 edits: vec![(edit_position..edit_position, "X".into())],
                 edit_preview: None,
@@ -7287,7 +7287,7 @@ async fn test_undo_inline_completion_scrolls_to_edit_pos(cx: &mut TestAppContext
         })
     });
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
     cx.update_editor(|editor, window, cx| {
         editor.accept_edit_prediction(&crate::AcceptEditPrediction, window, cx)
     });
@@ -7967,6 +7967,38 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
             cx,
         );
     });
+}
+
+#[gpui::test]
+async fn test_unwrap_syntax_node(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(Some(language), cx);
+    });
+
+    cx.set_state(
+        &r#"
+            use mod1::mod2::{«mod3ˇ», mod4};
+        "#
+        .unindent(),
+    );
+    cx.update_editor(|editor, window, cx| {
+        editor.unwrap_syntax_node(&UnwrapSyntaxNode, window, cx);
+    });
+    cx.assert_editor_state(
+        &r#"
+            use mod1::mod2::«mod3ˇ»;
+        "#
+        .unindent(),
+    );
 }
 
 #[gpui::test]
@@ -20552,7 +20584,7 @@ async fn test_multi_buffer_navigation_with_folded_buffers(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_inline_completion_text(cx: &mut TestAppContext) {
+async fn test_edit_prediction_text(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Simple insertion
@@ -20651,7 +20683,7 @@ async fn test_inline_completion_text(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
+async fn test_edit_prediction_text_with_deletions(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     // Deletion
@@ -20741,7 +20773,7 @@ async fn assert_highlighted_edits(
         .await;
 
     cx.update(|_window, cx| {
-        let highlighted_edits = inline_completion_edit_text(
+        let highlighted_edits = edit_prediction_edit_text(
             &snapshot.as_singleton().unwrap().2,
             &edits,
             &edit_preview,
