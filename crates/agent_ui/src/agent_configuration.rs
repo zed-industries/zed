@@ -279,7 +279,7 @@ impl AgentConfiguration {
                                 "Start New Thread",
                             )
                             .icon_position(IconPosition::Start)
-                            .icon(IconName::NewThread)
+                            .icon(IconName::Thread)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .label_size(LabelSize::Small)
@@ -1025,7 +1025,7 @@ impl AgentConfiguration {
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::NewThread)
+                                .icon(IconName::Thread)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted),
@@ -1056,7 +1056,7 @@ impl AgentConfiguration {
                         .child(
                             Button::new("start_acp_thread", "Start New Thread")
                                 .label_size(LabelSize::Small)
-                                .icon(IconName::NewThread)
+                                .icon(IconName::Thread)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted),
