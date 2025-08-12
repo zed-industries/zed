@@ -5,8 +5,8 @@ mod evals;
 mod streaming_fuzzy_matcher;
 
 use crate::{Template, Templates};
+use action_log::ActionLog;
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use cloud_llm_client::CompletionIntent;
 use create_file_parser::{CreateFileParser, CreateFileParserEvent};
 pub use edit_parser::EditFormat;
@@ -29,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
-use util::debug_panic;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
@@ -682,11 +681,6 @@ impl EditAgent {
                 if last_message.content.is_empty() {
                     conversation.messages.pop();
                 }
-            } else {
-                debug_panic!(
-                    "Last message must be an Assistant tool calling! Got {:?}",
-                    last_message.content
-                );
             }
         }
 
@@ -962,7 +956,7 @@ mod tests {
         );
         cx.run_until_parked();
 
-        model.stream_last_completion_response("<old_text>a");
+        model.send_last_completion_stream_text_chunk("<old_text>a");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -974,7 +968,7 @@ mod tests {
             None
         );
 
-        model.stream_last_completion_response("bc</old_text>");
+        model.send_last_completion_stream_text_chunk("bc</old_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -996,7 +990,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<new_text>abX");
+        model.send_last_completion_stream_text_chunk("<new_text>abX");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
         assert_eq!(
@@ -1011,7 +1005,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("cY");
+        model.send_last_completion_stream_text_chunk("cY");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), [EditAgentOutputEvent::Edited]);
         assert_eq!(
@@ -1026,8 +1020,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("</new_text>");
-        model.stream_last_completion_response("<old_text>hall");
+        model.send_last_completion_stream_text_chunk("</new_text>");
+        model.send_last_completion_stream_text_chunk("<old_text>hall");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -1042,8 +1036,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("ucinated old</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("ucinated old</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1061,8 +1055,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("hallucinated new</new_");
-        model.stream_last_completion_response("text>");
+        model.send_last_completion_stream_text_chunk("hallucinated new</new_");
+        model.send_last_completion_stream_text_chunk("text>");
         cx.run_until_parked();
         assert_eq!(drain_events(&mut events), vec![]);
         assert_eq!(
@@ -1077,7 +1071,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("<old_text>\nghi\nj");
+        model.send_last_completion_stream_text_chunk("<old_text>\nghi\nj");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1099,8 +1093,8 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("kl</old_text>");
-        model.stream_last_completion_response("<new_text>");
+        model.send_last_completion_stream_text_chunk("kl</old_text>");
+        model.send_last_completion_stream_text_chunk("<new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1122,7 +1116,7 @@ mod tests {
             })
         );
 
-        model.stream_last_completion_response("GHI</new_text>");
+        model.send_last_completion_stream_text_chunk("GHI</new_text>");
         cx.run_until_parked();
         assert_eq!(
             drain_events(&mut events),
@@ -1367,7 +1361,9 @@ mod tests {
         cx.background_spawn(async move {
             for chunk in chunks {
                 executor.simulate_random_delay().await;
-                model.as_fake().stream_last_completion_response(chunk);
+                model
+                    .as_fake()
+                    .send_last_completion_stream_text_chunk(chunk);
             }
             model.as_fake().end_last_completion_stream();
         })

@@ -8,10 +8,9 @@ mod rate_completion_modal;
 
 pub(crate) use completion_diff_element::*;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
+use edit_prediction::DataCollectionState;
 pub use init::*;
-use inline_completion::DataCollectionState;
-use license_detection::LICENSE_FILES_TO_CHECK;
-pub use license_detection::is_license_eligible_for_data_collection;
+use license_detection::LicenseDetectionWatcher;
 pub use rate_completion_modal::*;
 
 use anyhow::{Context as _, Result, anyhow};
@@ -19,7 +18,7 @@ use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::{
     AcceptEditPredictionBody, EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
-    PredictEditsBody, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
+    PredictEditsBody, PredictEditsGitInfo, PredictEditsResponse, ZED_VERSION_HEADER_NAME,
 };
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
@@ -33,13 +32,11 @@ use language::{
     Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, ToOffset, ToPoint, text_diff,
 };
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use postage::watch;
-use project::Project;
+use project::{Project, ProjectPath};
 use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
 use std::{
-    borrow::Cow,
     cmp,
     fmt::Write,
     future::Future,
@@ -50,7 +47,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::InlineCompletionRating;
+use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::ResultExt;
 use uuid::Uuid;
@@ -68,6 +65,7 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 const MAX_EVENT_TOKENS: usize = 500;
+const MAX_DIAGNOSTIC_GROUPS: usize = 10;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -81,15 +79,15 @@ actions!(
 );
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
-pub struct InlineCompletionId(Uuid);
+pub struct EditPredictionId(Uuid);
 
-impl From<InlineCompletionId> for gpui::ElementId {
-    fn from(value: InlineCompletionId) -> Self {
+impl From<EditPredictionId> for gpui::ElementId {
+    fn from(value: EditPredictionId) -> Self {
         gpui::ElementId::Uuid(value.0)
     }
 }
 
-impl std::fmt::Display for InlineCompletionId {
+impl std::fmt::Display for EditPredictionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
@@ -134,8 +132,8 @@ struct ZetaGlobal(Entity<Zeta>);
 impl Global for ZetaGlobal {}
 
 #[derive(Clone)]
-pub struct InlineCompletion {
-    id: InlineCompletionId,
+pub struct EditPrediction {
+    id: EditPredictionId,
     path: Arc<Path>,
     excerpt_range: Range<usize>,
     cursor_offset: usize,
@@ -150,7 +148,7 @@ pub struct InlineCompletion {
     response_received_at: Instant,
 }
 
-impl InlineCompletion {
+impl EditPrediction {
     fn latency(&self) -> Duration {
         self.response_received_at
             .duration_since(self.buffer_snapshotted_at)
@@ -207,9 +205,9 @@ fn interpolate(
     if edits.is_empty() { None } else { Some(edits) }
 }
 
-impl std::fmt::Debug for InlineCompletion {
+impl std::fmt::Debug for EditPrediction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("InlineCompletion")
+        f.debug_struct("EditPrediction")
             .field("id", &self.id)
             .field("path", &self.path)
             .field("edits", &self.edits)
@@ -222,8 +220,8 @@ pub struct Zeta {
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
-    shown_completions: VecDeque<InlineCompletion>,
-    rated_completions: HashSet<InlineCompletionId>,
+    shown_completions: VecDeque<EditPrediction>,
+    rated_completions: HashSet<EditPredictionId>,
     data_collection_choice: Entity<DataCollectionChoice>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
@@ -253,11 +251,10 @@ impl Zeta {
 
         this.update(cx, move |this, cx| {
             if let Some(worktree) = worktree {
-                worktree.update(cx, |worktree, cx| {
-                    this.license_detection_watchers
-                        .entry(worktree.id())
-                        .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(worktree, cx)));
-                });
+                let worktree_id = worktree.read(cx).id();
+                this.license_detection_watchers
+                    .entry(worktree_id)
+                    .or_insert_with(|| Rc::new(LicenseDetectionWatcher::new(&worktree, cx)));
             }
         });
 
@@ -384,7 +381,7 @@ impl Zeta {
         can_collect_data: bool,
         cx: &mut Context<Self>,
         perform_predict_edits: F,
-    ) -> Task<Result<Option<InlineCompletion>>>
+    ) -> Task<Result<Option<EditPrediction>>>
     where
         F: FnOnce(PerformPredictEditsParams) -> R + 'static,
         R: Future<Output = Result<(PredictEditsResponse, Option<EditPredictionUsage>)>>
@@ -399,6 +396,14 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+
+        let git_info = if let (true, Some(project), Some(file)) =
+            (can_collect_data, project, snapshot.file())
+        {
+            git_info_for_file(project, &ProjectPath::from_file(file.as_ref(), cx), cx)
+        } else {
+            None
+        };
 
         let full_path: Arc<Path> = snapshot
             .file()
@@ -415,6 +420,7 @@ impl Zeta {
             cursor_point,
             make_events_prompt,
             can_collect_data,
+            git_info,
             cx,
         );
 
@@ -423,6 +429,7 @@ impl Zeta {
                 body,
                 editable_range,
             } = gather_task.await?;
+            let done_gathering_context_at = Instant::now();
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
@@ -475,6 +482,7 @@ impl Zeta {
                 }
             };
 
+            let received_response_at = Instant::now();
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
@@ -486,7 +494,7 @@ impl Zeta {
                 .ok();
             }
 
-            Self::process_completion_response(
+            let edit_prediction = Self::process_completion_response(
                 response,
                 buffer,
                 &snapshot,
@@ -499,7 +507,25 @@ impl Zeta {
                 buffer_snapshotted_at,
                 &cx,
             )
-            .await
+            .await;
+
+            let finished_at = Instant::now();
+
+            // record latency for ~1% of requests
+            if rand::random::<u8>() <= 2 {
+                telemetry::event!(
+                    "Edit Prediction Request",
+                    context_latency = done_gathering_context_at
+                        .duration_since(buffer_snapshotted_at)
+                        .as_millis(),
+                    request_latency = received_response_at
+                        .duration_since(done_gathering_context_at)
+                        .as_millis(),
+                    process_latency = finished_at.duration_since(received_response_at).as_millis()
+                );
+            }
+
+            edit_prediction
         })
     }
 
@@ -664,7 +690,7 @@ and then another
         position: language::Anchor,
         response: PredictEditsResponse,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         use std::future::ready;
 
         self.request_completion_impl(None, project, buffer, position, false, cx, |_params| {
@@ -679,7 +705,7 @@ and then another
         position: language::Anchor,
         can_collect_data: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         let workspace = self
             .workspace
             .as_ref()
@@ -773,7 +799,7 @@ and then another
 
     fn accept_edit_prediction(
         &mut self,
-        request_id: InlineCompletionId,
+        request_id: EditPredictionId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let client = self.client.clone();
@@ -852,7 +878,7 @@ and then another
         input_excerpt: String,
         buffer_snapshotted_at: Instant,
         cx: &AsyncApp,
-    ) -> Task<Result<Option<InlineCompletion>>> {
+    ) -> Task<Result<Option<EditPrediction>>> {
         let snapshot = snapshot.clone();
         let request_id = prediction_response.request_id;
         let output_excerpt = prediction_response.output_excerpt;
@@ -884,8 +910,8 @@ and then another
 
             let edit_preview = edit_preview.await;
 
-            Ok(Some(InlineCompletion {
-                id: InlineCompletionId(request_id),
+            Ok(Some(EditPrediction {
+                id: EditPredictionId(request_id),
                 path,
                 excerpt_range: editable_range,
                 cursor_offset,
@@ -995,11 +1021,11 @@ and then another
             .collect()
     }
 
-    pub fn is_completion_rated(&self, completion_id: InlineCompletionId) -> bool {
+    pub fn is_completion_rated(&self, completion_id: EditPredictionId) -> bool {
         self.rated_completions.contains(&completion_id)
     }
 
-    pub fn completion_shown(&mut self, completion: &InlineCompletion, cx: &mut Context<Self>) {
+    pub fn completion_shown(&mut self, completion: &EditPrediction, cx: &mut Context<Self>) {
         self.shown_completions.push_front(completion.clone());
         if self.shown_completions.len() > 50 {
             let completion = self.shown_completions.pop_back().unwrap();
@@ -1010,8 +1036,8 @@ and then another
 
     pub fn rate_completion(
         &mut self,
-        completion: &InlineCompletion,
-        rating: InlineCompletionRating,
+        completion: &EditPrediction,
+        rating: EditPredictionRating,
         feedback: String,
         cx: &mut Context<Self>,
     ) {
@@ -1029,7 +1055,7 @@ and then another
         cx.notify();
     }
 
-    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
+    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &EditPrediction> {
         self.shown_completions.iter()
     }
 
@@ -1095,64 +1121,40 @@ pub struct ZedUpdateRequiredError {
     minimum_version: SemanticVersion,
 }
 
-struct LicenseDetectionWatcher {
-    is_open_source_rx: watch::Receiver<bool>,
-    _is_open_source_task: Task<()>,
-}
-
-impl LicenseDetectionWatcher {
-    pub fn new(worktree: &Worktree, cx: &mut Context<Worktree>) -> Self {
-        let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
-
-        // Check if worktree is a single file, if so we do not need to check for a LICENSE file
-        let task = if worktree.abs_path().is_file() {
-            Task::ready(())
-        } else {
-            let loaded_files = LICENSE_FILES_TO_CHECK
-                .iter()
-                .map(Path::new)
-                .map(|file| worktree.load_file(file, cx))
-                .collect::<ArrayVec<_, { LICENSE_FILES_TO_CHECK.len() }>>();
-
-            cx.background_spawn(async move {
-                for loaded_file in loaded_files.into_iter() {
-                    let Ok(loaded_file) = loaded_file.await else {
-                        continue;
-                    };
-
-                    let path = &loaded_file.file.path;
-                    if is_license_eligible_for_data_collection(&loaded_file.text) {
-                        log::info!("detected '{path:?}' as open source license");
-                        *is_open_source_tx.borrow_mut() = true;
-                    } else {
-                        log::info!("didn't detect '{path:?}' as open source license");
-                    }
-
-                    // stop on the first license that successfully read
-                    return;
-                }
-
-                log::debug!("didn't find a license file to check, assuming closed source");
-            })
-        };
-
-        Self {
-            is_open_source_rx,
-            _is_open_source_task: task,
-        }
-    }
-
-    /// Answers false until we find out it's open source
-    pub fn is_project_open_source(&self) -> bool {
-        *self.is_open_source_rx.borrow()
-    }
-}
-
 fn common_prefix<T1: Iterator<Item = char>, T2: Iterator<Item = char>>(a: T1, b: T2) -> usize {
     a.zip(b)
         .take_while(|(a, b)| a == b)
         .map(|(a, _)| a.len_utf8())
         .sum()
+}
+
+fn git_info_for_file(
+    project: &Entity<Project>,
+    project_path: &ProjectPath,
+    cx: &App,
+) -> Option<PredictEditsGitInfo> {
+    let git_store = project.read(cx).git_store().read(cx);
+    if let Some((repository, _repo_path)) =
+        git_store.repository_and_path_for_project_path(project_path, cx)
+    {
+        let repository = repository.read(cx);
+        let head_sha = repository
+            .head_commit
+            .as_ref()
+            .map(|head_commit| head_commit.sha.to_string());
+        let remote_origin_url = repository.remote_origin_url.clone();
+        let remote_upstream_url = repository.remote_upstream_url.clone();
+        if head_sha.is_none() && remote_origin_url.is_none() && remote_upstream_url.is_none() {
+            return None;
+        }
+        Some(PredictEditsGitInfo {
+            head_sha,
+            remote_origin_url,
+            remote_upstream_url,
+        })
+    } else {
+        None
+    }
 }
 
 pub struct GatherContextOutput {
@@ -1167,12 +1169,13 @@ pub fn gather_context(
     cursor_point: language::Point,
     make_events_prompt: impl FnOnce() -> String + Send + 'static,
     can_collect_data: bool,
+    git_info: Option<PredictEditsGitInfo>,
     cx: &App,
 ) -> Task<Result<GatherContextOutput>> {
     let local_lsp_store =
         project.and_then(|project| project.read(cx).lsp_store().read(cx).as_local());
     let diagnostic_groups: Vec<(String, serde_json::Value)> =
-        if let Some(local_lsp_store) = local_lsp_store {
+        if can_collect_data && let Some(local_lsp_store) = local_lsp_store {
             snapshot
                 .diagnostic_groups(None)
                 .into_iter()
@@ -1192,7 +1195,9 @@ pub fn gather_context(
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let diagnostic_groups = if diagnostic_groups.is_empty() {
+            let diagnostic_groups = if diagnostic_groups.is_empty()
+                || diagnostic_groups.len() >= MAX_DIAGNOSTIC_GROUPS
+            {
                 None
             } else {
                 Some(diagnostic_groups)
@@ -1206,16 +1211,16 @@ pub fn gather_context(
                 MAX_CONTEXT_TOKENS,
             );
             let input_events = make_events_prompt();
-            let input_outline = prompt_for_outline(&snapshot);
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
             let body = PredictEditsBody {
                 input_events,
                 input_excerpt: input_excerpt.prompt,
-                speculated_output: Some(input_excerpt.speculated_output),
-                outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
+                git_info,
+                outline: None,
+                speculated_output: None,
             };
 
             Ok(GatherContextOutput {
@@ -1224,32 +1229,6 @@ pub fn gather_context(
             })
         }
     })
-}
-
-fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
-    let mut input_outline = String::new();
-
-    writeln!(
-        input_outline,
-        "```{}",
-        snapshot
-            .file()
-            .map_or(Cow::Borrowed("untitled"), |file| file
-                .path()
-                .to_string_lossy())
-    )
-    .unwrap();
-
-    if let Some(outline) = snapshot.outline(None) {
-        for item in &outline.items {
-            let spacing = " ".repeat(item.depth);
-            writeln!(input_outline, "{}{}", spacing, item.text).unwrap();
-        }
-    }
-
-    writeln!(input_outline, "```").unwrap();
-
-    input_outline
 }
 
 fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {
@@ -1323,12 +1302,12 @@ impl Event {
 }
 
 #[derive(Debug, Clone)]
-struct CurrentInlineCompletion {
+struct CurrentEditPrediction {
     buffer_id: EntityId,
-    completion: InlineCompletion,
+    completion: EditPrediction,
 }
 
-impl CurrentInlineCompletion {
+impl CurrentEditPrediction {
     fn should_replace_completion(&self, old_completion: &Self, snapshot: &BufferSnapshot) -> bool {
         if self.buffer_id != old_completion.buffer_id {
             return true;
@@ -1497,17 +1476,17 @@ async fn llm_token_retry(
     }
 }
 
-pub struct ZetaInlineCompletionProvider {
+pub struct ZetaEditPredictionProvider {
     zeta: Entity<Zeta>,
     pending_completions: ArrayVec<PendingCompletion, 2>,
     next_pending_completion_id: usize,
-    current_completion: Option<CurrentInlineCompletion>,
+    current_completion: Option<CurrentEditPrediction>,
     /// None if this is entirely disabled for this provider
     provider_data_collection: ProviderDataCollection,
     last_request_timestamp: Instant,
 }
 
-impl ZetaInlineCompletionProvider {
+impl ZetaEditPredictionProvider {
     pub const THROTTLE_TIMEOUT: Duration = Duration::from_millis(300);
 
     pub fn new(zeta: Entity<Zeta>, provider_data_collection: ProviderDataCollection) -> Self {
@@ -1522,7 +1501,7 @@ impl ZetaInlineCompletionProvider {
     }
 }
 
-impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider {
+impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
     fn name() -> &'static str {
         "zed-predict"
     }
@@ -1650,7 +1629,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
                 Ok(completion_request) => {
                     let completion_request = completion_request.await;
                     completion_request.map(|c| {
-                        c.map(|completion| CurrentInlineCompletion {
+                        c.map(|completion| CurrentEditPrediction {
                             buffer_id: buffer.entity_id(),
                             completion,
                         })
@@ -1723,7 +1702,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         &mut self,
         _buffer: Entity<Buffer>,
         _cursor_position: language::Anchor,
-        _direction: inline_completion::Direction,
+        _direction: edit_prediction::Direction,
         _cx: &mut Context<Self>,
     ) {
         // Right now we don't support cycling.
@@ -1754,8 +1733,8 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
         buffer: &Entity<Buffer>,
         cursor_position: language::Anchor,
         cx: &mut Context<Self>,
-    ) -> Option<inline_completion::InlineCompletion> {
-        let CurrentInlineCompletion {
+    ) -> Option<edit_prediction::EditPrediction> {
+        let CurrentEditPrediction {
             buffer_id,
             completion,
             ..
@@ -1803,7 +1782,7 @@ impl inline_completion::EditPredictionProvider for ZetaInlineCompletionProvider 
             }
         }
 
-        Some(inline_completion::InlineCompletion {
+        Some(edit_prediction::EditPrediction {
             id: Some(completion.id.to_string().into()),
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
             edit_preview: Some(completion.edit_preview.clone()),
@@ -1833,7 +1812,7 @@ mod tests {
     use super::*;
 
     #[gpui::test]
-    async fn test_inline_completion_basic_interpolation(cx: &mut TestAppContext) {
+    async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
         let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
             to_completion_edits(
@@ -1848,12 +1827,12 @@ mod tests {
             .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
             .await;
 
-        let completion = InlineCompletion {
+        let completion = EditPrediction {
             edits,
             edit_preview,
             path: Path::new("").into(),
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
-            id: InlineCompletionId(Uuid::new_v4()),
+            id: EditPredictionId(Uuid::new_v4()),
             excerpt_range: 0..0,
             cursor_offset: 0,
             input_outline: "".into(),
@@ -2014,7 +1993,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_inline_completion_end_of_buffer(cx: &mut TestAppContext) {
+    async fn test_edit_prediction_end_of_buffer(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);

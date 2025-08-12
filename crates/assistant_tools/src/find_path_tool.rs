@@ -1,7 +1,8 @@
 use crate::{schema::json_schema_for, ui::ToolCallCardHeader};
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
 use assistant_tool::{
-    ActionLog, Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
+    Tool, ToolCard, ToolResult, ToolResultContent, ToolResultOutput, ToolUseStatus,
 };
 use editor::Editor;
 use futures::channel::oneshot::{self, Receiver};
@@ -257,7 +258,7 @@ impl ToolCard for FindPathToolCard {
 
                         Button::new(("path", index), button_label)
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)

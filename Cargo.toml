@@ -2,8 +2,10 @@
 resolver = "2"
 members = [
     "crates/acp_thread",
+    "crates/action_log",
     "crates/activity_indicator",
     "crates/agent",
+    "crates/agent2",
     "crates/agent_servers",
     "crates/agent_settings",
     "crates/agent_ui",
@@ -40,6 +42,7 @@ members = [
     "crates/component",
     "crates/context_server",
     "crates/copilot",
+    "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
     "crates/dap_adapters",
@@ -79,8 +82,8 @@ members = [
     "crates/icons",
     "crates/image_viewer",
     "crates/indexed_docs",
-    "crates/inline_completion",
-    "crates/inline_completion_button",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
@@ -227,7 +230,9 @@ edition = "2024"
 #
 
 acp_thread = { path = "crates/acp_thread" }
+action_log = { path = "crates/action_log" }
 agent = { path = "crates/agent" }
+agent2 = { path = "crates/agent2" }
 activity_indicator = { path = "crates/activity_indicator" }
 agent_ui = { path = "crates/agent_ui" }
 agent_settings = { path = "crates/agent_settings" }
@@ -266,6 +271,7 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
+crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
@@ -302,8 +308,8 @@ http_client_tls = { path = "crates/http_client_tls" }
 icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
-inline_completion = { path = "crates/inline_completion" }
-inline_completion_button = { path = "crates/inline_completion_button" }
+edit_prediction = { path = "crates/edit_prediction" }
+edit_prediction_button = { path = "crates/edit_prediction_button" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -421,7 +427,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 #
 
 agentic-coding-protocol = "0.0.10"
-agent-client-protocol = "0.0.11"
+agent-client-protocol = "0.0.23"
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -457,6 +463,7 @@ bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
+ciborium = "0.2"
 circular-buffer = "1.0"
 clap = { version = "4.4", features = ["derive"] }
 cocoa = "0.26"
@@ -466,6 +473,7 @@ core-foundation = "0.10.0"
 core-foundation-sys = "0.8.6"
 core-video = { version = "0.4.3", features = ["metal"] }
 cpal = "0.16"
+crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
@@ -513,6 +521,7 @@ log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "39f629bdd03d59abd786ed9fc27e8bca02c0c0ec" }
 markup5ever_rcdom = "0.3.0"
 metal = "0.29"
+minidumper = "0.8"
 moka = { version = "0.12.10", features = ["sync"] }
 naga = { version = "25.0", features = ["wgsl-in"] }
 nanoid = "0.4"
@@ -552,6 +561,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "charset",
     "http2",
     "macos-system-configuration",
+    "multipart",
     "rustls-tls-native-roots",
     "socks",
     "stream",
@@ -593,7 +603,7 @@ sysinfo = "0.31.0"
 take-until = "0.2.0"
 tempfile = "3.20.0"
 thiserror = "2.0.12"
-tiktoken-rs = "0.7.0"
+tiktoken-rs = { git = "https://github.com/zed-industries/tiktoken-rs", rev = "30c32a4522751699adeda0d5840c71c3b75ae73d" }
 time = { version = "0.3", features = [
     "macros",
     "parsing",
@@ -653,6 +663,9 @@ which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
+# We can switch back to the published version once https://github.com/infinitefield/yawc/pull/16 is merged and a new
+# version is released.
+yawc = { git = "https://github.com/deviant-forks/yawc", rev = "1899688f3e69ace4545aceb97b2a13881cf26142" }
 zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
@@ -756,7 +769,7 @@ feature_flags = { codegen-units = 1 }
 file_icons = { codegen-units = 1 }
 fsevent = { codegen-units = 1 }
 image_viewer = { codegen-units = 1 }
-inline_completion_button = { codegen-units = 1 }
+edit_prediction_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
 lmstudio = { codegen-units = 1 }
@@ -828,6 +841,7 @@ style = { level = "allow", priority = -1 }
 module_inception = { level = "deny" }
 question_mark = { level = "deny" }
 redundant_closure = { level = "deny" }
+declare_interior_mutable_const = { level = "deny" }
 # Individual rules that have violations in the codebase:
 type_complexity = "allow"
 # We often return trait objects from `new` functions.

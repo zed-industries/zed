@@ -1,7 +1,7 @@
 use crate::{Project, ProjectPath};
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use itertools::Itertools;
 use language::LanguageName;
 use remote::ssh_session::SshArgs;
@@ -98,7 +98,6 @@ impl Project {
     pub fn create_terminal(
         &mut self,
         kind: TerminalKind,
-        window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let path: Option<Arc<Path>> = match &kind {
@@ -134,7 +133,7 @@ impl Project {
                 None
             };
             project.update(cx, |project, cx| {
-                project.create_terminal_with_venv(kind, python_venv_directory, window, cx)
+                project.create_terminal_with_venv(kind, python_venv_directory, cx)
             })?
         })
     }
@@ -209,7 +208,6 @@ impl Project {
         &mut self,
         kind: TerminalKind,
         python_venv_directory: Option<PathBuf>,
-        window: AnyWindowHandle,
         cx: &mut Context<Self>,
     ) -> Result<Entity<Terminal>> {
         let this = &mut *self;
@@ -396,7 +394,7 @@ impl Project {
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             is_ssh_terminal,
-            window,
+            cx.entity_id().as_u64(),
             completion_tx,
             cx,
         )
