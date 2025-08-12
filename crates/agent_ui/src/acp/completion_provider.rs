@@ -1,18 +1,20 @@
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::Result;
+use acp_thread::MentionUri;
+use anyhow::{Context as _, Result};
 use collections::HashMap;
 use editor::display_map::CreaseId;
 use editor::{CompletionProvider, Editor, ExcerptId};
 use file_icons::FileIcons;
+use futures::future::try_join_all;
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
 use parking_lot::Mutex;
-use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, WorktreeId};
+use project::{Completion, CompletionIntent, CompletionResponse, Project, ProjectPath, WorktreeId};
 use rope::Point;
 use text::{Anchor, ToPoint};
 use ui::prelude::*;
@@ -23,21 +25,63 @@ use crate::context_picker::file_context_picker::{extract_file_name_and_directory
 
 #[derive(Default)]
 pub struct MentionSet {
-    paths_by_crease_id: HashMap<CreaseId, ProjectPath>,
+    paths_by_crease_id: HashMap<CreaseId, MentionUri>,
 }
 
 impl MentionSet {
-    pub fn insert(&mut self, crease_id: CreaseId, path: ProjectPath) {
-        self.paths_by_crease_id.insert(crease_id, path);
-    }
-
-    pub fn path_for_crease_id(&self, crease_id: CreaseId) -> Option<ProjectPath> {
-        self.paths_by_crease_id.get(&crease_id).cloned()
+    pub fn insert(&mut self, crease_id: CreaseId, path: PathBuf) {
+        self.paths_by_crease_id
+            .insert(crease_id, MentionUri::File(path));
     }
 
     pub fn drain(&mut self) -> impl Iterator<Item = CreaseId> {
         self.paths_by_crease_id.drain().map(|(id, _)| id)
     }
+
+    pub fn contents(
+        &self,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Result<HashMap<CreaseId, Mention>>> {
+        let contents = self
+            .paths_by_crease_id
+            .iter()
+            .map(|(crease_id, uri)| match uri {
+                MentionUri::File(path) => {
+                    let crease_id = *crease_id;
+                    let uri = uri.clone();
+                    let path = path.to_path_buf();
+                    let buffer_task = project.update(cx, |project, cx| {
+                        let path = project
+                            .find_project_path(path, cx)
+                            .context("Failed to find project path")?;
+                        anyhow::Ok(project.open_buffer(path, cx))
+                    });
+
+                    cx.spawn(async move |cx| {
+                        let buffer = buffer_task?.await?;
+                        let content = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+
+                        anyhow::Ok((crease_id, Mention { uri, content }))
+                    })
+                }
+                _ => {
+                    // TODO
+                    unimplemented!()
+                }
+            })
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_cx| {
+            let contents = try_join_all(contents).await?.into_iter().collect();
+            anyhow::Ok(contents)
+        })
+    }
+}
+
+pub struct Mention {
+    pub uri: MentionUri,
+    pub content: String,
 }
 
 pub struct ContextPickerCompletionProvider {
@@ -68,6 +112,7 @@ impl ContextPickerCompletionProvider {
         source_range: Range<Anchor>,
         editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
+        project: Entity<Project>,
         cx: &App,
     ) -> Completion {
         let (file_name, directory) =
@@ -112,6 +157,7 @@ impl ContextPickerCompletionProvider {
                 new_text_len - 1,
                 editor,
                 mention_set,
+                project,
             )),
         }
     }
@@ -159,6 +205,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
+        let project = workspace.read(cx).project().clone();
         let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
@@ -195,6 +242,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                             source_range.clone(),
                             editor.clone(),
                             mention_set.clone(),
+                            project.clone(),
                             cx,
                         )
                     })
@@ -254,6 +302,7 @@ fn confirm_completion_callback(
     content_len: usize,
     editor: Entity<Editor>,
     mention_set: Arc<Mutex<MentionSet>>,
+    project: Entity<Project>,
 ) -> Arc<dyn Fn(CompletionIntent, &mut Window, &mut App) -> bool + Send + Sync> {
     Arc::new(move |_, window, cx| {
         let crease_text = crease_text.clone();
@@ -261,6 +310,7 @@ fn confirm_completion_callback(
         let editor = editor.clone();
         let project_path = project_path.clone();
         let mention_set = mention_set.clone();
+        let project = project.clone();
         window.defer(cx, move |window, cx| {
             let crease_id = crate::context_picker::insert_crease_for_mention(
                 excerpt_id,
@@ -272,8 +322,13 @@ fn confirm_completion_callback(
                 window,
                 cx,
             );
+
+            let Some(path) = project.read(cx).absolute_path(&project_path, cx) else {
+                return;
+            };
+
             if let Some(crease_id) = crease_id {
-                mention_set.lock().insert(crease_id, project_path);
+                mention_set.lock().insert(crease_id, path);
             }
         });
         false
