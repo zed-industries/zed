@@ -149,7 +149,9 @@
                 parameters: (parameter_list
                     "(" @context
                     ")" @context)))
-    ]
-    (type_qualifier)? @context) @item
+    ; Fields declarations may define multiple fields, and so @item is on the
+    ; declarator so they each get distinct ranges.
+    ] @item
+    (type_qualifier)? @context)
 
 (comment) @annotation
