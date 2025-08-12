@@ -101,7 +101,7 @@ impl AgentTool for GrepTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         const CONTEXT_LINES: u32 = 2;
@@ -282,33 +282,22 @@ impl AgentTool for GrepTool {
                         }
                     }
 
-                    event_stream.update_fields(acp::ToolCallUpdateFields {
-                        content: Some(vec![output.clone().into()]),
-                        ..Default::default()
-                    });
                     matches_found += 1;
                 }
             }
 
-            let output = if matches_found == 0 {
-                "No matches found".to_string()
+            if matches_found == 0 {
+                Ok("No matches found".into())
             } else if has_more_matches {
-                format!(
+                Ok(format!(
                     "Showing matches {}-{} (there were more matches found; use offset: {} to see next page):\n{output}",
                     input.offset + 1,
                     input.offset + matches_found,
                     input.offset + RESULTS_PER_PAGE,
-                )
+                ))
             } else {
-                format!("Found {matches_found} matches:\n{output}")
-            };
-
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                content: Some(vec![output.clone().into()]),
-                ..Default::default()
-            });
-
-            Ok(output)
+                Ok(format!("Found {matches_found} matches:\n{output}"))
+            }
         })
     }
 }

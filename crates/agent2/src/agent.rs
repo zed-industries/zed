@@ -1,8 +1,8 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
 use crate::{
-    CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool,
-    GrepTool, ListDirectoryTool, MessageContent, MovePathTool, NowTool, OpenTool, ReadFileTool,
-    TerminalTool, ThinkingTool, ToolCallAuthorization, WebSearchTool,
+    ContextServerRegistry, CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool,
+    FetchTool, FindPathTool, GrepTool, ListDirectoryTool, MessageContent, MovePathTool, NowTool,
+    OpenTool, ReadFileTool, TerminalTool, ThinkingTool, ToolCallAuthorization, WebSearchTool,
 };
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
@@ -55,6 +55,7 @@ pub struct NativeAgent {
     project_context: Rc<RefCell<ProjectContext>>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
+    context_server_registry: Entity<ContextServerRegistry>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
     project: Entity<Project>,
@@ -89,6 +90,9 @@ impl NativeAgent {
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
+                }),
+                context_server_registry: cx.new(|cx| {
+                    ContextServerRegistry::new(project.read(cx).context_server_store(), cx)
                 }),
                 templates,
                 project,
@@ -385,7 +389,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             // Create AcpThread
             let acp_thread = cx.update(|cx| {
                 cx.new(|cx| {
-                    acp_thread::AcpThread::new("agent2", self.clone(), project.clone(), session_id.clone(), cx)
+                    acp_thread::AcpThread::new(
+                        "agent2",
+                        self.clone(),
+                        project.clone(),
+                        session_id.clone(),
+                        cx,
+                    )
                 })
             })?;
             let action_log = cx.update(|cx| acp_thread.read(cx).action_log().clone())?;
@@ -413,11 +423,21 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         })
                         .ok_or_else(|| {
                             log::warn!("No default model configured in settings");
-                            anyhow!("No default model configured. Please configure a default model in settings.")
+                            anyhow!(
+                                "No default model. Please configure a default model in settings."
+                            )
                         })?;
 
                     let thread = cx.new(|cx| {
-                        let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log.clone(), agent.templates.clone(), default_model);
+                        let mut thread = Thread::new(
+                            project.clone(),
+                            agent.project_context.clone(),
+                            agent.context_server_registry.clone(),
+                            action_log.clone(),
+                            agent.templates.clone(),
+                            default_model,
+                            cx,
+                        );
                         thread.add_tool(CreateDirectoryTool::new(project.clone()));
                         thread.add_tool(CopyPathTool::new(project.clone()));
                         thread.add_tool(DiagnosticsTool::new(project.clone()));
@@ -450,7 +470,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                         acp_thread: acp_thread.downgrade(),
                         _subscription: cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                             this.sessions.remove(acp_thread.session_id());
-                        })
+                        }),
                     },
                 );
             })?;
@@ -496,14 +516,13 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 })?;
             log::debug!("Found session for: {}", session_id);
 
-            // Convert prompt to message
             let message: Vec<MessageContent> = params
                 .prompt
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>();
             log::info!("Converted prompt to message: {} chars", message.len());
-            // log::debug!("Message content: {}", message);
+            log::debug!("Message content: {:?}", message);
 
             // Get model using the ModelSelector capability (always available for agent2)
             // Get the selected model from the thread directly
