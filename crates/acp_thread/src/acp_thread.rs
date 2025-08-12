@@ -1,11 +1,15 @@
 mod connection;
 mod diff;
+mod mention;
+mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+pub use mention::*;
+pub use terminal::*;
 
 use action_log::ActionLog;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp};
 use anyhow::{Context as _, Result};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
@@ -19,12 +23,7 @@ use std::error::Error;
 use std::fmt::Formatter;
 use std::process::ExitStatus;
 use std::rc::Rc;
-use std::{
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::ResultExt;
 
@@ -48,38 +47,6 @@ impl UserMessage {
 
     fn to_markdown(&self, cx: &App) -> String {
         format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
-    }
-}
-
-#[derive(Debug)]
-pub struct MentionPath<'a>(&'a Path);
-
-impl<'a> MentionPath<'a> {
-    const PREFIX: &'static str = "@file:";
-
-    pub fn new(path: &'a Path) -> Self {
-        MentionPath(path)
-    }
-
-    pub fn try_parse(url: &'a str) -> Option<Self> {
-        let path = url.strip_prefix(Self::PREFIX)?;
-        Some(MentionPath(Path::new(path)))
-    }
-
-    pub fn path(&self) -> &Path {
-        self.0
-    }
-}
-
-impl Display for MentionPath<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[@{}]({}{})",
-            self.0.file_name().unwrap_or_default().display(),
-            Self::PREFIX,
-            self.0.display()
-        )
     }
 }
 
@@ -142,6 +109,14 @@ impl AgentThreadEntry {
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         if let AgentThreadEntry::ToolCall(call) = self {
             itertools::Either::Left(call.diffs())
+        } else {
+            itertools::Either::Right(std::iter::empty())
+        }
+    }
+
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        if let AgentThreadEntry::ToolCall(call) = self {
+            itertools::Either::Left(call.terminals())
         } else {
             itertools::Either::Right(std::iter::empty())
         }
@@ -244,14 +219,32 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
+            if self.content.is_empty() {
+                if let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
+                {
+                    self.content
+                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                            markdown,
+                        }));
+                }
+            }
             self.raw_output = Some(raw_output);
         }
     }
 
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
-            ToolCallContent::ContentBlock { .. } => None,
-            ToolCallContent::Diff { diff } => Some(diff),
+            ToolCallContent::Diff(diff) => Some(diff),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Terminal(_) => None,
+        })
+    }
+
+    pub fn terminals(&self) -> impl Iterator<Item = &Entity<Terminal>> {
+        self.content.iter().filter_map(|content| match content {
+            ToolCallContent::Terminal(terminal) => Some(terminal),
+            ToolCallContent::ContentBlock(_) => None,
+            ToolCallContent::Diff(_) => None,
         })
     }
 
@@ -339,16 +332,24 @@ impl ContentBlock {
     ) {
         let new_content = match block {
             acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                if let Some(path) = resource_link.uri.strip_prefix("file://") {
-                    format!("{}", MentionPath(path.as_ref()))
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource:
+                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
+                        uri,
+                        ..
+                    }),
+                ..
+            }) => {
+                if let Some(uri) = MentionUri::parse(&uri).log_err() {
+                    uri.to_link()
                 } else {
-                    resource_link.uri.clone()
+                    uri.clone()
                 }
             }
             acp::ContentBlock::Image(_)
             | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(_) => String::new(),
+            | acp::ContentBlock::Resource(acp::EmbeddedResource { .. })
+            | acp::ContentBlock::ResourceLink(_) => String::new(),
         };
 
         match self {
@@ -387,8 +388,9 @@ impl ContentBlock {
 
 #[derive(Debug)]
 pub enum ToolCallContent {
-    ContentBlock { content: ContentBlock },
-    Diff { diff: Entity<Diff> },
+    ContentBlock(ContentBlock),
+    Diff(Entity<Diff>),
+    Terminal(Entity<Terminal>),
 }
 
 impl ToolCallContent {
@@ -398,19 +400,20 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Self {
         match content {
-            acp::ToolCallContent::Content { content } => Self::ContentBlock {
-                content: ContentBlock::new(content, &language_registry, cx),
-            },
-            acp::ToolCallContent::Diff { diff } => Self::Diff {
-                diff: cx.new(|cx| Diff::from_acp(diff, language_registry, cx)),
-            },
+            acp::ToolCallContent::Content { content } => {
+                Self::ContentBlock(ContentBlock::new(content, &language_registry, cx))
+            }
+            acp::ToolCallContent::Diff { diff } => {
+                Self::Diff(cx.new(|cx| Diff::from_acp(diff, language_registry, cx)))
+            }
         }
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::ContentBlock { content } => content.to_markdown(cx).to_string(),
-            Self::Diff { diff } => diff.read(cx).to_markdown(cx),
+            Self::ContentBlock(content) => content.to_markdown(cx).to_string(),
+            Self::Diff(diff) => diff.read(cx).to_markdown(cx),
+            Self::Terminal(terminal) => terminal.read(cx).to_markdown(cx),
         }
     }
 }
@@ -419,6 +422,7 @@ impl ToolCallContent {
 pub enum ToolCallUpdate {
     UpdateFields(acp::ToolCallUpdate),
     UpdateDiff(ToolCallUpdateDiff),
+    UpdateTerminal(ToolCallUpdateTerminal),
 }
 
 impl ToolCallUpdate {
@@ -426,6 +430,7 @@ impl ToolCallUpdate {
         match self {
             Self::UpdateFields(update) => &update.id,
             Self::UpdateDiff(diff) => &diff.id,
+            Self::UpdateTerminal(terminal) => &terminal.id,
         }
     }
 }
@@ -446,6 +451,18 @@ impl From<ToolCallUpdateDiff> for ToolCallUpdate {
 pub struct ToolCallUpdateDiff {
     pub id: acp::ToolCallId,
     pub diff: Entity<Diff>,
+}
+
+impl From<ToolCallUpdateTerminal> for ToolCallUpdate {
+    fn from(terminal: ToolCallUpdateTerminal) -> Self {
+        Self::UpdateTerminal(terminal)
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ToolCallUpdateTerminal {
+    pub id: acp::ToolCallId,
+    pub terminal: Entity<Terminal>,
 }
 
 #[derive(Debug, Default)]
@@ -760,7 +777,13 @@ impl AcpThread {
                 current_call.content.clear();
                 current_call
                     .content
-                    .push(ToolCallContent::Diff { diff: update.diff });
+                    .push(ToolCallContent::Diff(update.diff));
+            }
+            ToolCallUpdate::UpdateTerminal(update) => {
+                current_call.content.clear();
+                current_call
+                    .content
+                    .push(ToolCallContent::Terminal(update.terminal));
             }
         }
 
@@ -1225,6 +1248,48 @@ impl AcpThread {
     }
 }
 
+fn markdown_for_raw_output(
+    raw_output: &serde_json::Value,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> Option<Entity<Markdown>> {
+    match raw_output {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::Number(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::String(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.clone().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        value => Some(cx.new(|cx| {
+            Markdown::new(
+                format!("```json\n{}\n```", value).into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1237,7 +1302,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{cell::RefCell, rc::Rc, time::Duration};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Duration};
 
     use util::path;
 

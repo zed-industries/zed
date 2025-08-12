@@ -399,7 +399,10 @@ message Envelope {
         GetDefaultBranchResponse get_default_branch_response = 360;
 
         GetCrashFiles get_crash_files = 361;
-        GetCrashFilesResponse get_crash_files_response = 362; // current max
+        GetCrashFilesResponse get_crash_files_response = 362;
+
+        GitClone git_clone = 363;
+        GitCloneResponse git_clone_response = 364; // current max
     }
 
     reserved 87 to 88;

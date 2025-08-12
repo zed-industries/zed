@@ -32,7 +32,9 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+terminal.workspace = true
 ui.workspace = true
+url.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 

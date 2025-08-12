@@ -133,7 +133,7 @@ impl EditFileTool {
         &self,
         input: &EditFileToolInput,
         event_stream: &ToolCallEventStream,
-        cx: &App,
+        cx: &mut App,
     ) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
@@ -147,8 +147,9 @@ impl EditFileTool {
             .components()
             .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
         {
-            return cx.foreground_executor().spawn(
-                event_stream.authorize(format!("{} (local settings)", input.display_description)),
+            return event_stream.authorize(
+                format!("{} (local settings)", input.display_description),
+                cx,
             );
         }
 
@@ -156,9 +157,9 @@ impl EditFileTool {
         // so check for that edge case too.
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path) {
             if canonical_path.starts_with(paths::config_dir()) {
-                return cx.foreground_executor().spawn(
-                    event_stream
-                        .authorize(format!("{} (global settings)", input.display_description)),
+                return event_stream.authorize(
+                    format!("{} (global settings)", input.display_description),
+                    cx,
                 );
             }
         }
@@ -173,8 +174,7 @@ impl EditFileTool {
         if project_path.is_some() {
             Task::ready(Ok(()))
         } else {
-            cx.foreground_executor()
-                .spawn(event_stream.authorize(input.display_description.clone()))
+            event_stream.authorize(&input.display_description, cx)
         }
     }
 }
@@ -454,9 +454,8 @@ fn resolve_path(
 
 #[cfg(test)]
 mod tests {
-    use crate::Templates;
-
     use super::*;
+    use crate::{ContextServerRegistry, Templates};
     use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
@@ -475,9 +474,20 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread =
-            cx.new(|_| Thread::new(project, Rc::default(), action_log, Templates::new(), model));
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project,
+                Rc::default(),
+                context_server_registry,
+                action_log,
+                Templates::new(),
+                model,
+                cx,
+            )
+        });
         let result = cx
             .update(|cx| {
                 let input = EditFileToolInput {
@@ -661,14 +671,18 @@ mod tests {
         });
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -792,15 +806,19 @@ mod tests {
         .unwrap();
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -914,15 +932,19 @@ mod tests {
         init_test(cx);
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -942,7 +964,7 @@ mod tests {
             )
         });
 
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 1 (local settings)");
 
         // Test 2: Path outside project should require confirmation
@@ -959,7 +981,7 @@ mod tests {
             )
         });
 
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 2");
 
         // Test 3: Relative path without .zed should not require confirmation
@@ -992,7 +1014,7 @@ mod tests {
                 cx,
             )
         });
-        let event = stream_rx.expect_tool_authorization().await;
+        let event = stream_rx.expect_authorization().await;
         assert_eq!(event.tool_call.title, "test 4 (local settings)");
 
         // Test 5: When always_allow_tool_actions is enabled, no confirmation needed
@@ -1041,15 +1063,19 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1088,7 +1114,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1148,14 +1174,18 @@ mod tests {
         .await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1192,7 +1222,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1225,14 +1255,18 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1276,7 +1310,7 @@ mod tests {
             });
 
             if should_confirm {
-                stream_rx.expect_tool_authorization().await;
+                stream_rx.expect_authorization().await;
             } else {
                 auth.await.unwrap();
                 assert!(
@@ -1305,14 +1339,18 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1339,7 +1377,7 @@ mod tests {
                 )
             });
 
-            stream_rx.expect_tool_authorization().await;
+            stream_rx.expect_authorization().await;
 
             // Test outside path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1355,7 +1393,7 @@ mod tests {
                 )
             });
 
-            stream_rx.expect_tool_authorization().await;
+            stream_rx.expect_authorization().await;
 
             // Test normal path with different modes
             let (stream_tx, mut stream_rx) = ToolCallEventStream::test();
@@ -1382,14 +1420,18 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });

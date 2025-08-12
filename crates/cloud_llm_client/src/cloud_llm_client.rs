@@ -263,12 +263,12 @@ pub struct WebSearchBody {
     pub query: String,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebSearchResponse {
     pub results: Vec<WebSearchResult>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WebSearchResult {
     pub title: String,
     pub url: String,
