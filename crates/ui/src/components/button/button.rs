@@ -393,6 +393,11 @@ impl ButtonCommon for Button {
         self
     }
 
+    fn tab_index(mut self, tab_index: impl Into<isize>) -> Self {
+        self.base = self.base.tab_index(tab_index);
+        self
+    }
+
     fn layer(mut self, elevation: ElevationIndex) -> Self {
         self.base = self.base.layer(elevation);
         self

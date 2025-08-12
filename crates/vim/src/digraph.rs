@@ -56,9 +56,7 @@ impl Vim {
 
         self.pop_operator(window, cx);
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.insert(&text, window, cx)
-            });
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text, window, cx);
         }
@@ -214,9 +212,7 @@ impl Vim {
         text.push_str(suffix);
 
         if self.editor_input_enabled() {
-            self.update_editor(window, cx, |_, editor, window, cx| {
-                editor.insert(&text, window, cx)
-            });
+            self.update_editor(cx, |_, editor, cx| editor.insert(&text, window, cx));
         } else {
             self.input_ignored(text.into(), window, cx);
         }

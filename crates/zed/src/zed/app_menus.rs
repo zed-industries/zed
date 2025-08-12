@@ -25,16 +25,17 @@ pub fn app_menus() -> Vec<Menu> {
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action(
+                            "Select Settings Profile...",
+                            zed_actions::settings_profile_selector::Toggle,
+                        ),
+                        MenuItem::action(
                             "Select Theme...",
                             zed_actions::theme_selector::Toggle::default(),
                         ),
                     ],
                 }),
                 MenuItem::separator(),
-                MenuItem::submenu(Menu {
-                    name: "Services".into(),
-                    items: vec![],
-                }),
+                MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
                 MenuItem::action("Install CLI", install_cli::Install),

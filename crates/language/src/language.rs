@@ -161,12 +161,11 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
-    language_ids: HashMap<String, String>,
+    language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
     manifest_name: OnceLock<Option<ManifestName>>,
-    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -202,7 +201,6 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
-            attach_kind: Default::default(),
             manifest_name: Default::default(),
         })
     }
@@ -279,38 +277,25 @@ impl CachedLspAdapter {
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
         self.language_ids
-            .get(language_name.as_ref())
+            .get(language_name)
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
     }
+
     pub fn manifest_name(&self) -> Option<ManifestName> {
         self.manifest_name
             .get_or_init(|| self.adapter.manifest_name())
             .clone()
     }
-    pub fn attach_kind(&self) -> Attach {
-        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
-    }
 }
 
+/// Determines what gets sent out as a workspace folders content
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Attach {
-    /// Create a single language server instance per subproject root.
-    InstancePerRoot,
-    /// Use one shared language server instance for all subprojects within a project.
-    Shared,
-}
-
-impl Attach {
-    pub fn root_path(
-        &self,
-        root_subproject_path: (WorktreeId, Arc<Path>),
-    ) -> (WorktreeId, Arc<Path>) {
-        match self {
-            Attach::InstancePerRoot => root_subproject_path,
-            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
-        }
-    }
+pub enum WorkspaceFoldersContent {
+    /// Send out a single entry with the root of the workspace.
+    WorktreeRoot,
+    /// Send out a list of subproject roots.
+    SubprojectRoots,
 }
 
 /// [`LspAdapterDelegate`] allows [`LspAdapter]` implementations to interface with the application
@@ -589,8 +574,8 @@ pub trait LspAdapter: 'static + Send + Sync {
         None
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
-        Default::default()
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
+        HashMap::default()
     }
 
     /// Support custom initialize params.
@@ -602,8 +587,11 @@ pub trait LspAdapter: 'static + Send + Sync {
         Ok(original)
     }
 
-    fn attach_kind(&self) -> Attach {
-        Attach::Shared
+    /// Determines whether a language server supports workspace folders.
+    ///
+    /// And does not trip over itself in the process.
+    fn workspace_folders_content(&self) -> WorkspaceFoldersContent {
+        WorkspaceFoldersContent::SubprojectRoots
     }
 
     fn manifest_name(&self) -> Option<ManifestName> {
@@ -2365,9 +2353,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2378,9 +2366,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 
@@ -2391,9 +2379,9 @@ mod tests {
         assert_eq!(
             languages.language_names(),
             &[
-                "JSON".to_string(),
-                "Plain Text".to_string(),
-                "Rust".to_string(),
+                LanguageName::new("JSON"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Rust"),
             ]
         );
 

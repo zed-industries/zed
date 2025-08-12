@@ -48,7 +48,10 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{Buffer, LanguageRegistry, Rope};
+use language::{
+    Buffer, LanguageRegistry, Rope,
+    language_settings::{AllLanguageSettings, all_language_settings},
+};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -74,7 +77,7 @@ use remote::{SshClientDelegate, SshConnectionOptions, ssh_session::ConnectionIde
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::Settings;
+use settings::{Settings, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -233,6 +236,8 @@ actions!(
         ToggleBottomDock,
         /// Toggles centered layout mode.
         ToggleCenteredLayout,
+        /// Toggles edit prediction feature globally for all files.
+        ToggleEditPrediction,
         /// Toggles the left dock.
         ToggleLeftDock,
         /// Toggles the right dock.
@@ -1065,7 +1070,6 @@ pub struct Workspace {
     center: PaneGroup,
     left_dock: Entity<Dock>,
     bottom_dock: Entity<Dock>,
-    bottom_dock_layout: BottomDockLayout,
     right_dock: Entity<Dock>,
     panes: Vec<Entity<Pane>>,
     panes_by_item: HashMap<EntityId, WeakEntity<Pane>>,
@@ -1082,6 +1086,7 @@ pub struct Workspace {
     follower_states: HashMap<CollaboratorId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakEntity<Pane>, CollaboratorId>,
     window_edited: bool,
+    last_window_title: Option<String>,
     dirty_items: HashMap<EntityId, Subscription>,
     active_call: Option<(Entity<ActiveCall>, Vec<Subscription>)>,
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
@@ -1091,7 +1096,8 @@ pub struct Workspace {
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
-    _schedule_serialize: Option<Task<()>>,
+    _schedule_serialize_workspace: Option<Task<()>>,
+    _schedule_serialize_ssh_paths: Option<Task<()>>,
     pane_history_timestamp: Arc<AtomicUsize>,
     bounds: Bounds<Pixels>,
     pub centered_layout: bool,
@@ -1104,6 +1110,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    scheduled_tasks: Vec<Task<()>>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1149,6 +1156,8 @@ impl Workspace {
 
                 project::Event::WorktreeRemoved(_) | project::Event::WorktreeAdded(_) => {
                     this.update_window_title(window, cx);
+                    this.update_ssh_paths(cx);
+                    this.serialize_ssh_paths(window, cx);
                     this.serialize_workspace(window, cx);
                     // This event could be triggered by `AddFolderToProject` or `RemoveFromProject`.
                     this.update_history(cx);
@@ -1306,7 +1315,6 @@ impl Workspace {
         )
         .detach();
 
-        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
         let left_dock = Dock::new(DockPosition::Left, modal_layer.clone(), window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, modal_layer.clone(), window, cx);
         let right_dock = Dock::new(DockPosition::Right, modal_layer.clone(), window, cx);
@@ -1405,20 +1413,21 @@ impl Workspace {
             suppressed_notifications: HashSet::default(),
             left_dock,
             bottom_dock,
-            bottom_dock_layout,
             right_dock,
             project: project.clone(),
             follower_states: Default::default(),
             last_leaders_by_pane: Default::default(),
             dispatching_keystrokes: Default::default(),
             window_edited: false,
+            last_window_title: None,
             dirty_items: Default::default(),
             active_call,
             database_id: workspace_id,
             app_state,
             _observe_current_user,
             _apply_leader_updates,
-            _schedule_serialize: None,
+            _schedule_serialize_workspace: None,
+            _schedule_serialize_ssh_paths: None,
             leader_updates_tx,
             _subscriptions: subscriptions,
             pane_history_timestamp,
@@ -1435,6 +1444,7 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            scheduled_tasks: Vec::new(),
         }
     }
 
@@ -1631,10 +1641,6 @@ impl Workspace {
         &self.bottom_dock
     }
 
-    pub fn bottom_dock_layout(&self) -> BottomDockLayout {
-        self.bottom_dock_layout
-    }
-
     pub fn set_bottom_dock_layout(
         &mut self,
         layout: BottomDockLayout,
@@ -1646,7 +1652,6 @@ impl Workspace {
             content.bottom_dock_layout = Some(layout);
         });
 
-        self.bottom_dock_layout = layout;
         cx.notify();
         self.serialize_workspace(window, cx);
     }
@@ -1810,10 +1815,7 @@ impl Workspace {
                             .max_by(|b1, b2| b1.worktree_id.cmp(&b2.worktree_id))
                     });
 
-                match latest_project_path_opened {
-                    Some(latest_project_path_opened) => latest_project_path_opened == history_path,
-                    None => true,
-                }
+                latest_project_path_opened.map_or(true, |path| path == history_path)
             })
     }
 
@@ -4403,7 +4405,13 @@ impl Workspace {
             title.push_str(" ↗");
         }
 
+        if let Some(last_title) = self.last_window_title.as_ref() {
+            if &title == last_title {
+                return;
+            }
+        }
         window.set_window_title(&title);
+        self.last_window_title = Some(title);
     }
 
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
@@ -4793,7 +4801,7 @@ impl Workspace {
                             .remote_id(&self.app_state.client, window, cx)
                             .map(|id| id.to_proto());
 
-                        if let Some(id) = id.clone() {
+                        if let Some(id) = id {
                             if let Some(variant) = item.to_state_proto(window, cx) {
                                 let view = Some(proto::View {
                                     id: id.clone(),
@@ -4806,7 +4814,7 @@ impl Workspace {
                                 update = proto::UpdateActiveView {
                                     view,
                                     // TODO: Remove after version 0.145.x stabilizes.
-                                    id: id.clone(),
+                                    id,
                                     leader_id: leader_peer_id,
                                 };
                             }
@@ -5079,6 +5087,46 @@ impl Workspace {
         }
     }
 
+    fn update_ssh_paths(&mut self, cx: &App) {
+        let project = self.project().read(cx);
+        if !project.is_local() {
+            let paths: Vec<String> = project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+                .collect();
+            if let Some(ssh_project) = &mut self.serialized_ssh_project {
+                ssh_project.paths = paths;
+            }
+        }
+    }
+
+    fn serialize_ssh_paths(&mut self, window: &mut Window, cx: &mut Context<Workspace>) {
+        if self._schedule_serialize_ssh_paths.is_none() {
+            self._schedule_serialize_ssh_paths =
+                Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(SERIALIZATION_THROTTLE_TIME)
+                        .await;
+                    this.update_in(cx, |this, window, cx| {
+                        let task = if let Some(ssh_project) = &this.serialized_ssh_project {
+                            let ssh_project_id = ssh_project.id;
+                            let ssh_project_paths = ssh_project.paths.clone();
+                            window.spawn(cx, async move |_| {
+                                persistence::DB
+                                    .update_ssh_project_paths(ssh_project_id, ssh_project_paths)
+                                    .await
+                            })
+                        } else {
+                            Task::ready(Err(anyhow::anyhow!("No SSH project to serialize")))
+                        };
+                        task.detach();
+                        this._schedule_serialize_ssh_paths.take();
+                    })
+                    .log_err();
+                }));
+        }
+    }
+
     fn remove_panes(&mut self, member: Member, window: &mut Window, cx: &mut Context<Workspace>) {
         match member {
             Member::Axis(PaneAxis { members, .. }) => {
@@ -5122,17 +5170,18 @@ impl Workspace {
     }
 
     fn serialize_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self._schedule_serialize.is_none() {
-            self._schedule_serialize = Some(cx.spawn_in(window, async move |this, cx| {
-                cx.background_executor()
-                    .timer(Duration::from_millis(100))
-                    .await;
-                this.update_in(cx, |this, window, cx| {
-                    this.serialize_workspace_internal(window, cx).detach();
-                    this._schedule_serialize.take();
-                })
-                .log_err();
-            }));
+        if self._schedule_serialize_workspace.is_none() {
+            self._schedule_serialize_workspace =
+                Some(cx.spawn_in(window, async move |this, cx| {
+                    cx.background_executor()
+                        .timer(SERIALIZATION_THROTTLE_TIME)
+                        .await;
+                    this.update_in(cx, |this, window, cx| {
+                        this.serialize_workspace_internal(window, cx).detach();
+                        this._schedule_serialize_workspace.take();
+                    })
+                    .log_err();
+                }));
         }
     }
 
@@ -5507,6 +5556,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
+            .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, window, cx);
@@ -5695,7 +5745,6 @@ impl Workspace {
 
         let client = project.read(cx).client();
         let user_store = project.read(cx).user_store();
-
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
         let session = cx.new(|cx| AppSession::new(Session::test(), cx));
         window.activate_window();
@@ -5937,6 +5986,19 @@ impl Workspace {
             } else {
                 bottom_dock.resize_active_panel(Some(size), window, cx);
             }
+        });
+    }
+
+    fn toggle_edit_predictions_all_files(
+        &mut self,
+        _: &ToggleEditPrediction,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.project().read(cx).fs().clone();
+        let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
+        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -6244,6 +6306,7 @@ impl Render for Workspace {
             .iter()
             .map(|(_, notification)| notification.entity_id())
             .collect::<Vec<_>>();
+        let bottom_dock_layout = WorkspaceSettings::get_global(cx).bottom_dock_layout;
 
         client_side_decorations(
             self.actions(div(), window, cx)
@@ -6367,7 +6430,7 @@ impl Render for Workspace {
                                     ))
                                 })
                                 .child({
-                                    match self.bottom_dock_layout {
+                                    match bottom_dock_layout {
                                         BottomDockLayout::Full => div()
                                             .flex()
                                             .flex_col()
@@ -6899,10 +6962,13 @@ async fn join_channel_internal(
         match status {
             Status::Connecting
             | Status::Authenticating
+            | Status::Authenticated
             | Status::Reconnecting
             | Status::Reauthenticating => continue,
             Status::Connected { .. } => break 'outer,
-            Status::SignedOut => return Err(ErrorCode::SignedOut.into()),
+            Status::SignedOut | Status::AuthenticationError => {
+                return Err(ErrorCode::SignedOut.into());
+            }
             Status::UpgradeRequired => return Err(ErrorCode::UpgradeRequired.into()),
             Status::ConnectionError | Status::ConnectionLost | Status::ReconnectionError { .. } => {
                 return Err(ErrorCode::Disconnected.into());

@@ -99,8 +99,8 @@ messages!(
     (GetHoverResponse, Background),
     (GetNotifications, Foreground),
     (GetNotificationsResponse, Foreground),
-    (GetPanicFiles, Background),
-    (GetPanicFilesResponse, Background),
+    (GetCrashFiles, Background),
+    (GetCrashFilesResponse, Background),
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
@@ -121,8 +121,6 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
-    (LanguageServerIdForName, Background),
-    (LanguageServerIdForNameResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -261,6 +259,8 @@ messages!(
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
     (Unstage, Background),
+    (Stash, Background),
+    (StashPop, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -313,7 +313,11 @@ messages!(
     (LogToDebugConsole, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
-    (PullWorkspaceDiagnostics, Background)
+    (PullWorkspaceDiagnostics, Background),
+    (GetDefaultBranch, Background),
+    (GetDefaultBranchResponse, Background),
+    (GitClone, Background),
+    (GitCloneResponse, Background)
 );
 
 request_messages!(
@@ -419,13 +423,14 @@ request_messages!(
     (TaskContextForLocation, TaskContext),
     (Test, Test),
     (Unstage, Ack),
+    (Stash, Ack),
+    (StashPop, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
     (UpdateWorktree, Ack),
     (UpdateRepository, Ack),
     (RemoveRepository, Ack),
-    (LanguageServerIdForName, LanguageServerIdForNameResponse),
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (LspExtOpenDocs, LspExtOpenDocsResponse),
     (LspExtRunnables, LspExtRunnablesResponse),
@@ -456,7 +461,7 @@ request_messages!(
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
-    (GetPanicFiles, GetPanicFilesResponse),
+    (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
@@ -479,7 +484,9 @@ request_messages!(
     (GetDebugAdapterBinary, DebugAdapterBinary),
     (RunDebugLocators, DebugRequest),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
-    (PullWorkspaceDiagnostics, Ack)
+    (PullWorkspaceDiagnostics, Ack),
+    (GetDefaultBranch, GetDefaultBranchResponse),
+    (GitClone, GitCloneResponse)
 );
 
 entity_messages!(
@@ -549,6 +556,8 @@ entity_messages!(
     TaskContextForLocation,
     UnshareProject,
     Unstage,
+    Stash,
+    StashPop,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
@@ -579,7 +588,6 @@ entity_messages!(
     OpenServerSettings,
     GetPermalinkToLine,
     LanguageServerPromptRequest,
-    LanguageServerIdForName,
     GitGetBranches,
     UpdateGitBranch,
     ListToolchains,
@@ -609,7 +617,9 @@ entity_messages!(
     GetDebugAdapterBinary,
     LogToDebugConsole,
     GetDocumentDiagnostics,
-    PullWorkspaceDiagnostics
+    PullWorkspaceDiagnostics,
+    GetDefaultBranch,
+    GitClone
 );
 
 entity_messages!(
@@ -776,6 +786,25 @@ pub fn split_repository_update(
         is_last_update: true,
         ..update
     }])
+}
+
+impl MultiLspQuery {
+    pub fn request_str(&self) -> &str {
+        match self.request {
+            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
+            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
+            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
+            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
+            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
+            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
+            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
+            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
+            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
+            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
+            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
+            None => "<unknown>",
+        }
+    }
 }
 
 #[cfg(test)]

@@ -13,14 +13,15 @@ use parking_lot::Mutex;
 use smol::io::BufReader;
 
 use crate::{
-    AnyNotification, AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, RequestId, ResponseHandler,
+    AnyResponse, CONTENT_LEN_HEADER, IoHandler, IoKind, NotificationOrRequest, RequestId,
+    ResponseHandler,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
 /// Handler for stdout of language server.
 pub struct LspStdoutHandler {
     pub(super) loop_handle: Task<Result<()>>,
-    pub(super) notifications_channel: UnboundedReceiver<AnyNotification>,
+    pub(super) incoming_messages: UnboundedReceiver<NotificationOrRequest>,
 }
 
 async fn read_headers<Stdout>(reader: &mut BufReader<Stdout>, buffer: &mut Vec<u8>) -> Result<()>
@@ -54,13 +55,13 @@ impl LspStdoutHandler {
         let loop_handle = cx.spawn(Self::handler(stdout, tx, response_handlers, io_handlers));
         Self {
             loop_handle,
-            notifications_channel,
+            incoming_messages: notifications_channel,
         }
     }
 
     async fn handler<Input>(
         stdout: Input,
-        notifications_sender: UnboundedSender<AnyNotification>,
+        notifications_sender: UnboundedSender<NotificationOrRequest>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     ) -> anyhow::Result<()>
@@ -96,7 +97,7 @@ impl LspStdoutHandler {
                 }
             }
 
-            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
+            if let Ok(msg) = serde_json::from_slice::<NotificationOrRequest>(&buffer) {
                 notifications_sender.unbounded_send(msg)?;
             } else if let Ok(AnyResponse {
                 id, error, result, ..

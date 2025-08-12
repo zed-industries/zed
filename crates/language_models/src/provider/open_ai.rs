@@ -301,7 +301,25 @@ impl LanguageModel for OpenAiLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        false
+        use open_ai::Model;
+        match &self.model {
+            Model::FourOmni
+            | Model::FourOmniMini
+            | Model::FourPointOne
+            | Model::FourPointOneMini
+            | Model::FourPointOneNano
+            | Model::Five
+            | Model::FiveMini
+            | Model::FiveNano
+            | Model::O1
+            | Model::O3
+            | Model::O4Mini => true,
+            Model::ThreePointFiveTurbo
+            | Model::Four
+            | Model::FourTurbo
+            | Model::O3Mini
+            | Model::Custom { .. } => false,
+        }
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -455,6 +473,7 @@ pub fn into_open_ai(
         } else {
             None
         },
+        prompt_cache_key: request.thread_id,
         tools: request
             .tools
             .into_iter()
@@ -674,6 +693,10 @@ pub fn count_open_ai_tokens(
             | Model::O3
             | Model::O3Mini
             | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
+            Model::Five | Model::FiveMini | Model::FiveNano => {
+                tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)
+            }
         }
         .map(|tokens| tokens as u64)
     })
@@ -780,7 +803,7 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with OpenAI, you need to add an API key. Follow these steps:"))
+                .child(Label::new("To use Zed's agent with OpenAI, you need to add an API key. Follow these steps:"))
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
@@ -865,10 +888,10 @@ impl Render for ConfigurationView {
             .child(
                 Button::new("docs", "Learn More")
                     .icon(IconName::ArrowUpRight)
-                    .icon_size(IconSize::XSmall)
+                    .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)
                     .on_click(move |_, _window, cx| {
-                        cx.open_url("https://zed.dev/docs/ai/configuration#openai-api-compatible")
+                        cx.open_url("https://zed.dev/docs/ai/llm-providers#openai-api-compatible")
                     }),
             );
 

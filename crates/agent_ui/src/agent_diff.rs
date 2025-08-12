@@ -1,9 +1,9 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
+use action_log::ActionLog;
 use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
-use assistant_tool::ActionLog;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -1521,6 +1521,10 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
+            AcpThreadEvent::Stopped
+            | AcpThreadEvent::ToolAuthorizationRequired
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::ServerExited(_) => {}
         }
     }
 

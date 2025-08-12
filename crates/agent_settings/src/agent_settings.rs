@@ -13,6 +13,9 @@ use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
+pub const SUMMARIZE_THREAD_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
 }
@@ -321,11 +324,11 @@ pub enum CompletionMode {
     Burn,
 }
 
-impl From<CompletionMode> for zed_llm_client::CompletionMode {
+impl From<CompletionMode> for cloud_llm_client::CompletionMode {
     fn from(value: CompletionMode) -> Self {
         match value {
-            CompletionMode::Normal => zed_llm_client::CompletionMode::Normal,
-            CompletionMode::Burn => zed_llm_client::CompletionMode::Max,
+            CompletionMode::Normal => cloud_llm_client::CompletionMode::Normal,
+            CompletionMode::Burn => cloud_llm_client::CompletionMode::Max,
         }
     }
 }
@@ -440,10 +443,6 @@ impl Settings for AgentSettings {
                 value.inline_alternatives.clone(),
             );
             merge(
-                &mut settings.always_allow_tool_actions,
-                value.always_allow_tool_actions,
-            );
-            merge(
                 &mut settings.notify_when_agent_waiting,
                 value.notify_when_agent_waiting,
             );
@@ -503,6 +502,20 @@ impl Settings for AgentSettings {
                     }));
             }
         }
+
+        debug_assert_eq!(
+            sources.default.always_allow_tool_actions.unwrap_or(false),
+            false,
+            "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
+        );
+
+        // For security reasons, only trust the user's global settings for whether to always allow tool actions.
+        // If this could be overridden locally, an attacker could (e.g. by committing to source control and
+        // convincing you to switch branches) modify your project-local settings to disable the agent's safety checks.
+        settings.always_allow_tool_actions = sources
+            .user
+            .and_then(|setting| setting.always_allow_tool_actions)
+            .unwrap_or(false);
 
         Ok(settings)
     }

@@ -635,7 +635,7 @@ pub(crate) struct Highlights<'a> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct InlineCompletionStyles {
+pub struct EditPredictionStyles {
     pub insertion: HighlightStyle,
     pub whitespace: HighlightStyle,
 }
@@ -643,7 +643,7 @@ pub struct InlineCompletionStyles {
 #[derive(Default, Debug, Clone, Copy)]
 pub struct HighlightStyles {
     pub inlay_hint: Option<HighlightStyle>,
-    pub inline_completion: Option<InlineCompletionStyles>,
+    pub edit_prediction: Option<EditPredictionStyles>,
 }
 
 #[derive(Clone)]
@@ -958,7 +958,7 @@ impl DisplaySnapshot {
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
-                inline_completion: Some(editor_style.inline_completion_styles),
+                edit_prediction: Some(editor_style.edit_prediction_styles),
             },
         )
         .flat_map(|chunk| {
@@ -2036,7 +2036,7 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.splice_inlays(
                 &[],
-                vec![Inlay::inline_completion(
+                vec![Inlay::edit_prediction(
                     0,
                     buffer_snapshot.anchor_after(0),
                     "\n",

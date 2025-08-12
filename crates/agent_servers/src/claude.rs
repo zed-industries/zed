@@ -2,13 +2,13 @@ mod mcp_server;
 pub mod tools;
 
 use collections::HashMap;
+use context_server::listener::McpServerTool;
 use project::Project;
 use settings::SettingsStore;
 use smol::process::Child;
 use std::cell::RefCell;
 use std::fmt::Display;
 use std::path::Path;
-use std::pin::pin;
 use std::rc::Rc;
 use uuid::Uuid;
 
@@ -24,7 +24,7 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Entity, Task, WeakEntity};
 use serde::{Deserialize, Serialize};
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
 
 use crate::claude::mcp_server::{ClaudeZedMcpServer, McpConfig};
 use crate::claude::tools::ClaudeTool;
@@ -44,7 +44,7 @@ impl AgentServer for ClaudeCode {
     }
 
     fn empty_state_message(&self) -> &'static str {
-        ""
+        "How can I help you today?"
     }
 
     fn logo(&self) -> ui::IconName {
@@ -65,28 +65,11 @@ impl AgentServer for ClaudeCode {
     }
 }
 
-#[cfg(unix)]
-fn send_interrupt(pid: libc::pid_t) -> anyhow::Result<()> {
-    let pid = nix::unistd::Pid::from_raw(pid);
-
-    nix::sys::signal::kill(pid, nix::sys::signal::SIGINT)
-        .map_err(|e| anyhow!("Failed to interrupt process: {}", e))
-}
-
-#[cfg(windows)]
-fn send_interrupt(_pid: i32) -> anyhow::Result<()> {
-    panic!("Cancel not implemented on Windows")
-}
-
 struct ClaudeAgentConnection {
     sessions: Rc<RefCell<HashMap<acp::SessionId, ClaudeAgentSession>>>,
 }
 
 impl AgentConnection for ClaudeAgentConnection {
-    fn name(&self) -> &'static str {
-        ClaudeCode.name()
-    }
-
     fn new_thread(
         self: Rc<Self>,
         project: Entity<Project>,
@@ -118,101 +101,95 @@ impl AgentConnection for ClaudeAgentConnection {
                 settings.get::<AllAgentServersSettings>(None).claude.clone()
             })?;
 
-            let Some(command) =
-                AgentServerCommand::resolve("claude", &[], settings, &project, cx).await
+            let Some(command) = AgentServerCommand::resolve(
+                "claude",
+                &[],
+                Some(&util::paths::home_dir().join(".claude/local/claude")),
+                settings,
+                &project,
+                cx,
+            )
+            .await
             else {
                 anyhow::bail!("Failed to find claude binary");
             };
 
             let (incoming_message_tx, mut incoming_message_rx) = mpsc::unbounded();
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded();
-            let (cancel_tx, mut cancel_rx) = mpsc::unbounded::<oneshot::Sender<Result<()>>>();
 
             let session_id = acp::SessionId(Uuid::new_v4().to_string().into());
 
             log::trace!("Starting session with id: {}", session_id);
 
-            cx.background_spawn({
-                let session_id = session_id.clone();
-                async move {
-                    let mut outgoing_rx = Some(outgoing_rx);
-                    let mut mode = ClaudeSessionMode::Start;
+            let mut child = spawn_claude(
+                &command,
+                ClaudeSessionMode::Start,
+                session_id.clone(),
+                &mcp_config_path,
+                &cwd,
+            )?;
 
-                    loop {
-                        let mut child = spawn_claude(
-                            &command,
-                            mode,
-                            session_id.clone(),
-                            &mcp_config_path,
-                            &cwd,
-                        )
-                        .await?;
-                        mode = ClaudeSessionMode::Resume;
+            let stdin = child.stdin.take().unwrap();
+            let stdout = child.stdout.take().unwrap();
 
-                        let pid = child.id();
-                        log::trace!("Spawned (pid: {})", pid);
+            let pid = child.id();
+            log::trace!("Spawned (pid: {})", pid);
 
-                        let mut io_fut = pin!(
-                            ClaudeAgentSession::handle_io(
-                                outgoing_rx.take().unwrap(),
-                                incoming_message_tx.clone(),
-                                child.stdin.take().unwrap(),
-                                child.stdout.take().unwrap(),
-                            )
-                            .fuse()
-                        );
+            cx.background_spawn(async move {
+                let mut outgoing_rx = Some(outgoing_rx);
 
-                        select_biased! {
-                            done_tx = cancel_rx.next() => {
-                                if let Some(done_tx) = done_tx {
-                                    log::trace!("Interrupted (pid: {})", pid);
-                                    let result = send_interrupt(pid as i32);
-                                    outgoing_rx.replace(io_fut.await?);
-                                    done_tx.send(result).log_err();
-                                    continue;
-                                }
-                            }
-                            result = io_fut => {
-                                result?;
-                            }
-                        }
+                ClaudeAgentSession::handle_io(
+                    outgoing_rx.take().unwrap(),
+                    incoming_message_tx.clone(),
+                    stdin,
+                    stdout,
+                )
+                .await?;
 
-                        log::trace!("Stopped (pid: {})", pid);
-                        break;
-                    }
+                log::trace!("Stopped (pid: {})", pid);
 
-                    drop(mcp_config_path);
-                    anyhow::Ok(())
-                }
+                drop(mcp_config_path);
+                anyhow::Ok(())
             })
             .detach();
 
-            let end_turn_tx = Rc::new(RefCell::new(None));
+            let turn_state = Rc::new(RefCell::new(TurnState::None));
+
             let handler_task = cx.spawn({
-                let end_turn_tx = end_turn_tx.clone();
-                let thread_rx = thread_rx.clone();
+                let turn_state = turn_state.clone();
+                let mut thread_rx = thread_rx.clone();
                 async move |cx| {
                     while let Some(message) = incoming_message_rx.next().await {
                         ClaudeAgentSession::handle_message(
                             thread_rx.clone(),
                             message,
-                            end_turn_tx.clone(),
+                            turn_state.clone(),
                             cx,
                         )
                         .await
                     }
+
+                    if let Some(status) = child.status().await.log_err() {
+                        if let Some(thread) = thread_rx.recv().await.ok() {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.emit_server_exited(status, cx);
+                                })
+                                .ok();
+                        }
+                    }
                 }
             });
 
-            let thread =
-                cx.new(|cx| AcpThread::new(self.clone(), project, session_id.clone(), cx))?;
+            let thread = cx.new(|cx| {
+                AcpThread::new("Claude Code", self.clone(), project, session_id.clone(), cx)
+            })?;
 
             thread_tx.send(thread.downgrade())?;
 
             let session = ClaudeAgentSession {
                 outgoing_tx,
-                end_turn_tx,
-                cancel_tx,
+                turn_state,
                 _handler_task: handler_task,
                 _mcp_server: Some(permission_mcp_server),
             };
@@ -223,11 +200,19 @@ impl AgentConnection for ClaudeAgentConnection {
         })
     }
 
-    fn authenticate(&self, _cx: &mut App) -> Task<Result<()>> {
+    fn auth_methods(&self) -> &[acp::AuthMethod] {
+        &[]
+    }
+
+    fn authenticate(&self, _: acp::AuthMethodId, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("Authentication not supported")))
     }
 
-    fn prompt(&self, params: acp::PromptToolArguments, cx: &mut App) -> Task<Result<()>> {
+    fn prompt(
+        &self,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&params.session_id) else {
             return Task::ready(Err(anyhow!(
@@ -236,8 +221,8 @@ impl AgentConnection for ClaudeAgentConnection {
             )));
         };
 
-        let (tx, rx) = oneshot::channel();
-        session.end_turn_tx.borrow_mut().replace(tx);
+        let (end_tx, end_rx) = oneshot::channel();
+        session.turn_state.replace(TurnState::InProgress { end_tx });
 
         let mut content = String::new();
         for chunk in params.prompt {
@@ -271,47 +256,48 @@ impl AgentConnection for ClaudeAgentConnection {
             return Task::ready(Err(anyhow!(err)));
         }
 
-        cx.foreground_executor().spawn(async move {
-            rx.await??;
-            Ok(())
-        })
+        cx.foreground_executor().spawn(async move { end_rx.await? })
     }
 
-    fn cancel(&self, session_id: &acp::SessionId, cx: &mut App) {
+    fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
         let sessions = self.sessions.borrow();
         let Some(session) = sessions.get(&session_id) else {
             log::warn!("Attempted to cancel nonexistent session {}", session_id);
             return;
         };
 
-        let (done_tx, done_rx) = oneshot::channel();
-        if session
-            .cancel_tx
-            .unbounded_send(done_tx)
-            .log_err()
-            .is_some()
-        {
-            let end_turn_tx = session.end_turn_tx.clone();
-            cx.foreground_executor()
-                .spawn(async move {
-                    done_rx.await??;
-                    if let Some(end_turn_tx) = end_turn_tx.take() {
-                        end_turn_tx.send(Ok(())).ok();
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-        }
+        let request_id = new_request_id();
+
+        let turn_state = session.turn_state.take();
+        let TurnState::InProgress { end_tx } = turn_state else {
+            // Already cancelled or idle, put it back
+            session.turn_state.replace(turn_state);
+            return;
+        };
+
+        session.turn_state.replace(TurnState::CancelRequested {
+            end_tx,
+            request_id: request_id.clone(),
+        });
+
+        session
+            .outgoing_tx
+            .unbounded_send(SdkMessage::ControlRequest {
+                request_id,
+                request: ControlRequest::Interrupt,
+            })
+            .log_err();
     }
 }
 
 #[derive(Clone, Copy)]
 enum ClaudeSessionMode {
     Start,
+    #[expect(dead_code)]
     Resume,
 }
 
-async fn spawn_claude(
+fn spawn_claude(
     command: &AgentServerCommand,
     mode: ClaudeSessionMode,
     session_id: acp::SessionId,
@@ -332,10 +318,16 @@ async fn spawn_claude(
             &format!(
                 "mcp__{}__{}",
                 mcp_server::SERVER_NAME,
-                mcp_server::PERMISSION_TOOL
+                mcp_server::PermissionTool::NAME,
             ),
             "--allowedTools",
-            "mcp__zed__Read,mcp__zed__Edit",
+            &format!(
+                "mcp__{}__{},mcp__{}__{}",
+                mcp_server::SERVER_NAME,
+                mcp_server::EditTool::NAME,
+                mcp_server::SERVER_NAME,
+                mcp_server::ReadTool::NAME
+            ),
             "--disallowedTools",
             "Read,Edit",
         ])
@@ -356,25 +348,139 @@ async fn spawn_claude(
 
 struct ClaudeAgentSession {
     outgoing_tx: UnboundedSender<SdkMessage>,
-    end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
-    cancel_tx: UnboundedSender<oneshot::Sender<Result<()>>>,
+    turn_state: Rc<RefCell<TurnState>>,
     _mcp_server: Option<ClaudeZedMcpServer>,
     _handler_task: Task<()>,
+}
+
+#[derive(Debug, Default)]
+enum TurnState {
+    #[default]
+    None,
+    InProgress {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+    CancelRequested {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+        request_id: String,
+    },
+    CancelConfirmed {
+        end_tx: oneshot::Sender<Result<acp::PromptResponse>>,
+    },
+}
+
+impl TurnState {
+    fn is_cancelled(&self) -> bool {
+        matches!(self, TurnState::CancelConfirmed { .. })
+    }
+
+    fn end_tx(self) -> Option<oneshot::Sender<Result<acp::PromptResponse>>> {
+        match self {
+            TurnState::None => None,
+            TurnState::InProgress { end_tx, .. } => Some(end_tx),
+            TurnState::CancelRequested { end_tx, .. } => Some(end_tx),
+            TurnState::CancelConfirmed { end_tx } => Some(end_tx),
+        }
+    }
+
+    fn confirm_cancellation(self, id: &str) -> Self {
+        match self {
+            TurnState::CancelRequested { request_id, end_tx } if request_id == id => {
+                TurnState::CancelConfirmed { end_tx }
+            }
+            _ => self,
+        }
+    }
 }
 
 impl ClaudeAgentSession {
     async fn handle_message(
         mut thread_rx: watch::Receiver<WeakEntity<AcpThread>>,
         message: SdkMessage,
-        end_turn_tx: Rc<RefCell<Option<oneshot::Sender<Result<()>>>>>,
+        turn_state: Rc<RefCell<TurnState>>,
         cx: &mut AsyncApp,
     ) {
         match message {
-            SdkMessage::Assistant {
+            // we should only be sending these out, they don't need to be in the thread
+            SdkMessage::ControlRequest { .. } => {}
+            SdkMessage::User {
                 message,
                 session_id: _,
+            } => {
+                let Some(thread) = thread_rx
+                    .recv()
+                    .await
+                    .log_err()
+                    .and_then(|entity| entity.upgrade())
+                else {
+                    log::error!("Received an SDK message but thread is gone");
+                    return;
+                };
+
+                for chunk in message.content.chunks() {
+                    match chunk {
+                        ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
+                            if !turn_state.borrow().is_cancelled() {
+                                thread
+                                    .update(cx, |thread, cx| {
+                                        thread.push_user_content_block(text.into(), cx)
+                                    })
+                                    .log_err();
+                            }
+                        }
+                        ContentChunk::ToolResult {
+                            content,
+                            tool_use_id,
+                        } => {
+                            let content = content.to_string();
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.update_tool_call(
+                                        acp::ToolCallUpdate {
+                                            id: acp::ToolCallId(tool_use_id.into()),
+                                            fields: acp::ToolCallUpdateFields {
+                                                status: if turn_state.borrow().is_cancelled() {
+                                                    // Do not set to completed if turn was cancelled
+                                                    None
+                                                } else {
+                                                    Some(acp::ToolCallStatus::Completed)
+                                                },
+                                                content: (!content.is_empty())
+                                                    .then(|| vec![content.into()]),
+                                                ..Default::default()
+                                            },
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Thinking { .. }
+                        | ContentChunk::RedactedThinking
+                        | ContentChunk::ToolUse { .. } => {
+                            debug_panic!(
+                                "Should not get {:?} with role: assistant. should we handle this?",
+                                chunk
+                            );
+                        }
+
+                        ContentChunk::Image
+                        | ContentChunk::Document
+                        | ContentChunk::WebSearchToolResult => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        format!("Unsupported content: {:?}", chunk).into(),
+                                        false,
+                                        cx,
+                                    )
+                                })
+                                .log_err();
+                        }
+                    }
+                }
             }
-            | SdkMessage::User {
+            SdkMessage::Assistant {
                 message,
                 session_id: _,
             } => {
@@ -393,7 +499,25 @@ impl ClaudeAgentSession {
                         ContentChunk::Text { text } | ContentChunk::UntaggedText(text) => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(text.into(), false, cx)
+                                    thread.push_assistant_content_block(text.into(), false, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::Thinking { thinking } => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(thinking.into(), true, cx)
+                                })
+                                .log_err();
+                        }
+                        ContentChunk::RedactedThinking => {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.push_assistant_content_block(
+                                        "[REDACTED]".into(),
+                                        true,
+                                        cx,
+                                    )
                                 })
                                 .log_err();
                         }
@@ -422,30 +546,15 @@ impl ClaudeAgentSession {
                                 })
                                 .log_err();
                         }
-                        ContentChunk::ToolResult {
-                            content,
-                            tool_use_id,
-                        } => {
-                            let content = content.to_string();
-                            thread
-                                .update(cx, |thread, cx| {
-                                    thread.update_tool_call(
-                                        acp::ToolCallId(tool_use_id.into()),
-                                        acp::ToolCallStatus::Completed,
-                                        (!content.is_empty()).then(|| vec![content.into()]),
-                                        cx,
-                                    )
-                                })
-                                .log_err();
+                        ContentChunk::ToolResult { .. } | ContentChunk::WebSearchToolResult => {
+                            debug_panic!(
+                                "Should not get tool results with role: assistant. should we handle this?"
+                            );
                         }
-                        ContentChunk::Image
-                        | ContentChunk::Document
-                        | ContentChunk::Thinking
-                        | ContentChunk::RedactedThinking
-                        | ContentChunk::WebSearchToolResult => {
+                        ContentChunk::Image | ContentChunk::Document => {
                             thread
                                 .update(cx, |thread, cx| {
-                                    thread.push_assistant_chunk(
+                                    thread.push_assistant_content_block(
                                         format!("Unsupported content: {:?}", chunk).into(),
                                         false,
                                         cx,
@@ -457,14 +566,43 @@ impl ClaudeAgentSession {
                 }
             }
             SdkMessage::Result {
-                is_error, subtype, ..
+                is_error,
+                subtype,
+                result,
+                ..
             } => {
-                if let Some(end_turn_tx) = end_turn_tx.borrow_mut().take() {
-                    if is_error {
-                        end_turn_tx.send(Err(anyhow!("Error: {subtype}"))).ok();
-                    } else {
-                        end_turn_tx.send(Ok(())).ok();
-                    }
+                let turn_state = turn_state.take();
+                let was_cancelled = turn_state.is_cancelled();
+                let Some(end_turn_tx) = turn_state.end_tx() else {
+                    debug_panic!("Received `SdkMessage::Result` but there wasn't an active turn");
+                    return;
+                };
+
+                if is_error || (!was_cancelled && subtype == ResultErrorType::ErrorDuringExecution)
+                {
+                    end_turn_tx
+                        .send(Err(anyhow!(
+                            "Error: {}",
+                            result.unwrap_or_else(|| subtype.to_string())
+                        )))
+                        .ok();
+                } else {
+                    let stop_reason = match subtype {
+                        ResultErrorType::Success => acp::StopReason::EndTurn,
+                        ResultErrorType::ErrorMaxTurns => acp::StopReason::MaxTurnRequests,
+                        ResultErrorType::ErrorDuringExecution => acp::StopReason::Cancelled,
+                    };
+                    end_turn_tx
+                        .send(Ok(acp::PromptResponse { stop_reason }))
+                        .ok();
+                }
+            }
+            SdkMessage::ControlResponse { response } => {
+                if matches!(response.subtype, ResultErrorType::Success) {
+                    let new_state = turn_state.take().confirm_cancellation(&response.request_id);
+                    turn_state.replace(new_state);
+                } else {
+                    log::error!("Control response error: {:?}", response);
                 }
             }
             SdkMessage::System { .. } => {}
@@ -576,11 +714,13 @@ enum ContentChunk {
         content: Content,
         tool_use_id: String,
     },
+    Thinking {
+        thinking: String,
+    },
+    RedactedThinking,
     // TODO
     Image,
     Document,
-    Thinking,
-    RedactedThinking,
     WebSearchToolResult,
     #[serde(untagged)]
     UntaggedText(String),
@@ -590,12 +730,12 @@ impl Display for ContentChunk {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ContentChunk::Text { text } => write!(f, "{}", text),
+            ContentChunk::Thinking { thinking } => write!(f, "Thinking: {}", thinking),
+            ContentChunk::RedactedThinking => write!(f, "Thinking: [REDACTED]"),
             ContentChunk::UntaggedText(text) => write!(f, "{}", text),
             ContentChunk::ToolResult { content, .. } => write!(f, "{}", content),
             ContentChunk::Image
             | ContentChunk::Document
-            | ContentChunk::Thinking
-            | ContentChunk::RedactedThinking
             | ContentChunk::ToolUse { .. }
             | ContentChunk::WebSearchToolResult => {
                 write!(f, "\n{:?}\n", &self)
@@ -636,14 +776,12 @@ enum SdkMessage {
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },
-
     // A user message
     User {
         message: Message, // from Anthropic SDK
         #[serde(skip_serializing_if = "Option::is_none")]
         session_id: Option<String>,
     },
-
     // Emitted as the last message in a conversation
     Result {
         subtype: ResultErrorType,
@@ -668,9 +806,29 @@ enum SdkMessage {
         #[serde(rename = "permissionMode")]
         permission_mode: PermissionMode,
     },
+    /// Messages used to control the conversation, outside of chat messages to the model
+    ControlRequest {
+        request_id: String,
+        request: ControlRequest,
+    },
+    /// Response to a control request
+    ControlResponse { response: ControlResponse },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "subtype", rename_all = "snake_case")]
+enum ControlRequest {
+    /// Cancel the current conversation
+    Interrupt,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ControlResponse {
+    request_id: String,
+    subtype: ResultErrorType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 enum ResultErrorType {
     Success,
@@ -686,6 +844,17 @@ impl Display for ResultErrorType {
             ResultErrorType::ErrorDuringExecution => write!(f, "error_during_execution"),
         }
     }
+}
+
+fn new_request_id() -> String {
+    use rand::Rng;
+    // In the Claude Code TS SDK they just generate a random 12 character string,
+    // `Math.random().toString(36).substring(2, 15)`
+    rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(12)
+        .map(char::from)
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -706,9 +875,11 @@ enum PermissionMode {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::e2e_tests;
+    use gpui::TestAppContext;
     use serde_json::json;
 
-    crate::common_e2e_tests!(ClaudeCode);
+    crate::common_e2e_tests!(ClaudeCode, allow_option_id = "allow");
 
     pub fn local_command() -> AgentServerCommand {
         AgentServerCommand {
@@ -716,6 +887,68 @@ pub(crate) mod tests {
             args: vec![],
             env: None,
         }
+    }
+
+    #[gpui::test]
+    #[cfg_attr(not(feature = "e2e"), ignore)]
+    async fn test_todo_plan(cx: &mut TestAppContext) {
+        let fs = e2e_tests::init_test(cx).await;
+        let project = Project::test(fs, [], cx).await;
+        let thread =
+            e2e_tests::new_test_thread(ClaudeCode, project.clone(), "/private/tmp", cx).await;
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Create a todo plan for initializing a new React app. I'll follow it myself, do not execute on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let mut entries_len = 0;
+
+        thread.read_with(cx, |thread, _| {
+            entries_len = thread.plan().entries.len();
+            assert!(thread.plan().entries.len() > 0, "Empty plan");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Mark the first entry status as in progress without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::InProgress
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.send_raw(
+                    "Now mark the first entry as completed without acting on it.",
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert!(matches!(
+                thread.plan().entries[0].status,
+                acp::PlanEntryStatus::Completed
+            ));
+            assert_eq!(thread.plan().entries.len(), entries_len);
+        });
     }
 
     #[test]
