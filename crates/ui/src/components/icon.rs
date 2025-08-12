@@ -84,11 +84,12 @@ impl IconSize {
     ///   2. The padding of one side of the square
     pub fn square_components(&self, window: &mut Window, cx: &mut App) -> (Pixels, Pixels) {
         let icon_size = self.rems() * window.rem_size();
+
         let padding = match self {
             IconSize::Indicator => DynamicSpacing::Base00.px(cx),
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
-            IconSize::Small => DynamicSpacing::Base02.px(cx),
-            IconSize::Medium => DynamicSpacing::Base02.px(cx),
+            IconSize::Small => DynamicSpacing::Base04.px(cx),
+            IconSize::Medium => DynamicSpacing::Base06.px(cx),
             IconSize::XLarge => DynamicSpacing::Base02.px(cx),
             // TODO: Wire into dynamic spacing
             IconSize::Custom(size) => size.to_pixels(window.rem_size()),
