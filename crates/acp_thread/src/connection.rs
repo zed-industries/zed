@@ -49,6 +49,15 @@ impl LanguageModelInfoList {
             LanguageModelInfoList::Grouped(groups) => groups.is_empty(),
         }
     }
+
+    pub fn all_models(&self) -> impl Iterator<Item = &LanguageModelInfo> {
+        match self {
+            LanguageModelInfoList::Flat(models) => itertools::Either::Left(models.iter()),
+            LanguageModelInfoList::Grouped(groups) => {
+                itertools::Either::Right(groups.values().flatten())
+            }
+        }
+    }
 }
 
 /// Trait for agents that support listing, selecting, and querying language models.
