@@ -31,7 +31,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::{Formatter, IndentGuideSettings};
-use lsp::CompletionParams;
+use lsp::{CompletionParams, OneOf};
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
@@ -10407,6 +10407,104 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.text(cx)),
         "one\ntwo\nthree\n"
     );
+}
+
+#[gpui::test]
+async fn test_document_format_with_all_formatters(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.formatter = Some(SelectedFormatter::All)
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(path!("/file.rs"), "one  \ntwo   \nthree".into())
+        .await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "rust-lsp",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+    let mut fake_other_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "other-lsp",
+            capabilities: lsp::ServerCapabilities {
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+
+    cx.executor().start_waiting();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    fake_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "applied-formatting\n".to_string(),
+            )]))
+        },
+    );
+    let fake_other_server = fake_other_servers.next().await.unwrap();
+    fake_other_server.set_request_handler::<lsp::request::Formatting, _, _>(
+        move |_params, _| async move {
+            Ok(Some(vec![lsp::TextEdit::new(
+                lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                "applied-formatting-other\n".to_string(),
+            )]))
+        },
+    );
+
+    cx.executor().start_waiting();
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffers(editor.buffer().read(cx).all_buffers()),
+                window,
+                cx,
+            )
+        })
+        .unwrap()
+        .await;
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            editor.text(cx),
+            r#"
+                applied-formatting-other
+                applied-formatting
+                one
+                two
+                three
+            "#
+            .unindent()
+        );
+    });
 }
 
 #[gpui::test]
