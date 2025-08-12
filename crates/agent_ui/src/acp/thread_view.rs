@@ -2946,7 +2946,8 @@ impl AcpThreadView {
 
     fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
-            .icon_size(IconSize::XSmall)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -2957,7 +2958,8 @@ impl AcpThreadView {
             }));
 
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
-            .icon_size(IconSize::XSmall)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2968,7 +2970,6 @@ impl AcpThreadView {
             .w_full()
             .mr_1()
             .pb_2()
-            .gap_1()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
