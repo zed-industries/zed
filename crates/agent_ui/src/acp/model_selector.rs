@@ -1,22 +1,29 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::{AgentModelSelector, LanguageModelInfo, LanguageModelInfoList};
-use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
-use gpui::{BackgroundExecutor, DismissEvent, Task};
+use agent_client_protocol as acp;
+use anyhow::Result;
+use collections::IndexMap;
+use futures::FutureExt;
+use fuzzy::{StringMatchCandidate, match_strings};
+use gpui::{Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, WeakEntity};
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{
-    AnyElement, App, Context, ListItem, ListItemSpacing, SharedString, Window, prelude::*, rems,
+    AnyElement, App, Context, IntoElement, ListItem, ListItemSpacing, SharedString, Window,
+    prelude::*, rems,
 };
+use util::ResultExt;
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
 pub fn acp_model_selector(
+    session_id: acp::SessionId,
     selector: Rc<dyn AgentModelSelector>,
     window: &mut Window,
     cx: &mut Context<AcpModelSelector>,
 ) -> AcpModelSelector {
-    let delegate = AcpModelPickerDelegate::new(selector, window, cx);
+    let delegate = AcpModelPickerDelegate::new(session_id, selector, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
@@ -29,25 +36,56 @@ enum AcpModelPickerEntry {
 }
 
 pub struct AcpModelPickerDelegate {
+    session_id: acp::SessionId,
     selector: Rc<dyn AgentModelSelector>,
     filtered_entries: Vec<AcpModelPickerEntry>,
     models: Option<LanguageModelInfoList>,
     selected_index: usize,
     selected_model: Option<LanguageModelInfo>,
+    _refresh_models_task: Task<()>,
 }
 
 impl AcpModelPickerDelegate {
     fn new(
+        session_id: acp::SessionId,
         selector: Rc<dyn AgentModelSelector>,
         window: &mut Window,
         cx: &mut Context<AcpModelSelector>,
     ) -> Self {
+        let mut rx = selector.watch(cx);
+        let refresh_models_task = cx.spawn_in(window, async move |this, cx| {
+            async fn refresh(
+                this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
+                cx: &mut AsyncWindowContext,
+            ) -> Result<()> {
+                let models = this
+                    .update(cx, |this, cx| this.delegate.selector.list_models(cx))?
+                    .await
+                    .ok();
+
+                this.update_in(cx, |this, window, cx| {
+                    this.delegate.models = models;
+                    this.delegate.update_matches(this.query(cx), window, cx)
+                })?
+                .await;
+
+                Ok(())
+            }
+
+            refresh(&this, cx).await.log_err();
+            while let Ok(()) = rx.recv().await {
+                refresh(&this, cx).await.log_err();
+            }
+        });
+
         Self {
+            session_id,
             selector,
             filtered_entries: Vec::new(),
             models: None,
             selected_model: None,
             selected_index: 0,
+            _refresh_models_task: refresh_models_task,
         }
     }
 }
@@ -90,24 +128,38 @@ impl PickerDelegate for AcpModelPickerDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let all_models = self.all_models.clone();
-        let active_model = (self.get_active_model)(cx);
-        let bg_executor = cx.background_executor();
-
-        let matcher_rec = ModelMatcher::new(recommended_models, bg_executor.clone());
-        let matcher_all = ModelMatcher::new(available_models, bg_executor.clone());
-
-        let recommended = matcher_rec.exact_search(&query);
-        let all = matcher_all.fuzzy_search(&query);
-
-        let filtered_models = GroupedModels::new(all, recommended);
-
         cx.spawn_in(window, async move |this, cx| {
+            let filtered_models = match this
+                .read_with(cx, |this, cx| {
+                    this.delegate.models.clone().map(move |models| {
+                        fuzzy_search(models, query, cx.background_executor().clone())
+                    })
+                })
+                .ok()
+                .flatten()
+            {
+                Some(task) => task.await,
+                None => LanguageModelInfoList::Flat(vec![]),
+            };
+
             this.update_in(cx, |this, window, cx| {
-                this.delegate.filtered_entries = filtered_models.entries();
+                this.delegate.filtered_entries =
+                    info_list_to_picker_entries(filtered_models).collect();
                 // Finds the currently selected model in the list
-                let new_index =
-                    Self::get_active_model_index(&this.delegate.filtered_entries, active_model);
+                let new_index = this
+                    .delegate
+                    .selected_model
+                    .as_ref()
+                    .and_then(|selected| {
+                        this.delegate.filtered_entries.iter().position(|entry| {
+                            if let AcpModelPickerEntry::Model(model_info) = entry {
+                                model_info.id == selected.id
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .unwrap_or(0);
                 this.set_selected_index(new_index, Some(picker::Direction::Down), true, window, cx);
                 cx.notify();
             })
@@ -119,9 +171,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
         if let Some(AcpModelPickerEntry::Model(model_info)) =
             self.filtered_entries.get(self.selected_index)
         {
-            let model = model_info.model.clone();
-            (self.on_model_changed)(model.clone(), cx);
-
+            self.selector
+                .select_model(self.session_id.clone(), model_info.id.clone(), cx)
+                .detach_and_log_err(cx);
+            self.selected_model = Some(model_info.clone());
             let current_index = self.selected_index;
             self.set_selected_index(current_index, window, cx);
 
@@ -159,12 +212,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
                     .into_any_element(),
             ),
             AcpModelPickerEntry::Model(model_info) => {
-                let active_model = (self.get_active_model)(cx);
-                let active_provider_id = active_model.as_ref().map(|m| m.provider.id());
-                let active_model_id = active_model.map(|m| m.model.id());
-
-                let is_selected = Some(model_info.model.provider_id()) == active_provider_id
-                    && Some(model_info.model.id()) == active_model_id;
+                let is_selected = Some(model_info) == self.selected_model.as_ref();
 
                 let model_icon_color = if is_selected {
                     Color::Accent
@@ -177,18 +225,18 @@ impl PickerDelegate for AcpModelPickerDelegate {
                         .inset(true)
                         .spacing(ListItemSpacing::Sparse)
                         .toggle_state(selected)
-                        .start_slot(
-                            Icon::new(model_info.icon)
+                        .start_slot::<Icon>(model_info.icon.map(|icon| {
+                            Icon::new(icon)
                                 .color(model_icon_color)
-                                .size(IconSize::Small),
-                        )
+                                .size(IconSize::Small)
+                        }))
                         .child(
                             h_flex()
                                 .w_full()
                                 .pl_0p5()
                                 .gap_1p5()
                                 .w(px(240.))
-                                .child(Label::new(model_info.model.name().0.clone()).truncate()),
+                                .child(Label::new(model_info.name.clone()).truncate()),
                         )
                         .end_slot(div().pr_3().when(is_selected, |this| {
                             this.child(
@@ -208,10 +256,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
-        use feature_flags::FeatureFlagAppExt;
-
-        let plan = proto::Plan::ZedPro;
-
         Some(
             h_flex()
                 .w_full()
@@ -220,28 +264,6 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
-                    this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                            .icon(IconName::ZedAssistant)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
-                            }),
-                        Plan::Free | Plan::ZedProTrial => Button::new(
-                            "try-pro",
-                            if plan == Plan::ZedProTrial {
-                                "Upgrade to Pro"
-                            } else {
-                                "Try Pro"
-                            },
-                        )
-                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
-                    })
-                })
                 .child(
                     Button::new("configure", "Configure")
                         .icon(IconName::Settings)
@@ -260,37 +282,226 @@ impl PickerDelegate for AcpModelPickerDelegate {
     }
 }
 
-pub async fn fuzzy_search(
-    model_list: &LanguageModelInfoList,
-    query: &str,
+fn info_list_to_picker_entries(
+    model_list: LanguageModelInfoList,
+) -> impl Iterator<Item = AcpModelPickerEntry> {
+    match model_list {
+        LanguageModelInfoList::Flat(list) => itertools::Either::Left(
+            list.into_iter()
+                .map(|info| AcpModelPickerEntry::Model(info)),
+        ),
+        LanguageModelInfoList::Grouped(index_map) => {
+            itertools::Either::Right(index_map.into_iter().flat_map(|(group_name, models)| {
+                std::iter::once(AcpModelPickerEntry::Separator(group_name.0)).chain(
+                    models
+                        .into_iter()
+                        .map(|info| AcpModelPickerEntry::Model(info)),
+                )
+            }))
+        }
+    }
+}
+
+async fn fuzzy_search(
+    model_list: LanguageModelInfoList,
+    query: String,
     executor: BackgroundExecutor,
 ) -> LanguageModelInfoList {
-    let candidates = model_list
-        .all_models()
-        .enumerate()
-        .map(|(ix, model)| StringMatchCandidate::new(ix, model.id.0.as_ref()))
-        .collect::<Vec<_>>();
+    async fn fuzzy_search_list(
+        model_list: Vec<LanguageModelInfo>,
+        query: &str,
+        executor: BackgroundExecutor,
+    ) -> Vec<LanguageModelInfo> {
+        let candidates = model_list
+            .iter()
+            .enumerate()
+            .map(|(ix, model)| {
+                StringMatchCandidate::new(ix, &format!("{}/{}", model.id, model.name))
+            })
+            .collect::<Vec<_>>();
+        let mut matches = match_strings(
+            &candidates,
+            &query,
+            false,
+            true,
+            100,
+            &Default::default(),
+            executor,
+        )
+        .await;
 
-    let mut matches = match_strings(
-        &candidates,
-        &query,
-        false,
-        true,
-        100,
-        &Default::default(),
-        executor,
-    )
-    .await;
+        matches.sort_unstable_by_key(|mat| {
+            let candidate = &candidates[mat.candidate_id];
+            (Reverse(OrderedFloat(mat.score)), candidate.id)
+        });
 
-    matches.sort_unstable_by_key(|mat| {
-        let candidate = &candidates[mat.candidate_id];
-        (Reverse(OrderedFloat(mat.score)), candidate.id)
-    });
+        matches
+            .into_iter()
+            .map(|mat| model_list[mat.candidate_id].clone())
+            .collect()
+    }
 
-    let matched_models: Vec<_> = matches
-        .into_iter()
-        .map(|mat| self.models[mat.candidate_id].clone())
-        .collect();
+    match model_list {
+        LanguageModelInfoList::Flat(model_list) => {
+            LanguageModelInfoList::Flat(fuzzy_search_list(model_list, &query, executor).await)
+        }
+        LanguageModelInfoList::Grouped(index_map) => {
+            let groups =
+                futures::future::join_all(index_map.into_iter().map(|(group_name, models)| {
+                    fuzzy_search_list(models, &query, executor.clone())
+                        .map(|results| (group_name, results))
+                }))
+                .await;
+            LanguageModelInfoList::Grouped(IndexMap::from_iter(
+                groups
+                    .into_iter()
+                    .filter(|(_, results)| !results.is_empty()),
+            ))
+        }
+    }
+}
 
-    matched_models
+#[cfg(test)]
+mod tests {
+    use gpui::TestAppContext;
+    use itertools::Itertools;
+
+    use super::*;
+
+    fn create_model_list(model_specs: Vec<(&str, &str)>) -> LanguageModelInfoList {
+        LanguageModelInfoList::Grouped(
+            model_specs
+                .into_iter()
+                .map(|(group, name)| {
+                    (
+                        group.to_string(),
+                        acp_thread::LanguageModelInfo {
+                            id: acp_thread::LanguageModelId(name.to_string().into()),
+                            name: name.to_string().into(),
+                            icon: None,
+                        },
+                    )
+                })
+                .into_group_map()
+                .into_iter()
+                .map(|(group, models)| (acp_thread::LanguageModelGroup(group.into()), models))
+                .collect(),
+        )
+    }
+
+    fn assert_models_eq(result: LanguageModelInfoList, expected: Vec<(&str, &str)>) {
+        let LanguageModelInfoList::Grouped(groups) = result else {
+            panic!("Expected LanguageModelInfoList::Grouped, got {:?}", result);
+        };
+        let values = groups
+            .into_iter()
+            .flat_map(|(group, models)| models.into_iter().map(move |model| (group.clone(), model)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values.len(),
+            expected.len(),
+            "Number of models doesn't match"
+        );
+
+        dbg!(&values);
+
+        for (i, (expected_group, expected_name)) in expected.iter().enumerate() {
+            assert_eq!(
+                values[i].0.0.as_ref(),
+                *expected_group,
+                "Group at position {} doesn't match expected group",
+                i
+            );
+            assert_eq!(
+                values[i].1.name, *expected_name,
+                "Model at position {} doesn't match expected model",
+                i
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_fuzzy_match(cx: &mut TestAppContext) {
+        let models = create_model_list(vec![
+            ("zed", "Claude 3.7 Sonnet"),
+            ("zed", "Claude 3.7 Sonnet Thinking"),
+            ("zed", "gpt-4.1"),
+            ("zed", "gpt-4.1-nano"),
+            ("openai", "gpt-3.5-turbo"),
+            ("openai", "gpt-4.1"),
+            ("openai", "gpt-4.1-nano"),
+            ("ollama", "mistral"),
+            ("ollama", "deepseek"),
+        ]);
+
+        // Results should preserve models order whenever possible.
+        // In the case below, `zed/gpt-4.1` and `openai/gpt-4.1` have identical
+        // similarity scores, but `zed/gpt-4.1` was higher in the models list,
+        // so it should appear first in the results.
+        let results = fuzzy_search(models.clone(), "41".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![
+                ("zed", "gpt-4.1"),
+                ("zed", "gpt-4.1-nano"),
+                ("openai", "gpt-4.1"),
+                ("openai", "gpt-4.1-nano"),
+            ],
+        );
+
+        // Model provider should be searchable as well
+        let results = fuzzy_search(models.clone(), "ol".into(), cx.executor()).await;
+        assert_models_eq(
+            dbg!(results),
+            vec![("ollama", "mistral"), ("ollama", "deepseek")],
+        );
+
+        // Fuzzy search
+        let results = fuzzy_search(models.clone(), "z4n".into(), cx.executor()).await;
+        assert_models_eq(dbg!(results), vec![("zed", "gpt-4.1-nano")]);
+    }
+
+    // #[gpui::test]
+    // fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
+    //     let recommended_models = create_model_list(vec![("zed", "claude")]);
+    //     let all_models = create_model_list(vec![
+    //         ("zed", "claude"), // Should be filtered out from "other"
+    //         ("zed", "gemini"),
+    //         ("copilot", "o3"),
+    //     ]);
+
+    //     let grouped_models = GroupedModels::new(all_models, recommended_models);
+
+    //     let actual_other_models = grouped_models
+    //         .other
+    //         .values()
+    //         .flatten()
+    //         .cloned()
+    //         .collect::<Vec<_>>();
+
+    //     // Recommended models should not appear in "other"
+    //     assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
+    // }
+
+    // #[gpui::test]
+    // fn test_dont_exclude_models_from_other_providers(_cx: &mut TestAppContext) {
+    //     let recommended_models = create_model_list(vec![("zed", "claude")]);
+    //     let all_models = create_model_list(vec![
+    //         ("zed", "claude"), // Should be filtered out from "other"
+    //         ("zed", "gemini"),
+    //         ("copilot", "claude"), // Should not be filtered out from "other"
+    //     ]);
+
+    //     let grouped_models = GroupedModels::new(all_models, recommended_models);
+
+    //     let actual_other_models = grouped_models
+    //         .other
+    //         .values()
+    //         .flatten()
+    //         .cloned()
+    //         .collect::<Vec<_>>();
+
+    //     // Recommended models should not appear in "other"
+    //     assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/claude"]);
+    // }
 }
