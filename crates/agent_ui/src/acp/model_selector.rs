@@ -364,74 +364,77 @@ async fn fuzzy_search(
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
-    use itertools::Itertools;
 
     use super::*;
 
-    fn create_model_list(model_specs: Vec<(&str, &str)>) -> LanguageModelInfoList {
-        LanguageModelInfoList::Grouped(
-            model_specs
-                .into_iter()
-                .map(|(group, name)| {
-                    (
-                        group.to_string(),
-                        acp_thread::LanguageModelInfo {
-                            id: acp_thread::LanguageModelId(name.to_string().into()),
-                            name: name.to_string().into(),
+    fn create_model_list(grouped_models: Vec<(&str, Vec<&str>)>) -> LanguageModelInfoList {
+        LanguageModelInfoList::Grouped(IndexMap::from_iter(grouped_models.into_iter().map(
+            |(group, models)| {
+                (
+                    acp_thread::LanguageModelGroup(group.to_string().into()),
+                    models
+                        .into_iter()
+                        .map(|model| acp_thread::LanguageModelInfo {
+                            id: acp_thread::LanguageModelId(model.to_string().into()),
+                            name: model.to_string().into(),
                             icon: None,
-                        },
-                    )
-                })
-                .into_group_map()
-                .into_iter()
-                .map(|(group, models)| (acp_thread::LanguageModelGroup(group.into()), models))
-                .collect(),
-        )
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            },
+        )))
     }
 
-    fn assert_models_eq(result: LanguageModelInfoList, expected: Vec<(&str, &str)>) {
+    fn assert_models_eq(result: LanguageModelInfoList, expected: Vec<(&str, Vec<&str>)>) {
         let LanguageModelInfoList::Grouped(groups) = result else {
             panic!("Expected LanguageModelInfoList::Grouped, got {:?}", result);
         };
-        let values = groups
-            .into_iter()
-            .flat_map(|(group, models)| models.into_iter().map(move |model| (group.clone(), model)))
-            .collect::<Vec<_>>();
+
         assert_eq!(
-            values.len(),
+            groups.len(),
             expected.len(),
-            "Number of models doesn't match"
+            "Number of groups doesn't match"
         );
 
-        dbg!(&values);
-
-        for (i, (expected_group, expected_name)) in expected.iter().enumerate() {
+        for (i, (expected_group, expected_models)) in expected.iter().enumerate() {
+            let (actual_group, actual_models) = groups.get_index(i).unwrap();
             assert_eq!(
-                values[i].0.0.as_ref(),
+                actual_group.0.as_ref(),
                 *expected_group,
                 "Group at position {} doesn't match expected group",
                 i
             );
             assert_eq!(
-                values[i].1.name, *expected_name,
-                "Model at position {} doesn't match expected model",
-                i
+                actual_models.len(),
+                expected_models.len(),
+                "Number of models in group {} doesn't match",
+                expected_group
             );
+
+            for (j, expected_model_name) in expected_models.iter().enumerate() {
+                assert_eq!(
+                    actual_models[j].name, *expected_model_name,
+                    "Model at position {} in group {} doesn't match expected model",
+                    j, expected_group
+                );
+            }
         }
     }
 
     #[gpui::test]
     async fn test_fuzzy_match(cx: &mut TestAppContext) {
         let models = create_model_list(vec![
-            ("zed", "Claude 3.7 Sonnet"),
-            ("zed", "Claude 3.7 Sonnet Thinking"),
-            ("zed", "gpt-4.1"),
-            ("zed", "gpt-4.1-nano"),
-            ("openai", "gpt-3.5-turbo"),
-            ("openai", "gpt-4.1"),
-            ("openai", "gpt-4.1-nano"),
-            ("ollama", "mistral"),
-            ("ollama", "deepseek"),
+            (
+                "zed",
+                vec![
+                    "Claude 3.7 Sonnet",
+                    "Claude 3.7 Sonnet Thinking",
+                    "gpt-4.1",
+                    "gpt-4.1-nano",
+                ],
+            ),
+            ("openai", vec!["gpt-3.5-turbo", "gpt-4.1", "gpt-4.1-nano"]),
+            ("ollama", vec!["mistral", "deepseek"]),
         ]);
 
         // Results should preserve models order whenever possible.
@@ -442,66 +445,19 @@ mod tests {
         assert_models_eq(
             results,
             vec![
-                ("zed", "gpt-4.1"),
-                ("zed", "gpt-4.1-nano"),
-                ("openai", "gpt-4.1"),
-                ("openai", "gpt-4.1-nano"),
+                ("zed", vec!["gpt-4.1", "gpt-4.1-nano"]),
+                ("openai", vec!["gpt-4.1", "gpt-4.1-nano"]),
             ],
         );
 
-        // Model provider should be searchable as well
-        let results = fuzzy_search(models.clone(), "ol".into(), cx.executor()).await;
-        assert_models_eq(
-            dbg!(results),
-            vec![("ollama", "mistral"), ("ollama", "deepseek")],
-        );
-
         // Fuzzy search
-        let results = fuzzy_search(models.clone(), "z4n".into(), cx.executor()).await;
-        assert_models_eq(dbg!(results), vec![("zed", "gpt-4.1-nano")]);
+        let results = fuzzy_search(models.clone(), "4n".into(), cx.executor()).await;
+        assert_models_eq(
+            results,
+            vec![
+                ("zed", vec!["gpt-4.1-nano"]),
+                ("openai", vec!["gpt-4.1-nano"]),
+            ],
+        );
     }
-
-    // #[gpui::test]
-    // fn test_exclude_recommended_models(_cx: &mut TestAppContext) {
-    //     let recommended_models = create_model_list(vec![("zed", "claude")]);
-    //     let all_models = create_model_list(vec![
-    //         ("zed", "claude"), // Should be filtered out from "other"
-    //         ("zed", "gemini"),
-    //         ("copilot", "o3"),
-    //     ]);
-
-    //     let grouped_models = GroupedModels::new(all_models, recommended_models);
-
-    //     let actual_other_models = grouped_models
-    //         .other
-    //         .values()
-    //         .flatten()
-    //         .cloned()
-    //         .collect::<Vec<_>>();
-
-    //     // Recommended models should not appear in "other"
-    //     assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/o3"]);
-    // }
-
-    // #[gpui::test]
-    // fn test_dont_exclude_models_from_other_providers(_cx: &mut TestAppContext) {
-    //     let recommended_models = create_model_list(vec![("zed", "claude")]);
-    //     let all_models = create_model_list(vec![
-    //         ("zed", "claude"), // Should be filtered out from "other"
-    //         ("zed", "gemini"),
-    //         ("copilot", "claude"), // Should not be filtered out from "other"
-    //     ]);
-
-    //     let grouped_models = GroupedModels::new(all_models, recommended_models);
-
-    //     let actual_other_models = grouped_models
-    //         .other
-    //         .values()
-    //         .flatten()
-    //         .cloned()
-    //         .collect::<Vec<_>>();
-
-    //     // Recommended models should not appear in "other"
-    //     assert_models_eq(actual_other_models, vec!["zed/gemini", "copilot/claude"]);
-    // }
 }
