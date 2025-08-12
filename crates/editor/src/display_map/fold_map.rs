@@ -320,13 +320,13 @@ impl FoldMapWriter<'_> {
 /// Decides where the fold indicators should be; also tracks parts of a source file that are currently folded.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
-pub(crate) struct FoldMap {
+pub struct FoldMap {
     snapshot: FoldSnapshot,
     next_fold_id: FoldId,
 }
 
 impl FoldMap {
-    pub(crate) fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
+    pub fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
         let this = Self {
             snapshot: FoldSnapshot {
                 folds: SumTree::new(&inlay_snapshot.buffer),
