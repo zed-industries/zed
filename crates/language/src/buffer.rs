@@ -3661,7 +3661,7 @@ impl BufferSnapshot {
         let mut annotation_row_ranges = annotation_row_ranges.into_iter().peekable();
         for item in items {
             while let Some(last_end) = item_ends_stack.last().copied() {
-                if last_end < item.range.end {
+                if last_end <= item.range.end {
                     item_ends_stack.pop();
                 } else {
                     break;
