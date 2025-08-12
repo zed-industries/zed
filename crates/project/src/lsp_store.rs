@@ -1564,8 +1564,7 @@ impl LocalLspStore {
                             Err(err) => {
                                 zlog::warn!(
                                     logger =>
-                                    "Failed to format ranges via LSP: {e:#}",
-                                    err
+                                    "Failed to format ranges via LSP: {err:#}"
                                 );
                                 continue;
                             }
@@ -1586,8 +1585,7 @@ impl LocalLspStore {
                             Err(err) => {
                                 zlog::warn!(
                                     logger =>
-                                    "Failed to format buffer via LSP: {}",
-                                    err
+                                    "Failed to format buffer via LSP: {err:#}"
                                 );
                                 continue;
                             }
