@@ -12871,6 +12871,7 @@ dependencies = [
  "prost-build 0.9.0",
  "serde",
  "typed-path",
+ "util",
  "workspace-hack",
 ]
 

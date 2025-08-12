@@ -67,6 +67,7 @@ use text::{LineEnding, Rope};
 use util::{
     ResultExt,
     paths::{PathMatcher, SanitizedPath, home_dir},
+    rel_path::RelPath,
 };
 pub use worktree_settings::WorktreeSettings;
 
@@ -132,12 +133,12 @@ pub struct LocalWorktree {
 }
 
 pub struct PathPrefixScanRequest {
-    path: Arc<Path>,
+    path: Arc<RelPath>,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
 struct ScanRequest {
-    relative_paths: Vec<Arc<Path>>,
+    relative_paths: Vec<Arc<RelPath>>,
     done: SmallVec<[barrier::Sender; 1]>,
 }
 
@@ -186,7 +187,7 @@ pub struct Snapshot {
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub enum WorkDirectory {
     InProject {
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
     },
     AboveProject {
         absolute_path: Arc<Path>,
@@ -197,7 +198,7 @@ pub enum WorkDirectory {
 impl WorkDirectory {
     #[cfg(test)]
     fn in_project(path: &str) -> Self {
-        let path = Path::new(path);
+        let path = RelPath::new(path);
         Self::InProject {
             relative_path: path.into(),
         }
@@ -232,9 +233,8 @@ impl WorkDirectory {
     /// is a repository in a directory between these two paths
     /// external .git folder in a parent folder of the project root.
     #[track_caller]
-    pub fn directory_contains(&self, path: impl AsRef<Path>) -> bool {
+    pub fn directory_contains(&self, path: impl AsRef<RelPath>) -> bool {
         let path = path.as_ref();
-        debug_assert!(path.is_relative());
         match self {
             WorkDirectory::InProject { relative_path } => path.starts_with(relative_path),
             WorkDirectory::AboveProject { .. } => true,
@@ -246,9 +246,8 @@ impl WorkDirectory {
     /// If the root of the repository (and its .git folder) are located in a parent folder
     /// of the project root folder, then the returned RepoPath is relative to the root
     /// of the repository and not a valid path inside the project.
-    pub fn relativize(&self, path: &Path) -> Result<RepoPath> {
+    pub fn relativize(&self, path: &RelPath) -> Result<RepoPath> {
         // path is assumed to be relative to worktree root.
-        debug_assert!(path.is_relative());
         match self {
             WorkDirectory::InProject { relative_path } => Ok(path
                 .strip_prefix(relative_path)
@@ -842,12 +841,12 @@ impl Worktree {
 
     pub fn create_entry(
         &mut self,
-        path: impl Into<Arc<Path>>,
+        path: impl Into<Arc<RelPath>>,
         is_directory: bool,
         content: Option<Vec<u8>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<CreatedEntry>> {
-        let path: Arc<Path> = path.into();
+        let path: Arc<RelPath> = path.into();
         let worktree_id = self.id();
         match self {
             Worktree::Local(this) => this.create_entry(path, is_directory, content, cx),
@@ -914,7 +913,7 @@ impl Worktree {
         Some(task)
     }
 
-    fn get_children_ids_recursive(&self, path: &Path, ids: &mut Vec<ProjectEntryId>) {
+    fn get_children_ids_recursive(&self, path: &RelPath, ids: &mut Vec<ProjectEntryId>) {
         let children_iter = self.child_entries(path);
         for child in children_iter {
             ids.push(child.id);
@@ -1575,7 +1574,7 @@ impl LocalWorktree {
 
     fn create_entry(
         &self,
-        path: impl Into<Arc<Path>>,
+        path: impl Into<Arc<RelPath>>,
         is_dir: bool,
         content: Option<Vec<u8>>,
         cx: &Context<Worktree>,
@@ -1975,7 +1974,7 @@ impl LocalWorktree {
         }))
     }
 
-    fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
+    fn refresh_entries_for_paths(&self, paths: Vec<Arc<RelPath>>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.scan_requests_tx
             .try_send(ScanRequest {
@@ -1987,11 +1986,14 @@ impl LocalWorktree {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn manually_refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {
+    pub fn manually_refresh_entries_for_paths(
+        &self,
+        paths: Vec<Arc<RelPath>>,
+    ) -> barrier::Receiver {
         self.refresh_entries_for_paths(paths)
     }
 
-    pub fn add_path_prefix_to_scan(&self, path_prefix: Arc<Path>) -> barrier::Receiver {
+    pub fn add_path_prefix_to_scan(&self, path_prefix: Arc<RelPath>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.path_prefixes_to_scan_tx
             .try_send(PathPrefixScanRequest {
@@ -2004,8 +2006,8 @@ impl LocalWorktree {
 
     fn refresh_entry(
         &self,
-        path: Arc<Path>,
-        old_path: Option<Arc<Path>>,
+        path: Arc<RelPath>,
+        old_path: Option<Arc<RelPath>>,
         cx: &Context<Worktree>,
     ) -> Task<Result<Option<Entry>>> {
         if self.settings.is_path_excluded(&path) {
@@ -2403,18 +2405,8 @@ impl Snapshot {
         }
     }
 
-    pub fn absolutize(&self, path: &Path) -> Result<PathBuf> {
-        if path
-            .components()
-            .any(|component| !matches!(component, std::path::Component::Normal(_)))
-        {
-            anyhow::bail!("invalid path");
-        }
-        if path.file_name().is_some() {
-            Ok(self.abs_path.as_path().join(path))
-        } else {
-            Ok(self.abs_path.as_path().to_path_buf())
-        }
+    pub fn absolutize(&self, path: &RelPath) -> Result<PathBuf> {
+        Ok(path.append_to_abs_path(&self.abs_path.0))
     }
 
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
@@ -2585,7 +2577,7 @@ impl Snapshot {
         include_files: bool,
         include_dirs: bool,
         include_ignored: bool,
-        path: &Path,
+        path: &RelPath,
     ) -> Traversal<'_> {
         Traversal::new(self, include_files, include_dirs, include_ignored, path)
     }
@@ -2602,15 +2594,15 @@ impl Snapshot {
         self.traverse_from_offset(true, true, include_ignored, start)
     }
 
-    pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
-        let empty_path = Path::new("");
+    pub fn paths(&self) -> impl Iterator<Item = &Arc<RelPath>> {
+        let empty_path = RelPath::new("");
         self.entries_by_path
             .cursor::<()>(&())
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| &entry.path)
     }
 
-    pub fn child_entries<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+    pub fn child_entries<'a>(&'a self, parent_path: &'a RelPath) -> ChildEntriesIter<'a> {
         let options = ChildEntriesOptions {
             include_files: true,
             include_dirs: true,
@@ -2621,7 +2613,7 @@ impl Snapshot {
 
     pub fn child_entries_with_options<'a>(
         &'a self,
-        parent_path: &'a Path,
+        parent_path: &'a RelPath,
         options: ChildEntriesOptions,
     ) -> ChildEntriesIter<'a> {
         let mut cursor = self.entries_by_path.cursor(&());
@@ -2659,9 +2651,8 @@ impl Snapshot {
         self.scan_id
     }
 
-    pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
+    pub fn entry_for_path(&self, path: impl AsRef<RelPath>) -> Option<&Entry> {
         let path = path.as_ref();
-        debug_assert!(path.is_relative());
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
@@ -3436,7 +3427,7 @@ impl File {
 pub struct Entry {
     pub id: ProjectEntryId,
     pub kind: EntryKind,
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
     pub inode: u64,
     pub mtime: Option<MTime>,
 
@@ -3510,7 +3501,7 @@ pub struct UpdatedGitRepository {
     pub common_dir_abs_path: Option<Arc<Path>>,
 }
 
-pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
+pub type UpdatedEntriesSet = Arc<[(Arc<RelPath>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[UpdatedGitRepository]>;
 
 #[derive(Clone, Debug)]
@@ -3786,7 +3777,7 @@ impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for ProjectEntryId {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct PathKey(pub Arc<Path>);
+pub struct PathKey(pub Arc<RelPath>);
 
 impl Default for PathKey {
     fn default() -> Self {
@@ -5188,7 +5179,7 @@ impl WorktreeModelHandle for Entity<Worktree> {
 
 #[derive(Clone, Debug)]
 struct TraversalProgress<'a> {
-    max_path: &'a Path,
+    max_path: &'a RelPath,
     count: usize,
     non_ignored_count: usize,
     file_count: usize,
@@ -5250,7 +5241,7 @@ impl<'a> Traversal<'a> {
         include_files: bool,
         include_dirs: bool,
         include_ignored: bool,
-        start_path: &Path,
+        start_path: &RelPath,
     ) -> Self {
         let mut cursor = snapshot.entries_by_path.cursor(&());
         cursor.seek(&TraversalTarget::path(start_path), Bias::Left);
@@ -5343,12 +5334,12 @@ impl<'a> Iterator for Traversal<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum PathTarget<'a> {
-    Path(&'a Path),
-    Successor(&'a Path),
+    Path(&'a RelPath),
+    Successor(&'a RelPath),
 }
 
 impl PathTarget<'_> {
-    fn cmp_path(&self, other: &Path) -> Ordering {
+    fn cmp_path(&self, other: &RelPath) -> Ordering {
         match self {
             PathTarget::Path(path) => path.cmp(&other),
             PathTarget::Successor(path) => {
@@ -5386,11 +5377,11 @@ enum TraversalTarget<'a> {
 }
 
 impl<'a> TraversalTarget<'a> {
-    fn path(path: &'a Path) -> Self {
+    fn path(path: &'a RelPath) -> Self {
         Self::Path(PathTarget::Path(path))
     }
 
-    fn successor(path: &'a Path) -> Self {
+    fn successor(path: &'a RelPath) -> Self {
         Self::Path(PathTarget::Successor(path))
     }
 

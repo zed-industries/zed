@@ -1663,7 +1663,7 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .map(PathBuf::from)
+            .map(RelPath::new)
             .map(RepoPath::new)
             .collect();
 

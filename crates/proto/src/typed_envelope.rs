@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 use std::{marker::PhantomData, time::Instant};
+use util::rel_path::RelPath;
 
 pub trait EnvelopedMessage: Clone + Debug + Serialize + Sized + Send + Sync + 'static {
     const NAME: &'static str;
@@ -155,6 +156,12 @@ impl FromProto for PathBuf {
 impl FromProto for Arc<Path> {
     fn from_proto(proto: String) -> Self {
         from_proto_path(proto).into()
+    }
+}
+
+impl FromProto for Arc<RelPath> {
+    fn from_proto(proto: String) -> Self {
+        RelPath::new(proto.as_bytes()).into()
     }
 }
 

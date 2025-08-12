@@ -27,6 +27,7 @@ use std::{
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
 use util::command::{new_smol_command, new_std_command};
+use util::rel_path::RelPath;
 use util::{ResultExt, paths};
 use uuid::Uuid;
 
@@ -662,14 +663,22 @@ impl GitRepository for RealGitRepository {
             for (path, status_code) in changes {
                 match status_code {
                     StatusCode::Modified => {
-                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        write!(&mut stdin, "{commit}:")?;
+                        stdin.write_all(path.as_bytes())?;
+                        stdin.write_all(b"\n")?;
+                        write!(&mut stdin, "{parent_sha}:")?;
+                        stdin.write_all(path.as_bytes())?;
+                        stdin.write_all(b"\n")?;
                     }
                     StatusCode::Added => {
-                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
+                        write!(&mut stdin, "{commit}:")?;
+                        stdin.write_all(path.as_bytes())?;
+                        stdin.write_all(b"\n")?;
                     }
                     StatusCode::Deleted => {
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        write!(&mut stdin, "{parent_sha}:")?;
+                        stdin.write_all(path.as_bytes())?;
+                        stdin.write_all(b"\n")?;
                     }
                     _ => continue,
                 }
@@ -1652,7 +1661,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("-z"),
     ];
     args.extend(path_prefixes.iter().map(|path_prefix| {
-        if path_prefix.0.as_ref() == Path::new("") {
+        if path_prefix.0.as_ref() == RelPath::new("") {
             Path::new(".").into()
         } else {
             path_prefix.as_os_str().into()
@@ -1905,61 +1914,30 @@ async fn run_askpass_command(
 }
 
 pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
-    LazyLock::new(|| RepoPath(Path::new("").into()));
+    LazyLock::new(|| RepoPath(RelPath::new("").into()));
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub Arc<Path>);
+pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
-    pub fn new(path: PathBuf) -> Self {
-        debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-        RepoPath(path.into())
-    }
-
     pub fn from_str(path: &str) -> Self {
-        let path = Path::new(path);
-        debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-        RepoPath(path.into())
+        RepoPath(RelPath::new(path).into())
     }
 
     pub fn to_unix_style(&self) -> Cow<'_, OsStr> {
-        #[cfg(target_os = "windows")]
-        {
-            use std::ffi::OsString;
-
-            let path = self.0.as_os_str().to_string_lossy().replace("\\", "/");
-            Cow::Owned(OsString::from(path))
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Cow::Borrowed(self.0.as_os_str())
-        }
+        self.0.as_os_str()
     }
 }
 
-impl std::fmt::Display for RepoPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.to_string_lossy().fmt(f)
+impl From<&RelPath> for RepoPath {
+    fn from(value: &RelPath) -> Self {
+        RepoPath(value.into())
     }
 }
 
-impl From<&Path> for RepoPath {
-    fn from(value: &Path) -> Self {
-        RepoPath::new(value.into())
-    }
-}
-
-impl From<Arc<Path>> for RepoPath {
-    fn from(value: Arc<Path>) -> Self {
+impl From<Arc<RelPath>> for RepoPath {
+    fn from(value: Arc<RelPath>) -> Self {
         RepoPath(value)
-    }
-}
-
-impl From<PathBuf> for RepoPath {
-    fn from(value: PathBuf) -> Self {
-        RepoPath::new(value)
     }
 }
 
@@ -1971,32 +1949,32 @@ impl From<&str> for RepoPath {
 
 impl Default for RepoPath {
     fn default() -> Self {
-        RepoPath(Path::new("").into())
+        RepoPath(RelPath::new("").into())
     }
 }
 
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
+impl AsRef<RelPath> for RepoPath {
+    fn as_ref(&self) -> &RelPath {
         self.0.as_ref()
     }
 }
 
 impl std::ops::Deref for RepoPath {
-    type Target = Path;
+    type Target = RelPath;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl Borrow<Path> for RepoPath {
-    fn borrow(&self) -> &Path {
+impl Borrow<RelPath> for RepoPath {
+    fn borrow(&self) -> &RelPath {
         self.0.as_ref()
     }
 }
 
 #[derive(Debug)]
-pub struct RepoPathDescendants<'a>(pub &'a Path);
+pub struct RepoPathDescendants<'a>(pub &'a RelPath);
 
 impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
     fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
