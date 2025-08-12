@@ -88,6 +88,10 @@ impl AcpModelPickerDelegate {
             _refresh_models_task: refresh_models_task,
         }
     }
+
+    pub fn active_model(&self) -> Option<&LanguageModelInfo> {
+        self.selected_model.as_ref()
+    }
 }
 
 impl PickerDelegate for AcpModelPickerDelegate {
