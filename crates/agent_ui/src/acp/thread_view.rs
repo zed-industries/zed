@@ -1278,8 +1278,6 @@ impl AcpThreadView {
                                 .pr_1()
                                 .py_1()
                                 .rounded_t_md()
-                                .border_b_1()
-                                .border_color(self.tool_card_border_color(cx))
                                 .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
@@ -1387,7 +1385,9 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(&diff.read(cx).multibuffer()),
+            ToolCallContent::Diff(diff) => {
+                self.render_diff_editor(&diff.read(cx).multibuffer(), cx)
+            }
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(terminal, tool_call, window, cx)
             }
@@ -1531,9 +1531,15 @@ impl AcpThreadView {
             })))
     }
 
-    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>) -> AnyElement {
+    fn render_diff_editor(
+        &self,
+        multibuffer: &Entity<MultiBuffer>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .h_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
@@ -1746,9 +1752,9 @@ impl AcpThreadView {
             .overflow_hidden()
             .child(
                 v_flex()
-                    .pt_1()
-                    .pb_2()
-                    .px_2()
+                    .py_1p5()
+                    .pl_2()
+                    .pr_1p5()
                     .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
@@ -2004,24 +2010,26 @@ impl AcpThreadView {
                         parent.child(self.render_plan_entries(plan, window, cx))
                     })
             })
-            .when(!changed_buffers.is_empty(), |this| {
+            .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
-                    .child(self.render_edits_summary(
+            })
+            .when(!changed_buffers.is_empty(), |this| {
+                this.child(self.render_edits_summary(
+                    action_log,
+                    &changed_buffers,
+                    self.edits_expanded,
+                    pending_edits,
+                    window,
+                    cx,
+                ))
+                .when(self.edits_expanded, |parent| {
+                    parent.child(self.render_edited_files(
                         action_log,
                         &changed_buffers,
-                        self.edits_expanded,
                         pending_edits,
-                        window,
                         cx,
                     ))
-                    .when(self.edits_expanded, |parent| {
-                        parent.child(self.render_edited_files(
-                            action_log,
-                            &changed_buffers,
-                            pending_edits,
-                            cx,
-                        ))
-                    })
+                })
             })
             .into_any()
             .into()
@@ -2940,7 +2948,8 @@ impl AcpThreadView {
 
     fn render_thread_controls(&self, cx: &Context<Self>) -> impl IntoElement {
         let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
-            .icon_size(IconSize::XSmall)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Open Thread as Markdown"))
             .on_click(cx.listener(move |this, _, window, cx| {
@@ -2951,7 +2960,8 @@ impl AcpThreadView {
             }));
 
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
-            .icon_size(IconSize::XSmall)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
             .icon_color(Color::Ignored)
             .tooltip(Tooltip::text("Scroll To Top"))
             .on_click(cx.listener(move |this, _, _, cx| {
@@ -2962,7 +2972,6 @@ impl AcpThreadView {
             .w_full()
             .mr_1()
             .pb_2()
-            .gap_1()
             .px(RESPONSE_PADDING_X)
             .opacity(0.4)
             .hover(|style| style.opacity(1.))
@@ -3079,6 +3088,8 @@ impl Focusable for AcpThreadView {
 
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_messages = self.list_state.item_count() > 0;
+
         v_flex()
             .size_full()
             .key_context("AcpThread")
@@ -3125,7 +3136,7 @@ impl Render for AcpThreadView {
                     let thread_clone = thread.clone();
 
                     v_flex().flex_1().map(|this| {
-                        if self.list_state.item_count() > 0 {
+                        if has_messages {
                             this.child(
                                 list(
                                     self.list_state.clone(),
@@ -3144,22 +3155,31 @@ impl Render for AcpThreadView {
                                 .into_any(),
                             )
                             .child(self.render_vertical_scrollbar(cx))
-                            .children(match thread_clone.read(cx).status() {
-                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
-                                    None
-                                }
-                                ThreadStatus::Generating => div()
-                                    .px_5()
-                                    .py_2()
-                                    .child(LoadingLabel::new("").size(LabelSize::Small))
-                                    .into(),
-                            })
-                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                            .children(
+                                match thread_clone.read(cx).status() {
+                                    ThreadStatus::Idle
+                                    | ThreadStatus::WaitingForToolConfirmation => None,
+                                    ThreadStatus::Generating => div()
+                                        .px_5()
+                                        .py_2()
+                                        .child(LoadingLabel::new("").size(LabelSize::Small))
+                                        .into(),
+                                },
+                            )
                         } else {
                             this.child(self.render_empty_state(cx))
                         }
                     })
                 }
+            })
+            // The activity bar is intentionally rendered outside of the ThreadState::Ready match
+            // above so that the scrollbar doesn't render behind it. The current setup allows
+            // the scrollbar to stop exactly at the activity bar start.
+            .when(has_messages, |this| match &self.thread_state {
+                ThreadState::Ready { thread, .. } => {
+                    this.children(self.render_activity_bar(thread, window, cx))
+                }
+                _ => this,
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
