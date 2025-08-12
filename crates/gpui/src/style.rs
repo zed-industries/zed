@@ -260,6 +260,12 @@ pub struct Style {
     /// The opacity of this element
     pub opacity: Option<f32>,
 
+    /// The grid columns of this element
+    pub grid_cols: Option<usize>,
+
+    /// The grid rows of this element
+    pub grid_rows: Option<usize>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -757,6 +763,8 @@ impl Default for Style {
             text: TextStyleRefinement::default(),
             mouse_cursor: None,
             opacity: None,
+            grid_cols: None,
+            grid_rows: None,
 
             #[cfg(debug_assertions)]
             debug: false,

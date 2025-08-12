@@ -46,6 +46,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the display type of the element to `grid`.
+    /// [Docs](https://tailwindcss.com/docs/display)
+    fn grid(mut self) -> Self {
+        self.style().display = Some(Display::Grid);
+        self
+    }
+
     /// Sets the whitespace of the element to `normal`.
     /// [Docs](https://tailwindcss.com/docs/whitespace#normal)
     fn whitespace_normal(mut self) -> Self {
@@ -639,6 +646,20 @@ pub trait Styled: Sized {
         self.style().opacity = Some(opacity);
         self
     }
+
+    /// Sets the grid columns of this element.
+    fn grid_cols(mut self, cols: usize) -> Self {
+        self.style().grid_cols = Some(cols);
+        self
+    }
+
+    /// Sets the grid rows of this element.
+    fn grid_rows(mut self, rows: usize) -> Self {
+        self.style().grid_rows = Some(rows);
+        self
+    }
+
+    // TODO: Make grid cols/rows helpers up to 5
 
     /// Draws a debug border around this element.
     #[cfg(debug_assertions)]

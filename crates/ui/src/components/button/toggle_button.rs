@@ -589,6 +589,9 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     }
 }
 
+// Stage 1: Trim white space
+// Stage 2: Reflow table to stack icons
+
 fn register_toggle_button_group() {
     component::register_component::<ToggleButtonGroup<ToggleButtonSimple>>();
 }

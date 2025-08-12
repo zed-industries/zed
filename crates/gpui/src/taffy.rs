@@ -5,7 +5,7 @@ use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
-    TaffyTree, TraversePartialTree as _,
+    GridPlacement, TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
@@ -274,6 +274,13 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
+            // grid_template_areas
+            // grid_row:  self.grid_rows.map(|row| {
+            //     taffy::Line {
+            //         start: GridPlacement::Auto,
+            //         end: todo!(),
+            //     }
+            // })
             ..Default::default() // Ignore grid properties for now
         }
     }
