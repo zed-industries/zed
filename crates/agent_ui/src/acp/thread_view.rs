@@ -1208,8 +1208,7 @@ impl AcpThreadView {
         });
         let use_card_layout = needs_confirmation || is_edit || has_diff;
 
-        let is_collapsible =
-            !tool_call.content.is_empty() && !needs_confirmation && !is_edit && !has_diff;
+        let is_collapsible = !tool_call.content.is_empty() && !use_card_layout;
 
         let is_open = tool_call.content.is_empty()
             || needs_confirmation
