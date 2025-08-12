@@ -3008,9 +3008,10 @@ impl EditorElement {
                 };
 
                 let toggle = IconButton::new(("expand", ix), icon_name)
-                    .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
                     .selected_icon_color(Color::Custom(cx.theme().colors().editor_foreground))
+                    .icon_color(Color::Custom(cx.theme().colors().editor_line_number))
                     .icon_size(IconSize::Custom(rems(editor_font_size / window.rem_size())))
+                    .shape(ui::IconButtonShape::Wide)
                     .width(width.into())
                     .on_click(move |_, window, cx| {
                         editor.update(cx, |editor, cx| {
