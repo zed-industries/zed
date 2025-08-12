@@ -99,7 +99,9 @@ use std::{
     convert::TryInto,
     ffi::OsStr,
     future::ready,
-    iter, mem,
+    iter,
+    marker::PhantomData,
+    mem,
     ops::{ControlFlow, Range},
     path::{self, Path, PathBuf},
     pin::pin,
@@ -8140,6 +8142,137 @@ impl LspStore {
                 cx,
             ))
         })?
+    }
+
+    /*
+    * enum Response<T> {
+      Ok(T),
+      Suspended {
+        response_id: usize,
+      },
+      Error(anyhow::Error),
+    }
+    *
+    * remote Zed (David)
+    *  -> upstream client
+    *  -> local Zed (Kirill)
+    *  -> some lsp request (go to def gets stuck as the lsp does not respond)
+    *    ||new|||| select! with the timeout, send a dummy response with a "later_id"
+    *  -> remote Zed
+    *
+    */
+    fn foo() {
+        enum Foo<T> {
+            Ok(T),
+            Postponed(usize),
+            Err(()),
+        }
+
+        // MY SIDE!, YOU query me for the go_to_definitions
+        async fn handle_go_to_definitions<T, R>(
+            project_id: u64,
+            request: T,
+            cx: &mut App,
+        ) -> Foo<R> {
+            /*
+            * let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
+            * let version = deserialize_version(&envelope.payload.version);
+            * let buffer = lsp_store.update(&mut cx, |this, cx| {
+            *     this.buffer_store.read(cx).get_existing(buffer_id)
+            * })??.downgrade();
+            *
+            *  let mut get_definitions_task = cx.spawn_background(self.project.get_definitions(request.from_proto_to_lsp()));
+            *  let new_definitions = select_biased! {
+            *   new_definitions = (&mut get_definitions_task).await => {
+            *     return Foo::Ok(new_definitions)
+            *   }
+            *   _ = timeout(Duration::from_millis(100)) => {
+            *     let new_id = &mut self.later_id;
+            *     let new_task = cx.spawn(async move |cx| {
+            *        let result = get_definitions_task.await;
+            *        buffer.update(cx, |buffer, cx| {
+            *          match result {
+                           Ok(definitions) => client.send(project_id, buffer, proto::WeAreReadyNow {
+                               new_id, definitions
+                           }),
+                           Err(e) => client.send(project_id, buffer, new_id, Foo::Err(e)),
+                        }
+            *        }).unwrap().await;
+            *     });
+            *     self.tasks.insert??(new_id??, new_task);
+            *     return Foo::Postponed(post_inc(new_id));
+            *   }
+            * };
+            */
+            todo!("")
+        }
+
+        ///////////// YOUR SIDE!
+
+        pub fn goto_definitions_2(
+            &mut self,
+            buffer: &Entity<Buffer>,
+            position: PointUtf16,
+            cx: &mut Context<Self>,
+        ) -> Task<Result<Option<Vec<LocationLink>>>> {
+            if let Some((upstream_client, project_id)) = self.upstream_client() {
+                let request = GetImplementations { position };
+                if !self.is_capable_for_proto_request(buffer, &request, cx) {
+                    return Task::ready(Ok(None));
+                }
+                let request_task = proto::multi_lsp_query::Request::GetImplementation(
+                    request.to_proto(project_id, buffer.read(cx)),
+                );
+                let buffer = buffer.clone();
+                cx.spawn(async move |lsp_store: WeakEntity<LspStore>, cx| {
+                    let Some(project) = weak_project.upgrade() else {
+                        return Ok(None);
+                    };
+                    let response = request_task.await?;
+                    let foo_response: Foo<Result<Vec<LocationLink>>> =
+                        GetImplementations { position }
+                            .response_from_proto(
+                                implementations_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                            // TODO kb racy: could have been received the response already, hence fail the channel dance
+                            .await;
+
+                    match foo_response {
+                        Foo::Ok(locations) => Ok(Some(locations)),
+                        Foo::Suspended(id) => {
+                            let (tx, rx) = mpsc::oneshot();
+                            lsp_store.update(cx, |lsp_store, cx| {
+                                lsp_store.follow_ups.insert(id, tx);
+                            })?;
+                            rx.await.timeout(???) // Needs timeout as it could hang forever is the response already came in
+                        }
+                        Foo::Err(err) => Err(err),
+                    }
+
+                    Ok(response)
+                })
+            } else {
+                // same old local thing for ME modulo it's either Foo::Ok or Foo::Err (but never Foo::Postponed)
+            }
+        }
+
+        fn handle_follow_up<T: ProtoRequest>(
+            &mut self,
+            response: proto::WeAreReadyNow,
+            cx: &mut Context<Self>,
+        ) {
+            // Self {
+            //   follow_ups: HashMap<usize, mpsc::Sender<T>>,
+            // }
+            self.follow_ups
+                .remove(follow_up_id.id)
+                .context("(((((((((((")?
+                .send(response)
+                .ok();
+        }
     }
 
     async fn handle_multi_lsp_query(
