@@ -658,6 +658,7 @@ impl Thread {
             .profiles
             .get(&self.profile_id)
             .context("profile not found")?;
+        dbg!(&profile);
 
         Ok(self
             .tools

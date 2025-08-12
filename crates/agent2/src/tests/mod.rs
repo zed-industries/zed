@@ -2,8 +2,10 @@ use super::*;
 use acp_thread::AgentConnection;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
+use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
 use anyhow::Result;
 use client::{Client, UserStore};
+use collections::IndexMap;
 use fs::{FakeFs, Fs};
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
@@ -21,7 +23,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use smol::stream::StreamExt;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
@@ -151,7 +153,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .collect()
         .await;
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
-    thread.update(cx, |thread, _cx| {
+    thread.update(cx, |thread, cx| {
         assert!(
             thread
                 .messages()
@@ -165,7 +167,9 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
                     } else {
                         false
                     }
-                })
+                }),
+            "{}",
+            thread.to_markdown()
         );
     });
 }
@@ -468,6 +472,9 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
         assert!(text.contains("Ding"));
     });
 }
+
+#[gpui::test]
+async fn test_profiles(cx: &mut TestAppContext) {}
 
 #[gpui::test]
 #[ignore = "can't run on CI yet"]
@@ -835,13 +842,50 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     cx.executor().allow_parking();
 
     let fs = FakeFs::new(cx.background_executor.clone());
+    fs.create_dir(paths::settings_file().parent().unwrap())
+        .await
+        .unwrap();
+    fs.insert_file(
+        paths::settings_file().clone(),
+        json!({
+            "agent": {
+                "default_profile": "test-profile",
+                "profiles": {
+                    "test-profile": {
+                        "name": "Test Profile",
+                        "tools": {
+                            EchoTool.name(): true,
+                            DelayTool.name(): true,
+                            WordListTool.name(): true,
+                            ToolRequiringPermission.name(): true,
+                            InfiniteTool.name(): true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
 
     cx.update(|cx| {
         settings::init(cx);
-        watch_settings(fs.clone(), cx);
         Project::init_settings(cx);
         agent_settings::init(cx);
+        gpui_tokio::init(cx);
+        let http_client = ReqwestClient::user_agent("agent tests").unwrap();
+        cx.set_http_client(Arc::new(http_client));
+
+        client::init_settings(cx);
+        let client = Client::production(cx);
+        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+        language_model::init(client.clone(), cx);
+        language_models::init(user_store.clone(), client.clone(), cx);
+
+        watch_settings(fs.clone(), cx);
     });
+
     let templates = Templates::new();
 
     fs.insert_tree(path!("/test"), json!({})).await;
@@ -849,16 +893,6 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
 
     let model = cx
         .update(|cx| {
-            gpui_tokio::init(cx);
-            let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-            cx.set_http_client(Arc::new(http_client));
-
-            client::init_settings(cx);
-            let client = Client::production(cx);
-            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            language_model::init(client.clone(), cx);
-            language_models::init(user_store.clone(), client.clone(), cx);
-
             if let TestModel::Fake = model {
                 Task::ready(Arc::new(FakeLanguageModel::default()) as Arc<_>)
             } else {
