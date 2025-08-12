@@ -21,10 +21,10 @@ use editor::{
 use file_icons::FileIcons;
 use gpui::{
     Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
-    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
-    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, PlatformDisplay, SharedString,
+    StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement, Transformation,
+    UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop, linear_gradient,
+    list, percentage, point, prelude::*, pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
@@ -34,9 +34,7 @@ use project::Project;
 use settings::{Settings as _, SettingsStore};
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
-use ui::{
-    Disclosure, Divider, DividerColor, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*,
-};
+use ui::{Disclosure, Divider, DividerColor, KeyBinding, Tooltip, WithScrollbar, prelude::*};
 use util::ResultExt;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
@@ -71,7 +69,6 @@ pub struct AcpThreadView {
     notification_subscriptions: HashMap<WindowHandle<AgentNotification>, Vec<Subscription>>,
     last_error: Option<Entity<Markdown>>,
     list_state: ListState,
-    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -194,7 +191,6 @@ impl AcpThreadView {
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
             list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
             last_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
@@ -2566,39 +2562,6 @@ impl AcpThreadView {
             .child(scroll_to_top)
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("acp-thread-scrollbar")
-            .occlude()
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     fn settings_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         for diff_editor in self.diff_editors.values() {
             diff_editor.update(cx, |diff_editor, cx| {
@@ -2645,56 +2608,65 @@ impl Render for AcpThreadView {
                                 })
                             })
                         }),
-                    )),
-                ThreadState::Loading { .. } => v_flex().flex_1().child(self.render_empty_state(cx)),
+                    ))
+                    .into_any_element(),
+                ThreadState::Loading { .. } => v_flex()
+                    .flex_1()
+                    .child(self.render_empty_state(cx))
+                    .into_any_element(),
                 ThreadState::LoadError(e) => v_flex()
                     .p_2()
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .child(self.render_load_error(e, cx)),
+                    .child(self.render_load_error(e, cx))
+                    .into_any_element(),
                 ThreadState::ServerExited { status } => v_flex()
                     .p_2()
                     .flex_1()
                     .items_center()
                     .justify_center()
-                    .child(self.render_server_exited(*status, cx)),
+                    .child(self.render_server_exited(*status, cx))
+                    .into_any_element(),
                 ThreadState::Ready { thread, .. } => {
                     let thread_clone = thread.clone();
 
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
-                            this.child(
-                                list(
-                                    self.list_state.clone(),
-                                    cx.processor(|this, index: usize, window, cx| {
-                                        let Some((entry, len)) = this.thread().and_then(|thread| {
-                                            let entries = &thread.read(cx).entries();
-                                            Some((entries.get(index)?, entries.len()))
-                                        }) else {
-                                            return Empty.into_any();
-                                        };
-                                        this.render_entry(index, len, entry, window, cx)
-                                    }),
+                            this.id("acp-thread-list-view")
+                                .child(
+                                    list(
+                                        self.list_state.clone(),
+                                        cx.processor(|this, index: usize, window, cx| {
+                                            let Some((entry, len)) =
+                                                this.thread().and_then(|thread| {
+                                                    let entries = &thread.read(cx).entries();
+                                                    Some((entries.get(index)?, entries.len()))
+                                                })
+                                            else {
+                                                return Empty.into_any();
+                                            };
+                                            this.render_entry(index, len, entry, window, cx)
+                                        }),
+                                    )
+                                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                    .flex_grow()
+                                    .into_any(),
                                 )
-                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                .flex_grow()
-                                .into_any(),
-                            )
-                            .child(self.render_vertical_scrollbar(cx))
-                            .children(match thread_clone.read(cx).status() {
-                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
-                                    None
-                                }
-                                ThreadStatus::Generating => div()
-                                    .px_5()
-                                    .py_2()
-                                    .child(LoadingLabel::new("").size(LabelSize::Small))
-                                    .into(),
-                            })
-                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                                .vertical_scrollbar(window, cx)
+                                .children(match thread_clone.read(cx).status() {
+                                    ThreadStatus::Idle
+                                    | ThreadStatus::WaitingForToolConfirmation => None,
+                                    ThreadStatus::Generating => div()
+                                        .px_5()
+                                        .py_2()
+                                        .child(LoadingLabel::new("").size(LabelSize::Small))
+                                        .into(),
+                                })
+                                .children(self.render_activity_bar(&thread_clone, window, cx))
+                                .into_any_element()
                         } else {
-                            this.child(self.render_empty_state(cx))
+                            this.child(self.render_empty_state(cx)).into_any_element()
                         }
                     })
                 }

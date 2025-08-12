@@ -24,8 +24,8 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
-    ToggleButton, Tooltip, prelude::*,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, ToggleButton, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -289,7 +289,6 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    scrollbar_state: ScrollbarState,
 }
 
 impl ExtensionsPage {
@@ -350,7 +349,6 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -1377,7 +1375,7 @@ impl ExtensionsPage {
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1511,6 +1509,7 @@ impl Render for ExtensionsPage {
             .child(self.render_feature_upsells(cx))
             .child(
                 v_flex()
+                    .id("extensions-page-container")
                     .pl_4()
                     .pr_6()
                     .size_full()
@@ -1530,17 +1529,9 @@ impl Render for ExtensionsPage {
                             uniform_list("entries", count, cx.processor(Self::render_extensions))
                                 .flex_grow()
                                 .pb_4()
-                                .track_scroll(scroll_handle),
+                                .track_scroll(scroll_handle.clone()),
                         )
-                        .child(
-                            div()
-                                .absolute()
-                                .right_1()
-                                .top_0()
-                                .bottom_0()
-                                .w(px(12.))
-                                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-                        )
+                        .vertical_scrollbar_for(scroll_handle, window, cx)
                     }),
             )
     }

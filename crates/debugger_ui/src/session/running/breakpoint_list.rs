@@ -10,7 +10,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
+    Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
 use language::Point;
 use project::{
@@ -26,8 +26,8 @@ use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, Clickable, Color, Context, Disableable, Div,
     Divider, FluentBuilder as _, Icon, IconButton, IconName, IconSize, InteractiveElement,
     IntoElement, Label, LabelCommon, LabelSize, ListItem, ParentElement, Render, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, Toggleable,
-    Tooltip, Window, div, h_flex, px, v_flex,
+    SharedString, StatefulInteractiveElement, Styled, Toggleable, Tooltip, Window, WithScrollbar,
+    div, h_flex, px, v_flex,
 };
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
@@ -52,7 +52,6 @@ pub(crate) struct BreakpointList {
     breakpoint_store: Entity<BreakpointStore>,
     dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
-    scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
     focus_handle: FocusHandle,
@@ -90,7 +89,6 @@ impl BreakpointList {
         let dap_store = project.dap_store();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let adapter_name = session.as_ref().map(|session| session.read(cx).adapter());
         cx.new(|cx| {
@@ -98,7 +96,6 @@ impl BreakpointList {
                 breakpoint_store,
                 dap_store,
                 worktree_store,
-                scrollbar_state,
                 breakpoints: Default::default(),
                 workspace,
                 session,
@@ -594,39 +591,6 @@ impl BreakpointList {
         .flex_grow()
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("breakpoint-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let selection_kind = self.selection_kind();
         let focus_handle = self.focus_handle.clone();
@@ -792,7 +756,7 @@ impl Render for BreakpointList {
                 .chain(exception_breakpoints),
         );
         v_flex()
-            .id("breakpoint-list")
+            .id("breakpoint-list-container")
             .key_context("BreakpointList")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
@@ -809,9 +773,10 @@ impl Render for BreakpointList {
             .m_0p5()
             .child(
                 v_flex()
+                    .id("breakpoint-list")
                     .size_full()
                     .child(self.render_list(cx))
-                    .child(self.render_vertical_scrollbar(cx)),
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal()).child(

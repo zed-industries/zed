@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
+use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -160,6 +161,14 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub sticky_scroll: Option<bool>,
+}
+
+impl ScrollbarVisibilitySetting for ProjectPanelSettings {
+    fn scrollbar_visibility(&self, cx: &ui::App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for ProjectPanelSettings {

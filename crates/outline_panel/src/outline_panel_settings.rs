@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
-use gpui::Pixels;
+use editor::EditorSettings;
+use gpui::{App, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use ui::scrollbars::{ScrollbarVisibilitySetting, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -113,6 +114,14 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: 100
     pub expand_outlines_with_depth: Option<usize>,
+}
+
+impl ScrollbarVisibilitySetting for OutlinePanelSettings {
+    fn scrollbar_visibility(&self, cx: &App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for OutlinePanelSettings {

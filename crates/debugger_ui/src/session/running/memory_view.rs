@@ -9,7 +9,7 @@ use std::{
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     Action, AppContext, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
-    MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful, Subscription, Task, TextStyle,
+    MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Subscription, Task, TextStyle,
     UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point,
     uniform_list,
 };
@@ -18,10 +18,11 @@ use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session:
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
+    ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Divider, DropdownMenu, Element,
     FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
-    ParentElement, Pixels, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
-    StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, div, h_flex, px, v_flex,
+    ParentElement, Pixels, PopoverMenuHandle, Render, ScrollableHandle, SharedString,
+    StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, WithScrollbar, div, h_flex, px,
+    v_flex,
 };
 use workspace::Workspace;
 
@@ -32,7 +33,6 @@ actions!(debugger, [GoToSelectedAddress]);
 pub(crate) struct MemoryView {
     workspace: WeakEntity<Workspace>,
     scroll_handle: UniformListScrollHandle,
-    scroll_state: ScrollbarState,
     stack_frame_list: WeakEntity<StackFrameList>,
     focus_handle: FocusHandle,
     view_state: ViewState,
@@ -123,11 +123,10 @@ impl ViewState {
     }
 }
 
-struct ScrollbarDragging;
-
 static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
 static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
+
 impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
@@ -141,10 +140,8 @@ impl MemoryView {
 
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
 
-        let scroll_state = ScrollbarState::new(scroll_handle.clone());
         let mut this = Self {
             workspace,
-            scroll_state,
             scroll_handle,
             stack_frame_list,
             focus_handle: cx.focus_handle(),
@@ -162,43 +159,6 @@ impl MemoryView {
         })
         .detach();
         this
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("memory-view-vertical-scrollbar")
-            .on_drag_move(cx.listener(|this, evt, _, cx| {
-                let did_handle = this.handle_scroll_drag(evt);
-                cx.notify();
-                if did_handle {
-                    cx.stop_propagation()
-                }
-            }))
-            .on_drag(ScrollbarDragging, |_, _, _, cx| cx.new(|_| Empty))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scroll_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
@@ -235,10 +195,9 @@ impl MemoryView {
         .track_scroll(self.scroll_handle.clone())
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
             let delta = evt.delta.pixel_delta(window.line_height());
-            let scroll_handle = this.scroll_state.scroll_handle();
-            let size = scroll_handle.content_size();
-            let viewport = scroll_handle.viewport();
-            let current_offset = scroll_handle.offset();
+            let size = this.scroll_handle.content_size();
+            let viewport = this.scroll_handle.viewport();
+            let current_offset = this.scroll_handle.offset();
             let first_entry_offset_boundary = size.height / this.view_state.row_count() as f32;
             let last_entry_offset_boundary = size.height - first_entry_offset_boundary;
             if first_entry_offset_boundary + viewport.size.height > current_offset.y.abs() {
@@ -247,7 +206,8 @@ impl MemoryView {
             } else if last_entry_offset_boundary < current_offset.y.abs() + viewport.size.height {
                 this.view_state.schedule_scroll_down();
             }
-            scroll_handle.set_offset(current_offset + point(px(0.), delta.y));
+            this.scroll_handle
+                .set_offset(current_offset + point(px(0.), delta.y));
         }))
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -299,7 +259,7 @@ impl MemoryView {
         }
         let row_count = self.view_state.row_count();
         debug_assert!(row_count > 1);
-        let scroll_handle = self.scroll_state.scroll_handle();
+        let scroll_handle = &self.scroll_handle;
         let viewport = scroll_handle.viewport();
 
         if viewport.bottom() < evt.event.position.y {
@@ -309,13 +269,14 @@ impl MemoryView {
         }
     }
 
-    fn handle_scroll_drag(&mut self, evt: &DragMoveEvent<ScrollbarDragging>) -> bool {
-        if !self.scroll_state.is_dragging() {
-            return false;
-        }
+    fn handle_scroll_drag(&mut self, evt: &DragMoveEvent<()>) -> bool {
+        // todo!
+        // if !self.scroll_state.is_dragging() {
+        //     return false;
+        // }
         let row_count = self.view_state.row_count();
         debug_assert!(row_count > 1);
-        let scroll_handle = self.scroll_state.scroll_handle();
+        let scroll_handle = &self.scroll_handle;
         let viewport = scroll_handle.viewport();
 
         if viewport.bottom() < evt.event.position.y {
@@ -931,6 +892,7 @@ impl Render for MemoryView {
             .child(Divider::horizontal())
             .child(
                 v_flex()
+                    .id("memory-view-scroll-container")
                     .size_full()
                     .on_drag_move(cx.listener(|this, evt, _, _| {
                         this.handle_memory_drag(&evt);
@@ -945,7 +907,7 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .child(self.render_vertical_scrollbar(cx)),
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
     }
 }
