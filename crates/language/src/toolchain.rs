@@ -17,7 +17,7 @@ use settings::WorktreeId;
 use crate::{LanguageName, ManifestName};
 
 /// Represents a single toolchain.
-#[derive(Clone, Debug, Hash, Eq)]
+#[derive(Clone, Debug, Eq)]
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
@@ -25,6 +25,14 @@ pub struct Toolchain {
     pub language_name: LanguageName,
     /// Full toolchain data (including language-specific details)
     pub as_json: serde_json::Value,
+}
+
+impl std::hash::Hash for Toolchain {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.path.hash(state);
+        self.language_name.hash(state);
+    }
 }
 
 impl PartialEq for Toolchain {
