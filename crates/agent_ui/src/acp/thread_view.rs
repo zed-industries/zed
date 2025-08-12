@@ -1336,6 +1336,7 @@ impl AcpThreadView {
                         })
                         .map(|this| {
                             if is_open {
+                                // todo!("if content is empty, show the raw output")
                                 match &tool_call.status {
                                     ToolCallStatus::WaitingForConfirmation { options, .. } => this
                                         .children(tool_call.content.iter().map(|content| {

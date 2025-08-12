@@ -1,4 +1,4 @@
-use crate::{SystemPromptTemplate, Template, Templates};
+use crate::{ContextServerRegistry, SystemPromptTemplate, Template, Templates};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
 use agent_settings::AgentSettings;
@@ -127,6 +127,7 @@ pub struct Thread {
     pending_tool_uses: HashMap<LanguageModelToolUseId, LanguageModelToolUse>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     project_context: Rc<RefCell<ProjectContext>>,
+    context_server_registry: Entity<ContextServerRegistry>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
     project: Entity<Project>,
@@ -137,6 +138,7 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
+        context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         default_model: Arc<dyn LanguageModel>,
@@ -148,6 +150,7 @@ impl Thread {
             pending_tool_uses: HashMap::default(),
             tools: BTreeMap::default(),
             project_context,
+            context_server_registry,
             templates,
             selected_model: default_model,
             project,
@@ -298,6 +301,7 @@ impl Thread {
                                 } else {
                                     acp::ToolCallStatus::Completed
                                 }),
+                                raw_output: tool_result.output.clone(),
                                 ..Default::default()
                             },
                         );
@@ -722,8 +726,8 @@ where
 pub struct Erased<T>(T);
 
 pub struct AgentToolOutput {
-    llm_output: LanguageModelToolResultContent,
-    raw_output: serde_json::Value,
+    pub llm_output: LanguageModelToolResultContent,
+    pub raw_output: serde_json::Value,
 }
 
 pub trait AnyAgentTool {

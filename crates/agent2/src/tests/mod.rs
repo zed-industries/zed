@@ -881,11 +881,14 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         .await;
 
     let project_context = Rc::new(RefCell::new(ProjectContext::default()));
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
     let action_log = cx.new(|_| ActionLog::new(project.clone()));
     let thread = cx.new(|_| {
         Thread::new(
             project,
             project_context.clone(),
+            context_server_registry,
             action_log,
             templates,
             model.clone(),
