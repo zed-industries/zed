@@ -1296,7 +1296,7 @@ impl GitStore {
             .iter()
             .filter_map(|(repo_id, repo)| {
                 let repo_work_dir = &repo.read(cx).work_directory_abs_path;
-                if repo_work_dir.starts_with(worktree_abs_path) {
+                if repo_work_dir.starts_with(&worktree_abs_path) {
                     Some(*repo_id)
                 } else {
                     None
