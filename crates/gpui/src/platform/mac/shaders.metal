@@ -113,7 +113,7 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   float clip_sdf = quad_sdf(input.position.xy, content_mask.bounds, content_mask.corner_radii);
   float clip_alpha = saturate(antialias_threshold - clip_sdf);
   background_color.a *= clip_alpha;
-  border_color.a *= clip_alpha;
+  border_color *= clip_alpha;
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
