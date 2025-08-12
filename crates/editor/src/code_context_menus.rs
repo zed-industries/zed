@@ -225,7 +225,7 @@ pub struct CompletionsMenu {
     scroll_handle: UniformListScrollHandle,
     // The `ScrollHandle` used on the Markdown documentation rendered on the
     // side of the completions menu.
-    pub(crate) scroll_handle_aside: ScrollHandle,
+    pub scroll_handle_aside: ScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
