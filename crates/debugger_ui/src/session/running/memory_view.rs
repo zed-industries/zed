@@ -18,12 +18,9 @@ use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session:
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
-    ActiveTheme, AnyElement, App, Color, Context, ContextMenu, Div, Divider, DropdownMenu, Element,
-    FluentBuilder, Icon, IconName, InteractiveElement, IntoElement, Label, LabelCommon,
-    ParentElement, Pixels, PopoverMenuHandle, Render, Scrollbar, ScrollbarState, SharedString,
-    StatefulInteractiveElement, Styled, TextSize, Tooltip, Window, div, h_flex, px, v_flex,
+    ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
+    Scrollbar, ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
 };
-use util::ResultExt;
 use workspace::Workspace;
 
 use crate::{ToggleDataBreakpoint, session::running::stack_frame_list::StackFrameList};
@@ -34,9 +31,7 @@ pub(crate) struct MemoryView {
     workspace: WeakEntity<Workspace>,
     scroll_handle: UniformListScrollHandle,
     scroll_state: ScrollbarState,
-    show_scrollbar: bool,
     stack_frame_list: WeakEntity<StackFrameList>,
-    hide_scrollbar_task: Option<Task<()>>,
     focus_handle: FocusHandle,
     view_state: ViewState,
     query_editor: Entity<Editor>,
@@ -150,8 +145,6 @@ impl MemoryView {
             scroll_state,
             scroll_handle,
             stack_frame_list,
-            show_scrollbar: false,
-            hide_scrollbar_task: None,
             focus_handle: cx.focus_handle(),
             view_state,
             query_editor,
@@ -168,61 +161,42 @@ impl MemoryView {
         .detach();
         this
     }
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.show_scrollbar || self.scroll_state.is_dragging()) {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("memory-view-vertical-scrollbar")
-                .on_drag_move(cx.listener(|this, evt, _, cx| {
-                    let did_handle = this.handle_scroll_drag(evt);
-                    cx.notify();
-                    if did_handle {
-                        cx.stop_propagation()
-                    }
-                }))
-                .on_drag(ScrollbarDragging, |_, _, _, cx| cx.new(|_| Empty))
-                .on_hover(|_, _, cx| {
+    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("memory-view-vertical-scrollbar")
+            .on_drag_move(cx.listener(|this, evt, _, cx| {
+                let did_handle = this.handle_scroll_drag(evt);
+                cx.notify();
+                if did_handle {
+                    cx.stop_propagation()
+                }
+            }))
+            .on_drag(ScrollbarDragging, |_, _, _, cx| cx.new(|_| Empty))
+            .on_hover(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, _, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|_, _, _, cx| {
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.scroll_state.clone())),
-        )
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scroll_state.clone()).map(|s| s.auto_hide(cx)))
     }
 
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
@@ -920,15 +894,6 @@ impl Render for MemoryView {
             .on_action(cx.listener(Self::page_up))
             .size_full()
             .track_focus(&self.focus_handle)
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(window, cx);
-                }
-            }))
             .child(
                 h_flex()
                     .w_full()
@@ -978,7 +943,7 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .children(self.render_vertical_scrollbar(cx)),
+                    .child(self.render_vertical_scrollbar(cx)),
             )
     }
 }

@@ -12,7 +12,6 @@ use crate::{
 use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
-use client::DisableAiSettings;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     Editor, EditorElement, EditorMode, EditorSettings, MultiBuffer, ShowScrollbar,
@@ -51,10 +50,9 @@ use panel::{
     PanelHeader, panel_button, panel_editor_container, panel_editor_style, panel_filled_button,
     panel_icon_button,
 };
-use project::git_store::{RepositoryEvent, RepositoryId};
 use project::{
-    Fs, Project, ProjectPath,
-    git_store::{GitStoreEvent, Repository},
+    DisableAiSettings, Fs, Project, ProjectPath,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -71,12 +69,12 @@ use ui::{
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
 
+use cloud_llm_client::CompletionIntent;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, ErrorMessagePrompt, NotificationId},
 };
-use zed_llm_client::CompletionIntent;
 
 actions!(
     git_panel,
@@ -2083,6 +2081,99 @@ impl GitPanel {
             .detach_and_log_err(cx);
     }
 
+    pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+        });
+
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut paths = path.await.ok()?.ok()??;
+            let mut path = paths.pop()?;
+            let repo_name = repo
+                .split(std::path::MAIN_SEPARATOR_STR)
+                .last()?
+                .strip_suffix(".git")?
+                .to_owned();
+
+            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
+
+            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+                Ok(_) => cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Info,
+                        "Git Clone",
+                        None,
+                        &["Add repo to project", "Open repo in new project"],
+                        cx,
+                    )
+                }),
+                Err(e) => {
+                    this.update(cx, |this: &mut GitPanel, cx| {
+                        let toast = StatusToast::new(e.to_string(), cx, |this, _| {
+                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                .dismiss_button(true)
+                        });
+
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            })
+                            .ok();
+                    })
+                    .ok()?;
+
+                    return None;
+                }
+            }
+            .ok()?;
+
+            path.push(repo_name);
+            match prompt_answer.await.ok()? {
+                0 => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .project()
+                                .update(cx, |project, cx| {
+                                    project.create_worktree(path.as_path(), true, cx)
+                                })
+                                .detach();
+                        })
+                        .ok();
+                }
+                1 => {
+                    workspace
+                        .update(cx, move |workspace, cx| {
+                            workspace::open_new(
+                                Default::default(),
+                                workspace.app_state().clone(),
+                                cx,
+                                move |workspace, _, cx| {
+                                    cx.activate(true);
+                                    workspace
+                                        .project()
+                                        .update(cx, |project, cx| {
+                                            project.create_worktree(&path, true, cx)
+                                        })
+                                        .detach();
+                                },
+                            )
+                            .detach();
+                        })
+                        .ok();
+                }
+                _ => {}
+            }
+
+            Some(())
+        })
+        .detach();
+    }
+
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktrees = self
             .project
@@ -2416,7 +2507,7 @@ impl GitPanel {
                     .committer_name
                     .clone()
                     .or_else(|| participant.user.name.clone())
-                    .unwrap_or_else(|| participant.user.github_login.clone());
+                    .unwrap_or_else(|| participant.user.github_login.clone().to_string());
                 new_co_authors.push((name.clone(), email.clone()))
             }
         }
@@ -2436,7 +2527,7 @@ impl GitPanel {
             .name
             .clone()
             .or_else(|| user.name.clone())
-            .unwrap_or_else(|| user.github_login.clone());
+            .unwrap_or_else(|| user.github_login.clone().to_string());
         Some((name, email))
     }
 
@@ -2901,9 +2992,11 @@ impl GitPanel {
             let status_toast = StatusToast::new(message, cx, move |this, _cx| {
                 use remote_output::SuccessStyle::*;
                 match style {
-                    Toast { .. } => this,
+                    Toast { .. } => {
+                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
+                    }
                     ToastWithLog { output } => this
-                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action("View Log", move |window, cx| {
                             let output = output.clone();
                             let output =
@@ -2914,9 +3007,9 @@ impl GitPanel {
                                 })
                                 .ok();
                         }),
-                    PushPrLink { link } => this
-                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
-                        .action("Open Pull Request", move |_, cx| cx.open_url(&link)),
+                    PushPrLink { text, link } => this
+                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
+                        .action(text, move |_, cx| cx.open_url(&link)),
                 }
             });
             workspace.toggle_status_toast(status_toast, cx)
@@ -3109,10 +3202,11 @@ impl GitPanel {
                             .justify_center()
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu({
+                let git_panel = cx.entity();
                 let has_previous_commit = self.head_commit(cx).is_some();
                 let amend = self.amend_pending();
                 let signoff = self.signoff_enabled;
@@ -3129,7 +3223,16 @@ impl GitPanel {
                                     amend,
                                     IconPosition::Start,
                                     Some(Box::new(Amend)),
-                                    move |window, cx| window.dispatch_action(Box::new(Amend), cx),
+                                    {
+                                        let git_panel = git_panel.downgrade();
+                                        move |_, cx| {
+                                            git_panel
+                                                .update(cx, |git_panel, cx| {
+                                                    git_panel.toggle_amend_pending(cx);
+                                                })
+                                                .ok();
+                                        }
+                                    },
                                 )
                             })
                             .toggleable_entry(
@@ -3500,9 +3603,11 @@ impl GitPanel {
                             .truncate(),
                     ),
             )
-            .child(panel_button("Cancel").size(ButtonSize::Default).on_click(
-                cx.listener(|this, _, window, cx| this.toggle_amend_pending(&Amend, window, cx)),
-            ))
+            .child(
+                panel_button("Cancel")
+                    .size(ButtonSize::Default)
+                    .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
+            )
     }
 
     fn render_previous_commit(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
@@ -4263,17 +4368,8 @@ impl GitPanel {
 
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
         self.amend_pending = value;
-        cx.notify();
-    }
-
-    pub fn toggle_amend_pending(
-        &mut self,
-        _: &Amend,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_amend_pending(!self.amend_pending, cx);
         self.serialize(cx);
+        cx.notify();
     }
 
     pub fn signoff_enabled(&self) -> bool {
@@ -4367,6 +4463,13 @@ impl GitPanel {
             anchor: path,
         });
     }
+
+    pub(crate) fn toggle_amend_pending(&mut self, cx: &mut Context<Self>) {
+        self.set_amend_pending(!self.amend_pending, cx);
+        if self.amend_pending {
+            self.load_last_commit_message_if_empty(cx);
+        }
+    }
 }
 
 fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
@@ -4411,7 +4514,6 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::stage_range))
                     .on_action(cx.listener(GitPanel::commit))
                     .on_action(cx.listener(GitPanel::amend))
-                    .on_action(cx.listener(GitPanel::toggle_amend_pending))
                     .on_action(cx.listener(GitPanel::toggle_signoff_enabled))
                     .on_action(cx.listener(Self::stage_all))
                     .on_action(cx.listener(Self::unstage_all))
@@ -4552,7 +4654,7 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranchSmall).filter(|_| GitPanelSettings::get_global(cx).button)
+        Some(ui::IconName::GitBranchAlt).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -4799,7 +4901,7 @@ impl RenderOnce for PanelRepoFooter {
                     .items_center()
                     .child(
                         div().child(
-                            Icon::new(IconName::GitBranchSmall)
+                            Icon::new(IconName::GitBranchAlt)
                                 .size(IconSize::Small)
                                 .color(if single_repo {
                                     Color::Disabled
@@ -5106,7 +5208,6 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             Project::init_settings(cx);
-            client::DisableAiSettings::register(cx);
             crate::init(cx);
         });
     }

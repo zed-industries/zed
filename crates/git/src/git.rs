@@ -93,6 +93,8 @@ actions!(
         Init,
         /// Opens all modified files in the editor.
         OpenModifiedFiles,
+        /// Clones a repository.
+        Clone,
     ]
 );
 

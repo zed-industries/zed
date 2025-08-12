@@ -159,7 +159,7 @@ impl Render for MultibufferHint {
                     .child(
                         Button::new("open_docs", "Learn More")
                             .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
+                            .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .icon_position(IconPosition::End)
                             .on_click(move |_event, _, cx| {

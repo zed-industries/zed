@@ -5,6 +5,8 @@
 //! read/write messages and the types from types.rs for serialization/deserialization
 //! of messages.
 
+use std::time::Duration;
+
 use anyhow::Result;
 use futures::channel::oneshot;
 use gpui::AsyncApp;
@@ -98,13 +100,14 @@ impl InitializedContextServerProtocol {
         self.inner.request(T::METHOD, params).await
     }
 
-    pub async fn cancellable_request<T: Request>(
+    pub async fn request_with<T: Request>(
         &self,
         params: T::Params,
-        cancel_rx: oneshot::Receiver<()>,
+        cancel_rx: Option<oneshot::Receiver<()>>,
+        timeout: Option<Duration>,
     ) -> Result<T::Response> {
         self.inner
-            .cancellable_request(T::METHOD, params, cancel_rx)
+            .request_with(T::METHOD, params, cancel_rx, timeout)
             .await
     }
 
@@ -112,10 +115,11 @@ impl InitializedContextServerProtocol {
         self.inner.notify(T::METHOD, params)
     }
 
-    pub fn on_notification<F>(&self, method: &'static str, f: F)
-    where
-        F: 'static + Send + FnMut(Value, AsyncApp),
-    {
+    pub fn on_notification(
+        &self,
+        method: &'static str,
+        f: Box<dyn 'static + Send + FnMut(Value, AsyncApp)>,
+    ) {
         self.inner.on_notification(method, f);
     }
 }

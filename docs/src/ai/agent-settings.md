@@ -6,13 +6,12 @@ Learn about all the settings you can customize in Zed's Agent Panel.
 
 ### Default Model {#default-model}
 
-If you're using Zed's hosted LLM service, it sets `claude-sonnet-4` as the default model.
-But if you're not subscribed to the hosted service or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
+If you're using [Zed's hosted LLM service](./plans-and-usage.md), it sets `claude-sonnet-4` as the default model.
+But if you're not subscribed to it or simply just want to change it, you can do it so either via the model dropdown in the Agent Panel's bottom-right corner or by manually editing the `default_model` object in your settings:
 
 ```json
 {
   "agent": {
-    "version": "2",
     "default_model": {
       "provider": "zed.dev",
       "model": "gpt-4o"
@@ -32,7 +31,6 @@ Assign distinct and specific models for the following AI-powered features in Zed
 ```json
 {
   "agent": {
-    "version": "2",
     "default_model": {
       "provider": "zed.dev",
       "model": "claude-sonnet-4"
@@ -53,7 +51,7 @@ Assign distinct and specific models for the following AI-powered features in Zed
 }
 ```
 
-> If a model isn't set for one of these features, they automatically fall back to using the default model.
+> If a custom model isn't set for one of these features, they automatically fall back to using the default model.
 
 ### Alternative Models for Inline Assists {#alternative-assists}
 
@@ -110,7 +108,7 @@ Specify a custom temperature for a provider and/or model:
 
 ## Agent Panel Settings {#agent-panel-settings}
 
-Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open configuration` action or by the dropdown menu on the top-right corner of the panel.
+Note that some of these settings are also surfaced in the Agent Panel's settings UI, which you can access either via the `agent: open settings` action or by the dropdown menu on the top-right corner of the panel.
 
 ### Default View
 
@@ -128,6 +126,7 @@ You can choose between `thread` (the default) and `text_thread`:
 ### Auto-run Commands
 
 Control whether you want to allow the agent to run commands without asking you for permission.
+The default value is `false`.
 
 ```json
 {
@@ -142,6 +141,7 @@ Control whether you want to allow the agent to run commands without asking you f
 ### Single-file Review
 
 Control whether you want to see review actions (accept & reject) in single buffers after the agent is done performing edits.
+The default value is `false`.
 
 ```json
 {
@@ -158,6 +158,7 @@ When set to false, these controls are only available in the multibuffer review t
 ### Sound Notification
 
 Control whether you want to hear a notification sound when the agent is done generating changes or needs your input.
+The default value is `false`.
 
 ```json
 {
@@ -173,6 +174,7 @@ Control whether you want to hear a notification sound when the agent is done gen
 
 Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.
 This is encouraged for more thoughtful prompt crafting.
+The default value is `false`.
 
 ```json
 {
@@ -213,6 +215,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 ### Feedback Controls
 
 Control whether you want to see the thumbs up/down buttons to give Zed feedback about the agent's performance.
+The default value is `true`.
 
 ```json
 {

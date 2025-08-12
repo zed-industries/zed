@@ -1,10 +1,10 @@
 use std::any::{Any, TypeId};
 
-use client::DisableAiSettings;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{FeatureFlagAppExt as _, PredictEditsRateCompletionsFeatureFlag};
 use gpui::actions;
 use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
+use project::DisableAiSettings;
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::App;
 use workspace::Workspace;

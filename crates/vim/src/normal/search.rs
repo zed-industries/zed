@@ -251,7 +251,7 @@ impl Vim {
 
         // If the active editor has changed during a search, don't panic.
         if prior_selections.iter().any(|s| {
-            self.update_editor(window, cx, |_, editor, window, cx| {
+            self.update_editor(cx, |_, editor, cx| {
                 !s.start
                     .is_valid(&editor.snapshot(window, cx).buffer_snapshot)
             })
@@ -457,7 +457,7 @@ impl Vim {
         else {
             return;
         };
-        if let Some(result) = self.update_editor(window, cx, |vim, editor, window, cx| {
+        if let Some(result) = self.update_editor(cx, |vim, editor, cx| {
             let range = action.range.buffer_range(vim, editor, window, cx)?;
             let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
             let end_point = Point::new(range.end.0, snapshot.line_len(range.end));

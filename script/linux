@@ -143,6 +143,7 @@ if [[ -n $zyp ]]; then
     gzip
     jq
     libvulkan1
+    libx11-devel
     libxcb-devel
     libxkbcommon-devel
     libxkbcommon-x11-devel
