@@ -499,7 +499,10 @@ impl DirectWriteState {
                 .unwrap()
             } else {
                 self.find_font_id(
-                    target_font.family.as_ref(),
+                    font_name_with_fallbacks(
+                        target_font.family.as_ref(),
+                        self.system_ui_font_name.as_ref(),
+                    ),
                     target_font.weight,
                     target_font.style,
                     &target_font.features,

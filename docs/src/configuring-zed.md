@@ -294,11 +294,11 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `.ZedMono`. This currently aliases to [Lilex](https://lilex.myrt.co).
 
 **Options**
 
-The name of any font family installed on the user's system
+The name of any font family installed on the user's system, or `".ZedMono"`.
 
 ## Buffer Font Features
 
@@ -3505,11 +3505,11 @@ Float values between `0.0` and `0.9`, where:
 
 - Description: The name of the font to use for text in the UI.
 - Setting: `ui_font_family`
-- Default: `Zed Plex Sans`
+- Default: `.ZedSans`. This currently aliases to [IBM Plex](https://www.ibm.com/plex/).
 
 **Options**
 
-The name of any font family installed on the system.
+The name of any font family installed on the system, `".ZedSans"` to use the Zed-provided default, or `".SystemUIFont"` to use the system's default UI font (on macOS and Windows).
 
 ## UI Font Features
 
@@ -3597,7 +3597,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": ".ZedMono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
