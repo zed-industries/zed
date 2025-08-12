@@ -309,11 +309,14 @@ impl WindowsPlatform {
     }
 
     fn begin_vsync_thread(&self) {
-        let all_windows = self.raw_window_handles.clone();
+        let all_windows = Arc::downgrade(&self.raw_window_handles);
         std::thread::spawn(move || {
             let vsync_provider = VSyncProvider::new();
             loop {
                 vsync_provider.wait_for_vsync();
+                let Some(all_windows) = all_windows.upgrade() else {
+                    break;
+                };
                 for hwnd in all_windows.read().iter() {
                     unsafe {
                         RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE)
