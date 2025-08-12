@@ -1308,7 +1308,7 @@ fn markdown_for_raw_output(
         })),
         value => Some(cx.new(|cx| {
             Markdown::new(
-                format!("```json\n{}\n```", value.to_string()).into(),
+                format!("```json\n{}\n```", value).into(),
                 Some(language_registry.clone()),
                 None,
                 cx,
