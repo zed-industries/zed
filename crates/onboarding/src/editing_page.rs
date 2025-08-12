@@ -706,7 +706,7 @@ fn render_popular_settings_section(
                     })
                     .tab_index(tab_index)
                     .style(ToggleButtonGroupStyle::Outlined)
-                    .button_width(ui::rems_from_px(64.)),
+                    .width(ui::rems_from_px(3. * 64.)),
                 ),
         )
 }
