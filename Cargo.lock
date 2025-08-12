@@ -30,6 +30,7 @@ dependencies = [
  "terminal",
  "ui",
  "util",
+ "watch",
  "workspace-hack",
 ]
 

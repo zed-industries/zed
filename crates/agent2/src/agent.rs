@@ -4,7 +4,7 @@ use crate::{
     GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool,
     ThinkingTool, ToolCallAuthorization, WebSearchTool,
 };
-use acp_thread::LanguageModelSelector;
+use acp_thread::AgentModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
@@ -54,10 +54,24 @@ pub struct LanguageModels {
     models: HashMap<acp_thread::LanguageModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
     model_list: acp_thread::LanguageModelInfoList,
+    refresh_models_rx: watch::Receiver<()>,
+    refresh_models_tx: watch::Sender<()>,
 }
 
 impl LanguageModels {
-    fn refresh_list(cx: &App) -> Self {
+    fn new(cx: &App) -> Self {
+        let (refresh_models_tx, refresh_models_rx) = watch::channel(());
+        let mut this = Self {
+            models: HashMap::default(),
+            model_list: acp_thread::LanguageModelInfoList::Grouped(IndexMap::default()),
+            refresh_models_rx,
+            refresh_models_tx,
+        };
+        this.refresh_list(cx);
+        this
+    }
+
+    fn refresh_list(&mut self, cx: &App) {
         let providers = LanguageModelRegistry::global(cx).read(cx).providers();
 
         let mut language_model_list = IndexMap::default();
@@ -96,9 +110,13 @@ impl LanguageModels {
             }
         }
 
-        let model_list = acp_thread::LanguageModelInfoList::Grouped(language_model_list);
+        self.models = models;
+        self.model_list = acp_thread::LanguageModelInfoList::Grouped(language_model_list);
+        self.refresh_models_tx.send(()).ok();
+    }
 
-        Self { models, model_list }
+    fn watch(&self) -> watch::Receiver<()> {
+        self.refresh_models_rx.clone()
     }
 
     pub fn model_from_id(
@@ -175,7 +193,7 @@ impl NativeAgent {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
                 templates,
-                models: LanguageModels::refresh_list(cx),
+                models: LanguageModels::new(cx),
                 project,
                 prompt_store,
                 _subscriptions: subscriptions,
@@ -389,7 +407,7 @@ impl NativeAgent {
         _event: &language_model::Event,
         cx: &mut Context<Self>,
     ) {
-        self.models = LanguageModels::refresh_list(cx);
+        self.models.refresh_list(cx);
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, _| {
                 let model_id = LanguageModels::model_id(&thread.selected_model);
@@ -405,7 +423,7 @@ impl NativeAgent {
 #[derive(Clone)]
 pub struct NativeAgentConnection(pub Entity<NativeAgent>);
 
-impl LanguageModelSelector for NativeAgentConnection {
+impl AgentModelSelector for NativeAgentConnection {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::LanguageModelInfoList>> {
         log::debug!("NativeAgentConnection::list_models called");
         let list = self.0.read(cx).models.model_list.clone();
@@ -468,6 +486,10 @@ impl LanguageModelSelector for NativeAgentConnection {
         Task::ready(Ok(LanguageModels::map_language_model_to_info(
             &model, &provider,
         )))
+    }
+
+    fn watch(&self, cx: &mut App) -> watch::Receiver<()> {
+        self.0.read(cx).models.watch()
     }
 }
 
@@ -566,8 +588,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Task::ready(Ok(()))
     }
 
-    fn model_selector(&self) -> Option<Rc<dyn LanguageModelSelector>> {
-        Some(Rc::new(self.clone()) as Rc<dyn LanguageModelSelector>)
+    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
+        Some(Rc::new(self.clone()) as Rc<dyn AgentModelSelector>)
     }
 
     fn prompt(

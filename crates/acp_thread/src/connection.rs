@@ -54,7 +54,7 @@ impl LanguageModelInfoList {
 /// Trait for agents that support listing, selecting, and querying language models.
 ///
 /// This is an optional capability; agents indicate support via [AgentConnection::model_selector].
-pub trait LanguageModelSelector: 'static {
+pub trait AgentModelSelector: 'static {
     /// Lists all available language models for this agent.
     ///
     /// # Parameters
@@ -96,6 +96,9 @@ pub trait LanguageModelSelector: 'static {
         session_id: &acp::SessionId,
         cx: &mut App,
     ) -> Task<Result<LanguageModelInfo>>;
+
+    /// Whenever the model list is updated the receiver will be notified.
+    fn watch(&self, cx: &mut App) -> watch::Receiver<()>;
 }
 
 pub trait AgentConnection {
@@ -119,8 +122,8 @@ pub trait AgentConnection {
     ///
     /// If the agent does not support model selection, returns [None].
     /// This allows sharing the selector in UI components.
-    fn model_selector(&self) -> Option<Rc<dyn LanguageModelSelector>> {
-        None // Default impl for agents that don't support it
+    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
+        None
     }
 }
 
