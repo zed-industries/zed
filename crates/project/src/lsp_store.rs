@@ -3367,20 +3367,6 @@ impl LocalLspStore {
     }
 }
 
-fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
-    reg: lsp::Registration,
-) -> anyhow::Result<OneOf<bool, T>> {
-    let caps = match reg
-        .register_options
-        .map(|options| serde_json::from_value::<T>(options))
-        .transpose()?
-    {
-        None => OneOf::Left(true),
-        Some(options) => OneOf::Right(options),
-    };
-    Ok(caps)
-}
-
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
     if let Some(capabilities) = serde_json::to_string(&server.capabilities()).ok() {
         cx.emit(LspStoreEvent::LanguageServerUpdate {
@@ -11690,190 +11676,190 @@ impl LspStore {
                     // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
                 }
                 "workspace/symbol" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.workspace_symbol_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.workspace_symbol_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "workspace/fileOperations" => {
-                    let caps = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                        .unwrap_or_default();
-                    server.update_capabilities(|capabilities| {
-                        capabilities
-                            .workspace
-                            .get_or_insert_default()
-                            .file_operations = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = reg.register_options {
+                        let caps = serde_json::from_value(options)?;
+                        server.update_capabilities(|capabilities| {
+                            capabilities
+                                .workspace
+                                .get_or_insert_default()
+                                .file_operations = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "workspace/executeCommand" => {
-                    let options = reg
-                        .register_options
-                        .map(serde_json::from_value)
-                        .transpose()?
-                        .unwrap_or_default();
-                    server.update_capabilities(|capabilities| {
-                        capabilities.execute_command_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = reg.register_options {
+                        let options = serde_json::from_value(options)?;
+                        server.update_capabilities(|capabilities| {
+                            capabilities.execute_command_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/rangeFormatting" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_range_formatting_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_range_formatting_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/onTypeFormatting" => {
-                    let options = reg
+                    if let Some(options) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_default();
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_on_type_formatting_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_on_type_formatting_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/formatting" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_formatting_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_formatting_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/rename" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.rename_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.rename_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/inlayHint" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.inlay_hint_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.inlay_hint_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/documentSymbol" => {
-                    let options = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.document_symbol_provider = Some(options);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.document_symbol_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/codeAction" => {
-                    let options = reg
+                    if let Some(options) = reg
                         .register_options
                         .map(serde_json::from_value)
-                        .transpose()?;
-                    let provider_capability = match options {
-                        None => lsp::CodeActionProviderCapability::Simple(true),
-                        Some(options) => lsp::CodeActionProviderCapability::Options(options),
-                    };
-                    server.update_capabilities(|capabilities| {
-                        capabilities.code_action_provider = Some(provider_capability);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.code_action_provider =
+                                Some(lsp::CodeActionProviderCapability::Options(options));
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/definition" => {
-                    let caps = parse_register_capabilities(reg)?;
-                    server.update_capabilities(|capabilities| {
-                        capabilities.definition_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    if let Some(options) = parse_register_capabilities(reg)? {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.definition_provider = Some(options);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/completion" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_default();
-                    server.update_capabilities(|capabilities| {
-                        capabilities.completion_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.completion_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/hover" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_else(|| lsp::HoverProviderCapability::Simple(true));
-                    server.update_capabilities(|capabilities| {
-                        capabilities.hover_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.hover_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/signatureHelp" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_default();
-                    server.update_capabilities(|capabilities| {
-                        capabilities.signature_help_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.signature_help_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/synchronization" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_else(|| {
-                            lsp::TextDocumentSyncCapability::Options(
-                                lsp::TextDocumentSyncOptions::default(),
-                            )
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.text_document_sync = Some(caps);
                         });
-                    server.update_capabilities(|capabilities| {
-                        capabilities.text_document_sync = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/codeLens" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_else(|| lsp::CodeLensOptions {
-                            resolve_provider: None,
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.code_lens_provider = Some(caps);
                         });
-                    server.update_capabilities(|capabilities| {
-                        capabilities.code_lens_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/diagnostic" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_else(|| {
-                            lsp::DiagnosticServerCapabilities::RegistrationOptions(
-                                lsp::DiagnosticRegistrationOptions::default(),
-                            )
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.diagnostic_provider = Some(caps);
                         });
-                    server.update_capabilities(|capabilities| {
-                        capabilities.diagnostic_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 "textDocument/colorProvider" => {
-                    let caps = reg
+                    if let Some(caps) = reg
                         .register_options
                         .map(serde_json::from_value)
                         .transpose()?
-                        .unwrap_or_else(|| lsp::ColorProviderCapability::Simple(true));
-                    server.update_capabilities(|capabilities| {
-                        capabilities.color_provider = Some(caps);
-                    });
-                    notify_server_capabilities_updated(&server, cx);
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.color_provider = Some(caps);
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
                 }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
@@ -12014,6 +12000,18 @@ impl LspStore {
 
         Ok(())
     }
+}
+
+// Registration with empty capabilities should be ignored.
+// https://github.com/microsoft/vscode-languageserver-node/blob/d90a87f9557a0df9142cfb33e251cfa6fe27d970/client/src/common/formatting.ts#L67-L70
+fn parse_register_capabilities<T: serde::de::DeserializeOwned>(
+    reg: lsp::Registration,
+) -> anyhow::Result<Option<OneOf<bool, T>>> {
+    Ok(reg
+        .register_options
+        .map(|options| serde_json::from_value::<T>(options))
+        .transpose()?
+        .map(OneOf::Right))
 }
 
 fn subscribe_to_binary_statuses(
