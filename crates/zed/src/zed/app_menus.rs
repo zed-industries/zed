@@ -33,8 +33,8 @@ pub fn app_menus() -> Vec<Menu> {
                             zed_actions::theme_selector::Toggle::default(),
                         ),
                         MenuItem::action(
-                            "Cycle Theme Mode",
-                            zed_actions::theme_selector::CycleMode,
+                            "Toggle Theme Mode",
+                            zed_actions::theme_selector::ToggleMode,
                         ),
                     ],
                 }),

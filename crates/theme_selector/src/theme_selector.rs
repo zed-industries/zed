@@ -40,9 +40,9 @@ pub fn init(cx: &mut App) {
             toggle_icon_theme_selector(workspace, &action, window, cx);
         });
     });
-    cx.on_action(|_: &zed_actions::theme_selector::CycleMode, cx| {
+    cx.on_action(|_: &zed_actions::theme_selector::ToggleMode, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
-            cycle_theme_mode(workspace, window, cx);
+            toggle_theme_mode(workspace, window, cx);
         });
     });
 }
@@ -83,15 +83,21 @@ fn toggle_icon_theme_selector(
     });
 }
 
-fn cycle_theme_mode(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
+fn toggle_theme_mode(workspace: &mut Workspace, _window: &mut Window, cx: &mut Context<Workspace>) {
     let current_settings = ThemeSettings::get_global(cx);
     let current_selection = current_settings.theme_selection.as_ref();
 
     let new_mode = match current_selection {
         Some(ThemeSelection::Dynamic { mode, .. }) => match mode {
             ThemeMode::Light => ThemeMode::Dark,
-            ThemeMode::Dark => ThemeMode::System,
-            ThemeMode::System => ThemeMode::Light,
+            ThemeMode::Dark => ThemeMode::Light,
+            ThemeMode::System => {
+                if cx.theme().appearance().is_light() {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                }
+            }
         },
         Some(ThemeSelection::Static(_)) => ThemeMode::Light,
         None => ThemeMode::Light,
