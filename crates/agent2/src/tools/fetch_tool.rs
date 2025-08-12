@@ -136,7 +136,7 @@ impl AgentTool for FetchTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        event_stream: ToolCallEventStream,
+        _event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
         let text = cx.background_spawn({
@@ -149,12 +149,6 @@ impl AgentTool for FetchTool {
             if text.trim().is_empty() {
                 bail!("no textual content found");
             }
-
-            event_stream.update_fields(acp::ToolCallUpdateFields {
-                content: Some(vec![text.clone().into()]),
-                ..Default::default()
-            });
-
             Ok(text)
         })
     }
