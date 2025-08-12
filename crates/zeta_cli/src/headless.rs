@@ -40,7 +40,7 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
-        "Zed/{} ({}; {})",
+        "Zeta CLI/{} ({}; {})",
         app_version,
         std::env::consts::OS,
         std::env::consts::ARCH

@@ -326,7 +326,7 @@ mod tests {
             _input: serde_json::Value,
             _request: Arc<language_model::LanguageModelRequest>,
             _project: Entity<Project>,
-            _action_log: Entity<assistant_tool::ActionLog>,
+            _action_log: Entity<action_log::ActionLog>,
             _model: Arc<dyn language_model::LanguageModel>,
             _window: Option<gpui::AnyWindowHandle>,
             _cx: &mut App,

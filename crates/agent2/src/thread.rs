@@ -1,10 +1,12 @@
 use crate::{SystemPromptTemplate, Template, Templates};
-use acp_thread::Diff;
+use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{anyhow, Context as _, Result};
-use assistant_tool::{adapt_schema_to_format, ActionLog};
+use agent_settings::AgentSettings;
+use anyhow::{Context as _, Result, anyhow};
+use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
 use collections::HashMap;
+use fs::Fs;
 use futures::{
     channel::{mpsc, oneshot},
     stream::FuturesUnordered,
@@ -21,9 +23,10 @@ use project::Project;
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
+use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::{cell::RefCell, collections::BTreeMap, fmt::Write, future::Future, rc::Rc, sync::Arc};
-use util::{markdown::MarkdownCodeBlock, ResultExt};
+use std::{cell::RefCell, collections::BTreeMap, fmt::Write, rc::Rc, sync::Arc};
+use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {
@@ -200,11 +203,11 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send(
         &mut self,
-        model: Arc<dyn LanguageModel>,
         content: impl Into<MessageContent>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
         let content = content.into();
+        let model = self.selected_model.clone();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
 
@@ -506,8 +509,9 @@ impl Thread {
             }));
         };
 
+        let fs = self.project.read(cx).fs().clone();
         let tool_event_stream =
-            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone());
+            ToolCallEventStream::new(&tool_use, tool.kind(), event_stream.clone(), Some(fs));
         tool_event_stream.update_fields(acp::ToolCallUpdateFields {
             status: Some(acp::ToolCallStatus::InProgress),
             ..Default::default()
@@ -801,47 +805,6 @@ impl AgentResponseEventStream {
             .ok();
     }
 
-    fn authorize_tool_call(
-        &self,
-        id: &LanguageModelToolUseId,
-        title: String,
-        kind: acp::ToolKind,
-        input: serde_json::Value,
-    ) -> impl use<> + Future<Output = Result<()>> {
-        let (response_tx, response_rx) = oneshot::channel();
-        self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
-                ToolCallAuthorization {
-                    tool_call: Self::initial_tool_call(id, title, kind, input),
-                    options: vec![
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("always_allow".into()),
-                            name: "Always Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowAlways,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("allow".into()),
-                            name: "Allow".into(),
-                            kind: acp::PermissionOptionKind::AllowOnce,
-                        },
-                        acp::PermissionOption {
-                            id: acp::PermissionOptionId("deny".into()),
-                            name: "Deny".into(),
-                            kind: acp::PermissionOptionKind::RejectOnce,
-                        },
-                    ],
-                    response: response_tx,
-                },
-            )))
-            .ok();
-        async move {
-            match response_rx.await?.0.as_ref() {
-                "allow" | "always_allow" => Ok(()),
-                _ => Err(anyhow!("Permission to run tool denied by user")),
-            }
-        }
-    }
-
     fn send_tool_call(
         &self,
         id: &LanguageModelToolUseId,
@@ -893,18 +856,6 @@ impl AgentResponseEventStream {
             .ok();
     }
 
-    fn update_tool_call_diff(&self, tool_use_id: &LanguageModelToolUseId, diff: Entity<Diff>) {
-        self.0
-            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateDiff {
-                    id: acp::ToolCallId(tool_use_id.to_string().into()),
-                    diff,
-                }
-                .into(),
-            )))
-            .ok();
-    }
-
     fn send_stop(&self, reason: StopReason) {
         match reason {
             StopReason::EndTurn => {
@@ -937,6 +888,7 @@ pub struct ToolCallEventStream {
     kind: acp::ToolKind,
     input: serde_json::Value,
     stream: AgentResponseEventStream,
+    fs: Option<Arc<dyn Fs>>,
 }
 
 impl ToolCallEventStream {
@@ -955,6 +907,7 @@ impl ToolCallEventStream {
             },
             acp::ToolKind::Other,
             AgentResponseEventStream(events_tx),
+            None,
         );
 
         (stream, ToolCallEventStreamReceiver(events_rx))
@@ -964,12 +917,14 @@ impl ToolCallEventStream {
         tool_use: &LanguageModelToolUse,
         kind: acp::ToolKind,
         stream: AgentResponseEventStream,
+        fs: Option<Arc<dyn Fs>>,
     ) -> Self {
         Self {
             tool_use_id: tool_use.id.clone(),
             kind,
             input: tool_use.input.clone(),
             stream,
+            fs,
         }
     }
 
@@ -978,17 +933,85 @@ impl ToolCallEventStream {
             .update_tool_call_fields(&self.tool_use_id, fields);
     }
 
-    pub fn update_diff(&self, diff: Entity<Diff>) {
-        self.stream.update_tool_call_diff(&self.tool_use_id, diff);
+    pub fn update_diff(&self, diff: Entity<acp_thread::Diff>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateDiff {
+                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    diff,
+                }
+                .into(),
+            )))
+            .ok();
     }
 
-    pub fn authorize(&self, title: String) -> impl use<> + Future<Output = Result<()>> {
-        self.stream.authorize_tool_call(
-            &self.tool_use_id,
-            title,
-            self.kind.clone(),
-            self.input.clone(),
-        )
+    pub fn update_terminal(&self, terminal: Entity<acp_thread::Terminal>) {
+        self.stream
+            .0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallUpdate(
+                acp_thread::ToolCallUpdateTerminal {
+                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
+                    terminal,
+                }
+                .into(),
+            )))
+            .ok();
+    }
+
+    pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
+        if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
+            return Task::ready(Ok(()));
+        }
+
+        let (response_tx, response_rx) = oneshot::channel();
+        self.stream
+            .0
+            .unbounded_send(Ok(AgentResponseEvent::ToolCallAuthorization(
+                ToolCallAuthorization {
+                    tool_call: AgentResponseEventStream::initial_tool_call(
+                        &self.tool_use_id,
+                        title.into(),
+                        self.kind.clone(),
+                        self.input.clone(),
+                    ),
+                    options: vec![
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("always_allow".into()),
+                            name: "Always Allow".into(),
+                            kind: acp::PermissionOptionKind::AllowAlways,
+                        },
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("allow".into()),
+                            name: "Allow".into(),
+                            kind: acp::PermissionOptionKind::AllowOnce,
+                        },
+                        acp::PermissionOption {
+                            id: acp::PermissionOptionId("deny".into()),
+                            name: "Deny".into(),
+                            kind: acp::PermissionOptionKind::RejectOnce,
+                        },
+                    ],
+                    response: response_tx,
+                },
+            )))
+            .ok();
+        let fs = self.fs.clone();
+        cx.spawn(async move |cx| match response_rx.await?.0.as_ref() {
+            "always_allow" => {
+                if let Some(fs) = fs.clone() {
+                    cx.update(|cx| {
+                        update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
+                            settings.set_always_allow_tool_actions(true);
+                        });
+                    })?;
+                }
+
+                Ok(())
+            }
+            "allow" => Ok(()),
+            _ => Err(anyhow!("Permission to run tool denied by user")),
+        })
     }
 }
 
@@ -999,12 +1022,24 @@ pub struct ToolCallEventStreamReceiver(
 
 #[cfg(test)]
 impl ToolCallEventStreamReceiver {
-    pub async fn expect_tool_authorization(&mut self) -> ToolCallAuthorization {
+    pub async fn expect_authorization(&mut self) -> ToolCallAuthorization {
         let event = self.0.next().await;
         if let Some(Ok(AgentResponseEvent::ToolCallAuthorization(auth))) = event {
             auth
         } else {
             panic!("Expected ToolCallAuthorization but got: {:?}", event);
+        }
+    }
+
+    pub async fn expect_terminal(&mut self) -> Entity<acp_thread::Terminal> {
+        let event = self.0.next().await;
+        if let Some(Ok(AgentResponseEvent::ToolCallUpdate(
+            acp_thread::ToolCallUpdate::UpdateTerminal(update),
+        ))) = event
+        {
+            update.terminal
+        } else {
+            panic!("Expected terminal but got: {:?}", event);
         }
     }
 }

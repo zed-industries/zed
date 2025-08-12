@@ -171,21 +171,31 @@ async fn get_context(
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };
-    let can_collect_data = false;
+    // Enable gathering extra data not currently needed for edit predictions
+    let can_collect_data = true;
     let git_info = None;
-    cx.update(|cx| {
-        gather_context(
-            project.as_ref(),
-            full_path_str,
-            &snapshot,
-            clipped_cursor,
-            move || events,
-            can_collect_data,
-            git_info,
-            cx,
-        )
-    })?
-    .await
+    let mut gather_context_output = cx
+        .update(|cx| {
+            gather_context(
+                project.as_ref(),
+                full_path_str,
+                &snapshot,
+                clipped_cursor,
+                move || events,
+                can_collect_data,
+                git_info,
+                cx,
+            )
+        })?
+        .await;
+
+    // Disable data collection for these requests, as this is currently just used for evals
+    match gather_context_output.as_mut() {
+        Ok(gather_context_output) => gather_context_output.body.can_collect_data = false,
+        Err(_) => {}
+    }
+
+    gather_context_output
 }
 
 pub async fn open_buffer_with_language_server(

@@ -679,7 +679,7 @@ impl Vim {
             match self.mode {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     if !prior_selections.is_empty() {
-                        self.update_editor(window, cx, |_, editor, window, cx| {
+                        self.update_editor(cx, |_, editor, cx| {
                             editor.change_selections(Default::default(), window, cx, |s| {
                                 s.select_ranges(prior_selections.iter().cloned())
                             })

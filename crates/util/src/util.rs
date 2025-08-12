@@ -669,9 +669,12 @@ where
     let file = caller.file();
     #[cfg(target_os = "windows")]
     let file = caller.file().replace('\\', "/");
-    // In this codebase, the first segment of the file path is
-    // the 'crates' folder, followed by the crate name.
-    let target = file.split('/').nth(1);
+    // In this codebase all crates reside in a `crates` directory,
+    // so discard the prefix up to that segment to find the crate name
+    let target = file
+        .split_once("crates/")
+        .and_then(|(_, s)| s.split_once('/'))
+        .map(|(p, _)| p);
 
     log::logger().log(
         &log::Record::builder()

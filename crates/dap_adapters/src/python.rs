@@ -152,6 +152,9 @@ impl PythonDebugAdapter {
         maybe!(async move {
             let response = latest_release.filter(|response| response.status().is_success())?;
 
+            let download_dir = debug_adapters_dir().join(Self::ADAPTER_NAME);
+            std::fs::create_dir_all(&download_dir).ok()?;
+
             let mut output = String::new();
             response
                 .into_body()
