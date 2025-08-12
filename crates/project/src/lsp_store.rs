@@ -1443,12 +1443,17 @@ impl LocalLspStore {
                     SelectedFormatter::Auto => {
                         if settings.prettier.allowed {
                             zlog::trace!(logger => "Formatter set to auto: defaulting to prettier");
-                            default_formatter_list.insert(0, Formatter::Prettier);
+                            std::slice::from_ref(&Formatter::Prettier)
+                        } else {
+                            zlog::trace!(logger => "Formatter set to auto: defaulting to primary language server");
+                            std::slice::from_ref(&Formatter::LanguageServer { name: None })
                         }
-
-                        default_formatter_list.as_ref()
                     }
                     SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
+                    SelectedFormatter::All => {
+                        default_formatter_list.insert(0, Formatter::Prettier);
+                        default_formatter_list.as_ref()
+                    }
                 }
             }
         };

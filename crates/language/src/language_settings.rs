@@ -793,6 +793,8 @@ pub enum SelectedFormatter {
     #[default]
     Auto,
     List(FormatterList),
+    /// Format files using the all available formatters.
+    All,
 }
 
 impl JsonSchema for SelectedFormatter {
@@ -811,7 +813,7 @@ impl JsonSchema for SelectedFormatter {
                 },
                 {
                     "type": "string",
-                    "enum": ["auto", "language_server"]
+                    "enum": ["auto", "language_server", "all"]
                 },
                 formatter_schema
             ]
@@ -827,6 +829,7 @@ impl Serialize for SelectedFormatter {
         match self {
             SelectedFormatter::Auto => serializer.serialize_str("auto"),
             SelectedFormatter::List(list) => list.serialize(serializer),
+            SelectedFormatter::All => serializer.serialize_str("all"),
         }
     }
 }
@@ -850,6 +853,8 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
             {
                 if v == "auto" {
                     Ok(Self::Value::Auto)
+                } else if v == "all" {
+                    Ok(Self::Value::All)
                 } else if v == "language_server" {
                     Ok(Self::Value::List(FormatterList::Single(
                         Formatter::LanguageServer { name: None },

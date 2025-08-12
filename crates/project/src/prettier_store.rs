@@ -702,8 +702,9 @@ pub fn prettier_plugins_for_language(
     language_settings: &LanguageSettings,
 ) -> Option<&HashSet<String>> {
     match &language_settings.formatter {
-        SelectedFormatter::Auto => Some(&language_settings.prettier.plugins),
-
+        SelectedFormatter::Auto | SelectedFormatter::All => {
+            Some(&language_settings.prettier.plugins)
+        }
         SelectedFormatter::List(list) => list
             .as_ref()
             .contains(&Formatter::Prettier)
