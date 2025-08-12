@@ -32,6 +32,19 @@ impl ContextServerRegistry {
         this
     }
 
+    pub fn servers(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &ContextServerId,
+            &BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+        ),
+    > {
+        self.registered_servers
+            .iter()
+            .map(|(id, server)| (id, &server.tools))
+    }
+
     fn reload_tools_for_server(&mut self, server_id: ContextServerId, cx: &mut Context<Self>) {
         let Some(server) = self.server_store.read(cx).get_running_server(&server_id) else {
             return;
@@ -124,7 +137,7 @@ impl AnyAgentTool for ContextServerTool {
         self.tool.name.clone().into()
     }
 
-    fn description(&self, _cx: &mut App) -> SharedString {
+    fn description(&self) -> SharedString {
         self.tool.description.clone().unwrap_or_default().into()
     }
 

@@ -436,6 +436,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                             action_log.clone(),
                             agent.templates.clone(),
                             default_model,
+                            cx,
                         );
                         thread.add_tool(CreateDirectoryTool::new(project.clone()));
                         thread.add_tool(CopyPathTool::new(project.clone()));

@@ -477,7 +477,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
@@ -485,6 +485,7 @@ mod tests {
                 action_log,
                 Templates::new(),
                 model,
+                cx,
             )
         });
         let result = cx
@@ -673,7 +674,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
@@ -681,6 +682,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -808,7 +810,7 @@ mod tests {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
@@ -816,6 +818,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -933,7 +936,7 @@ mod tests {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
@@ -941,6 +944,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1063,7 +1067,7 @@ mod tests {
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
@@ -1071,6 +1075,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1172,7 +1177,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
@@ -1180,6 +1185,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1252,7 +1258,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
@@ -1260,6 +1266,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1335,7 +1342,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
@@ -1343,6 +1350,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1415,7 +1423,7 @@ mod tests {
         let context_server_registry =
             cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
@@ -1423,6 +1431,7 @@ mod tests {
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
