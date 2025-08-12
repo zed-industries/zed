@@ -3086,6 +3086,8 @@ impl Focusable for AcpThreadView {
 
 impl Render for AcpThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_messages = self.list_state.item_count() > 0;
+
         v_flex()
             .size_full()
             .key_context("AcpThread")
@@ -3132,7 +3134,7 @@ impl Render for AcpThreadView {
                     let thread_clone = thread.clone();
 
                     v_flex().flex_1().map(|this| {
-                        if self.list_state.item_count() > 0 {
+                        if has_messages {
                             this.child(
                                 list(
                                     self.list_state.clone(),
@@ -3151,22 +3153,31 @@ impl Render for AcpThreadView {
                                 .into_any(),
                             )
                             .child(self.render_vertical_scrollbar(cx))
-                            .children(match thread_clone.read(cx).status() {
-                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
-                                    None
-                                }
-                                ThreadStatus::Generating => div()
-                                    .px_5()
-                                    .py_2()
-                                    .child(LoadingLabel::new("").size(LabelSize::Small))
-                                    .into(),
-                            })
-                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                            .children(
+                                match thread_clone.read(cx).status() {
+                                    ThreadStatus::Idle
+                                    | ThreadStatus::WaitingForToolConfirmation => None,
+                                    ThreadStatus::Generating => div()
+                                        .px_5()
+                                        .py_2()
+                                        .child(LoadingLabel::new("").size(LabelSize::Small))
+                                        .into(),
+                                },
+                            )
                         } else {
                             this.child(self.render_empty_state(cx))
                         }
                     })
                 }
+            })
+            // The activity bar is intentionally rendered outside of the ThreadState::Ready match
+            // above so that the scrollbar doesn't render behind it. The current setup allows
+            // the scrollbar to stop exactly at the activity bar start.
+            .when(has_messages, |this| match &self.thread_state {
+                ThreadState::Ready { thread, .. } => {
+                    this.children(self.render_activity_bar(thread, window, cx))
+                }
+                _ => this,
             })
             .when_some(self.last_error.clone(), |el, error| {
                 el.child(
