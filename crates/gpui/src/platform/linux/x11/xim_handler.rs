@@ -61,6 +61,7 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_method_id: u16,
         input_context_id: u16,
     ) -> Result<(), ClientError> {
+        println!("create ic");
         self.connected = true;
         self.ic_id = input_context_id;
         Ok(())
@@ -73,6 +74,8 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _input_context_id: u16,
         text: &str,
     ) -> Result<(), ClientError> {
+        println!("commit callback");
+
         self.last_callback_event = Some(XimCallbackEvent::XimCommitEvent(
             self.window,
             String::from(text),
@@ -88,6 +91,8 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         _flag: xim::ForwardEventFlag,
         xev: C::XEvent,
     ) -> Result<(), ClientError> {
+        println!("forward callback");
+
         match xev.response_type {
             x11rb::protocol::xproto::KEY_PRESS_EVENT => {
                 self.last_callback_event = Some(XimCallbackEvent::XimXEvent(Event::KeyPress(xev)));
@@ -102,6 +107,8 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
     }
 
     fn handle_close(&mut self, client: &mut C, _input_method_id: u16) -> Result<(), ClientError> {
+        println!("disconnect");
+
         client.disconnect()
     }
 
@@ -117,6 +124,7 @@ impl<C: Client<XEvent = xproto::KeyPressEvent>> ClientHandler<C> for XimHandler 
         preedit_string: &str,
         _feedbacks: Vec<xim::Feedback>,
     ) -> Result<(), ClientError> {
+        println!("preedit callback");
         // XIMReverse: 1, XIMPrimary: 8, XIMTertiary: 32: selected text
         // XIMUnderline: 2, XIMSecondary: 16: underlined text
         // XIMHighlight: 4: normal text

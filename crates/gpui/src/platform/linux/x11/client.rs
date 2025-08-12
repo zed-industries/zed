@@ -256,6 +256,7 @@ impl X11ClientStatePtr {
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+        println!("ime pos");
         let Some(client) = self.get_client() else {
             return;
         };
@@ -273,6 +274,7 @@ impl X11ClientStatePtr {
             state.ximc = Some(ximc);
             return;
         };
+        println!("set ic values");
         let ic_attributes = ximc
             .build_ic_attributes()
             .push(
@@ -642,6 +644,9 @@ impl X11Client {
                 let xim_connected = xim_handler.connected;
                 drop(state);
 
+                println!("");
+                println!("----start--");
+
                 let xim_filtered = match ximc.filter_event(&event, &mut xim_handler) {
                     Ok(handled) => handled,
                     Err(err) => {
@@ -660,12 +665,16 @@ impl X11Client {
                 }
 
                 if xim_filtered {
+                    println!("filtered skipping");
                     continue;
+                } else {
+                    println!("not skipping");
                 }
 
                 if xim_connected {
                     self.xim_handle_event(event);
                 } else {
+                    println!("event not connected!");
                     self.handle_event(event);
                 }
             }
@@ -711,6 +720,7 @@ impl X11Client {
                     });
             }
         }
+        println!("create ic");
         ximc.create_ic(xim_handler.im_id, ic_attributes.build())
             .ok();
         let mut state = self.0.borrow_mut();
@@ -718,6 +728,7 @@ impl X11Client {
     }
 
     pub fn reset_ime(&self) {
+        println!("reset called");
         let mut state = self.0.borrow_mut();
         state.composing = false;
         if let Some(mut ximc) = state.ximc.take() {
@@ -1275,12 +1286,15 @@ impl X11Client {
     fn handle_xim_callback_event(&self, event: XimCallbackEvent) {
         match event {
             XimCallbackEvent::XimXEvent(event) => {
+                println!("callback from from xim! xevent");
                 self.handle_event(event);
             }
             XimCallbackEvent::XimCommitEvent(window, text) => {
+                println!("callback from from xim! commit event");
                 self.xim_handle_commit(window, text);
             }
             XimCallbackEvent::XimPreeditEvent(window, text) => {
+                println!("callback from from xim! preedit event");
                 self.xim_handle_preedit(window, text);
             }
         };
@@ -1288,21 +1302,28 @@ impl X11Client {
 
     fn xim_handle_event(&self, event: Event) -> Option<()> {
         match event {
-            Event::KeyPress(event) | Event::KeyRelease(event) => {
+            Event::KeyPress(e)
+            // | Event::KeyRelease(e)
+            => {
                 let mut state = self.0.borrow_mut();
                 state.pre_key_char_down = Some(Keystroke::from_xkb(
                     &state.xkb,
                     state.modifiers,
-                    event.detail.into(),
+                    e.detail.into(),
                 ));
                 let (mut ximc, mut xim_handler) = state.take_xim()?;
                 drop(state);
-                xim_handler.window = event.event;
+                xim_handler.window = e.event;
+                if matches!(event, Event::KeyPress(..)) {
+                    println!("forward key press to xim");
+                } else {
+                    println!("forward key release to xim");
+                }
                 ximc.forward_event(
                     xim_handler.im_id,
                     xim_handler.ic_id,
-                    xim::ForwardEventFlag::empty(),
-                    &event,
+                    xim::ForwardEventFlag::REQUEST_FILTERING,
+                    &e,
                 )
                 .context("X11: Failed to forward XIM event")
                 .log_err();
@@ -1311,6 +1332,8 @@ impl X11Client {
                 drop(state);
             }
             event => {
+                println!("other x11 event.");
+                dbg!(&event);
                 self.handle_event(event);
             }
         }
