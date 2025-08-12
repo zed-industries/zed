@@ -20863,6 +20863,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "rand 0.8.5",
  "regex",
  "release_channel",
  "reqwest_client",

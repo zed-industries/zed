@@ -432,6 +432,7 @@ impl Zeta {
                 body,
                 editable_range,
             } = gather_task.await?;
+            let done_gathering_context_at = Instant::now();
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
@@ -484,6 +485,7 @@ impl Zeta {
                 }
             };
 
+            let received_response_at = Instant::now();
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
@@ -495,7 +497,7 @@ impl Zeta {
                 .ok();
             }
 
-            Self::process_completion_response(
+            let edit_prediction = Self::process_completion_response(
                 response,
                 buffer,
                 &snapshot,
@@ -508,7 +510,25 @@ impl Zeta {
                 buffer_snapshotted_at,
                 &cx,
             )
-            .await
+            .await;
+
+            let finished_at = Instant::now();
+
+            // record latency for ~1% of requests
+            if rand::random::<u8>() <= 2 {
+                telemetry::event!(
+                    "Edit Prediction Request",
+                    context_latency = done_gathering_context_at
+                        .duration_since(buffer_snapshotted_at)
+                        .as_millis(),
+                    request_latency = received_response_at
+                        .duration_since(done_gathering_context_at)
+                        .as_millis(),
+                    process_latency = finished_at.duration_since(received_response_at).as_millis()
+                );
+            }
+
+            edit_prediction
         })
     }
 
