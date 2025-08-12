@@ -702,11 +702,7 @@
     "bindings": {
       "enter": "editor::ConfirmCompletion",
       "shift-enter": "editor::ConfirmCompletionReplace",
-      "tab": "editor::ComposeCompletion",
-      "ctrl-d": ["editor::ContextMenuScrollAside", { "pages": 0.5 }],
-      "ctrl-u": ["editor::ContextMenuScrollAside", { "pages": -0.5 }],
-      "ctrl-e": ["editor::ContextMenuScrollAside", { "lines": 1.0 }],
-      "ctrl-y": ["editor::ContextMenuScrollAside", { "lines": -1.0 }]
+      "tab": "editor::ComposeCompletion"
     }
   },
   // Bindings for accepting edit predictions

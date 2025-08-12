@@ -15,7 +15,7 @@ impl ScrollDirection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum ScrollAmount {
     // Scroll N lines (positive is towards the end of the document)
     Line(f32),

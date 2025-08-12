@@ -291,19 +291,6 @@ pub struct GoToPreviousDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Scrolls the aside content of the context menu by the number of provided
-/// lines, where positive values scroll the content down and negative values
-/// scroll the content up.
-#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct ContextMenuScrollAside {
-    #[serde(default)]
-    pub lines: f32,
-    #[serde(default)]
-    pub pages: f32,
-}
-
 actions!(
     debugger,
     [
@@ -365,10 +352,6 @@ actions!(
         ContextMenuNext,
         /// Navigates to the previous item in the context menu.
         ContextMenuPrevious,
-        /// Scrolls the documentation displayed on the side of the context menu down
-        ContextMenuDocsScrollDown,
-        /// Scrolls the documentation displayed on the side of the context menu up
-        ContextMenuDocsScrollUp,
         /// Converts indentation from tabs to spaces.
         ConvertIndentationToSpaces,
         /// Converts indentation from spaces to tabs.

@@ -477,15 +477,6 @@
     }
   },
   {
-    "context": "vim_mode == insert && showing_completions",
-    "bindings": {
-      "ctrl-d": ["editor::ContextMenuScrollAside", { "pages": 0.5 }],
-      "ctrl-u": ["editor::ContextMenuScrollAside", { "pages": -0.5 }],
-      "ctrl-e": ["editor::ContextMenuScrollAside", { "lines": 1.0 }],
-      "ctrl-y": ["editor::ContextMenuScrollAside", { "lines": -1.0 }]
-    }
-  },
-  {
     "context": "vim_mode == replace",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",

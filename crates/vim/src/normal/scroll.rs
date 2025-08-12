@@ -98,7 +98,7 @@ impl Vim {
         Vim::take_forced_motion(cx);
         self.exit_temporary_normal(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            scroll_editor(editor, move_cursor, &amount, window, cx)
+            scroll_editor(editor, move_cursor, amount, window, cx)
         });
     }
 }
@@ -106,7 +106,7 @@ impl Vim {
 fn scroll_editor(
     editor: &mut Editor,
     preserve_cursor_position: bool,
-    amount: &ScrollAmount,
+    amount: ScrollAmount,
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) {
