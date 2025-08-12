@@ -53,28 +53,38 @@ impl AcpModelPickerDelegate {
         cx: &mut Context<AcpModelSelector>,
     ) -> Self {
         let mut rx = selector.watch(cx);
-        let refresh_models_task = cx.spawn_in(window, async move |this, cx| {
-            async fn refresh(
-                this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
-                cx: &mut AsyncWindowContext,
-            ) -> Result<()> {
-                let models = this
-                    .update(cx, |this, cx| this.delegate.selector.list_models(cx))?
-                    .await
-                    .ok();
+        let refresh_models_task = cx.spawn_in(window, {
+            let session_id = session_id.clone();
+            async move |this, cx| {
+                async fn refresh(
+                    this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
+                    session_id: &acp::SessionId,
+                    cx: &mut AsyncWindowContext,
+                ) -> Result<()> {
+                    let (models_task, selected_model_task) = this.update(cx, |this, cx| {
+                        (
+                            this.delegate.selector.list_models(cx),
+                            this.delegate.selector.selected_model(session_id, cx),
+                        )
+                    })?;
 
-                this.update_in(cx, |this, window, cx| {
-                    this.delegate.models = models;
-                    this.delegate.update_matches(this.query(cx), window, cx)
-                })?
-                .await;
+                    let (models, selected_model) = futures::join!(models_task, selected_model_task);
 
-                Ok(())
-            }
+                    this.update_in(cx, |this, window, cx| {
+                        //TODO: Handle errors?
+                        this.delegate.models = models.ok();
+                        this.delegate.selected_model = selected_model.ok();
+                        this.delegate.update_matches(this.query(cx), window, cx)
+                    })?
+                    .await;
 
-            refresh(&this, cx).await.log_err();
-            while let Ok(()) = rx.recv().await {
-                refresh(&this, cx).await.log_err();
+                    Ok(())
+                }
+
+                refresh(&this, &session_id, cx).await.log_err();
+                while let Ok(()) = rx.recv().await {
+                    refresh(&this, &session_id, cx).await.log_err();
+                }
             }
         });
 
