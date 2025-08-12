@@ -113,7 +113,7 @@ impl AppCell {
         let futures = futures::future::join_all(futures);
         futures::pin_mut!(futures);
         let mut start = std::time::Instant::now();
-        while dbg!(start.elapsed() < SHUTDOWN_TIMEOUT) {
+        while start.elapsed() < SHUTDOWN_TIMEOUT {
             match futures.as_mut().poll(&mut future_cx) {
                 Poll::Pending => {
                     executor.tick();
@@ -418,32 +418,6 @@ impl App {
         }));
 
         app
-    }
-
-    /// Quit the application gracefully. Handlers registered with [`Context::on_app_quit`]
-    /// will be given 100ms to complete before exiting.
-    pub fn shutdown_old(&mut self) {
-        let mut futures = Vec::new();
-
-        for observer in self.quit_observers.remove(&()) {
-            futures.push(observer(self));
-        }
-
-        self.windows.clear();
-        self.window_handles.clear();
-        self.flush_effects();
-        self.quitting = true;
-
-        let futures = futures::future::join_all(futures);
-        if self
-            .background_executor
-            .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
-            .is_err()
-        {
-            log::error!("timed out waiting on app_will_quit");
-        }
-
-        self.quitting = false;
     }
 
     /// Get the id of the current keyboard layout
