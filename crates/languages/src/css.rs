@@ -5,7 +5,7 @@ use gpui::AsyncApp;
 use language::{LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
-use project::Fs;
+use project::{Fs, lsp_store::language_server_settings};
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, merge_json_value_into};
 
 const SERVER_PATH: &str =
     "node_modules/vscode-langservers-extracted/bin/vscode-css-language-server";
@@ -133,6 +133,37 @@ impl LspAdapter for CssLspAdapter {
         Ok(Some(json!({
             "provideFormatter": true
         })))
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &dyn Fs,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
+        cx: &mut AsyncApp,
+    ) -> Result<serde_json::Value> {
+        let mut default_config = json!({
+            "css": {
+                "lint": {}
+            },
+            "less": {
+                "lint": {}
+            },
+            "scss": {
+                "lint": {}
+            }
+        });
+
+        let project_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = project_options {
+            merge_json_value_into(override_options, &mut default_config);
+        }
+
+        Ok(default_config)
     }
 }
 

@@ -8,6 +8,7 @@ mod tool_metrics;
 
 use assertions::{AssertionsReport, display_error_row};
 use instance::{ExampleInstance, JudgeOutput, RunOutput, run_git};
+use language_extension::LspAccess;
 pub(crate) use tool_metrics::*;
 
 use ::fs::RealFs;
@@ -17,7 +18,7 @@ use collections::{HashMap, HashSet};
 use extension::ExtensionHostProxy;
 use futures::future;
 use gpui::http_client::read_proxy_from_env;
-use gpui::{App, AppContext, Application, AsyncApp, Entity, SemanticVersion, UpdateGlobal};
+use gpui::{App, AppContext, Application, AsyncApp, Entity, UpdateGlobal};
 use gpui_tokio::Tokio;
 use language::LanguageRegistry;
 use language_model::{ConfiguredModel, LanguageModel, LanguageModelRegistry, SelectedModel};
@@ -336,7 +337,8 @@ pub struct AgentAppState {
 }
 
 pub fn init(cx: &mut App) -> Arc<AgentAppState> {
-    release_channel::init(SemanticVersion::default(), cx);
+    let app_version = AppVersion::load(env!("ZED_PKG_VERSION"));
+    release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
     let mut settings_store = SettingsStore::new(cx);
@@ -348,8 +350,8 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     // Set User-Agent so we can download language servers from GitHub
     let user_agent = format!(
-        "Zed/{} ({}; {})",
-        AppVersion::global(cx),
+        "Zed Agent Eval/{} ({}; {})",
+        app_version,
         std::env::consts::OS,
         std::env::consts::ARCH
     );
@@ -415,7 +417,11 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
 
     language::init(cx);
     debug_adapter_extension::init(extension_host_proxy.clone(), cx);
-    language_extension::init(extension_host_proxy.clone(), languages.clone());
+    language_extension::init(
+        LspAccess::Noop,
+        extension_host_proxy.clone(),
+        languages.clone(),
+    );
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
     languages::init(languages.clone(), node_runtime.clone(), cx);

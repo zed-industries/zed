@@ -18,7 +18,6 @@ client.workspace = true
 collections.workspace = true
 copilot.workspace = true
 editor.workspace = true
-feature_flags.workspace = true
 futures.workspace = true
 gpui.workspace = true
 itertools.workspace = true

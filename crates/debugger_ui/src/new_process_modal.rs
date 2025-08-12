@@ -1,5 +1,5 @@
 use anyhow::{Context as _, bail};
-use collections::{FxHashMap, HashMap};
+use collections::{FxHashMap, HashMap, HashSet};
 use language::LanguageRegistry;
 use std::{
     borrow::Cow,
@@ -450,7 +450,7 @@ impl NewProcessModal {
             .and_then(|buffer| buffer.read(cx).language())
             .cloned();
 
-        let mut available_adapters = workspace
+        let mut available_adapters: Vec<_> = workspace
             .update(cx, |_, cx| DapRegistry::global(cx).enumerate_adapters())
             .unwrap_or_default();
         if let Some(language) = active_buffer_language {
@@ -766,14 +766,7 @@ impl Render for NewProcessModal {
                             ))
                             .child(
                                 h_flex()
-                                    .child(div().child(self.adapter_drop_down_menu(window, cx)))
-                                    .child(
-                                        Button::new("debugger-spawn", "Start")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.start_new_session(window, cx)
-                                            }))
-                                            .disabled(disabled),
-                                    ),
+                                    .child(div().child(self.adapter_drop_down_menu(window, cx))),
                             )
                     }),
                     NewProcessMode::Debug => el,
@@ -1022,15 +1015,13 @@ impl DebugDelegate {
         let language_names = languages.language_names();
         let language = dap_registry
             .adapter_language(&scenario.adapter)
-            .map(|language| TaskSourceKind::Language {
-                name: language.into(),
-            });
+            .map(|language| TaskSourceKind::Language { name: language.0 });
 
         let language = language.or_else(|| {
             scenario.label.split_whitespace().find_map(|word| {
                 language_names
                     .iter()
-                    .find(|name| name.eq_ignore_ascii_case(word))
+                    .find(|name| name.as_ref().eq_ignore_ascii_case(word))
                     .map(|name| TaskSourceKind::Language {
                         name: name.to_owned().into(),
                     })
@@ -1063,6 +1054,9 @@ impl DebugDelegate {
                 })
             })
         });
+
+        let valid_adapters: HashSet<_> = cx.global::<DapRegistry>().enumerate_adapters();
+
         cx.spawn(async move |this, cx| {
             let (recent, scenarios) = if let Some(task) = task {
                 task.await
@@ -1103,6 +1097,7 @@ impl DebugDelegate {
                                 } => !(hide_vscode && dir.ends_with(".vscode")),
                                 _ => true,
                             })
+                            .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
                                 let (language, scenario) =
                                     Self::get_scenario_kind(&languages, &dap_registry, scenario);

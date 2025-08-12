@@ -922,62 +922,103 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     return blend_color(input.color, alpha);
 }
 
-// --- paths --- //
+// --- path rasterization --- //
 
-struct PathVertex {
+struct PathRasterizationVertex {
     xy_position: vec2<f32>,
-    content_mask: Bounds,
+    st_position: vec2<f32>,
+    color: Background,
+    bounds: Bounds,
 }
+
+var<storage, read> b_path_vertices: array<PathRasterizationVertex>;
+
+struct PathRasterizationVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) st_position: vec2<f32>,
+    @location(1) vertex_id: u32,
+    //TODO: use `clip_distance` once Naga supports it
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_path_rasterization(@builtin(vertex_index) vertex_id: u32) -> PathRasterizationVarying {
+    let v = b_path_vertices[vertex_id];
+
+    var out = PathRasterizationVarying();
+    out.position = to_device_position_impl(v.xy_position);
+    out.st_position = v.st_position;
+    out.vertex_id = vertex_id;
+    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.bounds);
+    return out;
+}
+
+@fragment
+fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) vec4<f32> {
+    let dx = dpdx(input.st_position);
+    let dy = dpdy(input.st_position);
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    let v = b_path_vertices[input.vertex_id];
+    let background = v.color;
+    let bounds = v.bounds;
+
+    var alpha: f32;
+    if (length(vec2<f32>(dx.x, dy.x)) < 0.001) {
+        // If the gradient is too small, return a solid color.
+        alpha = 1.0;
+    } else {
+        let gradient = 2.0 * input.st_position.xx * vec2<f32>(dx.x, dy.x) - vec2<f32>(dx.y, dy.y);
+        let f = input.st_position.x * input.st_position.x - input.st_position.y;
+        let distance = f / length(gradient);
+        alpha = saturate(0.5 - distance);
+    }
+    let gradient_color = prepare_gradient_color(
+        background.tag,
+        background.color_space,
+        background.solid,
+        background.colors,
+    );
+    let color = gradient_color(background, input.position.xy, bounds,
+        gradient_color.solid, gradient_color.color0, gradient_color.color1);
+    return vec4<f32>(color.rgb * color.a * alpha, color.a * alpha);
+}
+
+// --- paths --- //
 
 struct PathSprite {
     bounds: Bounds,
-    color: Background,
 }
-var<storage, read> b_path_vertices: array<PathVertex>;
 var<storage, read> b_path_sprites: array<PathSprite>;
 
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) clip_distances: vec4<f32>,
-    @location(1) @interpolate(flat) instance_id: u32,
-    @location(2) @interpolate(flat) color_solid: vec4<f32>,
-    @location(3) @interpolate(flat) color0: vec4<f32>,
-    @location(4) @interpolate(flat) color1: vec4<f32>,
+    @location(0) texture_coords: vec2<f32>,
 }
 
 @vertex
 fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> PathVarying {
-    let v = b_path_vertices[vertex_id];
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     let sprite = b_path_sprites[instance_id];
+    // Don't apply content mask because it was already accounted for when rasterizing the path.
+    let device_position = to_device_position(unit_vertex, sprite.bounds);
+    // For screen-space intermediate texture, convert screen position to texture coordinates
+    let screen_position = sprite.bounds.origin + unit_vertex * sprite.bounds.size;
+    let texture_coords = screen_position / globals.viewport_size;
 
     var out = PathVarying();
-    out.position = to_device_position_impl(v.xy_position);
-    out.clip_distances = distance_from_clip_rect_impl(v.xy_position, v.content_mask);
-    out.instance_id = instance_id;
+    out.position = device_position;
+    out.texture_coords = texture_coords;
 
-    let gradient = prepare_gradient_color(
-        sprite.color.tag,
-        sprite.color.color_space,
-        sprite.color.solid,
-        sprite.color.colors
-    );
-    out.color_solid = gradient.solid;
-    out.color0 = gradient.color0;
-    out.color1 = gradient.color1;
     return out;
 }
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    if any(input.clip_distances < vec4<f32>(0.0)) {
-        return vec4<f32>(0.0);
-    }
-
-    let sprite = b_path_sprites[input.instance_id];
-    let background = sprite.color;
-    let color = gradient_color(background, input.position.xy, sprite.bounds,
-        input.color_solid, input.color0, input.color1);
-    return blend_color(color, 1.0);
+    let sample = textureSample(t_sprite, s_sprite, input.texture_coords);
+    return sample;
 }
 
 // --- underlines --- //
@@ -1016,6 +1057,9 @@ fn vs_underline(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) 
 
 @fragment
 fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
+    const WAVE_FREQUENCY: f32 = 2.0;
+    const WAVE_HEIGHT_RATIO: f32 = 0.8;
+
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
@@ -1028,9 +1072,11 @@ fn fs_underline(input: UnderlineVarying) -> @location(0) vec4<f32> {
     }
 
     let half_thickness = underline.thickness * 0.5;
+
     let st = (input.position.xy - underline.bounds.origin) / underline.bounds.size.y - vec2<f32>(0.0, 0.5);
-    let frequency = M_PI_F * 3.0 * underline.thickness / 3.0;
-    let amplitude = 1.0 / (4.0 * underline.thickness);
+    let frequency = M_PI_F * WAVE_FREQUENCY * underline.thickness / underline.bounds.size.y;
+    let amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
     let sine = sin(st.x * frequency) * amplitude;
     let dSine = cos(st.x * frequency) * amplitude * frequency;
     let distance = (st.y - sine) / sqrt(1.0 + dSine * dSine);

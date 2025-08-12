@@ -3,10 +3,12 @@ use std::any::TypeId;
 use dap::debugger_settings::DebuggerSettings;
 use debugger_panel::DebugPanel;
 use editor::Editor;
-use gpui::{App, DispatchPhase, EntityInputHandler, actions};
+use gpui::{Action, App, DispatchPhase, EntityInputHandler, actions};
 use new_process_modal::{NewProcessModal, NewProcessMode};
 use onboarding_modal::DebuggerOnboardingModal;
 use project::debugger::{self, breakpoint_store::SourceBreakpoint, session::ThreadStatus};
+use schemars::JsonSchema;
+use serde::Deserialize;
 use session::DebugSession;
 use settings::Settings;
 use stack_trace_view::StackTraceView;
@@ -85,6 +87,20 @@ actions!(
         ToggleExpandItem,
     ]
 );
+
+/// Extends selection down by a specified number of lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = debugger)]
+#[serde(deny_unknown_fields)]
+/// Set a data breakpoint on the selected variable or memory region.
+pub struct ToggleDataBreakpoint {
+    /// The type of data breakpoint
+    /// Read & Write
+    /// Read
+    /// Write
+    #[serde(default)]
+    pub access_type: Option<dap::DataBreakpointAccessType>,
+}
 
 actions!(
     dev,
@@ -283,59 +299,76 @@ pub fn init(cx: &mut App) {
                     else {
                         return;
                     };
+
+                    let session = active_session
+                        .read(cx)
+                        .running_state
+                        .read(cx)
+                        .session()
+                        .read(cx);
+
+                    if session.is_terminated() {
+                        return;
+                    }
+
                     let editor = cx.entity().downgrade();
-                    window.on_action(TypeId::of::<editor::actions::RunToCursor>(), {
-                        let editor = editor.clone();
-                        let active_session = active_session.clone();
-                        move |_, phase, _, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-                            maybe!({
-                                let (buffer, position, _) = editor
-                                    .update(cx, |editor, cx| {
-                                        let cursor_point: language::Point =
-                                            editor.selections.newest(cx).head();
 
-                                        editor
-                                            .buffer()
-                                            .read(cx)
-                                            .point_to_buffer_point(cursor_point, cx)
-                                    })
-                                    .ok()??;
+                    window.on_action_when(
+                        session.any_stopped_thread(),
+                        TypeId::of::<editor::actions::RunToCursor>(),
+                        {
+                            let editor = editor.clone();
+                            let active_session = active_session.clone();
+                            move |_, phase, _, cx| {
+                                if phase != DispatchPhase::Bubble {
+                                    return;
+                                }
+                                maybe!({
+                                    let (buffer, position, _) = editor
+                                        .update(cx, |editor, cx| {
+                                            let cursor_point: language::Point =
+                                                editor.selections.newest(cx).head();
 
-                                let path =
+                                            editor
+                                                .buffer()
+                                                .read(cx)
+                                                .point_to_buffer_point(cursor_point, cx)
+                                        })
+                                        .ok()??;
+
+                                    let path =
                                 debugger::breakpoint_store::BreakpointStore::abs_path_from_buffer(
                                     &buffer, cx,
                                 )?;
 
-                                let source_breakpoint = SourceBreakpoint {
-                                    row: position.row,
-                                    path,
-                                    message: None,
-                                    condition: None,
-                                    hit_condition: None,
-                                    state: debugger::breakpoint_store::BreakpointState::Enabled,
-                                };
+                                    let source_breakpoint = SourceBreakpoint {
+                                        row: position.row,
+                                        path,
+                                        message: None,
+                                        condition: None,
+                                        hit_condition: None,
+                                        state: debugger::breakpoint_store::BreakpointState::Enabled,
+                                    };
 
-                                active_session.update(cx, |session, cx| {
-                                    session.running_state().update(cx, |state, cx| {
-                                        if let Some(thread_id) = state.selected_thread_id() {
-                                            state.session().update(cx, |session, cx| {
-                                                session.run_to_position(
-                                                    source_breakpoint,
-                                                    thread_id,
-                                                    cx,
-                                                );
-                                            })
-                                        }
+                                    active_session.update(cx, |session, cx| {
+                                        session.running_state().update(cx, |state, cx| {
+                                            if let Some(thread_id) = state.selected_thread_id() {
+                                                state.session().update(cx, |session, cx| {
+                                                    session.run_to_position(
+                                                        source_breakpoint,
+                                                        thread_id,
+                                                        cx,
+                                                    );
+                                                })
+                                            }
+                                        });
                                     });
-                                });
 
-                                Some(())
-                            });
-                        }
-                    });
+                                    Some(())
+                                });
+                            }
+                        },
+                    );
 
                     window.on_action(
                         TypeId::of::<editor::actions::EvaluateSelectedText>(),

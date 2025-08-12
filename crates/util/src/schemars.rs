@@ -15,7 +15,6 @@ pub fn replace_subschema<T: JsonSchema>(
     generator: &mut schemars::SchemaGenerator,
     schema: impl Fn() -> schemars::Schema,
 ) -> schemars::Schema {
-    // fallback on just using the schema name, which could collide.
     let schema_name = T::schema_name();
     let definitions = generator.definitions_mut();
     assert!(!definitions.contains_key(&format!("{schema_name}2")));

@@ -2,9 +2,10 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
+use assistant_tool::{Tool, ToolCard, ToolResult, ToolUseStatus};
 use futures::{FutureExt as _, future::Shared};
 use gpui::{
     Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
@@ -77,7 +78,7 @@ impl Tool for TerminalTool {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 
@@ -225,7 +226,6 @@ impl Tool for TerminalTool {
                                 env,
                                 ..Default::default()
                             }),
-                            window,
                             cx,
                         )
                     })?

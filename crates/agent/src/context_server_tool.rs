@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use action_log::ActionLog;
 use anyhow::{Result, anyhow, bail};
-use assistant_tool::{ActionLog, Tool, ToolResult, ToolSource};
+use assistant_tool::{Tool, ToolResult, ToolSource};
 use context_server::{ContextServerId, types};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use icons::IconName;
@@ -38,7 +39,7 @@ impl Tool for ContextServerTool {
     }
 
     fn icon(&self) -> IconName {
-        IconName::Cog
+        IconName::ToolHammer
     }
 
     fn source(&self) -> ToolSource {
@@ -47,7 +48,7 @@ impl Tool for ContextServerTool {
         }
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 

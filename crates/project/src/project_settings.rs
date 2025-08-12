@@ -326,6 +326,79 @@ impl DiagnosticSeverity {
     }
 }
 
+/// Determines the severity of the diagnostic that should be moved to.
+#[derive(PartialEq, PartialOrd, Clone, Copy, Debug, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GoToDiagnosticSeverity {
+    /// Errors
+    Error = 3,
+    /// Warnings
+    Warning = 2,
+    /// Information
+    Information = 1,
+    /// Hints
+    Hint = 0,
+}
+
+impl From<lsp::DiagnosticSeverity> for GoToDiagnosticSeverity {
+    fn from(severity: lsp::DiagnosticSeverity) -> Self {
+        match severity {
+            lsp::DiagnosticSeverity::ERROR => Self::Error,
+            lsp::DiagnosticSeverity::WARNING => Self::Warning,
+            lsp::DiagnosticSeverity::INFORMATION => Self::Information,
+            lsp::DiagnosticSeverity::HINT => Self::Hint,
+            _ => Self::Error,
+        }
+    }
+}
+
+impl GoToDiagnosticSeverity {
+    pub fn min() -> Self {
+        Self::Hint
+    }
+
+    pub fn max() -> Self {
+        Self::Error
+    }
+}
+
+/// Allows filtering diagnostics that should be moved to.
+#[derive(PartialEq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum GoToDiagnosticSeverityFilter {
+    /// Move to diagnostics of a specific severity.
+    Only(GoToDiagnosticSeverity),
+
+    /// Specify a range of severities to include.
+    Range {
+        /// Minimum severity to move to. Defaults no "error".
+        #[serde(default = "GoToDiagnosticSeverity::min")]
+        min: GoToDiagnosticSeverity,
+        /// Maximum severity to move to. Defaults to "hint".
+        #[serde(default = "GoToDiagnosticSeverity::max")]
+        max: GoToDiagnosticSeverity,
+    },
+}
+
+impl Default for GoToDiagnosticSeverityFilter {
+    fn default() -> Self {
+        Self::Range {
+            min: GoToDiagnosticSeverity::min(),
+            max: GoToDiagnosticSeverity::max(),
+        }
+    }
+}
+
+impl GoToDiagnosticSeverityFilter {
+    pub fn matches(&self, severity: lsp::DiagnosticSeverity) -> bool {
+        let severity: GoToDiagnosticSeverity = severity.into();
+        match self {
+            Self::Only(target) => *target == severity,
+            Self::Range { min, max } => severity >= *min && severity <= *max,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
@@ -358,10 +431,9 @@ impl GitSettings {
 
     pub fn inline_blame_delay(&self) -> Option<Duration> {
         match self.inline_blame {
-            Some(InlineBlameSettings {
-                delay_ms: Some(delay_ms),
-                ..
-            }) if delay_ms > 0 => Some(Duration::from_millis(delay_ms)),
+            Some(InlineBlameSettings { delay_ms, .. }) if delay_ms > 0 => {
+                Some(Duration::from_millis(delay_ms))
+            }
             _ => None,
         }
     }
@@ -397,7 +469,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -410,16 +482,40 @@ pub struct InlineBlameSettings {
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    pub delay_ms: Option<u64>,
+    #[serde(default)]
+    pub delay_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline blame in units of columns.
+    ///
+    /// Default: 7
+    #[serde(default = "default_inline_blame_padding")]
+    pub padding: u32,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    pub min_column: Option<u32>,
+    #[serde(default)]
+    pub min_column: u32,
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
     #[serde(default)]
     pub show_commit_summary: bool,
+}
+
+fn default_inline_blame_padding() -> u32 {
+    7
+}
+
+impl Default for InlineBlameSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            delay_ms: 0,
+            padding: default_inline_blame_padding(),
+            min_column: 0,
+            show_commit_summary: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -508,7 +604,7 @@ impl Settings for ProjectSettings {
 
         #[derive(Deserialize)]
         struct VsCodeContextServerCommand {
-            command: String,
+            command: PathBuf,
             args: Option<Vec<String>>,
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type
