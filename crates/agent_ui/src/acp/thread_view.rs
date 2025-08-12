@@ -1,6 +1,6 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    LoadError, MentionPath, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
+    LoadError, MentionUri, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
@@ -28,6 +28,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::{Settings as _, SettingsStore};
+use std::path::PathBuf;
 use std::{
     cell::RefCell, collections::BTreeMap, path::Path, process::ExitStatus, rc::Rc, sync::Arc,
     time::Duration,
@@ -376,81 +377,101 @@ impl AcpThreadView {
         let mut ix = 0;
         let mut chunks: Vec<acp::ContentBlock> = Vec::new();
         let project = self.project.clone();
-        self.message_editor.update(cx, |editor, cx| {
-            let text = editor.text(cx);
-            editor.display_map.update(cx, |map, cx| {
-                let snapshot = map.snapshot(cx);
-                for (crease_id, crease) in snapshot.crease_snapshot.creases() {
-                    // Skip creases that have been edited out of the message buffer.
-                    if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
-                        continue;
-                    }
 
-                    if let Some(project_path) =
-                        self.mention_set.lock().path_for_crease_id(crease_id)
-                    {
-                        let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
-                        if crease_range.start > ix {
-                            chunks.push(text[ix..crease_range.start].into());
+        let contents = self.mention_set.lock().contents(project, cx);
+
+        cx.spawn_in(window, async move |this, cx| {
+            let contents = match contents.await {
+                Ok(contents) => contents,
+                Err(e) => {
+                    this.update(cx, |this, cx| {
+                        this.last_error =
+                            Some(cx.new(|cx| Markdown::new(e.to_string().into(), None, None, cx)));
+                    })
+                    .ok();
+                    return;
+                }
+            };
+
+            this.update_in(cx, |this, window, cx| {
+                this.message_editor.update(cx, |editor, cx| {
+                    let text = editor.text(cx);
+                    editor.display_map.update(cx, |map, cx| {
+                        let snapshot = map.snapshot(cx);
+                        for (crease_id, crease) in snapshot.crease_snapshot.creases() {
+                            // Skip creases that have been edited out of the message buffer.
+                            if !crease.range().start.is_valid(&snapshot.buffer_snapshot) {
+                                continue;
+                            }
+
+                            if let Some(mention) = contents.get(&crease_id) {
+                                let crease_range =
+                                    crease.range().to_offset(&snapshot.buffer_snapshot);
+                                if crease_range.start > ix {
+                                    chunks.push(text[ix..crease_range.start].into());
+                                }
+                                chunks.push(acp::ContentBlock::Resource(acp::EmbeddedResource {
+                                    annotations: None,
+                                    resource: acp::EmbeddedResourceResource::TextResourceContents(
+                                        acp::TextResourceContents {
+                                            mime_type: None,
+                                            text: mention.content.clone(),
+                                            uri: mention.uri.to_uri(),
+                                        },
+                                    ),
+                                }));
+                                ix = crease_range.end;
+                            }
                         }
-                        if let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) {
-                            let path_str = abs_path.display().to_string();
-                            chunks.push(acp::ContentBlock::ResourceLink(acp::ResourceLink {
-                                uri: path_str.clone(),
-                                name: path_str,
-                                annotations: None,
-                                description: None,
-                                mime_type: None,
-                                size: None,
-                                title: None,
-                            }));
+
+                        if ix < text.len() {
+                            let last_chunk = text[ix..].trim_end();
+                            if !last_chunk.is_empty() {
+                                chunks.push(last_chunk.into());
+                            }
                         }
-                        ix = crease_range.end;
-                    }
+                    })
+                });
+
+                if chunks.is_empty() {
+                    return;
                 }
 
-                if ix < text.len() {
-                    let last_chunk = text[ix..].trim_end();
-                    if !last_chunk.is_empty() {
-                        chunks.push(last_chunk.into());
-                    }
-                }
+                let Some(thread) = this.thread() else {
+                    return;
+                };
+                let task = thread.update(cx, |thread, cx| thread.send(chunks.clone(), cx));
+
+                cx.spawn(async move |this, cx| {
+                    let result = task.await;
+
+                    this.update(cx, |this, cx| {
+                        if let Err(err) = result {
+                            this.last_error =
+                                Some(cx.new(|cx| {
+                                    Markdown::new(err.to_string().into(), None, None, cx)
+                                }))
+                        }
+                    })
+                })
+                .detach();
+
+                let mention_set = this.mention_set.clone();
+
+                this.set_editor_is_expanded(false, cx);
+
+                this.message_editor.update(cx, |editor, cx| {
+                    editor.clear(window, cx);
+                    editor.remove_creases(mention_set.lock().drain(), cx)
+                });
+
+                this.scroll_to_bottom(cx);
+
+                this.message_history.borrow_mut().push(chunks);
             })
-        });
-
-        if chunks.is_empty() {
-            return;
-        }
-
-        let Some(thread) = self.thread() else {
-            return;
-        };
-        let task = thread.update(cx, |thread, cx| thread.send(chunks.clone(), cx));
-
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-
-            this.update(cx, |this, cx| {
-                if let Err(err) = result {
-                    this.last_error =
-                        Some(cx.new(|cx| Markdown::new(err.to_string().into(), None, None, cx)))
-                }
-            })
+            .ok();
         })
         .detach();
-
-        let mention_set = self.mention_set.clone();
-
-        self.set_editor_is_expanded(false, cx);
-
-        self.message_editor.update(cx, |editor, cx| {
-            editor.clear(window, cx);
-            editor.remove_creases(mention_set.lock().drain(), cx)
-        });
-
-        self.scroll_to_bottom(cx);
-
-        self.message_history.borrow_mut().push(chunks);
     }
 
     fn previous_history_message(
@@ -563,16 +584,19 @@ impl AcpThreadView {
                 acp::ContentBlock::Text(text_content) => {
                     text.push_str(&text_content.text);
                 }
-                acp::ContentBlock::ResourceLink(resource_link) => {
-                    let path = Path::new(&resource_link.uri);
+                acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    resource: acp::EmbeddedResourceResource::TextResourceContents(resource),
+                    ..
+                }) => {
+                    let path = PathBuf::from(&resource.uri);
+                    let project_path = project.read(cx).project_path_for_absolute_path(&path, cx);
                     let start = text.len();
-                    let content = MentionPath::new(&path).to_string();
+                    let content = MentionUri::File(path).to_uri();
                     text.push_str(&content);
                     let end = text.len();
-                    if let Some(project_path) =
-                        project.read(cx).project_path_for_absolute_path(&path, cx)
-                    {
-                        let filename: SharedString = path
+                    if let Some(project_path) = project_path {
+                        let filename: SharedString = project_path
+                            .path
                             .file_name()
                             .unwrap_or_default()
                             .to_string_lossy()
@@ -583,7 +607,8 @@ impl AcpThreadView {
                 }
                 acp::ContentBlock::Image(_)
                 | acp::ContentBlock::Audio(_)
-                | acp::ContentBlock::Resource(_) => {}
+                | acp::ContentBlock::Resource(_)
+                | acp::ContentBlock::ResourceLink(_) => {}
             }
         }
 
@@ -602,18 +627,21 @@ impl AcpThreadView {
             };
 
             let anchor = snapshot.anchor_before(range.start);
-            let crease_id = crate::context_picker::insert_crease_for_mention(
-                anchor.excerpt_id,
-                anchor.text_anchor,
-                range.end - range.start,
-                filename,
-                crease_icon_path,
-                message_editor.clone(),
-                window,
-                cx,
-            );
-            if let Some(crease_id) = crease_id {
-                mention_set.lock().insert(crease_id, project_path);
+            if let Some(project_path) = project.read(cx).absolute_path(&project_path, cx) {
+                let crease_id = crate::context_picker::insert_crease_for_mention(
+                    anchor.excerpt_id,
+                    anchor.text_anchor,
+                    range.end - range.start,
+                    filename,
+                    crease_icon_path,
+                    message_editor.clone(),
+                    window,
+                    cx,
+                );
+
+                if let Some(crease_id) = crease_id {
+                    mention_set.lock().insert(crease_id, project_path);
+                }
             }
         }
 
@@ -2562,25 +2590,31 @@ impl AcpThreadView {
             return;
         };
 
-        if let Some(mention_path) = MentionPath::try_parse(&url) {
-            workspace.update(cx, |workspace, cx| {
-                let project = workspace.project();
-                let Some((path, entry)) = project.update(cx, |project, cx| {
-                    let path = project.find_project_path(mention_path.path(), cx)?;
-                    let entry = project.entry_for_path(&path, cx)?;
-                    Some((path, entry))
-                }) else {
-                    return;
-                };
+        if let Some(mention) = MentionUri::parse(&url).log_err() {
+            workspace.update(cx, |workspace, cx| match mention {
+                MentionUri::File(path) => {
+                    let project = workspace.project();
+                    let Some((path, entry)) = project.update(cx, |project, cx| {
+                        let path = project.find_project_path(path, cx)?;
+                        let entry = project.entry_for_path(&path, cx)?;
+                        Some((path, entry))
+                    }) else {
+                        return;
+                    };
 
-                if entry.is_dir() {
-                    project.update(cx, |_, cx| {
-                        cx.emit(project::Event::RevealInProjectPanel(entry.id));
-                    });
-                } else {
-                    workspace
-                        .open_path(path, None, true, window, cx)
-                        .detach_and_log_err(cx);
+                    if entry.is_dir() {
+                        project.update(cx, |_, cx| {
+                            cx.emit(project::Event::RevealInProjectPanel(entry.id));
+                        });
+                    } else {
+                        workspace
+                            .open_path(path, None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    }
+                }
+                _ => {
+                    // TODO
+                    unimplemented!()
                 }
             })
         } else {
@@ -2975,6 +3009,7 @@ impl AcpThreadView {
                 anchor..anchor,
                 self.message_editor.clone(),
                 self.mention_set.clone(),
+                self.project.clone(),
                 cx,
             );
 
@@ -3117,7 +3152,7 @@ fn user_message_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
 
     style.base_text_style = text_style;
     style.link_callback = Some(Rc::new(move |url, cx| {
-        if MentionPath::try_parse(url).is_some() {
+        if MentionUri::parse(url).is_ok() {
             let colors = cx.theme().colors();
             Some(TextStyleRefinement {
                 background_color: Some(colors.element_background),
