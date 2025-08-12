@@ -6,18 +6,8 @@ mod dialog;
 mod updater;
 
 #[cfg(target_os = "windows")]
-#[derive(clap::Parser, Debug)]
-struct Args {
-    #[clap(long, help = "Launch Zed after update")]
-    launch: Option<bool>,
-}
-
-#[cfg(target_os = "windows")]
 fn main() {
-    use clap::Parser;
-
-    let args = Args::parse();
-    if let Err(e) = windows_impl::run(args) {
+    if let Err(e) = windows_impl::run() {
         log::error!("Error: Zed update failed, {:?}", e);
         windows_impl::show_error(format!("Error: {:?}", e));
     }
@@ -29,8 +19,6 @@ fn main() {}
 #[cfg(target_os = "windows")]
 mod windows_impl {
     use std::path::Path;
-
-    use crate::Args;
 
     use super::dialog::create_dialog_window;
     use super::updater::perform_update;
@@ -49,7 +37,12 @@ mod windows_impl {
     pub(crate) const WM_JOB_UPDATED: u32 = WM_USER + 1;
     pub(crate) const WM_TERMINATE: u32 = WM_USER + 2;
 
-    pub(crate) fn run(args: Args) -> Result<()> {
+    #[derive(Debug)]
+    struct Args {
+        launch: Option<bool>,
+    }
+
+    pub(crate) fn run() -> Result<()> {
         let helper_dir = std::env::current_exe()?
             .parent()
             .context("No parent directory")?
@@ -63,6 +56,7 @@ mod windows_impl {
         log::info!("======= Starting Zed update =======");
         let (tx, rx) = std::sync::mpsc::channel();
         let hwnd = create_dialog_window(rx)?.0 as isize;
+        let args = parse_args();
         std::thread::spawn(move || {
             let result = perform_update(app_dir.as_path(), Some(hwnd), args.launch.unwrap_or(true));
             tx.send(result).ok();
@@ -87,6 +81,41 @@ mod windows_impl {
                 .open(helper_dir.join("auto_update_helper.log"))?,
         )?;
         Ok(())
+    }
+
+    fn parse_args() -> Args {
+        let mut result = Args { launch: None };
+        if let Some(candidate) = std::env::args().nth(1) {
+            parse_single_arg(&candidate, &mut result);
+        }
+
+        result
+    }
+
+    fn parse_single_arg(arg: &str, result: &mut Args) {
+        let Some((key, value)) = arg.strip_prefix("--").and_then(|arg| arg.split_once('=')) else {
+            log::error!(
+                "Invalid argument format: '{}'. Expected format: --key=value",
+                arg
+            );
+            return;
+        };
+
+        match key {
+            "launch" => parse_launch_arg(value, result),
+            _ => log::error!("Unknown argument: --{}", key),
+        }
+    }
+
+    fn parse_launch_arg(value: &str, result: &mut Args) {
+        match value {
+            "true" => result.launch = Some(true),
+            "false" => result.launch = Some(false),
+            _ => log::error!(
+                "Invalid value for --launch: '{}'. Expected 'true' or 'false'",
+                value
+            ),
+        }
     }
 
     pub(crate) fn show_error(mut content: String) {

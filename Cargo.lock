@@ -1279,7 +1279,6 @@ name = "auto_update_helper"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "log",
  "simplelog",
  "windows 0.61.1",
