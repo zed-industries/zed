@@ -1382,7 +1382,7 @@ impl AcpThreadView {
         match content {
             ToolCallContent::ContentBlock(content) => {
                 if let Some(resource_link) = content.resource_link() {
-                    self.render_resource_link(resource_link, window, cx)
+                    self.render_resource_link(resource_link, cx)
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(markdown.clone(), tool_call.id.clone(), window, cx)
                 } else {
@@ -1437,7 +1437,6 @@ impl AcpThreadView {
     fn render_resource_link(
         &self,
         resource_link: &acp::ResourceLink,
-        _window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let uri = &resource_link.uri;
