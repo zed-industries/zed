@@ -31,7 +31,7 @@ use language::{
     tree_sitter_python,
 };
 use language_settings::{Formatter, IndentGuideSettings};
-use lsp::{CompletionParams, OneOf};
+use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
