@@ -27,6 +27,7 @@ use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
+use rope::Point;
 use settings::{Settings as _, SettingsStore};
 use std::path::PathBuf;
 use std::{
@@ -2629,26 +2630,24 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
-        let location = self
+        let (tool_call_location, agent_location) = self
             .thread()?
             .read(cx)
             .entries()
             .get(entry_ix)?
-            .locations()?
-            .get(location_ix)?;
+            .location(location_ix)?;
 
         let project_path = self
             .project
             .read(cx)
-            .find_project_path(&location.path, cx)?;
+            .find_project_path(&tool_call_location.path, cx)?;
 
         let open_task = self
             .workspace
-            .update(cx, |worskpace, cx| {
-                worskpace.open_path(project_path, None, true, window, cx)
+            .update(cx, |workspace, cx| {
+                workspace.open_path(project_path, None, true, window, cx)
             })
             .log_err()?;
-
         window
             .spawn(cx, async move |cx| {
                 let item = open_task.await?;
@@ -2658,17 +2657,22 @@ impl AcpThreadView {
                 };
 
                 active_editor.update_in(cx, |editor, window, cx| {
-                    let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    let first_hunk = editor
-                        .diff_hunks_in_ranges(
-                            &[editor::Anchor::min()..editor::Anchor::max()],
-                            &snapshot,
-                        )
-                        .next();
-                    if let Some(first_hunk) = first_hunk {
-                        let first_hunk_start = first_hunk.multi_buffer_range().start;
+                    let multibuffer = editor.buffer().read(cx);
+                    let buffer = multibuffer.as_singleton();
+                    if agent_location.buffer.upgrade() == buffer {
+                        let excerpt_id = multibuffer.excerpt_ids().first().cloned();
+                        let anchor = editor::Anchor::in_buffer(
+                            excerpt_id.unwrap(),
+                            buffer.unwrap().read(cx).remote_id(),
+                            agent_location.position,
+                        );
                         editor.change_selections(Default::default(), window, cx, |selections| {
-                            selections.select_anchor_ranges([first_hunk_start..first_hunk_start]);
+                            selections.select_anchor_ranges([anchor..anchor]);
+                        })
+                    } else {
+                        let line = tool_call_location.line.unwrap_or_default();
+                        editor.change_selections(Default::default(), window, cx, |selections| {
+                            selections.select_ranges([Point::new(line, 0)..Point::new(line, 0)]);
                         })
                     }
                 })?;
