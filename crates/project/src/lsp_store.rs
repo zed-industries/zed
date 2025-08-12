@@ -654,7 +654,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(false),
+                                                None => OneOf::Left(true),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -709,7 +709,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let provider = match options {
-                                                None => OneOf::Left(false),
+                                                None => OneOf::Left(true),
                                                 Some(options) => OneOf::Right(options),
                                             };
                                             server.update_capabilities(|capabilities| {
@@ -738,7 +738,7 @@ impl LocalLspStore {
                                                 })
                                                 .transpose()?;
                                             let options = match options {
-                                                None => OneOf::Left(false),
+                                                None => OneOf::Left(true),
                                                 Some(options) => OneOf::Right(options),
                                             };
 
