@@ -20563,7 +20563,6 @@ impl Editor {
             .collect()
     }
 
-    // todo! send auto saved vs save
     fn report_editor_event(
         &self,
         reported_event: ReportEditorEvent,
