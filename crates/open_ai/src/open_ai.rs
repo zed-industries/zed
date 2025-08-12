@@ -445,7 +445,15 @@ pub async fn stream_completion(
                                 Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
+                                    Some(Err(anyhow!(error)))
+                                }
                             }
                         }
                     }
