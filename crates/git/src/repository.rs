@@ -1492,13 +1492,19 @@ impl GitRepository for RealGitRepository {
                     let mut excludes = exclude_files(git).await?;
 
                     git.run(&["add", "--all"]).await?;
-                    let tree = git.run(&["write-tree"]).await?;
+                    dbg!("added all files");
+                    let tree = git.run(&["write-tree"]).await;
+                    dbg!(&tree);
+                    let tree = tree?;
                     let checkpoint_sha = if let Some(head_sha) = head_sha.as_deref() {
+                        dbg!(&["git", "commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"]));
                         git.run(&["commit-tree", &tree, "-p", head_sha, "-m", "Checkpoint"])
                             .await?
                     } else {
+                        dbg!(&["git", "commit-tree", &tree, "-m", "Checkpoint"]);
                         git.run(&["commit-tree", &tree, "-m", "Checkpoint"]).await?
                     };
+                    dbg!(&checkpoint_sha);
 
                     excludes.restore_original().await?;
 
@@ -1551,6 +1557,8 @@ impl GitRepository for RealGitRepository {
         left: GitRepositoryCheckpoint,
         right: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<bool>> {
+        // todo! fail or short circuit
+
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
 
@@ -1559,6 +1567,11 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let working_directory = working_directory?;
                 let git = GitBinary::new(git_binary_path, working_directory, executor);
+                log::error!(
+                    "git diff-tree --quiet {} {}",
+                    left.commit_sha,
+                    right.commit_sha
+                );
                 let result = git
                     .run(&[
                         "diff-tree",
@@ -1567,6 +1580,7 @@ impl GitRepository for RealGitRepository {
                         &right.commit_sha.to_string(),
                     ])
                     .await;
+                dbg!(&result);
                 match result {
                     Ok(_) => Ok(true),
                     Err(error) => {

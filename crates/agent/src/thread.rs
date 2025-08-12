@@ -813,6 +813,7 @@ impl Thread {
     }
 
     fn finalize_pending_checkpoint(&mut self, cx: &mut Context<Self>) {
+        dbg!("finalize_pending_checkpoint");
         let pending_checkpoint = if self.is_generating() {
             return;
         } else if let Some(checkpoint) = self.pending_checkpoint.take() {
@@ -829,10 +830,13 @@ impl Thread {
         pending_checkpoint: ThreadCheckpoint,
         cx: &mut Context<Self>,
     ) {
+        dbg!("finalize_checkpoint");
         let git_store = self.project.read(cx).git_store().clone();
         let final_checkpoint = git_store.update(cx, |git_store, cx| git_store.checkpoint(cx));
         cx.spawn(async move |this, cx| match final_checkpoint.await {
             Ok(final_checkpoint) => {
+                dbg!(&pending_checkpoint.git_checkpoint);
+                dbg!(&final_checkpoint);
                 let equal = git_store
                     .update(cx, |store, cx| {
                         store.compare_checkpoints(
@@ -844,7 +848,7 @@ impl Thread {
                     .await
                     .unwrap_or(false);
 
-                if !equal {
+                if dbg!(!equal) {
                     this.update(cx, |this, cx| {
                         this.insert_checkpoint(pending_checkpoint, cx)
                     })?;
@@ -860,6 +864,7 @@ impl Thread {
     }
 
     fn insert_checkpoint(&mut self, checkpoint: ThreadCheckpoint, cx: &mut Context<Self>) {
+        dbg!("insert_checkpoint");
         self.checkpoints_by_message
             .insert(checkpoint.message_id, checkpoint);
         cx.emit(ThreadEvent::CheckpointChanged);
@@ -867,6 +872,7 @@ impl Thread {
     }
 
     pub fn last_restore_checkpoint(&self) -> Option<&LastRestoreCheckpoint> {
+        dbg!();
         self.last_restore_checkpoint.as_ref()
     }
 
