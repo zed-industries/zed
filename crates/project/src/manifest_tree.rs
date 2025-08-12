@@ -145,7 +145,8 @@ impl ManifestTree {
                 .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0
-                && let Some(provider) = ManifestProvidersStore::global(cx).get(manifest_name.borrow())
+                && let Some(provider) =
+                    ManifestProvidersStore::global(cx).get(manifest_name.borrow())
             {
                 let root = provider.search(ManifestQuery {
                     path: path.clone(),
