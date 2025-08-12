@@ -58,7 +58,6 @@ pub fn watch_config_file(
             futures::pin_mut!(events);
 
             let contents = fs.load(&path).await.unwrap_or_default();
-            println!("Contents:\n{}", contents);
             if tx.unbounded_send(contents).is_err() {
                 return;
             }

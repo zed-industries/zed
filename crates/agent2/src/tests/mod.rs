@@ -2,10 +2,9 @@ use super::*;
 use acp_thread::AgentConnection;
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
-use agent_settings::{AgentProfileId, AgentProfileSettings, AgentSettings};
+use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, UserStore};
-use collections::IndexMap;
 use fs::{FakeFs, Fs};
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
@@ -23,7 +22,7 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::{Settings, SettingsStore};
+use settings::SettingsStore;
 use smol::stream::StreamExt;
 use std::{cell::RefCell, path::Path, rc::Rc, sync::Arc, time::Duration};
 use util::path;
@@ -153,7 +152,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
         .collect()
         .await;
     assert_eq!(stop_events(events), vec![acp::StopReason::EndTurn]);
-    thread.update(cx, |thread, cx| {
+    thread.update(cx, |thread, _cx| {
         assert!(
             thread
                 .messages()
@@ -474,7 +473,80 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_profiles(cx: &mut TestAppContext) {}
+async fn test_profiles(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(DelayTool);
+        thread.add_tool(EchoTool);
+        thread.add_tool(InfiniteTool);
+    });
+
+    // Override profiles and wait for settings to be loaded.
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "profiles": {
+                    "test-1": {
+                        "name": "Test Profile 1",
+                        "tools": {
+                            EchoTool.name(): true,
+                            DelayTool.name(): true,
+                        }
+                    },
+                    "test-2": {
+                        "name": "Test Profile 2",
+                        "tools": {
+                            InfiniteTool.name(): true,
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    // Test that test-1 profile (default) has echo and delay tools
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test-1".into()));
+        thread.send("test", cx);
+    });
+    cx.run_until_parked();
+
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(pending_completions.len(), 1);
+    let completion = pending_completions.pop().unwrap();
+    let tool_names: Vec<String> = completion
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+    assert_eq!(tool_names, vec![DelayTool.name(), EchoTool.name()]);
+    fake_model.end_last_completion_stream();
+
+    // Switch to test-2 profile, and verify that it has only the infinite tool.
+    thread.update(cx, |thread, cx| {
+        thread.set_profile(AgentProfileId("test-2".into()));
+        thread.send("test2", cx)
+    });
+    cx.run_until_parked();
+    let mut pending_completions = fake_model.pending_completions();
+    assert_eq!(pending_completions.len(), 1);
+    let completion = pending_completions.pop().unwrap();
+    let tool_names: Vec<String> = completion
+        .tools
+        .iter()
+        .map(|tool| tool.name.clone())
+        .collect();
+    assert_eq!(tool_names, vec![InfiniteTool.name()]);
+}
 
 #[gpui::test]
 #[ignore = "can't run on CI yet"]
@@ -820,6 +892,7 @@ struct ThreadTest {
     model: Arc<dyn LanguageModel>,
     thread: Entity<Thread>,
     project_context: Rc<RefCell<ProjectContext>>,
+    fs: Arc<FakeFs>,
 }
 
 enum TestModel {
@@ -846,7 +919,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         .await
         .unwrap();
     fs.insert_file(
-        paths::settings_file().clone(),
+        paths::settings_file(),
         json!({
             "agent": {
                 "default_profile": "test-profile",
@@ -889,7 +962,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
     let templates = Templates::new();
 
     fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
     let model = cx
         .update(|cx| {
@@ -933,6 +1006,7 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         model,
         thread,
         project_context,
+        fs,
     }
 }
 
