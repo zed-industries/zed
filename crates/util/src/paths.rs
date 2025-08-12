@@ -354,8 +354,13 @@ impl PathWithPosition {
     ///     row: None,
     ///     column: None,
     /// });
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs:"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
+    ///     row: None,
+    ///     column: None,
+    /// });
     /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs::"),
+    ///     path: PathBuf::from("test_file.rs"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -447,6 +452,7 @@ impl PathWithPosition {
                         path_string.push_str(maybe_row);
                     }
                 }
+
                 for split in path_parts {
                     path_string.push(delimiter);
                     path_string.push_str(split);
@@ -740,7 +746,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs:"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }

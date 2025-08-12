@@ -1409,11 +1409,13 @@ impl PickerDelegate for FileFinderDelegate {
             #[cfg(not(windows))]
             let raw_query = raw_query.trim().to_owned();
 
-            let file_query_end = if path_position.path.to_str().unwrap_or(&raw_query) == raw_query {
+            let raw_query = raw_query.trim_end_matches(':').to_owned();
+            let path = path_position.path.to_str();
+            let file_query_end = if path.unwrap_or(&raw_query).trim_end_matches(':') == raw_query {
                 None
             } else {
                 // Safe to unwrap as we won't get here when the unwrap in if fails
-                Some(path_position.path.to_str().unwrap().len())
+                Some(path.unwrap().trim_end_matches(':').len())
             };
 
             let query = FileSearchQuery {
