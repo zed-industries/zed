@@ -72,7 +72,12 @@ impl LanguageModels {
     }
 
     fn refresh_list(&mut self, cx: &App) {
-        let providers = LanguageModelRegistry::global(cx).read(cx).providers();
+        let providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .into_iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .collect::<Vec<_>>();
 
         let mut language_model_list = IndexMap::default();
         let mut recommended_models = HashSet::default();
