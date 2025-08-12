@@ -2081,6 +2081,99 @@ impl GitPanel {
             .detach_and_log_err(cx);
     }
 
+    pub(crate) fn git_clone(&mut self, repo: String, window: &mut Window, cx: &mut Context<Self>) {
+        let path = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+        });
+
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut paths = path.await.ok()?.ok()??;
+            let mut path = paths.pop()?;
+            let repo_name = repo
+                .split(std::path::MAIN_SEPARATOR_STR)
+                .last()?
+                .strip_suffix(".git")?
+                .to_owned();
+
+            let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
+
+            let prompt_answer = match fs.git_clone(&repo, path.as_path()).await {
+                Ok(_) => cx.update(|window, cx| {
+                    window.prompt(
+                        PromptLevel::Info,
+                        "Git Clone",
+                        None,
+                        &["Add repo to project", "Open repo in new project"],
+                        cx,
+                    )
+                }),
+                Err(e) => {
+                    this.update(cx, |this: &mut GitPanel, cx| {
+                        let toast = StatusToast::new(e.to_string(), cx, |this, _| {
+                            this.icon(ToastIcon::new(IconName::XCircle).color(Color::Error))
+                                .dismiss_button(true)
+                        });
+
+                        this.workspace
+                            .update(cx, |workspace, cx| {
+                                workspace.toggle_status_toast(toast, cx);
+                            })
+                            .ok();
+                    })
+                    .ok()?;
+
+                    return None;
+                }
+            }
+            .ok()?;
+
+            path.push(repo_name);
+            match prompt_answer.await.ok()? {
+                0 => {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            workspace
+                                .project()
+                                .update(cx, |project, cx| {
+                                    project.create_worktree(path.as_path(), true, cx)
+                                })
+                                .detach();
+                        })
+                        .ok();
+                }
+                1 => {
+                    workspace
+                        .update(cx, move |workspace, cx| {
+                            workspace::open_new(
+                                Default::default(),
+                                workspace.app_state().clone(),
+                                cx,
+                                move |workspace, _, cx| {
+                                    cx.activate(true);
+                                    workspace
+                                        .project()
+                                        .update(cx, |project, cx| {
+                                            project.create_worktree(&path, true, cx)
+                                        })
+                                        .detach();
+                                },
+                            )
+                            .detach();
+                        })
+                        .ok();
+                }
+                _ => {}
+            }
+
+            Some(())
+        })
+        .detach();
+    }
+
     pub(crate) fn git_init(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let worktrees = self
             .project
@@ -2900,10 +2993,10 @@ impl GitPanel {
                 use remote_output::SuccessStyle::*;
                 match style {
                     Toast { .. } => {
-                        this.icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        this.icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                     }
                     ToastWithLog { output } => this
-                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action("View Log", move |window, cx| {
                             let output = output.clone();
                             let output =
@@ -2915,7 +3008,7 @@ impl GitPanel {
                                 .ok();
                         }),
                     PushPrLink { text, link } => this
-                        .icon(ToastIcon::new(IconName::GitBranchSmall).color(Color::Muted))
+                        .icon(ToastIcon::new(IconName::GitBranchAlt).color(Color::Muted))
                         .action(text, move |_, cx| cx.open_url(&link)),
                 }
             });
@@ -3109,7 +3202,7 @@ impl GitPanel {
                             .justify_center()
                             .border_l_1()
                             .border_color(cx.theme().colors().border)
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu({
@@ -4561,7 +4654,7 @@ impl Panel for GitPanel {
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<ui::IconName> {
-        Some(ui::IconName::GitBranchSmall).filter(|_| GitPanelSettings::get_global(cx).button)
+        Some(ui::IconName::GitBranchAlt).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 
     fn icon_tooltip(&self, _window: &Window, _cx: &App) -> Option<&'static str> {
@@ -4808,7 +4901,7 @@ impl RenderOnce for PanelRepoFooter {
                     .items_center()
                     .child(
                         div().child(
-                            Icon::new(IconName::GitBranchSmall)
+                            Icon::new(IconName::GitBranchAlt)
                                 .size(IconSize::Small)
                                 .color(if single_repo {
                                     Color::Disabled

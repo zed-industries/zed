@@ -5,25 +5,28 @@ self-hosted-runner:
     # GitHub-hosted Runners
     - github-8vcpu-ubuntu-2404
     - github-16vcpu-ubuntu-2404
+    - github-32vcpu-ubuntu-2404
+    - github-8vcpu-ubuntu-2204
+    - github-16vcpu-ubuntu-2204
+    - github-32vcpu-ubuntu-2204
+    - github-16vcpu-ubuntu-2204-arm
     - windows-2025-16
     - windows-2025-32
     - windows-2025-64
-    # Buildjet Ubuntu 20.04 - AMD x86_64
-    - buildjet-2vcpu-ubuntu-2004
-    - buildjet-4vcpu-ubuntu-2004
-    - buildjet-8vcpu-ubuntu-2004
-    - buildjet-16vcpu-ubuntu-2004
-    - buildjet-32vcpu-ubuntu-2004
-    # Buildjet Ubuntu 22.04 - AMD x86_64
-    - buildjet-2vcpu-ubuntu-2204
-    - buildjet-4vcpu-ubuntu-2204
-    - buildjet-8vcpu-ubuntu-2204
-    - buildjet-16vcpu-ubuntu-2204
-    - buildjet-32vcpu-ubuntu-2204
-    # Buildjet Ubuntu 22.04 - Graviton aarch64
-    - buildjet-8vcpu-ubuntu-2204-arm
-    - buildjet-16vcpu-ubuntu-2204-arm
-    - buildjet-32vcpu-ubuntu-2204-arm
+    # Namespace Ubuntu 20.04 (Release builds)
+    - namespace-profile-16x32-ubuntu-2004
+    - namespace-profile-32x64-ubuntu-2004
+    - namespace-profile-16x32-ubuntu-2004-arm
+    - namespace-profile-32x64-ubuntu-2004-arm
+    # Namespace Ubuntu 22.04 (Everything else)
+    - namespace-profile-2x4-ubuntu-2204
+    - namespace-profile-4x8-ubuntu-2204
+    - namespace-profile-8x16-ubuntu-2204
+    - namespace-profile-16x32-ubuntu-2204
+    - namespace-profile-32x64-ubuntu-2204
+    # Namespace Limited Preview
+    - namespace-profile-8x16-ubuntu-2004-arm-m4
+    - namespace-profile-8x32-ubuntu-2004-arm-m4
     # Self Hosted Runners
     - self-mini-macos
     - self-32vcpu-windows-2022
