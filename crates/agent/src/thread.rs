@@ -2268,6 +2268,15 @@ impl Thread {
                     max_attempts: 3,
                 })
             }
+            Other(err)
+                if err.is::<PaymentRequiredError>()
+                    || err.is::<ModelRequestLimitReachedError>() =>
+            {
+                // Retrying won't help for Payment Required or Model Request Limit errors (where
+                // the user must upgrade to usage-based billing to get more requests, or else wait
+                // for a significant amount of time for the request limit to reset).
+                None
+            }
             // Conservatively assume that any other errors are non-retryable
             HttpResponseError { .. } | Other(..) => Some(RetryStrategy::Fixed {
                 delay: BASE_RETRY_DELAY,
