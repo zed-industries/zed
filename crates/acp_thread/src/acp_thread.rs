@@ -254,6 +254,15 @@ impl ToolCall {
         }
 
         if let Some(raw_output) = raw_output {
+            if self.content.is_empty() {
+                if let Some(markdown) = markdown_for_raw_output(&raw_output, &language_registry, cx)
+                {
+                    self.content
+                        .push(ToolCallContent::ContentBlock(ContentBlock::Markdown {
+                            markdown,
+                        }));
+                }
+            }
             self.raw_output = Some(raw_output);
         }
     }
@@ -1263,6 +1272,48 @@ impl AcpThread {
 
     pub fn emit_server_exited(&mut self, status: ExitStatus, cx: &mut Context<Self>) {
         cx.emit(AcpThreadEvent::ServerExited(status));
+    }
+}
+
+fn markdown_for_raw_output(
+    raw_output: &serde_json::Value,
+    language_registry: &Arc<LanguageRegistry>,
+    cx: &mut App,
+) -> Option<Entity<Markdown>> {
+    match raw_output {
+        serde_json::Value::Null => None,
+        serde_json::Value::Bool(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::Number(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.to_string().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        serde_json::Value::String(value) => Some(cx.new(|cx| {
+            Markdown::new(
+                value.clone().into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
+        value => Some(cx.new(|cx| {
+            Markdown::new(
+                format!("```json\n{}\n```", value.to_string()).into(),
+                Some(language_registry.clone()),
+                None,
+                cx,
+            )
+        })),
     }
 }
 
