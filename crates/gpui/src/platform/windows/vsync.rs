@@ -16,14 +16,13 @@ use windows::{
             Dwm::{DWM_TIMING_INFO, DwmFlush, DwmGetCompositionTimingInfo},
         },
         System::{
-            LibraryLoader::GetProcAddress, Performance::QueryPerformanceFrequency,
+            LibraryLoader::{GetModuleHandleA, GetProcAddress},
+            Performance::QueryPerformanceFrequency,
             Threading::INFINITE,
         },
     },
     core::{HRESULT, s},
 };
-
-use crate::with_dll_library;
 
 static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
     let mut frequency = 0;
@@ -36,6 +35,8 @@ static QPC_TICKS_PER_SECOND: LazyLock<u64> = LazyLock::new(|| {
 const VSYNC_INTERVAL_THRESHOLD: Duration = Duration::from_millis(1);
 const DEFAULT_VSYNC_INTERVAL: Duration = Duration::from_micros(16_666); // ~60Hz
 
+// Here we are using dynamic loading of DirectComposition functions,
+// or the app will refuse to start on windows systems that do not support DirectComposition.
 type DCompositionGetFrameId =
     unsafe extern "system" fn(frameidtype: COMPOSITION_FRAME_ID_TYPE, frameid: *mut u64) -> HRESULT;
 type DCompositionGetStatistics = unsafe extern "system" fn(
@@ -55,25 +56,11 @@ pub(crate) struct VSyncProvider {
 
 impl VSyncProvider {
     pub(crate) fn new() -> Self {
-        if let Ok((get_frame_id, get_statistics, wait_for_comp_clock)) =
-            with_dll_library(s!("dcomp.dll"), |dcomp| unsafe {
-                let get_frame_id = GetProcAddress(dcomp, s!("DCompositionGetFrameId"))
-                    .ok_or(anyhow::anyhow!("Function DCompositionGetFrameId not found"))?;
-                let get_statistics = GetProcAddress(dcomp, s!("DCompositionGetStatistics")).ok_or(
-                    anyhow::anyhow!("Function DCompositionGetStatistics not found"),
-                )?;
-                let wait_for_comp_clock =
-                    GetProcAddress(dcomp, s!("DCompositionWaitForCompositorClock")).ok_or(
-                        anyhow::anyhow!("Function DCompositionWaitForCompositorClock not found"),
-                    )?;
-                Ok((get_frame_id, get_statistics, wait_for_comp_clock))
-            })
+        if let Some((get_frame_id, get_statistics, wait_for_comp_clock)) =
+            initialize_direct_composition()
+                .context("Retrieving DirectComposition functions")
+                .log_with_level(log::Level::Warn)
         {
-            let get_frame_id: DCompositionGetFrameId = unsafe { std::mem::transmute(get_frame_id) };
-            let get_statistics: DCompositionGetStatistics =
-                unsafe { std::mem::transmute(get_statistics) };
-            let wait_for_comp_clock: DCompositionWaitForCompositorClock =
-                unsafe { std::mem::transmute(wait_for_comp_clock) };
             let interval = get_dwm_interval_from_direct_composition(get_frame_id, get_statistics)
                 .context("Failed to get DWM interval from DirectComposition")
                 .log_err()
@@ -115,6 +102,28 @@ impl VSyncProvider {
             log::warn!("VSyncProvider::wait_for_vsync() took shorter than expected");
             std::thread::sleep(self.interval);
         }
+    }
+}
+
+fn initialize_direct_composition() -> Result<(
+    DCompositionGetFrameId,
+    DCompositionGetStatistics,
+    DCompositionWaitForCompositorClock,
+)> {
+    unsafe {
+        // Load DLL at runtime since older Windows versions don't have dcomp.
+        let hmodule = GetModuleHandleA(s!("dcomp.dll")).context("Loading dcomp.dll")?;
+        let get_frame_id_addr = GetProcAddress(hmodule, s!("DCompositionGetFrameId"))
+            .context("Function DCompositionGetFrameId not found")?;
+        let get_statistics_addr = GetProcAddress(hmodule, s!("DCompositionGetStatistics"))
+            .context("Function DCompositionGetStatistics not found")?;
+        let wait_for_compositor_clock_addr =
+            GetProcAddress(hmodule, s!("DCompositionWaitForCompositorClock"))
+                .context("Function DCompositionWaitForCompositorClock not found")?;
+        let get_frame_id = std::mem::transmute(get_frame_id_addr);
+        let get_statistics = std::mem::transmute(get_statistics_addr);
+        let wait_for_compositor_clock = std::mem::transmute(wait_for_compositor_clock_addr);
+        Ok((get_frame_id, get_statistics, wait_for_compositor_clock))
     }
 }
 
