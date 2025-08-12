@@ -962,6 +962,67 @@ enum FakeFsEntry {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl PartialEq for FakeFsEntry {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (
+                Self::File {
+                    inode: l_inode,
+                    mtime: l_mtime,
+                    len: l_len,
+                    content: l_content,
+                    git_dir_path: l_git_dir_path,
+                },
+                Self::File {
+                    inode: r_inode,
+                    mtime: r_mtime,
+                    len: r_len,
+                    content: r_content,
+                    git_dir_path: r_git_dir_path,
+                },
+            ) => {
+                l_inode == r_inode
+                    && l_mtime == r_mtime
+                    && l_len == r_len
+                    && l_content == r_content
+                    && l_git_dir_path == r_git_dir_path
+            }
+            (
+                Self::Dir {
+                    inode: l_inode,
+                    mtime: l_mtime,
+                    len: l_len,
+                    entries: l_entries,
+                    git_repo_state: l_git_repo_state,
+                },
+                Self::Dir {
+                    inode: r_inode,
+                    mtime: r_mtime,
+                    len: r_len,
+                    entries: r_entries,
+                    git_repo_state: r_git_repo_state,
+                },
+            ) => {
+                let same_repo_state = match (l_git_repo_state.as_ref(), r_git_repo_state.as_ref()) {
+                    (Some(l), Some(r)) => Arc::ptr_eq(l, r),
+                    (None, None) => true,
+                    _ => false,
+                };
+                l_inode == r_inode
+                    && l_mtime == r_mtime
+                    && l_len == r_len
+                    && l_entries == r_entries
+                    && same_repo_state
+            }
+            (Self::Symlink { target: l_target }, Self::Symlink { target: r_target }) => {
+                l_target == r_target
+            }
+            _ => false,
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl FakeFsState {
     fn get_and_increment_mtime(&mut self) -> MTime {
         let mtime = self.next_mtime;
@@ -1323,6 +1384,25 @@ impl FakeFs {
 
     pub fn flush_events(&self, count: usize) {
         self.state.lock().flush_events(count);
+    }
+
+    pub(crate) fn entry(&self, target: &Path) -> Result<FakeFsEntry> {
+        self.state.lock().entry(target).cloned()
+    }
+
+    pub(crate) fn insert_entry(&self, target: &Path, new_entry: FakeFsEntry) -> Result<()> {
+        let mut state = self.state.lock();
+        state.write_path(target, |entry| {
+            match entry {
+                btree_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(new_entry);
+                }
+                btree_map::Entry::Occupied(mut occupied_entry) => {
+                    occupied_entry.insert(new_entry);
+                }
+            }
+            Ok(())
+        })
     }
 
     #[must_use]
@@ -2368,6 +2448,7 @@ impl Fs for FakeFs {
                     dot_git_path: abs_dot_git.to_path_buf(),
                     repository_dir_path: repository_dir_path.to_owned(),
                     common_dir_path: common_dir_path.to_owned(),
+                    checkpoints: Arc::default(),
                 }) as _
             },
         )
