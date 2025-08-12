@@ -41,7 +41,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
 ```json
   // UI Font. Use ".SystemUIFont" to use the default system font (SF Pro on macOS),
   // or ".ZedSans" for the bundled default (currently IBM Plex)
-  "ui_font_family": ".SytemUIFont",
+  "ui_font_family": ".SystemUIFont",
   "ui_font_weight": 400, // Font weight in standard CSS units from 100 to 900.
   "ui_font_size": 16,
 
