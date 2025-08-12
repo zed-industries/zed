@@ -102,15 +102,15 @@ mod windows_impl {
         };
 
         match key {
-            "launch" => parse_launch_arg(value, result),
+            "launch" => parse_launch_arg(value, &mut result.launch),
             _ => log::error!("Unknown argument: --{}", key),
         }
     }
 
-    fn parse_launch_arg(value: &str, result: &mut Args) {
+    fn parse_launch_arg(value: &str, arg: &mut Option<bool>) {
         match value {
-            "true" => result.launch = Some(true),
-            "false" => result.launch = Some(false),
+            "true" => *arg = Some(true),
+            "false" => *arg = Some(false),
             _ => log::error!(
                 "Invalid value for --launch: '{}'. Expected 'true' or 'false'",
                 value
@@ -131,5 +131,48 @@ mod windows_impl {
                 MB_ICONERROR | MB_SYSTEMMODAL,
             )
         };
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::windows_impl::{Args, parse_launch_arg, parse_single_arg};
+
+        #[test]
+        fn test_parse_launch_arg() {
+            let mut arg = None;
+            parse_launch_arg("true", &mut arg);
+            assert_eq!(arg, Some(true));
+
+            let mut arg = None;
+            parse_launch_arg("false", &mut arg);
+            assert_eq!(arg, Some(false));
+
+            let mut arg = None;
+            parse_launch_arg("invalid", &mut arg);
+            assert_eq!(arg, None);
+        }
+
+        #[test]
+        fn test_parse_single_arg() {
+            let mut args = Args { launch: None };
+            parse_single_arg("--launch=true", &mut args);
+            assert_eq!(args.launch, Some(true));
+
+            let mut args = Args { launch: None };
+            parse_single_arg("--launch=false", &mut args);
+            assert_eq!(args.launch, Some(false));
+
+            let mut args = Args { launch: None };
+            parse_single_arg("--launch=invalid", &mut args);
+            assert_eq!(args.launch, None);
+
+            let mut args = Args { launch: None };
+            parse_single_arg("--launch", &mut args);
+            assert_eq!(args.launch, None);
+
+            let mut args = Args { launch: None };
+            parse_single_arg("--unknown", &mut args);
+            assert_eq!(args.launch, None);
+        }
     }
 }
