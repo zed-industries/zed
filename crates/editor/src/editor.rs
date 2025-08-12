@@ -254,6 +254,7 @@ enum ReportEditorEvent {
     Saved { auto_saved: bool },
     EditorOpened,
     ZetaTosClicked,
+    Closed,
 }
 
 impl ReportEditorEvent {
@@ -261,7 +262,8 @@ impl ReportEditorEvent {
         match self {
             Self::Saved { .. } => "Editor Saved",
             Self::EditorOpened => "Editor Opened",
-            Self::ZetaToSClicked => "Edit Prediction Provider ToS Clicked",
+            Self::ZetaTosClicked => "Edit Prediction Provider ToS Clicked",
+            Self::Closed => "Editor Closed",
         }
     }
 }
@@ -9140,7 +9142,7 @@ impl Editor {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(cx.listener(|this, _event, window, cx| {
                         cx.stop_propagation();
-                        this.report_editor_event(ReportEditorEvent::ZetaToSClicked, None, cx);
+                        this.report_editor_event(ReportEditorEvent::ZetaTosClicked, None, cx);
                         window.dispatch_action(
                             zed_actions::OpenZedPredictOnboarding.boxed_clone(),
                             cx,

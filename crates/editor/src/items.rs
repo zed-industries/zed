@@ -776,6 +776,10 @@ impl Item for Editor {
         }
     }
 
+    fn on_removed(&self, cx: &App) {
+        self.report_editor_event(ReportEditorEvent::Closed, None, cx);
+    }
+
     fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, true, false, cx);
@@ -1001,12 +1005,16 @@ impl Item for Editor {
     ) {
         self.workspace = Some((workspace.weak_handle(), workspace.database_id()));
         if let Some(workspace) = &workspace.weak_handle().upgrade() {
-            cx.subscribe(&workspace, |editor, _, event: &workspace::Event, _cx| {
-                if matches!(event, workspace::Event::ModalOpened) {
-                    editor.mouse_context_menu.take();
-                    editor.inline_blame_popover.take();
-                }
-            })
+            cx.subscribe(
+                &workspace,
+                |editor, _, event: &workspace::Event, _cx| match event {
+                    workspace::Event::ModalOpened => {
+                        editor.mouse_context_menu.take();
+                        editor.inline_blame_popover.take();
+                    }
+                    _ => {}
+                },
+            )
             .detach();
         }
     }
