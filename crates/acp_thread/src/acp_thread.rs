@@ -339,27 +339,6 @@ impl ContentBlock {
         }
 
         let new_content = self.extract_content_from_block(block);
-        let new_content = match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::Resource(acp::EmbeddedResource {
-                resource:
-                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
-                        uri,
-                        ..
-                    }),
-                ..
-            }) => {
-                if let Some(uri) = MentionUri::parse(&uri).log_err() {
-                    uri.to_link()
-                } else {
-                    uri.clone()
-                }
-            }
-            acp::ContentBlock::Image(_)
-            | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(acp::EmbeddedResource { .. })
-            | acp::ContentBlock::ResourceLink(_) => String::new(),
-        };
 
         match self {
             ContentBlock::Empty => {
@@ -378,10 +357,10 @@ impl ContentBlock {
     }
 
     fn resource_link_to_content(uri: &str) -> String {
-        if let Some(path) = uri.strip_prefix("file://") {
-            format!("{}", MentionPath(path.as_ref()))
+        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+            uri.to_link()
         } else {
-            uri.to_string()
+            uri.to_string().clone()
         }
     }
 
@@ -402,6 +381,14 @@ impl ContentBlock {
             acp::ContentBlock::ResourceLink(resource_link) => {
                 Self::resource_link_to_content(&resource_link.uri)
             }
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource:
+                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
+                        uri,
+                        ..
+                    }),
+                ..
+            }) => Self::resource_link_to_content(&uri),
             acp::ContentBlock::Image(_)
             | acp::ContentBlock::Audio(_)
             | acp::ContentBlock::Resource(_) => String::new(),
