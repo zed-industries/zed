@@ -1281,8 +1281,7 @@ impl LocalLspStore {
             }
         }
 
-        // Default to use all language servers.
-        let mut default_formatter_list: Vec<Formatter> = adapters_and_servers
+        let mut all_formatters: Vec<Formatter> = adapters_and_servers
             .iter()
             .map(|(_, server)| Formatter::LanguageServer {
                 name: Some(server.name().to_string()),
@@ -1303,12 +1302,12 @@ impl LocalLspStore {
                             std::slice::from_ref(&Formatter::LanguageServer { name: None })
                         }
                     }
-                    SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
+                    SelectedFormatter::List(list) => list.as_ref(),
                     SelectedFormatter::All => {
                         if settings.prettier.allowed {
-                            default_formatter_list.insert(0, Formatter::Prettier);
+                            all_formatters.insert(0, Formatter::Prettier);
                         }
-                        default_formatter_list.as_ref()
+                        all_formatters.as_ref()
                     }
                 }
             }
