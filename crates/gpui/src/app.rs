@@ -832,7 +832,7 @@ impl App {
         self.restart_observers
             .clone()
             .retain(&(), |observer| observer(self));
-        self.platform.restart(self.restart_path.clone())
+        self.platform.restart(self.restart_path.take())
     }
 
     /// Sets the path to use when restarting the application.
