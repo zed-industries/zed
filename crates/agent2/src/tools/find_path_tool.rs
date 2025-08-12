@@ -139,9 +139,6 @@ impl AgentTool for FindPathTool {
                         })
                         .collect(),
                 ),
-                raw_output: Some(serde_json::json!({
-                    "paths": &matches,
-                })),
                 ..Default::default()
             });
 
