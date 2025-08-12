@@ -15,7 +15,7 @@ impl VimTestContext {
         if cx.has_global::<VimGlobals>() {
             return;
         }
-        env_logger::init();
+        env_logger::try_init().ok();
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
