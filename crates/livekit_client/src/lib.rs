@@ -3,45 +3,45 @@ use collections::HashMap;
 mod remote_video_track_view;
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
-// #[cfg(not(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu"),
-//     target_os = "freebsd"
-// )))]
+#[cfg(not(any(
+    test,
+    feature = "test-support",
+    all(target_os = "windows", target_env = "gnu"),
+    target_os = "freebsd"
+)))]
 mod livekit_client;
-// #[cfg(not(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu"),
-//     target_os = "freebsd"
-// )))]
+#[cfg(not(any(
+    test,
+    feature = "test-support",
+    all(target_os = "windows", target_env = "gnu"),
+    target_os = "freebsd"
+)))]
 pub use livekit_client::*;
 
 // If you need proper LSP in livekit_client you've got to comment out
 // the mocks and test
 
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu"),
-//     target_os = "freebsd"
-// ))]
-// mod mock_client;
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu"),
-//     target_os = "freebsd"
-// ))]
-// pub mod test;
-// #[cfg(any(
-//     test,
-//     feature = "test-support",
-//     all(target_os = "windows", target_env = "gnu"),
-//     target_os = "freebsd"
-// ))]
-// pub use mock_client::*;
+#[cfg(any(
+    test,
+    feature = "test-support",
+    all(target_os = "windows", target_env = "gnu"),
+    target_os = "freebsd"
+))]
+mod mock_client;
+#[cfg(any(
+    test,
+    feature = "test-support",
+    all(target_os = "windows", target_env = "gnu"),
+    target_os = "freebsd"
+))]
+pub mod test;
+#[cfg(any(
+    test,
+    feature = "test-support",
+    all(target_os = "windows", target_env = "gnu"),
+    target_os = "freebsd"
+))]
+pub use mock_client::*;
 
 #[derive(Debug, Clone)]
 pub enum Participant {

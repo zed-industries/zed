@@ -498,8 +498,8 @@ impl NotificationFrame {
         }
     }
 
-    /// Determines whether the given notification ID should be supressable
-    /// Supressed motifications will not be shown anymore
+    /// Determines whether the given notification ID should be suppressible
+    /// Suppressed motifications will not be shown anymore
     pub fn show_suppress_button(mut self, show: bool) -> Self {
         self.show_suppress_button = show;
         self
@@ -762,7 +762,7 @@ pub mod simple_message_notification {
         }
 
         /// Determines whether the given notification ID should be supressable
-        /// Supressed motifications will not be shown anymor
+        /// Suppressed motifications will not be shown anymor
         pub fn show_suppress_button(mut self, show: bool) -> Self {
             self.show_suppress_button = show;
             self

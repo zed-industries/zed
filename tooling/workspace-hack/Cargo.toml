@@ -103,6 +103,7 @@ regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
+rodio = { version = "0.21", default-features = false, features = ["playback", "tracing", "wav", "wav_output"] }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
@@ -237,6 +238,7 @@ regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
 regex = { version = "1" }
 regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
+rodio = { version = "0.21", default-features = false, features = ["playback", "tracing", "wav", "wav_output"] }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustc-hash = { version = "1" }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }

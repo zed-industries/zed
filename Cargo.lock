@@ -20075,6 +20075,7 @@ dependencies = [
  "regex-automata 0.4.9",
  "regex-syntax 0.8.5",
  "ring",
+ "rodio",
  "rust_decimal",
  "rustc-hash 1.1.0",
  "rustix 0.38.44",

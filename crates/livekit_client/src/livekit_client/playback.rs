@@ -321,15 +321,18 @@ impl AudioStack {
     }
 }
 
-pub(super) fn convert_sample_data<TSource: SizedSample, TDest: SizedSample + FromSample<TSource>>(
-        data: &Data,
-    ) -> Vec<TDest> {
-        data.as_slice::<TSource>()
-            .unwrap()
-            .iter()
-            .map(|e| e.to_sample::<TDest>())
-            .collect()
-    }
+pub(super) fn convert_sample_data<
+    TSource: SizedSample,
+    TDest: SizedSample + FromSample<TSource>,
+>(
+    data: &Data,
+) -> Vec<TDest> {
+    data.as_slice::<TSource>()
+        .unwrap()
+        .iter()
+        .map(|e| e.to_sample::<TDest>())
+        .collect()
+}
 
 pub(super) fn get_sample_data(sample_format: SampleFormat, data: &Data) -> Result<Vec<i16>> {
     match sample_format {

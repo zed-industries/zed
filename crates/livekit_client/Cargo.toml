@@ -17,6 +17,7 @@ doctest = false
 name = "test_app"
 
 [features]
+record-microphone = []
 test-support = ["collections/test-support", "gpui/test-support"]
 
 [dependencies]
@@ -39,7 +40,7 @@ tokio-tungstenite.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
-rodio = { version = "0.21.1", default-features = false, features = ["wav_output"] }
+rodio = { workspace = true, features = ["wav_output"] }
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }

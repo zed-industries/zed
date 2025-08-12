@@ -363,6 +363,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
+rodio = { version = "0.21.1", default-features = false }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -564,7 +565,6 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "socks",
     "stream",
 ] }
-rodio = { version = "0.21.1", default-features = false }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
