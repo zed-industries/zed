@@ -1278,8 +1278,6 @@ impl AcpThreadView {
                                 .pr_1()
                                 .py_1()
                                 .rounded_t_md()
-                                .border_b_1()
-                                .border_color(self.tool_card_border_color(cx))
                                 .bg(self.tool_card_header_bg(cx))
                         } else {
                             this.opacity(0.8).hover(|style| style.opacity(1.))
@@ -1387,7 +1385,9 @@ impl AcpThreadView {
                     Empty.into_any_element()
                 }
             }
-            ToolCallContent::Diff(diff) => self.render_diff_editor(&diff.read(cx).multibuffer()),
+            ToolCallContent::Diff(diff) => {
+                self.render_diff_editor(&diff.read(cx).multibuffer(), cx)
+            }
             ToolCallContent::Terminal(terminal) => {
                 self.render_terminal_tool_call(terminal, tool_call, window, cx)
             }
@@ -1531,9 +1531,15 @@ impl AcpThreadView {
             })))
     }
 
-    fn render_diff_editor(&self, multibuffer: &Entity<MultiBuffer>) -> AnyElement {
+    fn render_diff_editor(
+        &self,
+        multibuffer: &Entity<MultiBuffer>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         v_flex()
             .h_full()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
             .child(
                 if let Some(editor) = self.diff_editors.get(&multibuffer.entity_id()) {
                     editor.clone().into_any_element()
