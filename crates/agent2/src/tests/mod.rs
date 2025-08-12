@@ -674,6 +674,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         language_models::init(user_store.clone(), client.clone(), cx);
         Project::init_settings(cx);
         LanguageModelRegistry::test(cx);
+        agent_settings::init(cx);
     });
     cx.executor().forbid_parking();
 
@@ -869,6 +870,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             id: acp::ToolCallId("1".into()),
             fields: acp::ToolCallUpdateFields {
                 status: Some(acp::ToolCallStatus::Completed),
+                raw_output: Some("Finished thinking.".into()),
                 ..Default::default()
             },
         }
