@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -402,11 +402,11 @@ impl GitRepository for FakeGitRepository {
         &self,
         _paths: Vec<RepoPath>,
         _env: Arc<HashMap<String, String>>,
-    ) -> BoxFuture<Result<()>> {
+    ) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
-    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<Result<()>> {
+    fn stash_pop(&self, _env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
         unimplemented!()
     }
 
@@ -489,6 +489,10 @@ impl GitRepository for FakeGitRepository {
         _base_checkpoint: GitRepositoryCheckpoint,
         _target_checkpoint: GitRepositoryCheckpoint,
     ) -> BoxFuture<'_, Result<String>> {
+        unimplemented!()
+    }
+
+    fn default_branch(&self) -> BoxFuture<'_, Result<Option<SharedString>>> {
         unimplemented!()
     }
 }

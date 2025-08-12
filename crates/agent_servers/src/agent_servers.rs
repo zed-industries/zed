@@ -1,3 +1,4 @@
+mod acp;
 mod claude;
 mod gemini;
 mod settings;
@@ -35,7 +36,6 @@ pub trait AgentServer: Send {
 
     fn connect(
         &self,
-        // these will go away when old_acp is fully removed
         root_dir: &Path,
         project: &Entity<Project>,
         cx: &mut App,
@@ -89,6 +89,7 @@ impl AgentServerCommand {
     pub(crate) async fn resolve(
         path_bin_name: &'static str,
         extra_args: &[&'static str],
+        fallback_path: Option<&Path>,
         settings: Option<AgentServerSettings>,
         project: &Entity<Project>,
         cx: &mut AsyncApp,
@@ -105,13 +106,24 @@ impl AgentServerCommand {
                 env: agent_settings.command.env,
             });
         } else {
-            find_bin_in_path(path_bin_name, project, cx)
-                .await
-                .map(|path| Self {
+            match find_bin_in_path(path_bin_name, project, cx).await {
+                Some(path) => Some(Self {
                     path,
                     args: extra_args.iter().map(|arg| arg.to_string()).collect(),
                     env: None,
-                })
+                }),
+                None => fallback_path.and_then(|path| {
+                    if path.exists() {
+                        Some(Self {
+                            path: path.to_path_buf(),
+                            args: extra_args.iter().map(|arg| arg.to_string()).collect(),
+                            env: None,
+                        })
+                    } else {
+                        None
+                    }
+                }),
+            }
         }
     }
 }

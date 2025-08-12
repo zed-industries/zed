@@ -58,14 +58,14 @@ use std::{
     path::PathBuf,
     process::ExitStatus,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use thiserror::Error;
 
 use gpui::{
-    AnyWindowHandle, App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla,
-    Keystroke, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
+    App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
+    ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -351,7 +351,7 @@ impl TerminalBuilder {
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
-        window: AnyWindowHandle,
+        window_id: u64,
         completion_tx: Sender<Option<ExitStatus>>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
@@ -463,11 +463,7 @@ impl TerminalBuilder {
         let term = Arc::new(FairMutex::new(term));
 
         //Setup the pty...
-        let pty = match tty::new(
-            &pty_options,
-            TerminalBounds::default().into(),
-            window.window_id().as_u64(),
-        ) {
+        let pty = match tty::new(&pty_options, TerminalBounds::default().into(), window_id) {
             Ok(pty) => pty,
             Err(error) => {
                 bail!(TerminalError {
@@ -538,10 +534,15 @@ impl TerminalBuilder {
 
                 'outer: loop {
                     let mut events = Vec::new();
+
+                    #[cfg(any(test, feature = "test-support"))]
+                    let mut timer = cx.background_executor().simulate_random_delay().fuse();
+                    #[cfg(not(any(test, feature = "test-support")))]
                     let mut timer = cx
                         .background_executor()
-                        .timer(Duration::from_millis(4))
+                        .timer(std::time::Duration::from_millis(4))
                         .fuse();
+
                     let mut wakeup = false;
                     loop {
                         futures::select_biased! {
@@ -2108,16 +2109,56 @@ pub fn rgba_color(r: u8, g: u8, b: u8) -> Hsla {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::{
+        IndexedCell, TerminalBounds, TerminalBuilder, TerminalContent, content_index_for_mouse,
+        rgb_for_index,
+    };
     use alacritty_terminal::{
         index::{Column, Line, Point as AlacPoint},
         term::cell::Cell,
     };
-    use gpui::{Pixels, Point, bounds, point, size};
+    use collections::HashMap;
+    use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
 
-    use crate::{
-        IndexedCell, TerminalBounds, TerminalContent, content_index_for_mouse, rgb_for_index,
-    };
+    #[cfg_attr(windows, ignore = "TODO: fix on windows")]
+    #[gpui::test]
+    async fn test_basic_terminal(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new(
+                None,
+                None,
+                None,
+                task::Shell::WithArguments {
+                    program: "echo".into(),
+                    args: vec!["hello".into()],
+                    title_override: None,
+                },
+                HashMap::default(),
+                CursorShape::default(),
+                AlternateScroll::On,
+                None,
+                false,
+                0,
+                completion_tx,
+                cx,
+            )
+            .unwrap()
+            .subscribe(cx)
+        });
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_eq!(
+            terminal.update(cx, |term, _| term.get_content()).trim(),
+            "hello"
+        );
+    }
 
     #[test]
     fn test_rgb_for_index() {

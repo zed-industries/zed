@@ -17,7 +17,7 @@ use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, Modifiers, ModifiersChangedEvent, ParentElement, Render, Styled, Task, WeakEntity,
-    Window, actions,
+    Window, actions, rems,
 };
 use open_path_prompt::OpenPathPrompt;
 use picker::{Picker, PickerDelegate};
@@ -350,7 +350,7 @@ impl FileFinder {
 
     pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
-        let small_width = Pixels(545.);
+        let small_width = rems(34.).to_pixels(window.rem_size());
 
         match width_setting {
             None | Some(FileFinderWidth::Small) => small_width,
@@ -1404,14 +1404,21 @@ impl PickerDelegate for FileFinderDelegate {
         } else {
             let path_position = PathWithPosition::parse_str(&raw_query);
 
+            #[cfg(windows)]
+            let raw_query = raw_query.trim().to_owned().replace("/", "\\");
+            #[cfg(not(windows))]
+            let raw_query = raw_query.trim().to_owned();
+
+            let file_query_end = if path_position.path.to_str().unwrap_or(&raw_query) == raw_query {
+                None
+            } else {
+                // Safe to unwrap as we won't get here when the unwrap in if fails
+                Some(path_position.path.to_str().unwrap().len())
+            };
+
             let query = FileSearchQuery {
-                raw_query: raw_query.trim().to_owned(),
-                file_query_end: if path_position.path.to_str().unwrap_or(raw_query) == raw_query {
-                    None
-                } else {
-                    // Safe to unwrap as we won't get here when the unwrap in if fails
-                    Some(path_position.path.to_str().unwrap().len())
-                },
+                raw_query,
+                file_query_end,
                 path_position,
             };
 
