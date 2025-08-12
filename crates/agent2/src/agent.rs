@@ -390,6 +390,14 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) {
         self.models = LanguageModels::refresh_list(cx);
+        for session in self.sessions.values_mut() {
+            session.thread.update(cx, |thread, _| {
+                let model_id = LanguageModels::model_id(&thread.selected_model);
+                if let Some(model) = self.models.model_from_id(&model_id) {
+                    thread.selected_model = model.clone();
+                }
+            });
+        }
     }
 }
 

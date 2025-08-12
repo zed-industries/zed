@@ -642,6 +642,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Get the session_id from the AcpThread
     let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
+    dbg!();
     // Test selected_model returns the default
     let model = cx
         .update(|cx| selector.selected_model(&session_id, cx))
@@ -652,11 +653,14 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         .unwrap();
     let model = model.as_fake();
     assert_eq!(model.id().0, "fake", "should return default model");
+    dbg!();
 
     let request = acp_thread.update(cx, |thread, cx| thread.send(vec!["abc".into()], cx));
     cx.run_until_parked();
+    dbg!();
     model.send_last_completion_stream_text_chunk("def");
     cx.run_until_parked();
+    dbg!();
     acp_thread.read_with(cx, |thread, cx| {
         assert_eq!(
             thread.to_markdown(cx),
