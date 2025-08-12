@@ -256,7 +256,7 @@ impl Project {
 
         let local_path = if is_ssh_terminal { None } else { path.clone() };
 
-        let mut python_venv_activate_command = None;
+        let mut python_venv_activate_command = Task::ready(None);
 
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
@@ -265,6 +265,7 @@ impl Project {
                         python_venv_directory,
                         &settings.detect_venv,
                         &settings.shell,
+                        cx,
                     );
                 }
 
@@ -419,9 +420,12 @@ impl Project {
             })
             .detach();
 
-            if let Some(activate_command) = python_venv_activate_command {
-                this.activate_python_virtual_environment(activate_command, &terminal_handle, cx);
-            }
+            this.activate_python_virtual_environment(
+                python_venv_activate_command,
+                &terminal_handle,
+                cx,
+            );
+
             terminal_handle
         })
     }
@@ -539,12 +543,15 @@ impl Project {
         venv_base_directory: &Path,
         venv_settings: &VenvSettings,
         shell: &Shell,
-    ) -> Option<String> {
-        let venv_settings = venv_settings.as_option()?;
+        cx: &mut App,
+    ) -> Task<Option<String>> {
+        let Some(venv_settings) = venv_settings.as_option() else {
+            return Task::ready(None);
+        };
         let activate_keyword = match venv_settings.activate_script {
             terminal_settings::ActivateScript::Default => match std::env::consts::OS {
                 "windows" => ".",
-                _ => "source",
+                _ => ".",
             },
             terminal_settings::ActivateScript::Nushell => "overlay use",
             terminal_settings::ActivateScript::PowerShell => ".",
@@ -589,30 +596,44 @@ impl Project {
                 .join(activate_script_name)
                 .to_string_lossy()
                 .to_string();
-            let quoted = shlex::try_quote(&path).ok()?;
-            smol::block_on(self.fs.metadata(path.as_ref()))
-                .ok()
-                .flatten()?;
 
-            Some(format!(
-                "{} {} ; clear{}",
-                activate_keyword, quoted, line_ending
-            ))
+            let is_valid_path = self.resolve_abs_path(path.as_ref(), cx);
+            cx.background_spawn(async move {
+                let quoted = shlex::try_quote(&path).ok()?;
+                if is_valid_path.await.is_some_and(|meta| meta.is_file()) {
+                    Some(format!(
+                        "{} {} ; clear{}",
+                        activate_keyword, quoted, line_ending
+                    ))
+                } else {
+                    None
+                }
+            })
         } else {
-            Some(format!(
+            Task::ready(Some(format!(
                 "{activate_keyword} {activate_script_name} {name}; clear{line_ending}",
                 name = venv_settings.venv_name
-            ))
+            )))
         }
     }
 
     fn activate_python_virtual_environment(
         &self,
-        command: String,
+        command: Task<Option<String>>,
         terminal_handle: &Entity<Terminal>,
         cx: &mut App,
     ) {
-        terminal_handle.update(cx, |terminal, _| terminal.input(command.into_bytes()));
+        terminal_handle.update(cx, |_, cx| {
+            cx.spawn(async move |this, cx| {
+                if let Some(command) = command.await {
+                    this.update(cx, |this, _| {
+                        this.input(command.into_bytes());
+                    })
+                    .ok();
+                }
+            })
+            .detach()
+        });
     }
 
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
