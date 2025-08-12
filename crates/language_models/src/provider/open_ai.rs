@@ -455,6 +455,7 @@ pub fn into_open_ai(
         } else {
             None
         },
+        prompt_cache_key: request.thread_id,
         tools: request
             .tools
             .into_iter()
