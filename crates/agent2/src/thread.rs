@@ -1,7 +1,8 @@
-use crate::{SystemPromptTemplate, Template, Templates};
+use crate::{ContextServerRegistry, SystemPromptTemplate, Template, Templates};
+use acp_thread::MentionUri;
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
 use cloud_llm_client::{CompletionIntent, CompletionMode};
@@ -13,10 +14,10 @@ use futures::{
 };
 use gpui::{App, Context, Entity, SharedString, Task};
 use language_model::{
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
     LanguageModelRequest, LanguageModelRequestMessage, LanguageModelRequestTool,
     LanguageModelToolResult, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, StopReason,
+    LanguageModelToolUse, LanguageModelToolUseId, Role, StopReason,
 };
 use log;
 use project::Project;
@@ -25,13 +26,31 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::{cell::RefCell, collections::BTreeMap, fmt::Write, rc::Rc, sync::Arc};
+use std::fmt::Write;
+use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone)]
 pub struct AgentMessage {
     pub role: Role,
     pub content: Vec<MessageContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessageContent {
+    Text(String),
+    Thinking {
+        text: String,
+        signature: Option<String>,
+    },
+    Mention {
+        uri: MentionUri,
+        content: String,
+    },
+    RedactedThinking(String),
+    Image(LanguageModelImage),
+    ToolUse(LanguageModelToolUse),
+    ToolResult(LanguageModelToolResult),
 }
 
 impl AgentMessage {
@@ -93,6 +112,9 @@ impl AgentMessage {
                         .unwrap();
                     }
                 }
+                MessageContent::Mention { uri, .. } => {
+                    write!(markdown, "{}", uri.to_link()).ok();
+                }
             }
         }
 
@@ -126,6 +148,8 @@ pub struct Thread {
     running_turn: Option<Task<()>>,
     pending_tool_uses: HashMap<LanguageModelToolUseId, LanguageModelToolUse>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
+    context_server_registry: Entity<ContextServerRegistry>,
+    profile_id: AgentProfileId,
     project_context: Rc<RefCell<ProjectContext>>,
     templates: Arc<Templates>,
     pub selected_model: Arc<dyn LanguageModel>,
@@ -137,16 +161,21 @@ impl Thread {
     pub fn new(
         project: Entity<Project>,
         project_context: Rc<RefCell<ProjectContext>>,
+        context_server_registry: Entity<ContextServerRegistry>,
         action_log: Entity<ActionLog>,
         templates: Arc<Templates>,
         default_model: Arc<dyn LanguageModel>,
+        cx: &mut Context<Self>,
     ) -> Self {
+        let profile_id = AgentSettings::get_global(cx).default_profile.clone();
         Self {
             messages: Vec::new(),
             completion_mode: CompletionMode::Normal,
             running_turn: None,
             pending_tool_uses: HashMap::default(),
             tools: BTreeMap::default(),
+            context_server_registry,
+            profile_id,
             project_context,
             templates,
             selected_model: default_model,
@@ -179,6 +208,10 @@ impl Thread {
         self.tools.remove(name).is_some()
     }
 
+    pub fn set_profile(&mut self, profile_id: AgentProfileId) {
+        self.profile_id = profile_id;
+    }
+
     pub fn cancel(&mut self) {
         self.running_turn.take();
 
@@ -203,10 +236,11 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send(
         &mut self,
-        content: impl Into<MessageContent>,
+        content: impl Into<UserMessage>,
         cx: &mut Context<Self>,
     ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
-        let content = content.into();
+        let content = content.into().0;
+
         let model = self.selected_model.clone();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
@@ -219,7 +253,7 @@ impl Thread {
         let user_message_ix = self.messages.len();
         self.messages.push(AgentMessage {
             role: Role::User,
-            content: vec![content],
+            content,
         });
         log::info!("Total messages in thread: {}", self.messages.len());
         self.running_turn = Some(cx.spawn(async move |thread, cx| {
@@ -298,6 +332,7 @@ impl Thread {
                                 } else {
                                     acp::ToolCallStatus::Completed
                                 }),
+                                raw_output: tool_result.output.clone(),
                                 ..Default::default()
                             },
                         );
@@ -341,7 +376,7 @@ impl Thread {
         log::debug!("System message built");
         AgentMessage {
             role: Role::System,
-            content: vec![prompt.into()],
+            content: vec![prompt.as_str().into()],
         }
     }
 
@@ -604,21 +639,23 @@ impl Thread {
         let messages = self.build_request_messages();
         log::info!("Request will include {} messages", messages.len());
 
-        let tools: Vec<LanguageModelRequestTool> = self
-            .tools
-            .values()
-            .filter_map(|tool| {
-                let tool_name = tool.name().to_string();
-                log::trace!("Including tool: {}", tool_name);
-                Some(LanguageModelRequestTool {
-                    name: tool_name,
-                    description: tool.description(cx).to_string(),
-                    input_schema: tool
-                        .input_schema(self.selected_model.tool_input_format())
-                        .log_err()?,
+        let tools = if let Some(tools) = self.tools(cx).log_err() {
+            tools
+                .filter_map(|tool| {
+                    let tool_name = tool.name().to_string();
+                    log::trace!("Including tool: {}", tool_name);
+                    Some(LanguageModelRequestTool {
+                        name: tool_name,
+                        description: tool.description().to_string(),
+                        input_schema: tool
+                            .input_schema(self.selected_model.tool_input_format())
+                            .log_err()?,
+                    })
                 })
-            })
-            .collect();
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         log::info!("Request includes {} tools", tools.len());
 
@@ -637,6 +674,35 @@ impl Thread {
 
         log::debug!("Completion request built successfully");
         request
+    }
+
+    fn tools<'a>(&'a self, cx: &'a App) -> Result<impl Iterator<Item = &'a Arc<dyn AnyAgentTool>>> {
+        let profile = AgentSettings::get_global(cx)
+            .profiles
+            .get(&self.profile_id)
+            .context("profile not found")?;
+
+        Ok(self
+            .tools
+            .iter()
+            .filter_map(|(tool_name, tool)| {
+                if profile.is_tool_enabled(tool_name) {
+                    Some(tool)
+                } else {
+                    None
+                }
+            })
+            .chain(self.context_server_registry.read(cx).servers().flat_map(
+                |(server_id, tools)| {
+                    tools.iter().filter_map(|(tool_name, tool)| {
+                        if profile.is_context_server_tool_enabled(&server_id.0, tool_name) {
+                            Some(tool)
+                        } else {
+                            None
+                        }
+                    })
+                },
+            )))
     }
 
     fn build_request_messages(&self) -> Vec<LanguageModelRequestMessage> {
@@ -658,11 +724,7 @@ impl Thread {
                     },
                     message.content.len()
                 );
-                LanguageModelRequestMessage {
-                    role: message.role,
-                    content: message.content.clone(),
-                    cache: false,
-                }
+                message.to_request()
             })
             .collect();
         messages
@@ -677,6 +739,20 @@ impl Thread {
     }
 }
 
+pub struct UserMessage(Vec<MessageContent>);
+
+impl From<Vec<MessageContent>> for UserMessage {
+    fn from(content: Vec<MessageContent>) -> Self {
+        UserMessage(content)
+    }
+}
+
+impl<T: Into<MessageContent>> From<T> for UserMessage {
+    fn from(content: T) -> Self {
+        UserMessage(vec![content.into()])
+    }
+}
+
 pub trait AgentTool
 where
     Self: 'static + Sized,
@@ -686,7 +762,7 @@ where
 
     fn name(&self) -> SharedString;
 
-    fn description(&self, _cx: &mut App) -> SharedString {
+    fn description(&self) -> SharedString {
         let schema = schemars::schema_for!(Self::Input);
         SharedString::new(
             schema
@@ -722,13 +798,13 @@ where
 pub struct Erased<T>(T);
 
 pub struct AgentToolOutput {
-    llm_output: LanguageModelToolResultContent,
-    raw_output: serde_json::Value,
+    pub llm_output: LanguageModelToolResultContent,
+    pub raw_output: serde_json::Value,
 }
 
 pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
-    fn description(&self, cx: &mut App) -> SharedString;
+    fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
     fn initial_title(&self, input: serde_json::Value) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
@@ -748,8 +824,8 @@ where
         self.0.name()
     }
 
-    fn description(&self, cx: &mut App) -> SharedString {
-        self.0.description(cx)
+    fn description(&self) -> SharedString {
+        self.0.description()
     }
 
     fn kind(&self) -> agent_client_protocol::ToolKind {
@@ -1057,5 +1133,209 @@ impl std::ops::Deref for ToolCallEventStreamReceiver {
 impl std::ops::DerefMut for ToolCallEventStreamReceiver {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl AgentMessage {
+    fn to_request(&self) -> language_model::LanguageModelRequestMessage {
+        let mut message = LanguageModelRequestMessage {
+            role: self.role,
+            content: Vec::with_capacity(self.content.len()),
+            cache: false,
+        };
+
+        const OPEN_CONTEXT: &str = "<context>\n\
+            The following items were attached by the user. \
+            They are up-to-date and don't need to be re-read.\n\n";
+
+        const OPEN_FILES_TAG: &str = "<files>";
+        const OPEN_SYMBOLS_TAG: &str = "<symbols>";
+        const OPEN_THREADS_TAG: &str = "<threads>";
+        const OPEN_RULES_TAG: &str =
+            "<rules>\nThe user has specified the following rules that should be applied:\n";
+
+        let mut file_context = OPEN_FILES_TAG.to_string();
+        let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
+        let mut thread_context = OPEN_THREADS_TAG.to_string();
+        let mut rules_context = OPEN_RULES_TAG.to_string();
+
+        for chunk in &self.content {
+            let chunk = match chunk {
+                MessageContent::Text(text) => language_model::MessageContent::Text(text.clone()),
+                MessageContent::Thinking { text, signature } => {
+                    language_model::MessageContent::Thinking {
+                        text: text.clone(),
+                        signature: signature.clone(),
+                    }
+                }
+                MessageContent::RedactedThinking(value) => {
+                    language_model::MessageContent::RedactedThinking(value.clone())
+                }
+                MessageContent::ToolUse(value) => {
+                    language_model::MessageContent::ToolUse(value.clone())
+                }
+                MessageContent::ToolResult(value) => {
+                    language_model::MessageContent::ToolResult(value.clone())
+                }
+                MessageContent::Image(value) => {
+                    language_model::MessageContent::Image(value.clone())
+                }
+                MessageContent::Mention { uri, content } => {
+                    match uri {
+                        MentionUri::File(path) | MentionUri::Symbol(path, _) => {
+                            write!(
+                                &mut symbol_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(&path),
+                                    text: &content.to_string(),
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Thread(_session_id) => {
+                            write!(&mut thread_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::Rule(_user_prompt_id) => {
+                            write!(
+                                &mut rules_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: "",
+                                    text: &content
+                                }
+                            )
+                            .ok();
+                        }
+                    }
+
+                    language_model::MessageContent::Text(uri.to_link())
+                }
+            };
+
+            message.content.push(chunk);
+        }
+
+        let len_before_context = message.content.len();
+
+        if file_context.len() > OPEN_FILES_TAG.len() {
+            file_context.push_str("</files>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(file_context));
+        }
+
+        if symbol_context.len() > OPEN_SYMBOLS_TAG.len() {
+            symbol_context.push_str("</symbols>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(symbol_context));
+        }
+
+        if thread_context.len() > OPEN_THREADS_TAG.len() {
+            thread_context.push_str("</threads>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(thread_context));
+        }
+
+        if rules_context.len() > OPEN_RULES_TAG.len() {
+            rules_context.push_str("</user_rules>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(rules_context));
+        }
+
+        if message.content.len() > len_before_context {
+            message.content.insert(
+                len_before_context,
+                language_model::MessageContent::Text(OPEN_CONTEXT.into()),
+            );
+            message
+                .content
+                .push(language_model::MessageContent::Text("</context>".into()));
+        }
+
+        message
+    }
+}
+
+fn codeblock_tag(full_path: &Path) -> String {
+    let mut result = String::new();
+
+    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+        let _ = write!(result, "{} ", extension);
+    }
+
+    let _ = write!(result, "{}", full_path.display());
+
+    result
+}
+
+impl From<acp::ContentBlock> for MessageContent {
+    fn from(value: acp::ContentBlock) -> Self {
+        match value {
+            acp::ContentBlock::Text(text_content) => MessageContent::Text(text_content.text),
+            acp::ContentBlock::Image(image_content) => {
+                MessageContent::Image(convert_image(image_content))
+            }
+            acp::ContentBlock::Audio(_) => {
+                // TODO
+                MessageContent::Text("[audio]".to_string())
+            }
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                match MentionUri::parse(&resource_link.uri) {
+                    Ok(uri) => Self::Mention {
+                        uri,
+                        content: String::new(),
+                    },
+                    Err(err) => {
+                        log::error!("Failed to parse mention link: {}", err);
+                        MessageContent::Text(format!(
+                            "[{}]({})",
+                            resource_link.name, resource_link.uri
+                        ))
+                    }
+                }
+            }
+            acp::ContentBlock::Resource(resource) => match resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(resource) => {
+                    match MentionUri::parse(&resource.uri) {
+                        Ok(uri) => Self::Mention {
+                            uri,
+                            content: resource.text,
+                        },
+                        Err(err) => {
+                            log::error!("Failed to parse mention link: {}", err);
+                            MessageContent::Text(
+                                MarkdownCodeBlock {
+                                    tag: &resource.uri,
+                                    text: &resource.text,
+                                }
+                                .to_string(),
+                            )
+                        }
+                    }
+                }
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => {
+                    // TODO
+                    MessageContent::Text("[blob]".to_string())
+                }
+            },
+        }
+    }
+}
+
+fn convert_image(image_content: acp::ImageContent) -> LanguageModelImage {
+    LanguageModelImage {
+        source: image_content.data.into(),
+        // TODO: make this optional?
+        size: gpui::Size::new(0.into(), 0.into()),
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(text: &str) -> Self {
+        MessageContent::Text(text.into())
     }
 }
