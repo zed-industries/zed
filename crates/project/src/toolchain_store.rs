@@ -12,8 +12,8 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
-    LanguageName, LanguageRegistry, LanguageToolchainStore, LocalLanguageToolchainStore,
-    ManifestDelegate, Toolchain, ToolchainList,
+    LanguageName, LanguageRegistry, LanguageToolchainStore, ManifestDelegate, Toolchain,
+    ToolchainList,
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
@@ -413,12 +413,6 @@ impl LocalToolchainStore {
                     .find_map(|root_path| paths.get(root_path))
             })
             .cloned()
-    }
-    pub(crate) fn as_local_trait_object(
-        &self,
-        cx: &Context<Self>,
-    ) -> Arc<dyn LocalLanguageToolchainStore> {
-        Arc::new(LocalStore(cx.weak_entity()))
     }
 }
 struct RemoteToolchainStore {

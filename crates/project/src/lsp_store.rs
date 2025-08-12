@@ -54,9 +54,9 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LocalLanguageToolchainStore, LspAdapter, LspAdapterDelegate,
-    ManifestDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
-    Transaction, Unclipped, WorkspaceFoldersContent,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, Patch,
+    PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction, Unclipped,
+    WorkspaceFoldersContent,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -288,7 +288,7 @@ impl LocalLspStore {
         let worktree = worktree_handle.read(cx);
 
         let root_path = worktree.abs_path();
-
+        let toolchain = key.toolchain.clone();
         let override_options = settings.initialization_options.clone();
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
@@ -299,8 +299,14 @@ impl LocalLspStore {
             adapter.name.0
         );
 
-        let binary =
-            self.get_language_server_binary(adapter.clone(), settings, delegate.clone(), true, cx);
+        let binary = self.get_language_server_binary(
+            adapter.clone(),
+            settings,
+            toolchain.clone(),
+            delegate.clone(),
+            true,
+            cx,
+        );
         let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
 
         let pending_server = cx.spawn({
@@ -357,19 +363,15 @@ impl LocalLspStore {
                 .diagnostics
                 .lsp_pull_diagnostics
                 .enabled;
-            let toolchains = self.toolchain_store().downgrade();
             cx.spawn(async move |cx| {
                 let result = async {
-                    let toolchains = toolchains
-                        .upgrade()
-                        .context("upgrading toolchains handle")?;
                     let language_server = pending_server.await?;
 
                     let workspace_config = Self::workspace_configuration_for_adapter(
                         adapter.adapter.clone(),
                         fs.as_ref(),
                         &delegate,
-                        &toolchains,
+                        toolchain,
                         cx,
                     )
                     .await?;
@@ -495,6 +497,7 @@ impl LocalLspStore {
         &self,
         adapter: Arc<CachedLspAdapter>,
         settings: Arc<LspSettings>,
+        toolchain: Option<Toolchain>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
         cx: &mut App,
@@ -528,13 +531,11 @@ impl LocalLspStore {
                 .unwrap_or_default(),
             allow_binary_download,
         };
-        let toolchains = self
-            .toolchain_store
-            .update(cx, |this, cx| this.as_local_trait_object(cx));
+
         cx.spawn(async move |cx| {
             let binary_result = adapter
                 .clone()
-                .get_language_server_command(delegate.clone(), toolchains, lsp_binary_options, cx)
+                .get_language_server_command(delegate.clone(), toolchain, lsp_binary_options, cx)
                 .await;
 
             delegate.update_status(adapter.name.clone(), BinaryStatus::None);
@@ -623,18 +624,20 @@ impl LocalLspStore {
                     let fs = fs.clone();
                     let mut cx = cx.clone();
                     async move {
-                        let toolchains = this
+                        let toolchain_for_id = this
                             .update(&mut cx, |this, _| {
-                                Some(this.as_local()?.toolchain_store().clone())
-                            })
-                            ?
-                            .context("Setting up handler for workspace configuration expected a local LSP store")?;
-
+                                this.as_local()?.language_server_ids.iter().find_map(
+                                    |(seed, value)| {
+                                        (value.id == server_id).then(|| seed.toolchain.clone())
+                                    },
+                                )
+                            })?
+                            .context("Expected the LSP store to be in a local mode")?;
                         let workspace_config = Self::workspace_configuration_for_adapter(
                             adapter.clone(),
                             fs.as_ref(),
                             &delegate,
-                            &toolchains,
+                            toolchain_for_id,
                             &mut cx,
                         )
                         .await?;
@@ -3400,13 +3403,12 @@ impl LocalLspStore {
         adapter: Arc<dyn LspAdapter>,
         fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        toolchains: &Entity<LocalToolchainStore>,
+        toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
-        let weak_toolchain = toolchains.update(cx, |this, cx| this.as_local_trait_object(cx))?;
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(fs, delegate, weak_toolchain, cx)
+            .workspace_configuration(fs, delegate, toolchain, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -4041,7 +4043,7 @@ impl LspStore {
                 return;
             };
 
-            let Ok(Some((fs, toolchain_store))) = this.read_with(cx, |this, _| {
+            let Ok(Some((fs, _))) = this.read_with(cx, |this, _| {
                 let local = this.as_local()?;
                 let toolchain_store = local.toolchain_store().clone();
                 return Some((local.fs.clone(), toolchain_store));
@@ -4055,7 +4057,7 @@ impl LspStore {
                         adapter,
                         fs.as_ref(),
                         &delegate,
-                        &toolchain_store,
+                        None,
                         cx,
                     )
                     .await
@@ -7482,7 +7484,7 @@ impl LspStore {
             let servers = lsp_store
                 .update(cx, |lsp_store, cx| {
                     let local = lsp_store.as_local()?;
-                    let toolchain_store = local.toolchain_store();
+
                     let servers = local
                         .language_server_ids
                         .iter()
@@ -7513,17 +7515,18 @@ impl LspStore {
                                     adapter, server, ..
                                 } => {
                                     let fs = fs.clone();
-                                    let toolchain_store = toolchain_store.clone();
+
                                     let adapter = adapter.clone();
                                     let server = server.clone();
                                     refreshed_servers.insert(server.name());
+                                    let toolchain = seed.toolchain.clone();
                                     Some(cx.spawn(async move |_, cx| {
                                         let settings =
                                             LocalLspStore::workspace_configuration_for_adapter(
                                                 adapter.adapter.clone(),
                                                 fs.as_ref(),
                                                 &delegate,
-                                                &toolchain_store,
+                                                toolchain,
                                                 cx,
                                             )
                                             .await
@@ -12762,7 +12765,7 @@ impl LspAdapter for SshLspAdapter {
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: Arc<dyn LocalLanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         Some(self.binary.clone())
