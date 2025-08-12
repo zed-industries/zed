@@ -36,8 +36,9 @@ impl Render for HelloWorld {
                             .py_2()
                             .px_7()
                             .border_3()
+                            .border_t_0()
                             .border_color(gpui::red())
-                            .child("Let build applications with GPUI."),
+                            .child("Let build applications with GPUI"),
                     )
                     .child(
                         div()
@@ -48,6 +49,7 @@ impl Render for HelloWorld {
                             .py_2()
                             .px_4()
                             .border_3()
+                            .border_b_0()
                             .border_dashed()
                             .border_color(gpui::black())
                             .child("The fast, productive UI framework for Rust"),

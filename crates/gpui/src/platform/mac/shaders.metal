@@ -110,16 +110,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
 
   // Apply content_mask corner radii clipping
   ContentMask_ScaledPixels content_mask = quad.content_mask;
-  if (content_mask.corner_radii.top_left > quad.corner_radii.top_left ||
-        content_mask.corner_radii.bottom_left > quad.corner_radii.bottom_left ||
-        content_mask.corner_radii.top_right > quad.corner_radii.top_right ||
-        content_mask.corner_radii.bottom_right > quad.corner_radii.bottom_right) {
-    float clip_sdf = quad_sdf(input.position.xy, content_mask.bounds, content_mask.corner_radii);
-    float clip_alpha = saturate(antialias_threshold - clip_sdf);
-
-    background_color.a *= clip_alpha;
-    border_color.a *= clip_alpha;
-  }
+  float clip_sdf = quad_sdf(input.position.xy, content_mask.bounds, content_mask.corner_radii);
+  float clip_alpha = saturate(antialias_threshold - clip_sdf);
+  background_color.a *= clip_alpha;
+  border_color.a *= clip_alpha;
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
