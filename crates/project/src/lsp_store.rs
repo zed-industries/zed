@@ -1451,7 +1451,9 @@ impl LocalLspStore {
                     }
                     SelectedFormatter::List(formatter_list) => formatter_list.as_ref(),
                     SelectedFormatter::All => {
-                        default_formatter_list.insert(0, Formatter::Prettier);
+                        if settings.prettier.allowed {
+                            default_formatter_list.insert(0, Formatter::Prettier);
+                        }
                         default_formatter_list.as_ref()
                     }
                 }
