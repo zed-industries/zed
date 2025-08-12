@@ -1114,7 +1114,7 @@ impl AcpThreadView {
                         ),
                 )
         } else {
-            div().child(tool_icon)
+            h_flex().child(tool_icon)
         }
     }
 
@@ -1178,6 +1178,7 @@ impl AcpThreadView {
             ToolCallContent::Diff(diff) => diff.read(cx).has_revealed_range(cx),
             _ => false,
         });
+        let use_card_layout = needs_confirmation || is_edit || has_diff;
 
         let is_collapsible =
             !tool_call.content.is_empty() && !needs_confirmation && !is_edit && !has_diff;
@@ -1199,6 +1200,11 @@ impl AcpThreadView {
                     linear_color_stop(color, 1.),
                     linear_color_stop(color.opacity(0.2), 0.),
                 ))
+        };
+        let gradient_color = if use_card_layout {
+            self.tool_card_header_bg(cx)
+        } else {
+            cx.theme().colors().panel_background
         };
 
         let tool_output_display = match &tool_call.status {
@@ -1227,7 +1233,7 @@ impl AcpThreadView {
         };
 
         v_flex()
-            .when(needs_confirmation || is_edit || has_diff, |this| {
+            .when(use_card_layout, |this| {
                 this.rounded_lg()
                     .border_1()
                     .border_color(self.tool_card_border_color(cx))
@@ -1241,7 +1247,7 @@ impl AcpThreadView {
                     .gap_1()
                     .justify_between()
                     .map(|this| {
-                        if needs_confirmation || is_edit || has_diff {
+                        if use_card_layout {
                             this.pl_2()
                                 .pr_1()
                                 .py_1()
@@ -1318,17 +1324,7 @@ impl AcpThreadView {
                                                 ),
                                             )),
                                     )
-                                    .map(|this| {
-                                        if needs_confirmation || is_edit || has_diff {
-                                            this.child(gradient_overlay(
-                                                self.tool_card_header_bg(cx),
-                                            ))
-                                        } else {
-                                            this.child(gradient_overlay(
-                                                cx.theme().colors().panel_background,
-                                            ))
-                                        }
-                                    })
+                                    .child(gradient_overlay(gradient_color))
                                     .on_click(cx.listener({
                                         let id = tool_call.id.clone();
                                         move |this: &mut Self, _, _, cx: &mut Context<Self>| {
@@ -1398,6 +1394,7 @@ impl AcpThreadView {
                     .label_size(LabelSize::Small)
                     .icon(IconName::ChevronUp)
                     .icon_color(Color::Muted)
+                    .icon_position(IconPosition::Start)
                     .on_click(cx.listener({
                         let id = tool_call_id.clone();
                         move |this: &mut Self, _, _, cx: &mut Context<Self>| {
