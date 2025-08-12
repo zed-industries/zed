@@ -2009,7 +2009,9 @@ impl AcpThreadView {
                     .when(self.plan_expanded, |parent| {
                         parent.child(self.render_plan_entries(plan, window, cx))
                     })
-                    .child(Divider::horizontal().color(DividerColor::Border))
+            })
+            .when(!plan.is_empty() && !changed_buffers.is_empty(), |this| {
+                this.child(Divider::horizontal().color(DividerColor::Border))
             })
             .when(!changed_buffers.is_empty(), |this| {
                 this.child(self.render_edits_summary(
