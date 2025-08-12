@@ -3,21 +3,25 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::{Editor, actions::DiffClipboardWithSelectionData};
+use editor::{Editor, EditorElement, EditorStyle, actions::DiffClipboardWithSelectionData};
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, Context, FocusHandle, Window, actions};
+use gpui::{
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, TextStyle,
+    Window, actions,
+};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
+use theme::ThemeSettings;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
 use zed_actions;
 
-use crate::text_diff_view::TextDiffView;
+use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -168,6 +172,19 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.git_init(window, cx);
             });
+        });
+        workspace.register_action(|workspace, _action: &git::Clone, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+
+            workspace.toggle_modal(window, cx, |window, cx| {
+                GitCloneModal::show(panel, window, cx)
+            });
+
+            // panel.update(cx, |panel, cx| {
+            //     panel.git_clone(window, cx);
+            // });
         });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
@@ -613,3 +630,98 @@ impl Component for GitStatusIcon {
         )
     }
 }
+
+struct GitCloneModal {
+    panel: Entity<GitPanel>,
+    repo_input: Entity<Editor>,
+    focus_handle: FocusHandle,
+}
+
+impl GitCloneModal {
+    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let repo_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter repository", cx);
+            editor
+        });
+        let focus_handle = repo_input.focus_handle(cx);
+
+        window.focus(&focus_handle);
+
+        Self {
+            panel,
+            repo_input,
+            focus_handle,
+        }
+    }
+
+    fn render_editor(&self, window: &Window, cx: &App) -> impl IntoElement {
+        let settings = ThemeSettings::get_global(cx);
+        let theme = cx.theme();
+
+        let text_style = TextStyle {
+            color: cx.theme().colors().text,
+            font_family: settings.buffer_font.family.clone(),
+            font_features: settings.buffer_font.features.clone(),
+            font_size: settings.buffer_font_size(cx).into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
+            background_color: Some(theme.colors().editor_background),
+            ..Default::default()
+        };
+
+        let element = EditorElement::new(
+            &self.repo_input,
+            EditorStyle {
+                background: theme.colors().editor_background,
+                local_player: theme.players().local(),
+                text: text_style,
+                ..Default::default()
+            },
+        );
+
+        div()
+            .rounded_md()
+            .p_1()
+            .border_1()
+            .border_color(theme.colors().border_variant)
+            .when(
+                self.repo_input
+                    .focus_handle(cx)
+                    .contains_focused(window, cx),
+                |this| this.border_color(theme.colors().border_focused),
+            )
+            .child(element)
+            .bg(theme.colors().editor_background)
+    }
+}
+
+impl Focusable for GitCloneModal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for GitCloneModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .w(rems(34.))
+            .elevation_3(cx)
+            .child(self.render_editor(window, cx))
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let repo = this.repo_input.read(cx).text(cx);
+                this.panel.update(cx, |panel, cx| {
+                    panel.git_clone(repo, window, cx);
+                });
+                cx.emit(DismissEvent);
+            }))
+    }
+}
+
+impl EventEmitter<DismissEvent> for GitCloneModal {}
+
+impl ModalView for GitCloneModal {}

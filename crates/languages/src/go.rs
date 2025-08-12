@@ -487,6 +487,8 @@ const GO_MODULE_ROOT_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_MODULE_ROOT"));
 const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
+const GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_TABLE_TEST_CASE_NAME"));
 
 impl ContextProvider for GoContextProvider {
     fn build_context(
@@ -545,10 +547,19 @@ impl ContextProvider for GoContextProvider {
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
+        let table_test_case_name = variables.get(&VariableName::Custom(Cow::Borrowed(
+            "_table_test_case_name",
+        )));
+
+        let go_table_test_case_variable = table_test_case_name
+            .and_then(extract_subtest_name)
+            .map(|case_name| (GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.clone(), case_name));
+
         Task::ready(Ok(TaskVariables::from_iter(
             [
                 go_package_variable,
                 go_subtest_variable,
+                go_table_test_case_variable,
                 go_module_root_variable,
             ]
             .into_iter()
@@ -570,6 +581,28 @@ impl ContextProvider for GoContextProvider {
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
         Task::ready(Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: format!(
+                    "go test {} -v -run {}/{}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                    GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "\\^{}\\$/\\^{}\\$",
+                        VariableName::Symbol.template_value(),
+                        GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.template_value(),
+                    ),
+                ],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-table-test-case".to_owned()],
+                ..TaskTemplate::default()
+            },
             TaskTemplate {
                 label: format!(
                     "go test {} -run {}",
@@ -842,10 +875,21 @@ mod tests {
                 .collect()
         });
 
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
         assert!(
-            runnables.len() == 2,
-            "Should find test function and subtest with double quotes, found: {}",
-            runnables.len()
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-subtest".to_string()),
+            "Should find go-subtest tag, found: {:?}",
+            tag_strings
         );
 
         let buffer = cx.new(|cx| {
@@ -860,10 +904,299 @@ mod tests {
                 .collect()
         });
 
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
         assert!(
-            runnables.len() == 2,
-            "Should find test function and subtest with backticks, found: {}",
-            runnables.len()
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-subtest".to_string()),
+            "Should find go-subtest tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_slice_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            _ = "some random string"
+
+            testCases := []struct{
+                name string
+                anotherStr string
+            }{
+                {
+                    name: "test case 1",
+                    anotherStr: "foo",
+                },
+                {
+                    name: "test case 2",
+                    anotherStr: "bar",
+                },
+            }
+
+            notATableTest := []struct{
+                name string
+            }{
+                {
+                    name: "some string",
+                },
+                {
+                    name: "some other string",
+                },
+            }
+
+            for _, tc := range testCases {
+                t.Run(tc.name, func(t *testing.T) {
+                    // test code here
+                })
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
+        );
+
+        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
+        let go_table_test_count = tag_strings
+            .iter()
+            .filter(|&tag| tag == "go-table-test-case")
+            .count();
+
+        assert!(
+            go_test_count == 1,
+            "Should find exactly 1 go-test, found: {}",
+            go_test_count
+        );
+        assert!(
+            go_table_test_count == 2,
+            "Should find exactly 2 go-table-test-case, found: {}",
+            go_table_test_count
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_slice_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        func Example() {
+            _ = "some random string"
+
+            notATableTest := []struct{
+                name string
+            }{
+                {
+                    name: "some string",
+                },
+                {
+                    name: "some other string",
+                },
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            !tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_map_detection(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        import "testing"
+
+        func TestExample(t *testing.T) {
+            _ = "some random string"
+
+           	testCases := map[string]struct {
+          		someStr string
+          		fail    bool
+           	}{
+          		"test failure": {
+         			someStr: "foo",
+         			fail:    true,
+          		},
+          		"test success": {
+         			someStr: "bar",
+         			fail:    false,
+          		},
+           	}
+
+           	notATableTest := map[string]struct {
+          		someStr string
+           	}{
+          		"some string": {
+         			someStr: "foo",
+          		},
+          		"some other string": {
+         			someStr: "bar",
+          		},
+           	}
+
+            for name, tc := range testCases {
+                t.Run(name, func(t *testing.T) {
+                    // test code here
+                })
+            }
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
+        );
+
+        let go_test_count = tag_strings.iter().filter(|&tag| tag == "go-test").count();
+        let go_table_test_count = tag_strings
+            .iter()
+            .filter(|&tag| tag == "go-table-test-case")
+            .count();
+
+        assert!(
+            go_test_count == 1,
+            "Should find exactly 1 go-test, found: {}",
+            go_test_count
+        );
+        assert!(
+            go_table_test_count == 2,
+            "Should find exactly 2 go-table-test-case, found: {}",
+            go_table_test_count
+        );
+    }
+
+    #[gpui::test]
+    fn test_go_table_test_map_ignored(cx: &mut TestAppContext) {
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
+
+        let table_test = r#"
+        package main
+
+        func Example() {
+            _ = "some random string"
+
+           	notATableTest := map[string]struct {
+          		someStr string
+           	}{
+          		"some string": {
+         			someStr: "foo",
+          		},
+          		"some other string": {
+         			someStr: "bar",
+          		},
+           	}
+        }
+        "#;
+
+        let buffer =
+            cx.new(|cx| crate::Buffer::local(table_test, cx).with_language(language.clone(), cx));
+        cx.executor().run_until_parked();
+
+        let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot.runnable_ranges(0..table_test.len()).collect()
+        });
+
+        let tag_strings: Vec<String> = runnables
+            .iter()
+            .flat_map(|r| &r.runnable.tags)
+            .map(|tag| tag.0.to_string())
+            .collect();
+
+        assert!(
+            !tag_strings.contains(&"go-test".to_string()),
+            "Should find go-test tag, found: {:?}",
+            tag_strings
+        );
+        assert!(
+            !tag_strings.contains(&"go-table-test-case".to_string()),
+            "Should find go-table-test-case tag, found: {:?}",
+            tag_strings
         );
     }
 

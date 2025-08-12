@@ -37,7 +37,6 @@ use release_channel::AppVersion;
 use settings::WorktreeId;
 use std::str::FromStr;
 use std::{
-    borrow::Cow,
     cmp,
     fmt::Write,
     future::Future,
@@ -66,6 +65,7 @@ const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_ch
 const MAX_CONTEXT_TOKENS: usize = 150;
 const MAX_REWRITE_TOKENS: usize = 350;
 const MAX_EVENT_TOKENS: usize = 500;
+const MAX_DIAGNOSTIC_GROUPS: usize = 10;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -429,6 +429,7 @@ impl Zeta {
                 body,
                 editable_range,
             } = gather_task.await?;
+            let done_gathering_context_at = Instant::now();
 
             log::debug!(
                 "Events:\n{}\nExcerpt:\n{:?}",
@@ -481,6 +482,7 @@ impl Zeta {
                 }
             };
 
+            let received_response_at = Instant::now();
             log::debug!("completion response: {}", &response.output_excerpt);
 
             if let Some(usage) = usage {
@@ -492,7 +494,7 @@ impl Zeta {
                 .ok();
             }
 
-            Self::process_completion_response(
+            let edit_prediction = Self::process_completion_response(
                 response,
                 buffer,
                 &snapshot,
@@ -505,7 +507,25 @@ impl Zeta {
                 buffer_snapshotted_at,
                 &cx,
             )
-            .await
+            .await;
+
+            let finished_at = Instant::now();
+
+            // record latency for ~1% of requests
+            if rand::random::<u8>() <= 2 {
+                telemetry::event!(
+                    "Edit Prediction Request",
+                    context_latency = done_gathering_context_at
+                        .duration_since(buffer_snapshotted_at)
+                        .as_millis(),
+                    request_latency = received_response_at
+                        .duration_since(done_gathering_context_at)
+                        .as_millis(),
+                    process_latency = finished_at.duration_since(received_response_at).as_millis()
+                );
+            }
+
+            edit_prediction
         })
     }
 
@@ -1175,7 +1195,9 @@ pub fn gather_context(
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let diagnostic_groups = if diagnostic_groups.is_empty() {
+            let diagnostic_groups = if diagnostic_groups.is_empty()
+                || diagnostic_groups.len() >= MAX_DIAGNOSTIC_GROUPS
+            {
                 None
             } else {
                 Some(diagnostic_groups)
@@ -1189,21 +1211,16 @@ pub fn gather_context(
                 MAX_CONTEXT_TOKENS,
             );
             let input_events = make_events_prompt();
-            let input_outline = if can_collect_data {
-                prompt_for_outline(&snapshot)
-            } else {
-                String::new()
-            };
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
             let body = PredictEditsBody {
                 input_events,
                 input_excerpt: input_excerpt.prompt,
-                speculated_output: Some(input_excerpt.speculated_output),
-                outline: Some(input_outline),
                 can_collect_data,
                 diagnostic_groups,
                 git_info,
+                outline: None,
+                speculated_output: None,
             };
 
             Ok(GatherContextOutput {
@@ -1212,32 +1229,6 @@ pub fn gather_context(
             })
         }
     })
-}
-
-fn prompt_for_outline(snapshot: &BufferSnapshot) -> String {
-    let mut input_outline = String::new();
-
-    writeln!(
-        input_outline,
-        "```{}",
-        snapshot
-            .file()
-            .map_or(Cow::Borrowed("untitled"), |file| file
-                .path()
-                .to_string_lossy())
-    )
-    .unwrap();
-
-    if let Some(outline) = snapshot.outline(None) {
-        for item in &outline.items {
-            let spacing = " ".repeat(item.depth);
-            writeln!(input_outline, "{}{}", spacing, item.text).unwrap();
-        }
-    }
-
-    writeln!(input_outline, "```").unwrap();
-
-    input_outline
 }
 
 fn prompt_for_events(events: &VecDeque<Event>, mut remaining_tokens: usize) -> String {

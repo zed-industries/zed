@@ -1,5 +1,9 @@
 use crate::{AgentResponseEvent, Thread, templates::Templates};
-use crate::{EditFileTool, FindPathTool, ReadFileTool, ThinkingTool, ToolCallAuthorization};
+use crate::{
+    CopyPathTool, CreateDirectoryTool, DiagnosticsTool, EditFileTool, FetchTool, FindPathTool,
+    GrepTool, ListDirectoryTool, MovePathTool, NowTool, OpenTool, ReadFileTool, TerminalTool,
+    ThinkingTool, ToolCallAuthorization, WebSearchTool,
+};
 use acp_thread::ModelSelector;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
@@ -414,10 +418,22 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
                     let thread = cx.new(|cx| {
                         let mut thread = Thread::new(project.clone(), agent.project_context.clone(), action_log.clone(), agent.templates.clone(), default_model);
+                        thread.add_tool(CreateDirectoryTool::new(project.clone()));
+                        thread.add_tool(CopyPathTool::new(project.clone()));
+                        thread.add_tool(DiagnosticsTool::new(project.clone()));
+                        thread.add_tool(MovePathTool::new(project.clone()));
+                        thread.add_tool(ListDirectoryTool::new(project.clone()));
+                        thread.add_tool(OpenTool::new(project.clone()));
                         thread.add_tool(ThinkingTool);
                         thread.add_tool(FindPathTool::new(project.clone()));
+                        thread.add_tool(FetchTool::new(project.read(cx).client().http_client()));
+                        thread.add_tool(GrepTool::new(project.clone()));
                         thread.add_tool(ReadFileTool::new(project.clone(), action_log));
                         thread.add_tool(EditFileTool::new(cx.entity()));
+                        thread.add_tool(NowTool);
+                        thread.add_tool(TerminalTool::new(project.clone(), cx));
+                        // TODO: Needs to be conditional based on zed model or not
+                        thread.add_tool(WebSearchTool);
                         thread
                     });
 
