@@ -238,7 +238,7 @@ impl LspAdapter for RustLspAdapter {
         )
         .await?;
         make_file_executable(&server_path).await?;
-        remove_matching(&container_dir, |path| server_path != path).await;
+        remove_matching(&container_dir, |path| path != destination_path).await;
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
@@ -1023,8 +1023,14 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             last = Some(path);
         }
 
+        let path = last.context("no cached binary")?;
+        let path = match RustLspAdapter::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => path.clone().join("rust-analyzer.exe"), // zip contains a .exe
+        };
+
         anyhow::Ok(LanguageServerBinary {
-            path: last.context("no cached binary")?,
+            path,
             env: None,
             arguments: Default::default(),
         })
