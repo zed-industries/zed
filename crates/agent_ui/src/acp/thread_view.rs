@@ -4,15 +4,17 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
+use agent::{TextThreadStore, ThreadStore};
 use agent_client_protocol as acp;
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
+use editor::scroll::Autoscroll;
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
-    EditorStyle, MinimapVisibility, MultiBuffer, PathKey,
+    EditorStyle, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
 };
 use file_icons::FileIcons;
 use gpui::{
@@ -27,8 +29,10 @@ use language::{Buffer, Language};
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
+use prompt_store::PromptId;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::{
     cell::RefCell, collections::BTreeMap, path::Path, process::ExitStatus, rc::Rc, sync::Arc,
@@ -44,6 +48,7 @@ use ui::{
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage, ToggleModelSelector};
+use zed_actions::assistant::OpenRulesLibrary;
 
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
@@ -61,6 +66,8 @@ pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
+    thread_store: WeakEntity<ThreadStore>,
+    text_thread_store: WeakEntity<TextThreadStore>,
     thread_state: ThreadState,
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     terminal_views: HashMap<EntityId, Entity<TerminalView>>,
@@ -108,6 +115,8 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        thread_store: WeakEntity<ThreadStore>,
+        text_thread_store: WeakEntity<TextThreadStore>,
         message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
         min_lines: usize,
         max_lines: Option<usize>,
@@ -145,6 +154,8 @@ impl AcpThreadView {
             editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
                 mention_set.clone(),
                 workspace.clone(),
+                thread_store.clone(),
+                text_thread_store.clone(),
                 cx.weak_entity(),
             ))));
             editor.set_context_menu_options(ContextMenuOptions {
@@ -188,6 +199,8 @@ impl AcpThreadView {
             agent: agent.clone(),
             workspace: workspace.clone(),
             project: project.clone(),
+            thread_store,
+            text_thread_store,
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
             model_selector: None,
@@ -401,7 +414,17 @@ impl AcpThreadView {
         let mut chunks: Vec<acp::ContentBlock> = Vec::new();
         let project = self.project.clone();
 
-        let contents = self.mention_set.lock().contents(project, cx);
+        let Some(thread_store) = self.thread_store.upgrade() else {
+            return;
+        };
+        let Some(text_thread_store) = self.text_thread_store.upgrade() else {
+            return;
+        };
+
+        let contents =
+            self.mention_set
+                .lock()
+                .contents(project, thread_store, text_thread_store, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
             let contents = match contents.await {
@@ -439,7 +462,7 @@ impl AcpThreadView {
                                         acp::TextResourceContents {
                                             mime_type: None,
                                             text: mention.content.clone(),
-                                            uri: mention.uri.to_uri(),
+                                            uri: mention.uri.to_uri().to_string(),
                                         },
                                     ),
                                 }));
@@ -614,8 +637,7 @@ impl AcpThreadView {
                     let path = PathBuf::from(&resource.uri);
                     let project_path = project.read(cx).project_path_for_absolute_path(&path, cx);
                     let start = text.len();
-                    let content = MentionUri::File(path).to_uri();
-                    text.push_str(&content);
+                    let _ = write!(&mut text, "{}", MentionUri::File(path).to_uri());
                     let end = text.len();
                     if let Some(project_path) = project_path {
                         let filename: SharedString = project_path
@@ -663,7 +685,9 @@ impl AcpThreadView {
                 );
 
                 if let Some(crease_id) = crease_id {
-                    mention_set.lock().insert(crease_id, project_path);
+                    mention_set
+                        .lock()
+                        .insert(crease_id, MentionUri::File(project_path));
                 }
             }
         }
@@ -2698,9 +2722,72 @@ impl AcpThreadView {
                             .detach_and_log_err(cx);
                     }
                 }
-                _ => {
-                    // TODO
-                    unimplemented!()
+                MentionUri::Symbol {
+                    path, line_range, ..
+                }
+                | MentionUri::Selection { path, line_range } => {
+                    let project = workspace.project();
+                    let Some((path, _)) = project.update(cx, |project, cx| {
+                        let path = project.find_project_path(path, cx)?;
+                        let entry = project.entry_for_path(&path, cx)?;
+                        Some((path, entry))
+                    }) else {
+                        return;
+                    };
+
+                    let item = workspace.open_path(path, None, true, window, cx);
+                    window
+                        .spawn(cx, async move |cx| {
+                            let Some(editor) = item.await?.downcast::<Editor>() else {
+                                return Ok(());
+                            };
+                            let range = Point::new(line_range.start as u32, 0)
+                                ..Point::new(line_range.start as u32, 0);
+                            editor
+                                .update_in(cx, |editor, window, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::scroll(Autoscroll::center()),
+                                        window,
+                                        cx,
+                                        |s| s.select_ranges(vec![range]),
+                                    );
+                                })
+                                .ok();
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                }
+                MentionUri::Thread { id, .. } => {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .open_thread_by_id(&id, window, cx)
+                                .detach_and_log_err(cx)
+                        });
+                    }
+                }
+                MentionUri::TextThread { path, .. } => {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| {
+                            panel
+                                .open_saved_prompt_editor(path.as_path().into(), window, cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
+                }
+                MentionUri::Rule { id, .. } => {
+                    let PromptId::User { uuid } = id else {
+                        return;
+                    };
+                    window.dispatch_action(
+                        Box::new(OpenRulesLibrary {
+                            prompt_to_select: Some(uuid.0),
+                        }),
+                        cx,
+                    )
+                }
+                MentionUri::Fetch { url } => {
+                    cx.open_url(url.as_str());
                 }
             })
         } else {
@@ -3090,7 +3177,7 @@ impl AcpThreadView {
                 .unwrap_or(path.path.as_os_str())
                 .display()
                 .to_string();
-            let completion = ContextPickerCompletionProvider::completion_for_path(
+            let Some(completion) = ContextPickerCompletionProvider::completion_for_path(
                 path,
                 &path_prefix,
                 false,
@@ -3101,7 +3188,9 @@ impl AcpThreadView {
                 self.mention_set.clone(),
                 self.project.clone(),
                 cx,
-            );
+            ) else {
+                continue;
+            };
 
             self.message_editor.update(cx, |message_editor, cx| {
                 message_editor.edit(
@@ -3570,6 +3659,8 @@ mod tests {
                     Rc::new(agent),
                     workspace.downgrade(),
                     project,
+                    WeakEntity::new_invalid(),
+                    WeakEntity::new_invalid(),
                     Rc::new(RefCell::new(MessageHistory::default())),
                     1,
                     None,
@@ -3672,6 +3763,8 @@ mod tests {
                     Rc::new(agent),
                     workspace.downgrade(),
                     project,
+                    WeakEntity::new_invalid(),
+                    WeakEntity::new_invalid(),
                     Rc::new(RefCell::new(MessageHistory::default())),
                     1,
                     None,

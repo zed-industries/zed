@@ -399,7 +399,7 @@ impl ContentBlock {
             }
         }
 
-        let new_content = self.extract_content_from_block(block);
+        let new_content = self.block_string_contents(block);
 
         match self {
             ContentBlock::Empty => {
@@ -419,7 +419,7 @@ impl ContentBlock {
 
     fn resource_link_to_content(uri: &str) -> String {
         if let Some(uri) = MentionUri::parse(&uri).log_err() {
-            uri.to_link()
+            uri.as_link().to_string()
         } else {
             uri.to_string().clone()
         }
@@ -436,7 +436,7 @@ impl ContentBlock {
         }
     }
 
-    fn extract_content_from_block(&self, block: acp::ContentBlock) -> String {
+    fn block_string_contents(&self, block: acp::ContentBlock) -> String {
         match block {
             acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {

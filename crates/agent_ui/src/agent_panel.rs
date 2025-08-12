@@ -925,6 +925,9 @@ impl AgentPanel {
             agent: crate::ExternalAgent,
         }
 
+        let thread_store = self.thread_store.clone();
+        let text_thread_store = self.context_store.clone();
+
         cx.spawn_in(window, async move |this, cx| {
             let server: Rc<dyn AgentServer> = match agent_choice {
                 Some(agent) => {
@@ -963,6 +966,8 @@ impl AgentPanel {
                         server,
                         workspace.clone(),
                         project,
+                        thread_store.downgrade(),
+                        text_thread_store.downgrade(),
                         message_history,
                         MIN_EDITOR_LINES,
                         Some(MAX_EDITOR_LINES),

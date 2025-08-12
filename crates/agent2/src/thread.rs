@@ -25,8 +25,8 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::fmt::Write;
 use std::{cell::RefCell, collections::BTreeMap, path::Path, rc::Rc, sync::Arc};
+use std::{fmt::Write, ops::Range};
 use util::{ResultExt, markdown::MarkdownCodeBlock};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,9 +79,9 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     if !content.is_empty() {
-                        markdown.push_str(&format!("{}\n\n{}\n", uri.to_link(), content));
+                        let _ = write!(&mut markdown, "{}\n\n{}\n", uri.as_link(), content);
                     } else {
-                        markdown.push_str(&format!("{}\n", uri.to_link()));
+                        let _ = write!(&mut markdown, "{}\n", uri.as_link());
                     }
                 }
             }
@@ -104,12 +104,14 @@ impl UserMessage {
         const OPEN_FILES_TAG: &str = "<files>";
         const OPEN_SYMBOLS_TAG: &str = "<symbols>";
         const OPEN_THREADS_TAG: &str = "<threads>";
+        const OPEN_FETCH_TAG: &str = "<fetched_urls>";
         const OPEN_RULES_TAG: &str =
             "<rules>\nThe user has specified the following rules that should be applied:\n";
 
         let mut file_context = OPEN_FILES_TAG.to_string();
         let mut symbol_context = OPEN_SYMBOLS_TAG.to_string();
         let mut thread_context = OPEN_THREADS_TAG.to_string();
+        let mut fetch_context = OPEN_FETCH_TAG.to_string();
         let mut rules_context = OPEN_RULES_TAG.to_string();
 
         for chunk in &self.content {
@@ -122,21 +124,40 @@ impl UserMessage {
                 }
                 UserMessageContent::Mention { uri, content } => {
                     match uri {
-                        MentionUri::File(path) | MentionUri::Symbol(path, _) => {
+                        MentionUri::File(path) => {
                             write!(
                                 &mut symbol_context,
                                 "\n{}",
                                 MarkdownCodeBlock {
-                                    tag: &codeblock_tag(&path),
+                                    tag: &codeblock_tag(&path, None),
                                     text: &content.to_string(),
                                 }
                             )
                             .ok();
                         }
-                        MentionUri::Thread(_session_id) => {
+                        MentionUri::Symbol {
+                            path, line_range, ..
+                        }
+                        | MentionUri::Selection {
+                            path, line_range, ..
+                        } => {
+                            write!(
+                                &mut rules_context,
+                                "\n{}",
+                                MarkdownCodeBlock {
+                                    tag: &codeblock_tag(&path, Some(line_range)),
+                                    text: &content
+                                }
+                            )
+                            .ok();
+                        }
+                        MentionUri::Thread { .. } => {
                             write!(&mut thread_context, "\n{}\n", content).ok();
                         }
-                        MentionUri::Rule(_user_prompt_id) => {
+                        MentionUri::TextThread { .. } => {
+                            write!(&mut thread_context, "\n{}\n", content).ok();
+                        }
+                        MentionUri::Rule { .. } => {
                             write!(
                                 &mut rules_context,
                                 "\n{}",
@@ -147,9 +168,12 @@ impl UserMessage {
                             )
                             .ok();
                         }
+                        MentionUri::Fetch { url } => {
+                            write!(&mut fetch_context, "\nFetch: {}\n\n{}", url, content).ok();
+                        }
                     }
 
-                    language_model::MessageContent::Text(uri.to_link())
+                    language_model::MessageContent::Text(uri.as_link().to_string())
                 }
             };
 
@@ -179,6 +203,13 @@ impl UserMessage {
                 .push(language_model::MessageContent::Text(thread_context));
         }
 
+        if fetch_context.len() > OPEN_FETCH_TAG.len() {
+            fetch_context.push_str("</fetched_urls>\n");
+            message
+                .content
+                .push(language_model::MessageContent::Text(fetch_context));
+        }
+
         if rules_context.len() > OPEN_RULES_TAG.len() {
             rules_context.push_str("</user_rules>\n");
             message
@@ -198,6 +229,26 @@ impl UserMessage {
 
         message
     }
+}
+
+fn codeblock_tag(full_path: &Path, line_range: Option<&Range<u32>>) -> String {
+    let mut result = String::new();
+
+    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+        let _ = write!(result, "{} ", extension);
+    }
+
+    let _ = write!(result, "{}", full_path.display());
+
+    if let Some(range) = line_range {
+        if range.start == range.end {
+            let _ = write!(result, ":{}", range.start + 1);
+        } else {
+            let _ = write!(result, ":{}-{}", range.start + 1, range.end + 1);
+        }
+    }
+
+    result
 }
 
 impl AgentMessage {
@@ -1365,18 +1416,6 @@ impl std::ops::DerefMut for ToolCallEventStreamReceiver {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
-}
-
-fn codeblock_tag(full_path: &Path) -> String {
-    let mut result = String::new();
-
-    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
-        let _ = write!(result, "{} ", extension);
-    }
-
-    let _ = write!(result, "{}", full_path.display());
-
-    result
 }
 
 impl From<&str> for UserMessageContent {

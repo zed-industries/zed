@@ -7,6 +7,7 @@ name = "acp_thread"
 version = "0.1.0"
 dependencies = [
  "action_log",
+ "agent",
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
@@ -21,6 +22,7 @@ dependencies = [
  "markdown",
  "parking_lot",
  "project",
+ "prompt_store",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -392,6 +394,7 @@ dependencies = [
  "ui",
  "ui_input",
  "unindent",
+ "url",
  "urlencoding",
  "util",
  "uuid",
