@@ -36,6 +36,7 @@ pub struct LanguageModelInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LanguageModelGroup(pub SharedString);
 
+#[derive(Debug, Clone)]
 pub enum LanguageModelInfoList {
     Flat(Vec<LanguageModelInfo>),
     Grouped(IndexMap<LanguageModelGroup, Vec<LanguageModelInfo>>),

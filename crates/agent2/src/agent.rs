@@ -12,9 +12,7 @@ use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
 };
-use language_model::{
-    LanguageModel, LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
-};
+use language_model::{LanguageModel, LanguageModelProvider, LanguageModelRegistry};
 use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
@@ -51,6 +49,81 @@ struct Session {
     _subscription: Subscription,
 }
 
+pub struct LanguageModels {
+    /// Access language model by ID
+    models: HashMap<acp_thread::LanguageModelId, Arc<dyn LanguageModel>>,
+    /// Cached list for returning language model information
+    model_list: acp_thread::LanguageModelInfoList,
+}
+
+impl LanguageModels {
+    fn refresh_list(cx: &App) -> Self {
+        let providers = LanguageModelRegistry::global(cx).read(cx).providers();
+
+        let mut language_model_list = IndexMap::default();
+        let mut recommended_models = HashSet::default();
+
+        let mut recommended = Vec::new();
+        for provider in &providers {
+            for model in provider.recommended_models(cx) {
+                recommended_models.insert(model.id());
+                recommended.push(Self::map_language_model_to_info(&model, &provider));
+            }
+        }
+        if !recommended.is_empty() {
+            language_model_list.insert(
+                acp_thread::LanguageModelGroup("Recommended".into()),
+                recommended,
+            );
+        }
+
+        let mut models = HashMap::default();
+        for provider in providers {
+            let mut provider_models = Vec::new();
+            for model in provider.provided_models(cx) {
+                let model_info = Self::map_language_model_to_info(&model, &provider);
+                let model_id = model_info.id.clone();
+                if !recommended_models.contains(&model.id()) {
+                    provider_models.push(model_info);
+                }
+                models.insert(model_id, model);
+            }
+            if !provider_models.is_empty() {
+                language_model_list.insert(
+                    acp_thread::LanguageModelGroup(provider.name().0.clone()),
+                    provider_models,
+                );
+            }
+        }
+
+        let model_list = acp_thread::LanguageModelInfoList::Grouped(language_model_list);
+
+        Self { models, model_list }
+    }
+
+    pub fn model_from_id(
+        &self,
+        model_id: &acp_thread::LanguageModelId,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        self.models.get(model_id).cloned()
+    }
+
+    fn map_language_model_to_info(
+        model: &Arc<dyn LanguageModel>,
+        provider: &Arc<dyn LanguageModelProvider>,
+    ) -> acp_thread::LanguageModelInfo {
+        acp_thread::LanguageModelInfo {
+            id: Self::model_id(model),
+            name: model.name().0,
+            icon: Some(provider.icon()),
+        }
+    }
+
+    fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::LanguageModelId {
+        acp_thread::LanguageModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
+    }
+}
+
 pub struct NativeAgent {
     /// Session ID -> Session mapping
     sessions: HashMap<acp::SessionId, Session>,
@@ -60,6 +133,8 @@ pub struct NativeAgent {
     _maintain_project_context: Task<Result<()>>,
     /// Shared templates for all threads
     templates: Arc<Templates>,
+    /// Cached model information
+    models: LanguageModels,
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
     _subscriptions: Vec<Subscription>,
@@ -79,7 +154,13 @@ impl NativeAgent {
             .await;
 
         cx.new(|cx| {
-            let mut subscriptions = vec![cx.subscribe(&project, Self::handle_project_event)];
+            let mut subscriptions = vec![
+                cx.subscribe(&project, Self::handle_project_event),
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+            ];
             if let Some(prompt_store) = prompt_store.as_ref() {
                 subscriptions.push(cx.subscribe(prompt_store, Self::handle_prompts_updated_event))
             }
@@ -94,11 +175,16 @@ impl NativeAgent {
                     Self::maintain_project_context(this, project_context_needs_refresh_rx, cx).await
                 }),
                 templates,
+                models: LanguageModels::refresh_list(cx),
                 project,
                 prompt_store,
                 _subscriptions: subscriptions,
             }
         })
+    }
+
+    pub fn models(&self) -> &LanguageModels {
+        &self.models
     }
 
     async fn maintain_project_context(
@@ -296,16 +382,14 @@ impl NativeAgent {
     ) {
         self.project_context_needs_refresh.send(()).ok();
     }
-}
 
-fn map_language_model_to_info(
-    model: &Arc<dyn LanguageModel>,
-    provider: &Arc<dyn LanguageModelProvider>,
-) -> acp_thread::LanguageModelInfo {
-    acp_thread::LanguageModelInfo {
-        id: acp_thread::LanguageModelId(format!("{}/{}", provider.id().0, model.id().0).into()),
-        name: model.name().0,
-        icon: Some(provider.icon()),
+    fn handle_models_updated_event(
+        &mut self,
+        _registry: Entity<LanguageModelRegistry>,
+        _event: &language_model::Event,
+        cx: &mut Context<Self>,
+    ) {
+        self.models = LanguageModels::refresh_list(cx);
     }
 }
 
@@ -313,75 +397,14 @@ fn map_language_model_to_info(
 #[derive(Clone)]
 pub struct NativeAgentConnection(pub Entity<NativeAgent>);
 
-impl NativeAgentConnection {
-    pub fn model_from_id(
-        model_id: &acp_thread::LanguageModelId,
-        cx: &App,
-    ) -> Option<Arc<dyn LanguageModel>> {
-        let (provider_id, model_id) = model_id.split_once('/')?;
-
-        LanguageModelRegistry::read_global(cx)
-            .provider(&LanguageModelProviderId(provider_id.to_string().into()))
-            .and_then(|provider| {
-                provider
-                    .provided_models(cx)
-                    .into_iter()
-                    .find(|model| model.id().0 == model_id)
-            })
-    }
-}
-
 impl LanguageModelSelector for NativeAgentConnection {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::LanguageModelInfoList>> {
         log::debug!("NativeAgentConnection::list_models called");
-
-        Task::ready({
-            let providers = LanguageModelRegistry::global(cx).read(cx).providers();
-
-            let mut language_model_list = IndexMap::default();
-            let mut recommended_models = HashSet::default();
-
-            let mut recommended = Vec::new();
-            for provider in &providers {
-                for model in provider.recommended_models(cx) {
-                    recommended_models.insert(model.id());
-                    recommended.push(map_language_model_to_info(&model, &provider));
-                }
-            }
-            if !recommended.is_empty() {
-                language_model_list.insert(
-                    acp_thread::LanguageModelGroup("Recommended".into()),
-                    recommended,
-                );
-            }
-
-            for provider in providers {
-                let models = provider
-                    .provided_models(cx)
-                    .into_iter()
-                    .filter_map(|model| {
-                        if recommended_models.contains(&model.id()) {
-                            None
-                        } else {
-                            Some(map_language_model_to_info(&model, &provider))
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                if !models.is_empty() {
-                    language_model_list.insert(
-                        acp_thread::LanguageModelGroup(provider.name().0.clone()),
-                        models,
-                    );
-                }
-            }
-
-            if language_model_list.is_empty() {
-                Err(anyhow::anyhow!("No models available"))
-            } else {
-                Ok(acp_thread::LanguageModelInfoList::Grouped(
-                    language_model_list,
-                ))
-            }
+        let list = self.0.read(cx).models.model_list.clone();
+        Task::ready(if list.is_empty() {
+            Err(anyhow::anyhow!("No models available"))
+        } else {
+            Ok(list)
         })
     }
 
@@ -402,7 +425,7 @@ impl LanguageModelSelector for NativeAgentConnection {
             return Task::ready(Err(anyhow!("Session not found")));
         };
 
-        let Some(model) = Self::model_from_id(&model_id, cx) else {
+        let Some(model) = self.0.read(cx).models.model_from_id(&model_id) else {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
@@ -434,7 +457,9 @@ impl LanguageModelSelector for NativeAgentConnection {
         else {
             return Task::ready(Err(anyhow!("Provider not found")));
         };
-        Task::ready(Ok(map_language_model_to_info(&model, &provider)))
+        Task::ready(Ok(LanguageModels::map_language_model_to_info(
+            &model, &provider,
+        )))
     }
 }
 
