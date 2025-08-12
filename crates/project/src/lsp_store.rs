@@ -11225,7 +11225,7 @@ impl LspStore {
                 }
             }
         }
-        for (path, _, change) in changes {
+        for (path, _, _) in changes {
             if let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str())
                 && local.watched_manifest_filenames.contains(file_name)
             {
