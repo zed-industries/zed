@@ -1136,7 +1136,11 @@ impl GitStore {
                 self.local_worktree_git_repos_changed(worktree, changed_repos, cx);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
-                self.cleanup_repositories_for_worktree(*worktree_id, downstream.as_ref().map(|d| d.updates_tx.clone()), cx);
+                self.cleanup_repositories_for_worktree(
+                    *worktree_id,
+                    downstream.as_ref().map(|d| d.updates_tx.clone()),
+                    cx,
+                );
             }
             _ => {}
         }
@@ -1286,7 +1290,7 @@ impl GitStore {
         };
 
         let worktree_abs_path = worktree.read(cx).abs_path();
-        
+
         let removed_repo_ids: Vec<RepositoryId> = self
             .repositories
             .iter()
