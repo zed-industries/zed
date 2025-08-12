@@ -120,9 +120,10 @@ fn initialize_direct_composition() -> Result<(
         let wait_for_compositor_clock_addr =
             GetProcAddress(hmodule, s!("DCompositionWaitForCompositorClock"))
                 .context("Function DCompositionWaitForCompositorClock not found")?;
-        let get_frame_id = std::mem::transmute(get_frame_id_addr);
-        let get_statistics = std::mem::transmute(get_statistics_addr);
-        let wait_for_compositor_clock = std::mem::transmute(wait_for_compositor_clock_addr);
+        let get_frame_id: DCompositionGetFrameId = std::mem::transmute(get_frame_id_addr);
+        let get_statistics: DCompositionGetStatistics = std::mem::transmute(get_statistics_addr);
+        let wait_for_compositor_clock: DCompositionWaitForCompositorClock =
+            std::mem::transmute(wait_for_compositor_clock_addr);
         Ok((get_frame_id, get_statistics, wait_for_compositor_clock))
     }
 }
