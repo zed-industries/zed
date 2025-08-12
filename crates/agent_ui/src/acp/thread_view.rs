@@ -1752,9 +1752,9 @@ impl AcpThreadView {
             .overflow_hidden()
             .child(
                 v_flex()
-                    .pt_1()
-                    .pb_2()
-                    .px_2()
+                    .py_1p5()
+                    .pl_2()
+                    .pr_1p5()
                     .gap_0p5()
                     .bg(header_bg)
                     .text_xs()
