@@ -1196,7 +1196,6 @@ impl AcpThreadView {
             tool_call.status,
             ToolCallStatus::WaitingForConfirmation { .. }
         );
-
         let is_edit = matches!(tool_call.kind, acp::ToolKind::Edit);
         let has_diff = tool_call
             .content
@@ -1438,12 +1437,12 @@ impl AcpThreadView {
         resource_link: &acp::ResourceLink,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let uri = &resource_link.uri;
+        let uri: SharedString = resource_link.uri.clone().into();
 
-        let label: SharedString = if let Some(path) = uri.strip_prefix("file://") {
+        let label: SharedString = if let Some(path) = resource_link.uri.strip_prefix("file://") {
             path.to_string().into()
         } else {
-            uri.clone().into()
+            uri.clone()
         };
 
         let button_id = SharedString::from(format!("item-{}", uri.clone()));
@@ -1462,8 +1461,11 @@ impl AcpThreadView {
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
                     .truncate(true)
-                    .on_click(cx.listener(move |_, _, _, _cx: &mut Context<Self>| {
-                        // TODO: Wire up the click handler to open this file on a buffer
+                    .on_click(cx.listener({
+                        let workspace = self.workspace.clone();
+                        move |_, _, window, cx: &mut Context<Self>| {
+                            Self::open_link(uri.clone(), &workspace, window, cx);
+                        }
                     })),
             )
             .into_any_element()
