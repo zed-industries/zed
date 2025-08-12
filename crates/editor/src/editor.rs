@@ -253,7 +253,7 @@ pub type RenderDiffHunkControlsFn = Arc<
 enum ReportEditorEvent {
     Saved { auto_saved: bool },
     EditorOpened,
-    ZetaToSClicked,
+    ZetaTosClicked,
 }
 
 impl ReportEditorEvent {
