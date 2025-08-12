@@ -305,7 +305,7 @@ impl LanguageServerTree {
     /// We want to reuse the old tree in order to preserve as many of the running language servers as possible.
     /// E.g. if the user disables one of their language servers for Python, we don't want to shut down any language servers unaffected by this settings change.
     ///
-    /// Thus, [`ServerTreeRebase`] mimicks the interface of a [`ServerTree`], except that it tries to find a matching language server in the old tree before handing out an uninitialized node.
+    /// Thus, [`ServerTreeRebase`] mimics the interface of a [`ServerTree`], except that it tries to find a matching language server in the old tree before handing out an uninitialized node.
     pub(crate) fn rebase(&mut self) -> ServerTreeRebase {
         ServerTreeRebase::new(self)
     }
