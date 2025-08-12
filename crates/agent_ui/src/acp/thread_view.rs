@@ -1108,10 +1108,10 @@ impl AcpThreadView {
         .size(IconSize::Small)
         .color(Color::Muted);
 
+        let base_container = h_flex().size_4().justify_center();
+
         if is_collapsible {
-            h_flex()
-                .size_4()
-                .justify_center()
+            base_container
                 .child(
                     div()
                         .group_hover(&group_name, |s| s.invisible().w_0())
@@ -1142,7 +1142,7 @@ impl AcpThreadView {
                         ),
                 )
         } else {
-            h_flex().child(tool_icon)
+            base_container.child(tool_icon)
         }
     }
 
@@ -1462,7 +1462,10 @@ impl AcpThreadView {
                     .icon(IconName::ArrowUpRight)
                     .icon_size(IconSize::XSmall)
                     .icon_color(Color::Muted)
-                    .truncate(true),
+                    .truncate(true)
+                    .on_click(cx.listener(move |_, _, _, _cx: &mut Context<Self>| {
+                        // TODO: Wire up the click handler to open this file on a buffer
+                    })),
             )
             .into_any_element()
     }
