@@ -427,7 +427,7 @@ impl Thread {
     }
 
     pub fn cancel(&mut self) {
-        // todo!("do we need to emit a stop::cancel from acp?")
+        // TODO: do we need to emit a stop::cancel for ACP?
         self.running_turn.take();
         self.flush_pending_agent_message();
     }
