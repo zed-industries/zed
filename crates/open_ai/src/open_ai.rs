@@ -89,11 +89,13 @@ pub enum Model {
         max_tokens: u64,
         max_output_tokens: Option<u64>,
         max_completion_tokens: Option<u64>,
+        reasoning_effort: Option<ReasoningEffort>,
     },
 }
 
 impl Model {
     pub fn default_fast() -> Self {
+        // TODO: Replace with FiveMini since all other models are deprecated
         Self::FourPointOneMini
     }
 
@@ -206,6 +208,15 @@ impl Model {
         }
     }
 
+    pub fn reasoning_effort(&self) -> Option<ReasoningEffort> {
+        match self {
+            Self::Custom {
+                reasoning_effort, ..
+            } => reasoning_effort.to_owned(),
+            _ => None,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -246,6 +257,7 @@ pub struct Request {
     pub tools: Vec<ToolDefinition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -255,6 +267,16 @@ pub enum ToolChoice {
     Required,
     None,
     Other(ToolDefinition),
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    Minimal,
+    Low,
+    Medium,
+    High,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
