@@ -11157,6 +11157,7 @@ dependencies = [
  "feature_flags",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.14.0",
  "language",
