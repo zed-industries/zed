@@ -427,7 +427,12 @@ impl X11Client {
 
         let xcb_connection = Rc::new(xcb_connection);
 
-        let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
+        // bug in ibus causes it to crash, which results in us not receiving xim callbacks, see #29083
+        let ximc = if get_package_version("ibus").as_deref() == Some("1.5.32~rc2-1") {
+            None
+        } else {
+            X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok()
+        };
         let xim_handler = if ximc.is_some() {
             Some(XimHandler::new())
         } else {
@@ -2487,4 +2492,45 @@ fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64
 #[inline]
 fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
+}
+
+fn get_package_version(name: String) -> Option<String> {
+    use util::command::new_std_command;
+
+    if let Ok(output) = new_std_command("dpkg-query")
+        .args(["-W", "-f=${Version}", name])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(version) = std::str::from_utf8(&output.stdout) {
+                return Some(version.trim().to_string());
+            }
+        }
+    }
+
+    if let Ok(output) = new_std_command("rpm")
+        .args(["-q", "--qf", "%{VERSION}-%{RELEASE}", name])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(version) = std::str::from_utf8(&output.stdout) {
+                return Some(version.trim().to_string());
+            }
+        }
+    }
+
+    if let Ok(output) = new_std_command("pacman")
+        .args(["-Q", name])
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(stdout) = std::str::from_utf8(&output.stdout) {
+                if let Some(version) = stdout.trim().split_whitespace().nth(1) {
+                    return Some(version.to_string());
+                }
+            }
+        }
+    }
+
+    None
 }
