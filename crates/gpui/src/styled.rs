@@ -648,13 +648,13 @@ pub trait Styled: Sized {
     }
 
     /// Sets the grid columns of this element.
-    fn grid_cols(mut self, cols: usize) -> Self {
+    fn grid_cols(mut self, cols: u16) -> Self {
         self.style().grid_cols = Some(cols);
         self
     }
 
     /// Sets the grid rows of this element.
-    fn grid_rows(mut self, rows: usize) -> Self {
+    fn grid_rows(mut self, rows: u16) -> Self {
         self.style().grid_rows = Some(rows);
         self
     }

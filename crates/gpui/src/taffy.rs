@@ -5,8 +5,10 @@ use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::fmt::Debug;
 use taffy::{
-    GridPlacement, TaffyTree, TraversePartialTree as _,
+    GridTemplateComponent, GridTemplateRepetition, MaxTrackSizingFunction, MinMax,
+    MinTrackSizingFunction, RepetitionCount, TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
+    prelude::TaffyZero,
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -274,13 +276,38 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            // grid_template_areas
-            // grid_row:  self.grid_rows.map(|row| {
-            //     taffy::Line {
-            //         start: GridPlacement::Auto,
-            //         end: todo!(),
-            //     }
-            // })
+            // grid-template-rows: repeat(<number>, minmax(0, 1fr));
+            grid_template_rows: if let Some(count) = self.grid_rows {
+                vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
+                    count: RepetitionCount::Count(count),
+                    tracks: (0..count)
+                        .into_iter()
+                        .map(|_| MinMax {
+                            min: MinTrackSizingFunction::ZERO,
+                            max: MaxTrackSizingFunction::fr(1.0),
+                        })
+                        .collect(),
+                    line_names: vec![],
+                })]
+            } else {
+                Default::default()
+            },
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            grid_template_columns: if let Some(count) = self.grid_cols {
+                vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
+                    count: RepetitionCount::Count(count),
+                    tracks: (0..count)
+                        .into_iter()
+                        .map(|_| MinMax {
+                            min: MinTrackSizingFunction::ZERO,
+                            max: MaxTrackSizingFunction::fr(1.0),
+                        })
+                        .collect(),
+                    line_names: vec![],
+                })]
+            } else {
+                Default::default()
+            },
             ..Default::default() // Ignore grid properties for now
         }
     }

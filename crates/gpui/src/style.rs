@@ -261,10 +261,10 @@ pub struct Style {
     pub opacity: Option<f32>,
 
     /// The grid columns of this element
-    pub grid_cols: Option<usize>,
+    pub grid_cols: Option<u16>,
 
     /// The grid rows of this element
-    pub grid_rows: Option<usize>,
+    pub grid_rows: Option<u16>,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
