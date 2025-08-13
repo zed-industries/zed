@@ -2130,6 +2130,45 @@ impl Render for ProjectSearchBar {
         });
 
         let filter_line = search.filters_enabled.then(|| {
+            let include = input_base_styles(BaseStyle::MultipleInputs, InputPanel::Include)
+                .on_action(cx.listener(|this, action, window, cx| {
+                    this.previous_history_query(action, window, cx)
+                }))
+                .on_action(cx.listener(|this, action, window, cx| {
+                    this.next_history_query(action, window, cx)
+                }))
+                .child(render_text_input(&search.included_files_editor, None, cx));
+            let exclude = input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
+                .on_action(cx.listener(|this, action, window, cx| {
+                    this.previous_history_query(action, window, cx)
+                }))
+                .on_action(cx.listener(|this, action, window, cx| {
+                    this.next_history_query(action, window, cx)
+                }))
+                .child(render_text_input(&search.excluded_files_editor, None, cx));
+            let mode_column = h_flex()
+                .gap_1()
+                .min_w_64()
+                .child(
+                    IconButton::new("project-search-opened-only", IconName::FolderSearch)
+                        .shape(IconButtonShape::Square)
+                        .toggle_state(self.is_opened_only_enabled(cx))
+                        .tooltip(Tooltip::text("Only Search Open Files"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_opened_only(window, cx);
+                        })),
+                )
+                .child(
+                    SearchOptions::INCLUDE_IGNORED.as_button(
+                        search
+                            .search_options
+                            .contains(SearchOptions::INCLUDE_IGNORED),
+                        focus_handle.clone(),
+                        cx.listener(|this, _, window, cx| {
+                            this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, window, cx);
+                        }),
+                    ),
+                );
             h_flex()
                 .w_full()
                 .gap_2()
@@ -2137,62 +2176,14 @@ impl Render for ProjectSearchBar {
                     h_flex()
                         .gap_2()
                         .w(input_width)
-                        .child(
-                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Include)
-                                .on_action(cx.listener(|this, action, window, cx| {
-                                    this.previous_history_query(action, window, cx)
-                                }))
-                                .on_action(cx.listener(|this, action, window, cx| {
-                                    this.next_history_query(action, window, cx)
-                                }))
-                                .child(render_text_input(&search.included_files_editor, None, cx)),
-                        )
-                        .child(
-                            input_base_styles(BaseStyle::MultipleInputs, InputPanel::Exclude)
-                                .on_action(cx.listener(|this, action, window, cx| {
-                                    this.previous_history_query(action, window, cx)
-                                }))
-                                .on_action(cx.listener(|this, action, window, cx| {
-                                    this.next_history_query(action, window, cx)
-                                }))
-                                .child(render_text_input(&search.excluded_files_editor, None, cx)),
-                        ),
+                        .child(include)
+                        .child(exclude),
                 )
-                .child(
-                    h_flex()
-                        .min_w_64()
-                        .gap_1()
-                        .child(
-                            IconButton::new("project-search-opened-only", IconName::FolderSearch)
-                                .shape(IconButtonShape::Square)
-                                .toggle_state(self.is_opened_only_enabled(cx))
-                                .tooltip(Tooltip::text("Only Search Open Files"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.toggle_opened_only(window, cx);
-                                })),
-                        )
-                        .child(
-                            SearchOptions::INCLUDE_IGNORED.as_button(
-                                search
-                                    .search_options
-                                    .contains(SearchOptions::INCLUDE_IGNORED),
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_search_option(
-                                        SearchOptions::INCLUDE_IGNORED,
-                                        window,
-                                        cx,
-                                    );
-                                }),
-                            ),
-                        ),
-                )
+                .child(mode_column)
         });
 
         let mut key_context = KeyContext::default();
-
         key_context.add("ProjectSearchBar");
-
         if search
             .replacement_editor
             .focus_handle(cx)

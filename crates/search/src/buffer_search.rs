@@ -17,9 +17,9 @@ use editor::{
 };
 use futures::channel::oneshot;
 use gpui::{
-    Action, App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle,
-    Styled, Subscription, Task, Window, actions, div,
+    Action, App, ClickEvent, Context, Entity, EventEmitter, Focusable, InteractiveElement as _,
+    IntoElement, KeyContext, ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task,
+    Window, actions, div,
 };
 use language::{Language, LanguageRegistry};
 use project::{
@@ -147,7 +147,14 @@ impl Render for BufferSearchBar {
         let hide_inline_icons = self.editor_needed_width
             > self.editor_scroll_handle.bounds().size.width - window.rem_size() * 6.;
 
-        let supported_options = self.supported_options(cx);
+        let workspace::searchable::SearchOptions {
+            case,
+            word,
+            regex,
+            replacement,
+            selection,
+            find_in_results,
+        } = self.supported_options(cx);
 
         if self.query_editor.update(cx, |query_editor, _cx| {
             query_editor.placeholder_text().is_none()
@@ -182,20 +189,16 @@ impl Render for BufferSearchBar {
                 }
             })
             .unwrap_or_else(|| "0/0".to_string());
-        let should_show_replace_input = self.replace_enabled && supported_options.replacement;
+        let should_show_replace_input = self.replace_enabled && replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
-        let mut key_context = KeyContext::new_with_defaults();
-        key_context.add("BufferSearchBar");
-        if in_replace {
-            key_context.add("in_replace");
-        }
+        let theme_colors = cx.theme().colors();
         let query_border = if self.query_error.is_some() {
             Color::Error.color(cx)
         } else {
-            cx.theme().colors().border
+            theme_colors.border
         };
-        let replacement_border = cx.theme().colors().border;
+        let replacement_border = theme_colors.border;
 
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
@@ -211,27 +214,27 @@ impl Render for BufferSearchBar {
                 div.child(
                     h_flex()
                         .gap_1()
-                        .when(supported_options.case, |div| {
-                            div.child(self.render_search_option_button(
-                                SearchOptions::CASE_SENSITIVE,
+                        .when(case, |div| {
+                            div.child(SearchOptions::CASE_SENSITIVE.as_button(
+                                self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                                 focus_handle.clone(),
                                 cx.listener(|this, _, window, cx| {
                                     this.toggle_case_sensitive(&ToggleCaseSensitive, window, cx)
                                 }),
                             ))
                         })
-                        .when(supported_options.word, |div| {
-                            div.child(self.render_search_option_button(
-                                SearchOptions::WHOLE_WORD,
+                        .when(word, |div| {
+                            div.child(SearchOptions::WHOLE_WORD.as_button(
+                                self.search_options.contains(SearchOptions::WHOLE_WORD),
                                 focus_handle.clone(),
                                 cx.listener(|this, _, window, cx| {
                                     this.toggle_whole_word(&ToggleWholeWord, window, cx)
                                 }),
                             ))
                         })
-                        .when(supported_options.regex, |div| {
-                            div.child(self.render_search_option_button(
-                                SearchOptions::REGEX,
+                        .when(regex, |div| {
+                            div.child(SearchOptions::REGEX.as_button(
+                                self.search_options.contains(SearchOptions::REGEX),
                                 focus_handle.clone(),
                                 cx.listener(|this, _, window, cx| {
                                     this.toggle_regex(&ToggleRegex, window, cx)
@@ -244,7 +247,7 @@ impl Render for BufferSearchBar {
         let mode_column = h_flex()
             .gap_1()
             .min_w_64()
-            .when(supported_options.replacement, |this| {
+            .when(replacement, |this| {
                 this.child(toggle_replace_button(
                     "buffer-search-bar-toggle-replace-button",
                     focus_handle.clone(),
@@ -254,7 +257,7 @@ impl Render for BufferSearchBar {
                     }),
                 ))
             })
-            .when(supported_options.selection, |this| {
+            .when(selection, |this| {
                 this.child(
                     IconButton::new(
                         "buffer-search-bar-toggle-search-selection-button",
@@ -283,13 +286,13 @@ impl Render for BufferSearchBar {
                     }),
                 )
             })
-            .when(!supported_options.find_in_results, |el| {
+            .when(!find_in_results, |el| {
                 let query_focus = self.query_editor.focus_handle(cx);
                 let matches_column = h_flex()
                     .pl_2()
                     .ml_1()
                     .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
+                    .border_color(theme_colors.border_variant)
                     .child(render_action_button(
                         "buffer-search-nav-button",
                         ui::IconName::ChevronLeft,
@@ -304,27 +307,17 @@ impl Render for BufferSearchBar {
                         self.active_match_index.is_some(),
                         "Select Next Match",
                         &SelectNextMatch,
-                        query_focus,
+                        query_focus.clone(),
                     ));
-                el.child(
-                    IconButton::new("select-all", ui::IconName::SelectAll)
-                        .on_click(|_, window, cx| {
-                            window.dispatch_action(SelectAllMatches.boxed_clone(), cx)
-                        })
-                        .shape(IconButtonShape::Square)
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |window, cx| {
-                                Tooltip::for_action_in(
-                                    "Select All Matches",
-                                    &SelectAllMatches,
-                                    &focus_handle,
-                                    window,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
+
+                el.child(render_action_button(
+                    "buffer-search-nav-button",
+                    IconName::SelectAll,
+                    true,
+                    "Select All Matches",
+                    &SelectAllMatches,
+                    query_focus,
+                ))
                 .child(matches_column)
                 .when(!narrow_mode, |this| {
                     this.child(h_flex().ml_2().min_w(rems_from_px(40.)).child(
@@ -338,22 +331,20 @@ impl Render for BufferSearchBar {
                     ))
                 })
             })
-            .when(supported_options.find_in_results, |el| {
-                el.child(
-                    IconButton::new(SharedString::from("Close"), IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .tooltip(move |window, cx| {
-                            Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
-                        })
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            this.dismiss(&Dismiss, window, cx)
-                        })),
-                )
+            .when(find_in_results, |el| {
+                el.child(render_action_button(
+                    "buffer-search",
+                    IconName::Close,
+                    true,
+                    "Close Search Bar",
+                    &Dismiss,
+                    focus_handle.clone(),
+                ))
             });
 
         let search_line = h_flex()
             .gap_2()
-            .when(supported_options.find_in_results, |el| {
+            .when(find_in_results, |el| {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
             .child(query_column)
@@ -390,6 +381,12 @@ impl Render for BufferSearchBar {
                     .child(replace_actions)
             });
 
+        let mut key_context = KeyContext::new_with_defaults();
+        key_context.add("BufferSearchBar");
+        if in_replace {
+            key_context.add("in_replace");
+        }
+
         let query_error_line = self.query_error.as_ref().map(|error| {
             Label::new(error)
                 .size(LabelSize::Small)
@@ -398,6 +395,21 @@ impl Render for BufferSearchBar {
                 .ml_2()
         });
 
+        let search_line =
+            h_flex()
+                .relative()
+                .child(search_line)
+                .when(!narrow_mode && !find_in_results, |div| {
+                    div.child(h_flex().absolute().right_0().child(render_action_button(
+                        "buffer-search",
+                        IconName::Close,
+                        true,
+                        "Close Search Bar",
+                        &Dismiss,
+                        focus_handle.clone(),
+                    )))
+                    .w_full()
+                });
         v_flex()
             .id("buffer_search")
             .gap_2()
@@ -416,43 +428,26 @@ impl Render for BufferSearchBar {
                     active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
                 }
             }))
-            .when(self.supported_options(cx).replacement, |this| {
+            .when(replacement, |this| {
                 this.on_action(cx.listener(Self::toggle_replace))
                     .when(in_replace, |this| {
                         this.on_action(cx.listener(Self::replace_next))
                             .on_action(cx.listener(Self::replace_all))
                     })
             })
-            .when(self.supported_options(cx).case, |this| {
+            .when(case, |this| {
                 this.on_action(cx.listener(Self::toggle_case_sensitive))
             })
-            .when(self.supported_options(cx).word, |this| {
+            .when(word, |this| {
                 this.on_action(cx.listener(Self::toggle_whole_word))
             })
-            .when(self.supported_options(cx).regex, |this| {
+            .when(regex, |this| {
                 this.on_action(cx.listener(Self::toggle_regex))
             })
-            .when(self.supported_options(cx).selection, |this| {
+            .when(selection, |this| {
                 this.on_action(cx.listener(Self::toggle_selection))
             })
-            .child(h_flex().relative().child(search_line.w_full()).when(
-                !narrow_mode && !supported_options.find_in_results,
-                |div| {
-                    div.child(
-                        h_flex().absolute().right_0().child(
-                            IconButton::new(SharedString::from("Close"), IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .tooltip(move |window, cx| {
-                                    Tooltip::for_action("Close Search Bar", &Dismiss, window, cx)
-                                })
-                                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                    this.dismiss(&Dismiss, window, cx)
-                                })),
-                        ),
-                    )
-                    .w_full()
-                },
-            ))
+            .child(search_line)
             .children(query_error_line)
             .children(replace_line)
     }
@@ -880,16 +875,6 @@ impl BufferSearchBar {
             cx.notify();
         }
         self.update_matches(!updated, window, cx)
-    }
-
-    fn render_search_option_button<Action: Fn(&ClickEvent, &mut Window, &mut App) + 'static>(
-        &self,
-        option: SearchOptions,
-        focus_handle: FocusHandle,
-        action: Action,
-    ) -> impl IntoElement + use<Action> {
-        let is_active = self.search_options.contains(option);
-        option.as_button(is_active, focus_handle, action)
     }
 
     pub fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut Context<Self>) {
