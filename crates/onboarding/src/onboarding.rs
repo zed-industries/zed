@@ -1,7 +1,8 @@
 use crate::{
     multibuffer_hint::MultibufferHint,
-    welcome::{ShowWelcome, WelcomePage},
+    welcome::WelcomePage,
 };
+pub use crate::welcome::ShowWelcome;
 use client::{Client, UserStore, zed_urls};
 use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
