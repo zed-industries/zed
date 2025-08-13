@@ -4380,7 +4380,6 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
-                "welcome",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
