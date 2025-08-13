@@ -1,3 +1,4 @@
+; Bracket matching pairs
 ("(" @open ")" @close)
 ("[" @open "]" @close)
 ("{" @open "}" @close)
@@ -10,3 +11,26 @@
 ((if_statement ("then" @open) (elif_clause ("elif" @close))) (#set! newline.only))
 ((if_statement ("then" @open) (else_clause ("else" @close))) (#set! newline.only))
 ((if_statement ("then" @open "fi" @close)) (#set! newline.only))
+
+; Rainbow bracket scopes
+[
+  (function_definition)
+  (compound_statement)
+  (subshell)
+  (test_command)
+  (subscript)
+  (parenthesized_expression)
+  (array)
+  (expansion)
+  (command_substitution)
+] @rainbow.scope
+
+; Rainbow brackets
+[
+  "(" ")"
+  "((" "))"
+  "${" "$("
+  "{" "}"
+  "[" "]"
+  "[[" "]]"
+] @rainbow.bracket

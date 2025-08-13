@@ -231,7 +231,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("runnables", |q| &mut q.runnables),
     ("debugger", |q| &mut q.debugger),
     ("textobjects", |q| &mut q.text_objects),
-    ("rainbow", |q| &mut q.rainbow),
+    // Rainbow queries are now loaded as part of brackets.scm
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -248,7 +248,6 @@ pub struct LanguageQueries {
     pub runnables: Option<Cow<'static, str>>,
     pub text_objects: Option<Cow<'static, str>>,
     pub debugger: Option<Cow<'static, str>>,
-    pub rainbow: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]

@@ -1391,11 +1391,7 @@ impl Language {
                 .with_text_object_query(query.as_ref())
                 .context("Error loading textobject query")?;
         }
-        if let Some(query) = queries.rainbow {
-            self = self
-                .with_rainbow_query(query.as_ref())
-                .context("Error loading rainbow query")?;
-        }
+        // Rainbow queries are now loaded as part of brackets.scm
         if let Some(query) = queries.debugger {
             self = self
                 .with_debug_variables_query(query.as_ref())
@@ -1539,16 +1535,24 @@ impl Language {
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
         let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+
+        // Check if we have rainbow captures in the query
         let query = Query::new(&grammar.ts_language, source)?;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
+        let mut rainbow_scope_capture_ix = None;
+        let mut rainbow_bracket_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("open", &mut open_capture_ix),
                 ("close", &mut close_capture_ix),
+                ("rainbow.scope", &mut rainbow_scope_capture_ix),
+                ("rainbow.bracket", &mut rainbow_bracket_capture_ix),
             ],
         );
+
+        // Process bracket matching patterns
         let patterns = (0..query.pattern_count())
             .map(|ix| {
                 let mut config = BracketsPatternConfig::default();
@@ -1561,6 +1565,8 @@ impl Language {
                 config
             })
             .collect();
+
+        // Set brackets config if we have bracket matching captures
         if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
             grammar.brackets_config = Some(BracketsConfig {
                 query,
@@ -1569,6 +1575,28 @@ impl Language {
                 patterns,
             });
         }
+
+        // Set rainbow config if we have rainbow captures
+        // We need to create a new query for rainbow config since we can't share the query for bracket highlights
+        if rainbow_scope_capture_ix.is_some() || rainbow_bracket_capture_ix.is_some() {
+            let rainbow_query = Query::new(&grammar.ts_language, source)?;
+            let mut include_children_patterns = HashSet::default();
+            for ix in 0..rainbow_query.pattern_count() {
+                for setting in rainbow_query.property_settings(ix) {
+                    if setting.key.as_ref() == "rainbow.include-children" {
+                        include_children_patterns.insert(ix);
+                    }
+                }
+            }
+
+            grammar.rainbow_config = Some(RainbowConfig {
+                query: rainbow_query,
+                scope_capture_ix: rainbow_scope_capture_ix,
+                bracket_capture_ix: rainbow_bracket_capture_ix,
+                include_children_patterns,
+            });
+        }
+
         Ok(self)
     }
 
@@ -1783,7 +1811,7 @@ impl Language {
                 ("rainbow.bracket", &mut bracket_capture_ix),
             ],
         );
-        
+
         let mut include_children_patterns = HashSet::default();
         for ix in 0..query.pattern_count() {
             for setting in query.property_settings(ix) {
