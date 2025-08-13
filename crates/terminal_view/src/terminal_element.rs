@@ -136,7 +136,7 @@ impl BatchedTextRun {
             .shape_line(
                 self.text.clone().into(),
                 self.font_size.to_pixels(window.rem_size()),
-                &[self.style.clone()],
+                std::slice::from_ref(&self.style),
                 Some(dimensions.cell_width),
             )
             .paint(pos, dimensions.line_height, window, cx);

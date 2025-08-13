@@ -355,7 +355,13 @@ impl LanguageModel for OpenAiCompatibleLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let request = into_open_ai(request, &self.model.name, true, self.max_output_tokens());
+        let request = into_open_ai(
+            request,
+            &self.model.name,
+            true,
+            self.max_output_tokens(),
+            None,
+        );
         let completions = self.stream_completion(request, cx);
         async move {
             let mapper = OpenAiEventMapper::new();
@@ -466,7 +472,7 @@ impl Render for ConfigurationView {
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new("To use Zed's assistant with an OpenAI compatible provider, you need to add an API key."))
+                .child(Label::new("To use Zed's agent with an OpenAI-compatible provider, you need to add an API key."))
                 .child(
                     div()
                         .pt(DynamicSpacing::Base04.rems(cx))

@@ -172,24 +172,31 @@ impl Render for Example {
                     .child(
                         div()
                             .w_full()
-                            .p_2()
-                            .bg(gpui::black())
-                            .border_x_2()
-                            .border_dashed()
-                            .rounded_lg()
-                            .border_color(gpui::white())
-                            .child("border x"),
-                    )
-                    .child(
-                        div()
-                            .w_full()
-                            .p_2()
-                            .bg(gpui::black())
-                            .border_y_2()
-                            .border_dashed()
-                            .rounded_lg()
-                            .border_color(gpui::white())
-                            .child("border y"),
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .p_2()
+                                    .bg(gpui::black())
+                                    .border_x_2()
+                                    .border_dashed()
+                                    .rounded_lg()
+                                    .border_color(gpui::white())
+                                    .child("border x"),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .p_2()
+                                    .bg(gpui::black())
+                                    .border_y_2()
+                                    .border_dashed()
+                                    .rounded_lg()
+                                    .border_color(gpui::white())
+                                    .child("border y"),
+                            ),
                     )
                     .child(
                         div()

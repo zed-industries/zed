@@ -79,11 +79,13 @@ pub enum DispatchPhase {
 
 impl DispatchPhase {
     /// Returns true if this represents the "bubble" phase.
+    #[inline]
     pub fn bubble(self) -> bool {
         self == DispatchPhase::Bubble
     }
 
     /// Returns true if this represents the "capture" phase.
+    #[inline]
     pub fn capture(self) -> bool {
         self == DispatchPhase::Capture
     }
@@ -2833,7 +2835,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(element_opacity),
             thickness: style.thickness.scale(scale_factor),
-            wavy: style.wavy,
+            wavy: if style.wavy { 1 } else { 0 },
         });
     }
 
@@ -2864,7 +2866,7 @@ impl Window {
             content_mask: content_mask.scale(scale_factor),
             thickness: style.thickness.scale(scale_factor),
             color: style.color.unwrap_or_default().opacity(opacity),
-            wavy: false,
+            wavy: 0,
         });
     }
 
@@ -3707,7 +3709,8 @@ impl Window {
         );
 
         if !match_result.to_replay.is_empty() {
-            self.replay_pending_input(match_result.to_replay, cx)
+            self.replay_pending_input(match_result.to_replay, cx);
+            cx.propagate_event = true;
         }
 
         if !match_result.pending.is_empty() {
@@ -4267,6 +4270,25 @@ impl Window {
             .on_action(action_type, Rc::new(listener));
     }
 
+    /// Register an action listener on the window for the next frame if the condition is true.
+    /// The type of action is determined by the first parameter of the given listener.
+    /// When the next frame is rendered the listener will be cleared.
+    ///
+    /// This is a fairly low-level method, so prefer using action handlers on elements unless you have
+    /// a specific need to register a global listener.
+    pub fn on_action_when(
+        &mut self,
+        condition: bool,
+        action_type: TypeId,
+        listener: impl Fn(&dyn Any, DispatchPhase, &mut Window, &mut App) + 'static,
+    ) {
+        if condition {
+            self.next_frame
+                .dispatch_tree
+                .on_action(action_type, Rc::new(listener));
+        }
+    }
+
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
     pub fn gpu_specs(&self) -> Option<GpuSpecs> {
@@ -4720,6 +4742,8 @@ pub enum ElementId {
     Path(Arc<std::path::Path>),
     /// A code location.
     CodeLocation(core::panic::Location<'static>),
+    /// A labeled child of an element.
+    NamedChild(Box<ElementId>, SharedString),
 }
 
 impl ElementId {
@@ -4740,6 +4764,7 @@ impl Display for ElementId {
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
             ElementId::Path(path) => write!(f, "{}", path.display())?,
             ElementId::CodeLocation(location) => write!(f, "{}", location)?,
+            ElementId::NamedChild(id, name) => write!(f, "{}-{}", id, name)?,
         }
 
         Ok(())
@@ -4827,6 +4852,12 @@ impl From<Uuid> for ElementId {
 impl From<(&'static str, u32)> for ElementId {
     fn from((name, id): (&'static str, u32)) -> Self {
         ElementId::NamedInteger(name.into(), id.into())
+    }
+}
+
+impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
+    fn from((id, name): (ElementId, T)) -> Self {
+        ElementId::NamedChild(Box::new(id), name.into())
     }
 }
 

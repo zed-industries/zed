@@ -79,11 +79,16 @@ message OpenServerSettings {
     uint64 project_id = 1;
 }
 
-message GetPanicFiles {
+message GetCrashFiles {
 }
 
-message GetPanicFilesResponse {
-    repeated string file_contents = 2;
+message GetCrashFilesResponse {
+    repeated CrashReport crashes = 1;
+}
+
+message CrashReport {
+    optional string panic_contents = 1;
+    optional bytes minidump_contents = 2;
 }
 
 message Extension {

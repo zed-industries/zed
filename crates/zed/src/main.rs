@@ -5,7 +5,7 @@ use agent_ui::AgentPanel;
 use anyhow::{Context as _, Result};
 use clap::{Parser, command};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{Client, CloudUserStore, ProxySettings, UserStore, parse_zed_link};
+use client::{Client, ProxySettings, UserStore, parse_zed_link};
 use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
@@ -42,7 +42,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
-use util::{ConnectionResult, ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use welcome::{FIRST_OPEN, show_welcome_view};
 use workspace::{
@@ -51,9 +51,9 @@ use workspace::{
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
-    derive_paths_with_position, handle_cli_connection, handle_keymap_file_changes,
-    handle_settings_changed, handle_settings_file_changes, initialize_workspace,
-    inline_completion_registry, open_paths_with_positions,
+    derive_paths_with_position, edit_prediction_registry, handle_cli_connection,
+    handle_keymap_file_changes, handle_settings_changed, handle_settings_file_changes,
+    initialize_workspace, open_paths_with_positions,
 };
 
 use crate::zed::OpenRequestKind;
@@ -172,6 +172,12 @@ pub fn main() {
 
     let args = Args::parse();
 
+    // `zed --crash-handler` Makes zed operate in minidump crash handler mode
+    if let Some(socket) = &args.crash_handler {
+        crashes::crash_server(socket.as_path());
+        return;
+    }
+
     // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
     if let Some(socket) = &args.askpass {
         askpass::main(socket);
@@ -192,16 +198,6 @@ pub fn main() {
     // `zed --printenv` Outputs environment variables as JSON to stdout
     if args.printenv {
         util::shell_env::print_env();
-        return;
-    }
-
-    // Check if there is a pending installer
-    // If there is, run the installer and exit
-    // And we don't want to run the installer if we are not the first instance
-    #[cfg(target_os = "windows")]
-    let is_first_instance = crate::zed::windows_only_instance::is_first_instance();
-    #[cfg(target_os = "windows")]
-    if is_first_instance && auto_update::check_pending_installation() {
         return;
     }
 
@@ -264,6 +260,9 @@ pub fn main() {
     let session_id = Uuid::new_v4().to_string();
     let session = app.background_executor().block(Session::new());
 
+    app.background_executor()
+        .spawn(crashes::init(session_id.clone()))
+        .detach();
     reliability::init_panic_hook(
         app_version,
         app_commit_sha.clone(),
@@ -274,30 +273,27 @@ pub fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check =
-        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-            false
-        } else {
-            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-            {
-                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
-            }
+    let failed_single_instance_check = if *db::ZED_STATELESS
+        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
+    {
+        false
+    } else {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
+        }
 
-            #[cfg(target_os = "windows")]
-            {
-                !crate::zed::windows_only_instance::handle_single_instance(
-                    open_listener.clone(),
-                    &args,
-                    is_first_instance,
-                )
-            }
+        #[cfg(target_os = "windows")]
+        {
+            !crate::zed::windows_only_instance::handle_single_instance(open_listener.clone(), &args)
+        }
 
-            #[cfg(target_os = "macos")]
-            {
-                use zed::mac_only_instance::*;
-                ensure_only_instance() != IsOnlyInstance::Yes
-            }
-        };
+        #[cfg(target_os = "macos")]
+        {
+            use zed::mac_only_instance::*;
+            ensure_only_instance() != IsOnlyInstance::Yes
+        }
+    };
     if failed_single_instance_check {
         println!("zed is already running");
         return;
@@ -457,7 +453,6 @@ pub fn main() {
         language::init(cx);
         languages::init(languages.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        let cloud_user_store = cx.new(|cx| CloudUserStore::new(client.cloud_client(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
         language_extension::init(
@@ -517,7 +512,6 @@ pub fn main() {
             languages: languages.clone(),
             client: client.clone(),
             user_store: user_store.clone(),
-            cloud_user_store,
             fs: fs.clone(),
             build_window_options,
             workspace_store,
@@ -561,11 +555,7 @@ pub fn main() {
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
-        inline_completion_registry::init(
-            app_state.client.clone(),
-            app_state.user_store.clone(),
-            cx,
-        );
+        edit_prediction_registry::init(app_state.client.clone(), app_state.user_store.clone(), cx);
         let prompt_builder = PromptBuilder::load(app_state.fs.clone(), stdout_is_a_pty(), cx);
         agent_ui::init(
             app_state.fs.clone(),
@@ -684,17 +674,9 @@ pub fn main() {
 
         cx.spawn({
             let client = app_state.client.clone();
-            async move |cx| match authenticate(client, &cx).await {
-                ConnectionResult::Timeout => log::error!("Timeout during initial auth"),
-                ConnectionResult::ConnectionReset => {
-                    log::error!("Connection reset during initial auth")
-                }
-                ConnectionResult::Result(r) => {
-                    r.log_err();
-                }
-            }
+            async move |cx| authenticate(client, &cx).await
         })
-        .detach();
+        .detach_and_log_err(cx);
 
         let urls: Vec<_> = args
             .paths_or_urls
@@ -844,15 +826,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                 let client = app_state.client.clone();
                 // we continue even if authentication fails as join_channel/ open channel notes will
                 // show a visible error message.
-                match authenticate(client, &cx).await {
-                    ConnectionResult::Timeout => {
-                        log::error!("Timeout during open request handling")
-                    }
-                    ConnectionResult::ConnectionReset => {
-                        log::error!("Connection reset during open request handling")
-                    }
-                    ConnectionResult::Result(r) => r?,
-                };
+                authenticate(client, &cx).await.log_err();
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -902,18 +876,18 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
     }
 }
 
-async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> ConnectionResult<()> {
+async fn authenticate(client: Arc<Client>, cx: &AsyncApp) -> Result<()> {
     if stdout_is_a_pty() {
         if client::IMPERSONATE_LOGIN.is_some() {
-            return client.authenticate_and_connect(false, cx).await;
+            client.sign_in_with_optional_connect(false, cx).await?;
         } else if client.has_credentials(cx).await {
-            return client.authenticate_and_connect(true, cx).await;
+            client.sign_in_with_optional_connect(true, cx).await?;
         }
     } else if client.has_credentials(cx).await {
-        return client.authenticate_and_connect(true, cx).await;
+        client.sign_in_with_optional_connect(true, cx).await?;
     }
 
-    ConnectionResult::Result(Ok(()))
+    Ok(())
 }
 
 async fn system_id() -> Result<IdType> {
@@ -1147,6 +1121,7 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
         paths::config_dir(),
         paths::extensions_dir(),
         paths::languages_dir(),
+        paths::debug_adapters_dir(),
         paths::database_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
@@ -1205,6 +1180,11 @@ struct Args {
     /// by having Zed act like netcat communicating over a Unix socket.
     #[arg(long, hide = true)]
     nc: Option<String>,
+
+    /// Used for recording minidumps on crashes by having Zed run a separate
+    /// process communicating over a socket.
+    #[arg(long, hide = true)]
+    crash_handler: Option<PathBuf>,
 
     /// Run zed in the foreground, only used on Windows, to match the behavior on macOS.
     #[arg(long)]

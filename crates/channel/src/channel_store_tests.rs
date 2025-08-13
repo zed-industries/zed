@@ -259,20 +259,6 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
         assert_channels(&channel_store, &[(0, "the-channel".to_string())], cx);
     });
 
-    let get_users = server.receive::<proto::GetUsers>().await.unwrap();
-    assert_eq!(get_users.payload.user_ids, vec![5]);
-    server.respond(
-        get_users.receipt(),
-        proto::UsersResponse {
-            users: vec![proto::User {
-                id: 5,
-                github_login: "nathansobo".into(),
-                avatar_url: "http://avatar.com/nathansobo".into(),
-                name: None,
-            }],
-        },
-    );
-
     // Join a channel and populate its existing messages.
     let channel = channel_store.update(cx, |store, cx| {
         let channel_id = store.ordered_channels().next().unwrap().1.id;
@@ -334,7 +320,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 .map(|message| (message.sender.github_login.clone(), message.body.clone()))
                 .collect::<Vec<_>>(),
             &[
-                ("nathansobo".into(), "a".into()),
+                ("user-5".into(), "a".into()),
                 ("maxbrunsfeld".into(), "b".into())
             ]
         );
@@ -437,7 +423,7 @@ async fn test_channel_messages(cx: &mut TestAppContext) {
                 .map(|message| (message.sender.github_login.clone(), message.body.clone()))
                 .collect::<Vec<_>>(),
             &[
-                ("nathansobo".into(), "y".into()),
+                ("user-5".into(), "y".into()),
                 ("maxbrunsfeld".into(), "z".into())
             ]
         );

@@ -297,6 +297,12 @@ impl From<String> for LanguageModelToolResultContent {
     }
 }
 
+impl From<LanguageModelImage> for LanguageModelToolResultContent {
+    fn from(image: LanguageModelImage) -> Self {
+        Self::Image(image)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, Hash)]
 pub enum MessageContent {
     Text(String),
