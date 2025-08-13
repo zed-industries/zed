@@ -50,17 +50,6 @@
 (mod_item
   name: (identifier) @module)
 
-[
-  (crate) @module
-  (super) @module
-]
-
-path: (scoped_identifier
-  (identifier) @module)
-path: (identifier) @module
-
-(use_wildcard (identifier) @module)
-
 (visibility_modifier [
   (crate) @keyword
   (super) @keyword
