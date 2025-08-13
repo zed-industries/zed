@@ -128,6 +128,10 @@ pub struct JupyterContent {
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusBar {
+    /// Whether to show the status bar.
+    ///
+    /// Default: true
+    pub visible: bool,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true
@@ -581,6 +585,10 @@ pub struct EditorSettingsContent {
 // Status bar related settings
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusBarContent {
+    /// Whether to show the status bar.
+    ///
+    /// Default: true
+    pub visible: Option<bool>,
     /// Whether to display the active language button in the status bar.
     ///
     /// Default: true

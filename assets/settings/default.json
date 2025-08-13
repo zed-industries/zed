@@ -1251,6 +1251,8 @@
   },
   // Status bar-related settings.
   "status_bar": {
+    // Whether to show the status bar.
+    "visible": true,
     // Whether to show the active language button in the status bar.
     "active_language_button": true
   },
