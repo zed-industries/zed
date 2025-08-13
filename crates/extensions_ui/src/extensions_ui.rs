@@ -1509,7 +1509,6 @@ impl Render for ExtensionsPage {
             .child(self.render_feature_upsells(cx))
             .child(
                 v_flex()
-                    .id("extensions-page-container")
                     .pl_4()
                     .pr_6()
                     .size_full()
@@ -1521,17 +1520,24 @@ impl Render for ExtensionsPage {
                         }
 
                         if count == 0 {
-                            return this.py_4().child(self.render_empty_state(cx));
-                        }
-
-                        let scroll_handle = self.list.clone();
-                        this.child(
-                            uniform_list("entries", count, cx.processor(Self::render_extensions))
+                            this.py_4()
+                                .child(self.render_empty_state(cx))
+                                .into_any_element()
+                        } else {
+                            let scroll_handle = self.list.clone();
+                            this.child(
+                                uniform_list(
+                                    "entries",
+                                    count,
+                                    cx.processor(Self::render_extensions),
+                                )
                                 .flex_grow()
                                 .pb_4()
                                 .track_scroll(scroll_handle.clone()),
-                        )
-                        .vertical_scrollbar_for(scroll_handle, window, cx)
+                            )
+                            .vertical_scrollbar_for(scroll_handle, window, cx)
+                            .into_any_element()
+                        }
                     }),
             )
     }

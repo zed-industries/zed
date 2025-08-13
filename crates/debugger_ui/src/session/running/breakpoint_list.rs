@@ -756,7 +756,7 @@ impl Render for BreakpointList {
                 .chain(exception_breakpoints),
         );
         v_flex()
-            .id("breakpoint-list-container")
+            .id("breakpoint-list")
             .key_context("BreakpointList")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
@@ -773,7 +773,6 @@ impl Render for BreakpointList {
             .m_0p5()
             .child(
                 v_flex()
-                    .id("breakpoint-list")
                     .size_full()
                     .child(self.render_list(cx))
                     .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),

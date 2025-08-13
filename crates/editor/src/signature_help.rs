@@ -343,7 +343,6 @@ impl SignatureHelpPopover {
         let main_content = div()
             .occlude()
             .p_2()
-            .id("signature_help_wrapper")
             .child(
                 div()
                     .id("signature_help_container")

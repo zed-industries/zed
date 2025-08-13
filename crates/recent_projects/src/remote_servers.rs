@@ -1560,7 +1560,6 @@ impl RemoteServerProjects {
             .section(
                 Section::new().padded(false).child(
                     v_flex()
-                        .id("remote-server-modal")
                         .min_h(rems(20.))
                         .size_full()
                         .relative()

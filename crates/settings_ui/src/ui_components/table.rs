@@ -889,7 +889,6 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
 
                 if let Some(state) = interaction_state.as_ref() {
                     content
-                        .id(("table-component-content", state.entity_id()))
                         .custom_scrollbars(
                             Scrollbars::for_settings::<EditorSettings>()
                                 .tracked_scroll_handle(state.read(cx).scroll_handle.clone()),

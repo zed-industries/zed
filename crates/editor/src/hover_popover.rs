@@ -990,7 +990,6 @@ impl DiagnosticPopover {
                                 ),
                             ),
                     )
-                    .id("diagnostic-popover-vertical-scroll-container")
                     .custom_scrollbars(
                         Scrollbars::for_settings::<EditorSettings>()
                             .tracked_scroll_handle(self.scroll_handle.clone()),

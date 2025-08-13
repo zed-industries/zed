@@ -3525,7 +3525,6 @@ impl GitPanel {
             .relative()
             .child(
                 h_flex()
-                    .id("git-panel-entries-container")
                     .flex_1()
                     .size_full()
                     .relative()

@@ -2633,38 +2633,36 @@ impl Render for AcpThreadView {
 
                     v_flex().flex_1().map(|this| {
                         if self.list_state.item_count() > 0 {
-                            this.id("acp-thread-list-view")
-                                .child(
-                                    list(
-                                        self.list_state.clone(),
-                                        cx.processor(|this, index: usize, window, cx| {
-                                            let Some((entry, len)) =
-                                                this.thread().and_then(|thread| {
-                                                    let entries = &thread.read(cx).entries();
-                                                    Some((entries.get(index)?, entries.len()))
-                                                })
-                                            else {
-                                                return Empty.into_any();
-                                            };
-                                            this.render_entry(index, len, entry, window, cx)
-                                        }),
-                                    )
-                                    .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
-                                    .flex_grow()
-                                    .into_any(),
+                            this.child(
+                                list(
+                                    self.list_state.clone(),
+                                    cx.processor(|this, index: usize, window, cx| {
+                                        let Some((entry, len)) = this.thread().and_then(|thread| {
+                                            let entries = &thread.read(cx).entries();
+                                            Some((entries.get(index)?, entries.len()))
+                                        }) else {
+                                            return Empty.into_any();
+                                        };
+                                        this.render_entry(index, len, entry, window, cx)
+                                    }),
                                 )
-                                .vertical_scrollbar(window, cx)
-                                .children(match thread_clone.read(cx).status() {
-                                    ThreadStatus::Idle
-                                    | ThreadStatus::WaitingForToolConfirmation => None,
-                                    ThreadStatus::Generating => div()
-                                        .px_5()
-                                        .py_2()
-                                        .child(LoadingLabel::new("").size(LabelSize::Small))
-                                        .into(),
-                                })
-                                .children(self.render_activity_bar(&thread_clone, window, cx))
-                                .into_any_element()
+                                .with_sizing_behavior(gpui::ListSizingBehavior::Auto)
+                                .flex_grow()
+                                .into_any(),
+                            )
+                            .vertical_scrollbar(window, cx)
+                            .children(match thread_clone.read(cx).status() {
+                                ThreadStatus::Idle | ThreadStatus::WaitingForToolConfirmation => {
+                                    None
+                                }
+                                ThreadStatus::Generating => div()
+                                    .px_5()
+                                    .py_2()
+                                    .child(LoadingLabel::new("").size(LabelSize::Small))
+                                    .into(),
+                            })
+                            .children(self.render_activity_bar(&thread_clone, window, cx))
+                            .into_any_element()
                         } else {
                             this.child(self.render_empty_state(cx)).into_any_element()
                         }

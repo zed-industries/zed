@@ -3529,7 +3529,6 @@ impl EventEmitter<ActiveThreadEvent> for ActiveThread {}
 impl Render for ActiveThread {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .id(("active-thread", cx.entity_id()))
             .size_full()
             .relative()
             .bg(cx.theme().colors().panel_background)

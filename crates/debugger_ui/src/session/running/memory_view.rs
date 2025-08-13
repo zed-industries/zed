@@ -892,7 +892,6 @@ impl Render for MemoryView {
             .child(Divider::horizontal())
             .child(
                 v_flex()
-                    .id("memory-view-scroll-container")
                     .size_full()
                     .on_drag_move(cx.listener(|this, evt, _, _| {
                         this.handle_memory_drag(&evt);

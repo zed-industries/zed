@@ -4706,7 +4706,6 @@ impl OutlinePanel {
             };
 
             v_flex()
-                .id("outline-panel-content-container")
                 .flex_shrink()
                 .size_full()
                 .child(list_contents.size_full().flex_shrink())

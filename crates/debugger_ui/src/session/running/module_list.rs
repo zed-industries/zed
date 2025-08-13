@@ -270,7 +270,6 @@ impl Render for ModuleList {
             self.schedule_rebuild(cx);
         }
         div()
-            .id("module-list-container")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::select_first))

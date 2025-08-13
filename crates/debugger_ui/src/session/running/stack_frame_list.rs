@@ -680,7 +680,6 @@ impl StackFrameList {
 impl Render for StackFrameList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id(("stack-frame-list-container", cx.entity_id()))
             .track_focus(&self.focus_handle)
             .size_full()
             .on_action(cx.listener(Self::select_next))
