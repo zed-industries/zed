@@ -18,7 +18,7 @@ use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 use std::{cell::RefCell, sync::Arc};
 use theme::ThemeSettings;
@@ -345,7 +345,6 @@ impl MessageEditor {
         let mut mentions = Vec::new();
 
         for chunk in message {
-            dbg!(&chunk);
             match chunk {
                 acp::ContentBlock::Text(text_content) => {
                     text.push_str(&text_content.text);
@@ -382,7 +381,6 @@ impl MessageEditor {
                 | acp::ContentBlock::ResourceLink(_) => {}
             }
         }
-        dbg!(&mentions);
 
         let snapshot = message_editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
@@ -672,7 +670,9 @@ mod tests {
         });
 
         let content = message_editor
-            .update_in(cx, |message_editor, window, cx| message_editor.contents(cx))
+            .update_in(cx, |message_editor, _window, cx| {
+                message_editor.contents(cx)
+            })
             .await
             .unwrap();
 

@@ -45,11 +45,6 @@ impl<T> MessageHistory<T> {
             None
         })
     }
-
-    #[cfg(test)]
-    pub fn items(&self) -> &[T] {
-        &self.items
-    }
 }
 #[cfg(test)]
 mod tests {
