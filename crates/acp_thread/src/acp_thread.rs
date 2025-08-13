@@ -26,7 +26,7 @@ use std::process::ExitStatus;
 use std::rc::Rc;
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, debug_panic};
+use util::ResultExt;
 
 #[derive(Debug)]
 pub struct UserMessage {
