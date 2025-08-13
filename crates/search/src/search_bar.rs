@@ -7,7 +7,8 @@ use ui::{Tooltip, prelude::*};
 
 use crate::ToggleReplace;
 
-pub(super) fn render_nav_button(
+pub(super) fn render_action_button(
+    id_prefix: &'static str,
     icon: ui::IconName,
     active: bool,
     tooltip: &'static str,
@@ -15,7 +16,7 @@ pub(super) fn render_nav_button(
     focus_handle: FocusHandle,
 ) -> impl IntoElement {
     IconButton::new(
-        SharedString::from(format!("search-nav-button-{}", action.name())),
+        SharedString::from(format!("{id_prefix}-{}", action.name())),
         icon,
     )
     .shape(IconButtonShape::Square)

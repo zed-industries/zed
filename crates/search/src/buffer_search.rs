@@ -4,7 +4,9 @@ use crate::{
     FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
     SelectAllMatches, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleRegex,
     ToggleReplace, ToggleSelection, ToggleWholeWord,
-    search_bar::{input_base_styles, render_nav_button, render_text_input, toggle_replace_button},
+    search_bar::{
+        input_base_styles, render_action_button, render_text_input, toggle_replace_button,
+    },
 };
 use any_vec::AnyVec;
 use anyhow::Context as _;
@@ -282,24 +284,27 @@ impl Render for BufferSearchBar {
                 )
             })
             .when(!supported_options.find_in_results, |el| {
+                let query_focus = self.query_editor.focus_handle(cx);
                 let matches_column = h_flex()
                     .pl_2()
                     .ml_1()
                     .border_l_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(render_nav_button(
+                    .child(render_action_button(
+                        "buffer-search-nav-button",
                         ui::IconName::ChevronLeft,
                         self.active_match_index.is_some(),
                         "Select Previous Match",
                         &SelectPreviousMatch,
-                        focus_handle.clone(),
+                        query_focus.clone(),
                     ))
-                    .child(render_nav_button(
+                    .child(render_action_button(
+                        "buffer-search-nav-button",
                         ui::IconName::ChevronRight,
                         self.active_match_index.is_some(),
                         "Select Next Match",
                         &SelectNextMatch,
-                        focus_handle.clone(),
+                        query_focus,
                     ));
                 el.child(
                     IconButton::new("select-all", ui::IconName::SelectAll)
@@ -363,14 +368,16 @@ impl Render for BufferSearchBar {
                 let replace_actions = h_flex()
                     .min_w_64()
                     .gap_1()
-                    .child(render_nav_button(
+                    .child(render_action_button(
+                        "buffer-search-replace-button",
                         IconName::ReplaceNext,
                         true,
                         "Replace Next Match",
                         &ReplaceNext,
                         focus_handle.clone(),
                     ))
-                    .child(render_nav_button(
+                    .child(render_action_button(
+                        "buffer-search-replace-button",
                         IconName::ReplaceAll,
                         true,
                         "Replace All Matches",

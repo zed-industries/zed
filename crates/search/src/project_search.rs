@@ -3,7 +3,9 @@ use crate::{
     SearchOptions, SelectNextMatch, SelectPreviousMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
     ToggleRegex, ToggleReplace, ToggleWholeWord,
     buffer_search::Deploy,
-    search_bar::{input_base_styles, render_nav_button, render_text_input, toggle_replace_button},
+    search_bar::{
+        input_base_styles, render_action_button, render_text_input, toggle_replace_button,
+    },
 };
 use anyhow::Context as _;
 use collections::{HashMap, HashSet};
@@ -2047,24 +2049,28 @@ impl Render for ProjectSearchBar {
                 }),
             ));
 
+        let query_focus = search.query_editor.focus_handle(cx);
+
         let matches_column = h_flex()
             .pl_2()
             .ml_2()
             .border_l_1()
             .border_color(cx.theme().colors().border_variant)
-            .child(render_nav_button(
+            .child(render_action_button(
+                "project-search-nav-button",
                 IconName::ChevronLeft,
                 search.active_match_index.is_some(),
                 "Select Previous Match",
                 &SelectPreviousMatch,
-                focus_handle.clone(),
+                query_focus.clone(),
             ))
-            .child(render_nav_button(
+            .child(render_action_button(
+                "project-search-nav-button",
                 IconName::ChevronRight,
                 search.active_match_index.is_some(),
                 "Select Next Match",
                 &SelectNextMatch,
-                focus_handle.clone(),
+                query_focus,
             ))
             .child(
                 div()
@@ -2099,14 +2105,16 @@ impl Render for ProjectSearchBar {
             let replace_actions = h_flex()
                 .min_w_64()
                 .gap_1()
-                .child(render_nav_button(
+                .child(render_action_button(
+                    "project-search-replace-button",
                     IconName::ReplaceNext,
                     true,
                     "Replace Next Match",
                     &ReplaceNext,
                     focus_handle.clone(),
                 ))
-                .child(render_nav_button(
+                .child(render_action_button(
+                    "project-search-replace-button",
                     IconName::ReplaceAll,
                     true,
                     "Replace All Matches",
