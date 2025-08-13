@@ -14,7 +14,7 @@ use language_model::{
     RateLimiter, Role, StopReason, TokenUsage,
 };
 use menu;
-use open_ai::{ImageUrl, Model, ResponseStreamEvent, stream_completion};
+use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, stream_completion};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -45,6 +45,7 @@ pub struct AvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     pub max_completion_tokens: Option<u64>,
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 pub struct OpenAiLanguageModelProvider {
@@ -213,6 +214,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
                     max_tokens: model.max_tokens,
                     max_output_tokens: model.max_output_tokens,
                     max_completion_tokens: model.max_completion_tokens,
+                    reasoning_effort: model.reasoning_effort.clone(),
                 },
             );
         }
@@ -369,6 +371,7 @@ impl LanguageModel for OpenAiLanguageModel {
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
             self.max_output_tokens(),
+            self.model.reasoning_effort(),
         );
         let completions = self.stream_completion(request, cx);
         async move {
@@ -384,6 +387,7 @@ pub fn into_open_ai(
     model_id: &str,
     supports_parallel_tool_calls: bool,
     max_output_tokens: Option<u64>,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
     let stream = !model_id.starts_with("o1-");
 
@@ -490,6 +494,7 @@ pub fn into_open_ai(
             LanguageModelToolChoice::Any => open_ai::ToolChoice::Required,
             LanguageModelToolChoice::None => open_ai::ToolChoice::None,
         }),
+        reasoning_effort,
     }
 }
 
