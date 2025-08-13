@@ -10,7 +10,7 @@ use git::{
     },
     status::{FileStatus, GitStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
-use gpui::{AsyncApp, BackgroundExecutor, SharedString};
+use gpui::{AsyncApp, BackgroundExecutor, SharedString, Task};
 use ignore::gitignore::GitignoreBuilder;
 use rope::Rope;
 use smol::future::FutureExt as _;
@@ -183,7 +183,7 @@ impl GitRepository for FakeGitRepository {
         async move { None }.boxed()
     }
 
-    fn status(&self, path_prefixes: &[RepoPath]) -> BoxFuture<'_, Result<GitStatus>> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>> {
         let workdir_path = self.dot_git_path.parent().unwrap();
 
         // Load gitignores
@@ -311,7 +311,10 @@ impl GitRepository for FakeGitRepository {
                 entries: entries.into(),
             })
         });
-        async move { result? }.boxed()
+        Task::ready(match result {
+            Ok(result) => result,
+            Err(e) => Err(e),
+        })
     }
 
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
