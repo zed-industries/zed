@@ -248,8 +248,6 @@ actions!(
         ToggleZoom,
         /// Stops following a collaborator.
         Unfollow,
-        /// Shows the welcome screen.
-        Welcome,
         /// Restores the banner.
         RestoreBanner,
         /// Toggles expansion of the selected item.
