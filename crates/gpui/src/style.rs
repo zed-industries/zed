@@ -584,9 +584,16 @@ impl Style {
                 };
 
                 let corner_radii = self.corner_radii.to_pixels(rem_size);
-
+                let border_widths = self.border_widths.to_pixels(rem_size);
                 Some(ContentMask {
-                    bounds,
+                    bounds: Bounds {
+                        origin: bounds.origin - point(border_widths.left, border_widths.top),
+                        size: bounds.size
+                            + size(
+                                border_widths.left + border_widths.right,
+                                border_widths.top + border_widths.bottom,
+                            ),
+                    },
                     corner_radii,
                 })
             }
