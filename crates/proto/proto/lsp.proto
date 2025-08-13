@@ -775,6 +775,24 @@ message MultiLspQuery {
     }
 }
 
+message LspQuery {
+    oneof request {
+        GetReferences get_references = 1;
+    }
+}
+
+message LspQueryResponse {
+    repeated LspResponse2 responses = 1;
+}
+
+message LspResponse2 {
+    uint64 server_id = 1;
+    oneof response {
+        GetReferencesResponse get_references_response = 2;
+    }
+}
+
+
 message AllLanguageServers {}
 
 message LanguageServerSelector {

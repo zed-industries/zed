@@ -69,3 +69,18 @@ macro_rules! entity_messages {
         })*
     };
 }
+
+#[macro_export]
+macro_rules! lsp_messages {
+    ($(($request_name:ident, $response_name:ident)),* $(,)?) => {
+        $(impl LspRequestMessage for $request_name {
+            type Response = $response_name;
+
+            fn into_query(self) -> crate::LspQuery {
+                crate::LspQuery {
+                    request: Some(crate::lsp_query::Request::$request_name(self)),
+                }
+            }
+        })*
+    };
+}

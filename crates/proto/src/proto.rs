@@ -171,6 +171,8 @@ messages!(
     (ReorderChannel, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
+    (LspQuery, Background),
+    (LspQueryResponse, Background),
     (OnTypeFormatting, Background),
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
@@ -427,6 +429,7 @@ request_messages!(
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
     (MultiLspQuery, MultiLspQueryResponse),
+    (LspQuery, LspQueryResponse),
     (RestartLanguageServers, Ack),
     (StopLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
@@ -477,6 +480,8 @@ request_messages!(
     (GetDefaultBranch, GetDefaultBranchResponse),
     (GitClone, GitCloneResponse)
 );
+
+lsp_messages!((GetReferences, GetReferencesResponse));
 
 entity_messages!(
     {project_id, ShareProject},
@@ -793,6 +798,26 @@ impl MultiLspQuery {
             Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
             None => "<unknown>",
         }
+    }
+}
+
+impl LspQuery {
+    pub fn request_str(&self) -> &str {
+        // match self.request {
+        //     Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
+        //     Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
+        //     Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
+        //     Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
+        //     Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
+        //     Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
+        //     Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
+        //     Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
+        //     Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
+        //     Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
+        //     Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
+        //     None => "<unknown>",
+        // }
+        todo!("TODO kb")
     }
 }
 

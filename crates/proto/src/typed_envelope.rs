@@ -31,6 +31,17 @@ pub trait RequestMessage: EnvelopedMessage {
     type Response: EnvelopedMessage;
 }
 
+pub trait LspRequestMessage: EnvelopedMessage {
+    type Response: EnvelopedMessage;
+
+    fn into_query(self) -> crate::LspQuery;
+}
+
+pub struct LspResponse<R> {
+    server_id: u64,
+    response: R,
+}
+
 pub trait AnyTypedEnvelope: Any + Send + Sync {
     fn payload_type_id(&self) -> TypeId;
     fn payload_type_name(&self) -> &'static str;

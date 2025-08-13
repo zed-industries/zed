@@ -28,7 +28,7 @@ use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
-use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
+use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, LspRequestMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -1616,6 +1616,36 @@ impl Client {
             );
             response
         }
+    }
+
+    pub fn request_lsp<T>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<TypedEnvelope<T::Response>>> + use<T>
+    where
+        T: LspRequestMessage,
+    {
+        let query = request.into_query();
+        let new_id = todo!("TODO kb");
+        async move { todo!("TODO kb") }
+        // let client_id = self.id();
+        // log::debug!(
+        //     "rpc request start. client_id:{}. name:{}",
+        //     client_id,
+        //     T::NAME
+        // );
+        // let response = self
+        //     .connection_id()
+        //     .map(|conn_id| self.peer.request_lsp(conn_id, request));
+        // async move {
+        //     let response = response?.await;
+        //     log::debug!(
+        //         "rpc request finish. client_id:{}. name:{}",
+        //         client_id,
+        //         T::NAME
+        //     );
+        //     response
+        // }
     }
 
     pub fn request_dynamic(

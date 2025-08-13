@@ -400,6 +400,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
             .add_request_handler(multi_lsp_query)
+            // .add_request_handler(lsp_query)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -911,6 +912,7 @@ impl Server {
                                 login=field::Empty,
                                 impersonator=field::Empty,
                                 multi_lsp_query_request=field::Empty,
+                                lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
@@ -2367,6 +2369,18 @@ async fn multi_lsp_query(
     tracing::info!("multi_lsp_query message received");
     forward_mutating_project_request(request, response, session).await
 }
+
+// async fn lsp_query(
+//     request: LspQuery,
+//     response: Response<LspQueryResponse>,
+//     session: MessageContext,
+// ) -> Result<()> {
+//     tracing::Span::current().record("lsp_query_request", request.request_str());
+//     tracing::info!("lsp_query message received");
+//     // TODO kb separate the permissions based on the request type?
+//     // inline match from request_str and have the `is_readonly` flag.
+//     forward_mutating_project_request(request, response, session).await
+// }
 
 /// Notify other participants that a new buffer has been created
 async fn create_buffer_for_peer(
