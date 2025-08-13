@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_parse_thread_uri() {
-        let thread_uri = "zed:///agent/thread/session123?name=Thread%20name";
+        let thread_uri = "zed:///agent/thread/session123?name=Thread+name";
         let parsed = MentionUri::parse(thread_uri).unwrap();
         match &parsed {
             MentionUri::Thread {
@@ -286,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_parse_rule_uri() {
-        let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some%20rule";
+        let rule_uri = "zed:///agent/rule/d8694ff2-90d5-4b6f-be33-33c1763acd52?name=Some+rule";
         let parsed = MentionUri::parse(rule_uri).unwrap();
         match &parsed {
             MentionUri::Rule { id, name } => {

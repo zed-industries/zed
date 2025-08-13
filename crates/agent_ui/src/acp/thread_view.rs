@@ -2741,8 +2741,8 @@ impl AcpThreadView {
                             let Some(editor) = item.await?.downcast::<Editor>() else {
                                 return Ok(());
                             };
-                            let range = Point::new(line_range.start as u32, 0)
-                                ..Point::new(line_range.start as u32, 0);
+                            let range =
+                                Point::new(line_range.start, 0)..Point::new(line_range.start, 0);
                             editor
                                 .update_in(cx, |editor, window, cx| {
                                     editor.change_selections(

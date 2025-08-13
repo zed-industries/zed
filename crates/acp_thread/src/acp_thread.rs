@@ -409,19 +409,11 @@ impl ContentBlock {
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
             ContentBlock::ResourceLink { resource_link } => {
-                let existing_content = Self::resource_link_to_content(&resource_link.uri);
+                let existing_content = Self::resource_link_md(&resource_link.uri);
                 let combined = format!("{}\n{}", existing_content, new_content);
 
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
-        }
-    }
-
-    fn resource_link_to_content(uri: &str) -> String {
-        if let Some(uri) = MentionUri::parse(&uri).log_err() {
-            uri.as_link().to_string()
-        } else {
-            uri.to_string().clone()
         }
     }
 
@@ -440,7 +432,7 @@ impl ContentBlock {
         match block {
             acp::ContentBlock::Text(text_content) => text_content.text.clone(),
             acp::ContentBlock::ResourceLink(resource_link) => {
-                Self::resource_link_to_content(&resource_link.uri)
+                Self::resource_link_md(&resource_link.uri)
             }
             acp::ContentBlock::Resource(acp::EmbeddedResource {
                 resource:
@@ -449,10 +441,18 @@ impl ContentBlock {
                         ..
                     }),
                 ..
-            }) => Self::resource_link_to_content(&uri),
+            }) => Self::resource_link_md(&uri),
             acp::ContentBlock::Image(_)
             | acp::ContentBlock::Audio(_)
             | acp::ContentBlock::Resource(_) => String::new(),
+        }
+    }
+
+    fn resource_link_md(uri: &str) -> String {
+        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+            uri.as_link().to_string()
+        } else {
+            uri.to_string()
         }
     }
 

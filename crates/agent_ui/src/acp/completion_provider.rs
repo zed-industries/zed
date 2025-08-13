@@ -161,7 +161,7 @@ impl MentionSet {
                         else {
                             return Task::ready(Err(anyhow!("missing prompt store")));
                         };
-                        let text_task = prompt_store.read(cx).load(prompt_id.clone(), cx);
+                        let text_task = prompt_store.read(cx).load(*prompt_id, cx);
                         let uri = uri.clone();
                         cx.spawn(async move |_| {
                             // TODO: report load errors instead of just logging
@@ -256,7 +256,7 @@ fn search(
                 search_symbols_task
                     .await
                     .into_iter()
-                    .map(|symbol| Match::Symbol(symbol))
+                    .map(Match::Symbol)
                     .collect()
             })
         }
@@ -682,11 +682,9 @@ impl ContextPickerCompletionProvider {
             crease_icon_path.clone()
         };
 
-        let Some(abs_path) = project.read(cx).absolute_path(&project_path, cx) else {
-            return None;
-        };
+        let abs_path = project.read(cx).absolute_path(&project_path, cx)?;
 
-        let file_uri = MentionUri::File(abs_path.into());
+        let file_uri = MentionUri::File(abs_path);
         let new_text = format!("{} ", file_uri.as_link());
         let new_text_len = new_text.len();
         Some(Completion {
