@@ -551,6 +551,7 @@ impl Render for Onboarding {
             .child(
                 h_flex()
                     .max_w(rems_from_px(1100.))
+                    .max_h(rems_from_px(850.))
                     .size_full()
                     .m_auto()
                     .py_20()
@@ -560,12 +561,14 @@ impl Render for Onboarding {
                     .child(self.render_nav(window, cx))
                     .child(
                         v_flex()
+                            .id("page-content")
+                            .size_full()
                             .max_w_full()
                             .min_w_0()
                             .pl_12()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                            .size_full()
+                            .overflow_y_scroll()
                             .child(self.render_page(window, cx)),
                     ),
             )
