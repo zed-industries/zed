@@ -6,8 +6,10 @@ use crate::{
 };
 use acp_thread::AgentModelSelector;
 use agent_client_protocol as acp;
+use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
+use fs::Fs;
 use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
@@ -17,6 +19,7 @@ use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
+use settings::update_settings_file;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -161,6 +164,7 @@ pub struct NativeAgent {
     models: LanguageModels,
     project: Entity<Project>,
     prompt_store: Option<Entity<PromptStore>>,
+    fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -169,6 +173,7 @@ impl NativeAgent {
         project: Entity<Project>,
         templates: Arc<Templates>,
         prompt_store: Option<Entity<PromptStore>>,
+        fs: Arc<dyn Fs>,
         cx: &mut AsyncApp,
     ) -> Result<Entity<NativeAgent>> {
         log::info!("Creating new NativeAgent");
@@ -205,6 +210,7 @@ impl NativeAgent {
                 models: LanguageModels::new(cx),
                 project,
                 prompt_store,
+                fs,
                 _subscriptions: subscriptions,
             }
         })
@@ -465,8 +471,16 @@ impl AgentModelSelector for NativeAgentConnection {
         };
 
         thread.update(cx, |thread, _cx| {
-            thread.selected_model = model;
+            thread.selected_model = model.clone();
         });
+
+        update_settings_file::<AgentSettings>(
+            self.0.read(cx).fs.clone(),
+            cx,
+            move |settings, _cx| {
+                settings.set_model(model);
+            },
+        );
 
         Task::ready(Ok(()))
     }
@@ -759,7 +773,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use acp_thread::{AgentModelGroupName, AgentModelId, AgentModelInfo};
+    use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use serde_json::json;
@@ -777,9 +791,15 @@ mod tests {
         )
         .await;
         let project = Project::test(fs.clone(), [], cx).await;
-        let agent = NativeAgent::new(project.clone(), Templates::new(), None, &mut cx.to_async())
-            .await
-            .unwrap();
+        let agent = NativeAgent::new(
+            project.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
         agent.read_with(cx, |agent, _| {
             assert_eq!(agent.project_context.borrow().worktrees, vec![])
         });
@@ -827,9 +847,15 @@ mod tests {
         fs.insert_tree("/", json!({ "a": {}  })).await;
         let project = Project::test(fs.clone(), [], cx).await;
         let connection = NativeAgentConnection(
-            NativeAgent::new(project.clone(), Templates::new(), None, &mut cx.to_async())
-                .await
-                .unwrap(),
+            NativeAgent::new(
+                project.clone(),
+                Templates::new(),
+                None,
+                fs.clone(),
+                &mut cx.to_async(),
+            )
+            .await
+            .unwrap(),
         );
 
         let models = cx.update(|cx| connection.list_models(cx)).await.unwrap();
@@ -850,12 +876,93 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_model_selection_persists_to_settings(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.create_dir(paths::settings_file().parent().unwrap())
+            .await
+            .unwrap();
+        fs.insert_file(
+            paths::settings_file(),
+            json!({
+                "agent": {
+                    "default_model": {
+                        "provider": "foo",
+                        "model": "bar"
+                    }
+                }
+            })
+            .to_string()
+            .into_bytes(),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+
+        // Create the agent and connection
+        let agent = NativeAgent::new(
+            project.clone(),
+            Templates::new(),
+            None,
+            fs.clone(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        let connection = NativeAgentConnection(agent.clone());
+
+        // Create a thread/session
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(
+                    project.clone(),
+                    Path::new("/a"),
+                    &mut cx.to_async(),
+                )
+            })
+            .await
+            .unwrap();
+
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        // Select a model
+        let model_id = AgentModelId("fake/fake".into());
+        cx.update(|cx| connection.select_model(session_id.clone(), model_id.clone(), cx))
+            .await
+            .unwrap();
+
+        // Verify the thread has the selected model
+        agent.read_with(cx, |agent, _| {
+            let session = agent.sessions.get(&session_id).unwrap();
+            session.thread.read_with(cx, |thread, _| {
+                assert_eq!(thread.selected_model.id().0, "fake");
+            });
+        });
+
+        cx.run_until_parked();
+
+        // Verify settings file was updated
+        let settings_content = fs.load(paths::settings_file()).await.unwrap();
+        let settings_json: serde_json::Value = serde_json::from_str(&settings_content).unwrap();
+
+        // Check that the agent settings contain the selected model
+        assert_eq!(
+            settings_json["agent"]["default_model"]["model"],
+            json!("fake")
+        );
+        assert_eq!(
+            settings_json["agent"]["default_model"]["provider"],
+            json!("fake")
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             Project::init_settings(cx);
+            agent_settings::init(cx);
             language::init(cx);
             LanguageModelRegistry::test(cx);
         });

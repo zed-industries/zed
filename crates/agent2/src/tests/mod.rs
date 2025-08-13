@@ -686,13 +686,19 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create a project for new_thread
     let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
     fake_fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
+    let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
 
     // Create agent and connection
-    let agent = NativeAgent::new(project.clone(), templates.clone(), None, &mut cx.to_async())
-        .await
-        .unwrap();
+    let agent = NativeAgent::new(
+        project.clone(),
+        templates.clone(),
+        None,
+        fake_fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
