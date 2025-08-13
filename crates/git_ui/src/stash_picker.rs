@@ -234,7 +234,7 @@ impl StashListDelegate {
                 .await??;
             Ok(())
         })
-        .detach_and_prompt_err("Failed to apply stash", window, cx, |e, _, _| {
+        .detach_and_prompt_err("Failed to drop stash", window, cx, |e, _, _| {
             Some(e.to_string())
         });
     }
