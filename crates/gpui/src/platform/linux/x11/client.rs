@@ -2494,11 +2494,11 @@ fn valid_scale_factor(scale_factor: f32) -> bool {
     scale_factor.is_sign_positive() && scale_factor.is_normal()
 }
 
-fn get_package_version(name: String) -> Option<String> {
+fn get_package_version(name: &str) -> Option<String> {
     use util::command::new_std_command;
 
     if let Ok(output) = new_std_command("dpkg-query")
-        .args(["-W", "-f=${Version}", name])
+        .args(["-W", "-f=${Version}", &name])
         .output()
     {
         if output.status.success() {
@@ -2509,7 +2509,7 @@ fn get_package_version(name: String) -> Option<String> {
     }
 
     if let Ok(output) = new_std_command("rpm")
-        .args(["-q", "--qf", "%{VERSION}-%{RELEASE}", name])
+        .args(["-q", "--qf", "%{VERSION}-%{RELEASE}", &name])
         .output()
     {
         if output.status.success() {
@@ -2519,10 +2519,7 @@ fn get_package_version(name: String) -> Option<String> {
         }
     }
 
-    if let Ok(output) = new_std_command("pacman")
-        .args(["-Q", name])
-        .output()
-    {
+    if let Ok(output) = new_std_command("pacman").args(["-Q", &name]).output() {
         if output.status.success() {
             if let Ok(stdout) = std::str::from_utf8(&output.stdout) {
                 if let Some(version) = stdout.trim().split_whitespace().nth(1) {
