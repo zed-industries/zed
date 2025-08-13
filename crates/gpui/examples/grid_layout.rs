@@ -15,15 +15,8 @@ impl Render for HelloWorld {
                 .border_dashed()
                 .rounded_md()
                 .border_color(gpui::white())
+                .items_center()
         };
-
-        let colors = [
-            gpui::red(),
-            gpui::green(),
-            gpui::blue(),
-            gpui::yellow(),
-            gpui::black(),
-        ];
 
         div()
             .gap_1()
@@ -34,8 +27,12 @@ impl Render for HelloWorld {
             .border_1()
             .border_color(rgb(0x0000ff))
             .grid_cols(3)
-            .child(block(gpui::white()).col_span(2).items_center())
-            .children(colors.map(block))
+            .child(block(gpui::white()).row_span_full())
+            .child(block(gpui::red()).col_span(2).items_center())
+            .child(block(gpui::green()).row_span(2).items_center())
+            .child(block(gpui::blue()).col_span_full())
+            .child(block(gpui::yellow()))
+            .child(block(gpui::black()))
     }
 }
 

@@ -661,13 +661,27 @@ pub trait Styled: Sized {
 
     /// Sets the column span of this element.
     fn col_span(mut self, span: u16) -> Self {
-        self.style().col_span = Some(span);
+        let span = span as i16;
+        self.style().col_span = Some(span..span);
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn col_span_full(mut self) -> Self {
+        self.style().col_span = Some(1..-1);
         self
     }
 
     /// Sets the row span of this element.
     fn row_span(mut self, span: u16) -> Self {
-        self.style().row_span = Some(span);
+        let span = span as i16;
+        self.style().row_span = Some(span..span);
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn row_span_full(mut self) -> Self {
+        self.style().row_span = Some(1..-1);
         self
     }
 

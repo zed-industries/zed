@@ -7,7 +7,7 @@ use std::fmt::Debug;
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
-    prelude::TaffyGridSpan,
+    prelude::{TaffyGridLine, TaffyGridSpan},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -254,6 +254,28 @@ impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
         use taffy::style_helpers::{fr, length, minmax, repeat};
 
+        fn convert_range_to_grid_line(
+            span: &std::ops::Range<i16>,
+        ) -> taffy::Line<taffy::GridPlacement> {
+            if span.start == span.end {
+                taffy::Line::from_span(span.start as u16)
+            } else {
+                taffy::Line {
+                    start: span.start,
+                    end: span.end,
+                }
+                .map(taffy::GridPlacement::from_line_index)
+            }
+        }
+
+        fn grid_axis_repeat<T: taffy::style::CheapCloneStr>(
+            unit: &Option<u16>,
+        ) -> Vec<taffy::GridTemplateComponent<T>> {
+            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
+                .unwrap_or_default()
+        }
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -277,24 +299,17 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            grid_template_rows: if let Some(count) = self.grid_rows {
-                vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])]
-            } else {
-                Default::default()
-            },
-            // grid-template-columns: repeat(<number>, minmax(0, 1fr));
-            grid_template_columns: if let Some(count) = self.grid_cols {
-                vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])]
-            } else {
-                Default::default()
-            },
+            grid_template_rows: grid_axis_repeat(&self.grid_rows),
+            grid_template_columns: grid_axis_repeat(&self.grid_cols),
             grid_row: self
                 .row_span
-                .map(taffy::Line::from_span)
+                .as_ref()
+                .map(convert_range_to_grid_line)
                 .unwrap_or_default(),
             grid_column: self
                 .col_span
-                .map(taffy::Line::from_span)
+                .as_ref()
+                .map(convert_range_to_grid_line)
                 .unwrap_or_default(),
             ..Default::default() // Ignore grid properties for now
         }

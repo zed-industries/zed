@@ -261,16 +261,18 @@ pub struct Style {
     pub opacity: Option<f32>,
 
     /// The grid columns of this element
+    /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
 
     /// The grid rows of this element
+    /// Equivalent to the Tailwind `grid-rows-<number>`
     pub grid_rows: Option<u16>,
 
     /// The row span of this element
-    pub row_span: Option<u16>,
+    pub row_span: Option<Range<i16>>,
 
     /// The column span of this element
-    pub col_span: Option<u16>,
+    pub col_span: Option<Range<i16>>,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
