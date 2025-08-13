@@ -6,6 +6,13 @@ use crate::{FocusHandle, FocusId};
 #[derive(Default)]
 pub(crate) struct TabHandles {
     pub(crate) handles: Vec<FocusHandle>,
+    groups: Vec<GroupDef>,
+    group_depth: usize,
+}
+
+struct GroupDef {
+    index: isize,
+    offset: usize,
 }
 
 impl TabHandles {
@@ -14,7 +21,10 @@ impl TabHandles {
             return;
         }
 
-        let focus_handle = focus_handle.clone();
+        let mut focus_handle = focus_handle.clone();
+        for group in self.groups.iter().rev().take(self.group_depth) {
+            focus_handle.tab_index += group.index;
+        }
 
         // Insert handle with same tab_index last
         if let Some(ix) = self
@@ -58,6 +68,18 @@ impl TabHandles {
 
         self.handles.get(prev_ix).cloned()
     }
+
+    fn begin_group(&mut self, tab_index: isize) {
+        self.groups.push(GroupDef {
+            index: tab_index,
+            offset: 0,
+        });
+        self.group_depth += 1;
+    }
+
+    fn end_group(&mut self) {
+        self.group_depth -= 1;
+    }
 }
 
 #[cfg(test)]
@@ -98,7 +120,7 @@ mod tests {
         #[derive(Debug, Clone)]
         enum NodeType {
             TabStop {
-                tab_index: Option<isize>,
+                tab_index: isize,
                 actual: usize, // Required for tab stops
             },
             NonTabStop {
@@ -106,7 +128,7 @@ mod tests {
                 // No actual field - these aren't in the tab order
             },
             Group {
-                tab_index: Option<isize>,
+                tab_index: isize,
                 children: Vec<TreeNode>,
             },
             FocusTrap {
@@ -120,7 +142,7 @@ mod tests {
                 xml_tag: "root".to_string(),
                 handle: None,
                 node_type: NodeType::Group {
-                    tab_index: None,
+                    tab_index: isize::MIN,
                     children: Vec::new(),
                 },
             };
@@ -211,6 +233,8 @@ mod tests {
                             if actual.is_some() {
                                 panic!("tab-group elements should not have 'actual' attribute");
                             }
+                            let tab_index = tab_index
+                                .expect("tab-group elements should have 'tab-index' attribute");
                             NodeType::Group {
                                 tab_index,
                                 children: Vec::new(),
@@ -227,18 +251,16 @@ mod tests {
                         _ => {
                             // Determine if it's a tab stop based on tab-stop attribute
                             let is_tab_stop = tab_stop.unwrap_or(true);
+
                             if is_tab_stop {
                                 // Tab stops must have an actual value
-                                match actual {
-                                    Some(actual_value) => NodeType::TabStop {
-                                        tab_index,
-                                        actual: actual_value,
-                                    },
-                                    None => panic!(
-                                        "Tab stop with tab-index={} must have an 'actual' attribute",
-                                        tab_index.map_or("None".to_string(), |v| v.to_string())
-                                    ),
-                                }
+                                let tab_index =
+                                    tab_index.expect("Tab stop must have a 'tab-index' attribute");
+                                let actual = actual.expect(&format!(
+                                    "Tab stop with tab-index={} must have an 'actual' attribute",
+                                    tab_index
+                                ));
+                                NodeType::TabStop { tab_index, actual }
                             } else {
                                 // Non-tab stops should not have an actual value
                                 if actual.is_some() {
@@ -298,8 +320,8 @@ mod tests {
                     NodeType::TabStop { tab_index, actual } => {
                         let mut handle = FocusHandle::new(focus_map);
 
-                        if let Some(idx) = tab_index {
-                            handle = handle.tab_index(*idx);
+                        if *tab_index != isize::MIN {
+                            handle = handle.tab_index(*tab_index);
                         }
 
                         handle = handle.tab_stop(true);
@@ -323,11 +345,16 @@ mod tests {
 
                         node.handle = Some(handle);
                     }
-                    NodeType::Group { children, .. } => {
+                    NodeType::Group {
+                        children,
+                        tab_index,
+                    } => {
                         // For now, just process children without special group handling
+                        tab_handles.begin_group(*tab_index);
                         for child in children {
                             construct_recursive(child, focus_map, tab_handles, actual_to_handle);
                         }
+                        tab_handles.end_group();
                     }
                     NodeType::FocusTrap { children, .. } => {
                         // TODO: Implement focus trap behavior
@@ -445,30 +472,25 @@ mod tests {
             handle_contexts.sort_by_key(|c| c.actual);
 
             // Helper function to format tree structure as XML for error messages
-            fn format_tree_structure(
-                node: &TreeNode,
-                label: &str,
-                actual_map: &HashMap<FocusId, usize>,
-            ) -> String {
-                let mut result = format!("{}:\n", label);
+            fn format_tree_structure(node: &TreeNode, tab_handles: &TabHandles) -> String {
+                let mut result = String::new();
 
-                fn format_node(
-                    node: &TreeNode,
-                    actual_map: &HashMap<FocusId, usize>,
-                    indent: usize,
-                ) -> String {
+                fn format_node(node: &TreeNode, tab_handles: &TabHandles, indent: usize) -> String {
                     let mut result = String::new();
                     let indent_str = "  ".repeat(indent);
 
                     match &node.node_type {
                         NodeType::TabStop { tab_index, actual } => {
+                            let actual = node
+                                .handle
+                                .as_ref()
+                                .and_then(|handle| tab_handles.current_index(Some(&handle.id)))
+                                .unwrap_or(*actual);
                             let actual_str = format!(" actual={}", actual);
 
                             result.push_str(&format!(
                                 "{}<tab-index={}{}>\n",
-                                indent_str,
-                                tab_index.map_or("None".to_string(), |v| v.to_string()),
-                                actual_str
+                                indent_str, tab_index, actual_str
                             ));
                         }
                         NodeType::NonTabStop { tab_index } => {
@@ -484,18 +506,17 @@ mod tests {
                         } => {
                             result.push_str(&format!(
                                 "{}<tab-group tab-index={}>\n",
-                                indent_str,
-                                tab_index.map_or("None".to_string(), |v| v.to_string())
+                                indent_str, tab_index
                             ));
                             for child in children {
-                                result.push_str(&format_node(child, actual_map, indent + 1));
+                                result.push_str(&format_node(child, tab_handles, indent + 1));
                             }
                             result.push_str(&format!("{}</tab-group>\n", indent_str));
                         }
                         NodeType::FocusTrap { children } => {
                             result.push_str(&format!("{}<focus-trap>\n", indent_str));
                             for child in children {
-                                result.push_str(&format_node(child, actual_map, indent + 1));
+                                result.push_str(&format_node(child, tab_handles, indent + 1));
                             }
                             result.push_str(&format!("{}</focus-trap>\n", indent_str));
                         }
@@ -507,7 +528,7 @@ mod tests {
                 // Skip the root node and format its children
                 if let NodeType::Group { children, .. } = &node.node_type {
                     for child in children {
-                        result.push_str(&format_node(child, actual_map, 0));
+                        result.push_str(&format_node(child, tab_handles, 0));
                     }
                 }
 
@@ -521,12 +542,17 @@ mod tests {
                 current_id: FocusId,
                 actual_id: Option<FocusId>,
                 expected_id: FocusId,
+                tab_handles: &TabHandles,
             ) {
                 if actual_id != Some(expected_id) {
                     panic!(
-                        "Tab navigation error!\n\n{}\n\n{}",
+                        "Tab navigation error!\n\n{}\n\n{}\n\n{}",
                         error_label,
-                        format_tree_with_navigation(tree, current_id, actual_id, expected_id)
+                        format_tree_with_navigation(tree, current_id, actual_id, expected_id),
+                        pretty_assertions::StrComparison::new(
+                            &format_tree_structure(tree, tab_handles),
+                            &format_tree_structure(tree, &TabHandles::default()),
+                        ),
                     );
                 }
             }
@@ -575,10 +601,7 @@ mod tests {
 
                             result.push_str(&format!(
                                 "{}<tab-index={}{}>{}\n",
-                                indent_str,
-                                tab_index.map_or("None".to_string(), |v| v.to_string()),
-                                actual_str,
-                                nav_comment
+                                indent_str, tab_index, actual_str, nav_comment
                             ));
                         }
                         NodeType::NonTabStop { tab_index } => {
@@ -598,8 +621,7 @@ mod tests {
                         } => {
                             result.push_str(&format!(
                                 "{}<tab-group tab-index={}>\n",
-                                indent_str,
-                                tab_index.map_or("None".to_string(), |v| v.to_string())
+                                indent_str, tab_index
                             ));
                             for child in children {
                                 result.push_str(&format_node_with_nav(
@@ -673,11 +695,13 @@ mod tests {
                 }
 
                 panic!(
-                    "Number of tab stops doesn't match! Expected {} but found {}\n\n{}\n{}",
+                    "Number of tab stops doesn't match! Expected {} but found {}\n\n{}",
                     actual_to_handle.len(),
                     handle_contexts.len(),
-                    format_tree_structure(tree, "Got", &actual_map),
-                    format_tree_structure(tree, "Expected", &expected_map)
+                    pretty_assertions::StrComparison::new(
+                        &format_tree_structure(tree, tab_handles),
+                        &format_tree_structure(tree, &TabHandles::default()),
+                    ),
                 );
             }
 
@@ -733,10 +757,11 @@ mod tests {
 
                         check_navigation(
                             tree,
-                            &format!("Tab order mismatch at position {}:\n\n", position),
+                            &format!("Tab order mismatch at position {}", position),
                             started_id,
                             went_to_id,
                             expected_handle.id,
+                            tab_handles,
                         );
                     }
                 }
@@ -755,6 +780,7 @@ mod tests {
                         last_id,
                         actual_next_id,
                         first_id,
+                        tab_handles,
                     );
 
                     // Test prev wraps from first to last
@@ -766,6 +792,7 @@ mod tests {
                         first_id,
                         actual_prev_id,
                         last_id,
+                        tab_handles,
                     );
                 }
 
@@ -827,6 +854,7 @@ mod tests {
                     current_id,
                     actual_next_id,
                     expected_next,
+                    tab_handles,
                 );
 
                 // Test prev navigation
@@ -838,6 +866,7 @@ mod tests {
                     current_id,
                     actual_prev_id,
                     expected_prev,
+                    tab_handles,
                 );
             }
         }
@@ -856,168 +885,242 @@ mod tests {
         eval(&tree, &tab_handles, &actual_to_handle);
     }
 
-    #[test]
-    fn test_check_helper() {
-        // Test simple ordering
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-index=1 actual=1>
-            <tab-index=2 actual=2>
-        "#;
-        check(xml);
-
-        // Test with duplicate tab indices (should maintain insertion order within same index)
-        let xml2 = r#"
-            <tab-index=0 actual=0>
-            <tab-index=0 actual=1>
-            <tab-index=1 actual=2>
-            <tab-index=1 actual=3>
-            <tab-index=2 actual=4>
-        "#;
-        check(xml2);
-
-        // Test with negative and positive indices
-        let xml3 = r#"
-            <tab-index=1 actual=2>
-            <tab-index=-1 actual=0>
-            <tab-index=0 actual=1>
-            <tab-index=2 actual=3>
-        "#;
-        check(xml3);
+    macro_rules! xml_test {
+        ($test_name:ident, $xml:expr) => {
+            #[test]
+            fn $test_name() {
+                let xml = $xml;
+                check(xml);
+            }
+        };
     }
 
-    #[test]
-    fn test_check_helper_with_nested_structures() {
-        // Test parsing and structure with nested groups and focus traps
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-group tab-index=1>
-                <tab-index=0 actual=1>
-                <focus-trap>
-                    <tab-index=0 actual=2>
-                    <tab-index=1 actual=3>
-                </focus-trap>
-                <tab-index=1 actual=4>
-            </tab-group>
-            <tab-index=2 actual=5>
-        "#;
+    mod test_helper {
+        use super::*;
 
-        // This should parse successfully even though navigation won't work correctly yet
-        // The test verifies that our tree structure correctly represents nested elements
-        check(xml);
-    }
+        xml_test!(
+            test_simple_ordering,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-index=2 actual=2>
+            "#
+        );
 
-    #[test]
-    fn test_tab_group_functionality() {
-        // This test defines the expected behavior for tab-group
-        // Tab-group should create a nested tab context where inner elements
-        // have tab indices relative to the group
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-index=1 actual=1>
-            <tab-group tab-index=2>
-                <tab-index=0 actual=2>
-                <tab-index=1 actual=3>
-            </tab-group>
-            <tab-index=3 actual=4>
-        "#;
-        check(xml);
-    }
-
-    #[test]
-    fn test_focus_trap_functionality() {
-        // This test defines the expected behavior for focus-trap
-        // Focus-trap should trap navigation within its boundaries
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <focus-trap tab-index=1>
+        xml_test!(
+            test_duplicate_indices_maintain_insertion_order,
+            r#"
+                <tab-index=0 actual=0>
                 <tab-index=0 actual=1>
                 <tab-index=1 actual=2>
-            </focus-trap>
-            <tab-index=2 actual=3>
-        "#;
-        check(xml);
-    }
-
-    #[test]
-    fn test_nested_groups_and_traps() {
-        // This test defines the expected behavior for nested structures
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-group tab-index=1>
-                <tab-index=0 actual=1>
-                <focus-trap tab-index=1>
-                    <tab-index=0 actual=2>
-                    <tab-index=1 actual=3>
-                </focus-trap>
+                <tab-index=1 actual=3>
                 <tab-index=2 actual=4>
-            </tab-group>
-            <tab-index=2 actual=5>
-        "#;
-        check(xml);
+            "#
+        );
+
+        xml_test!(
+            test_positive_and_negative_indices,
+            r#"
+                <tab-index=1 actual=2>
+                <tab-index=-1 actual=0>
+                <tab-index=0 actual=1>
+                <tab-index=2 actual=3>
+            "#
+        );
+
+        #[test]
+        #[should_panic(
+            expected = "Non-tab stop (tab-stop=false) should not have an 'actual' attribute"
+        )]
+        fn test_non_tab_stop_with_actual_panics() {
+            let xml = r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 tab-stop=false actual=1>
+                <tab-index=2 actual=2>
+            "#;
+            check(xml);
+        }
+
+        #[test]
+        #[should_panic(expected = "Tab stop with tab-index=1 must have an 'actual' attribute")]
+        fn test_tab_stop_without_actual_panics() {
+            // Tab stops must have an actual value
+            let xml = r#"
+                <tab-index=0 actual=0>
+                <tab-index=1>
+                <tab-index=2 actual=2>
+            "#;
+            check(xml);
+        }
+
+        #[test]
+        #[should_panic(expected = "Tab order mismatch at position")]
+        fn test_incorrect_tab_order_shows_xml_format() {
+            // This test intentionally has wrong expected order to demonstrate error reporting
+            // The actual tab order will be: tab-index=-1, 0, 1, 2 (positions 0, 1, 2, 3)
+            // But we're expecting them at wrong positions
+            let xml = r#"
+                <tab-index=0 actual=0>
+                <tab-index=-1 actual=1>
+                <tab-index=2 actual=2>
+                <tab-index=1 actual=3>
+            "#;
+            check(xml);
+        }
     }
 
-    #[test]
-    fn test_with_disabled_tab_stops() {
-        // Test with mixed tab-stop values
-        let xml = r#"
+    mod basic {
+        use super::*;
+
+        xml_test!(
+            test_with_disabled_tab_stop,
+            r#"
             <tab-index=0 actual=0>
             <tab-index=1 tab-stop=false>
             <tab-index=2 actual=1>
             <tab-index=3 actual=2>
-        "#;
-        check(xml);
+            "#
+        );
 
-        // Test with all disabled except specific ones
-        let xml2 = r#"
+        xml_test!(
+            test_with_disabled_tab_stops,
+            r#"
             <tab-index=0 tab-stop=false>
             <tab-index=1 actual=0>
             <tab-index=2 tab-stop=false>
             <tab-index=3 actual=1>
             <tab-index=4 tab-stop=false>
-        "#;
-        check(xml2);
+            "#
+        );
     }
 
-    #[test]
-    #[should_panic(expected = "Tab stop with tab-index=1 must have an 'actual' attribute")]
-    fn test_tab_stop_without_actual_panics() {
-        // Tab stops must have an actual value
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-index=1>
-            <tab-index=2 actual=2>
-        "#;
-        check(xml);
+    mod tab_group {
+        use super::*;
+
+        // This test defines the expected behavior for tab-group
+        // Tab-group should create a nested tab context where inner elements
+        // have tab indices relative to the group
+        xml_test!(
+            test_tab_group_functionality,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-index=0 actual=2>
+                    <tab-index=1 actual=3>
+                </tab-group>
+                <tab-index=3 actual=4>
+                <tab-index=4 actual=5>
+            "#
+        );
+
+        xml_test!(
+            test_sibling_groups,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-index=0 actual=2>
+                    <tab-index=1 actual=3>
+                </tab-group>
+                <tab-index=3 actual=4>
+                <tab-index=4 actual=5>
+                <tab-group tab-index=6>
+                    <tab-index=0 actual=6>
+                    <tab-index=1 actual=7>
+                </tab-group>
+                <tab-index=7 actual=8>
+                <tab-index=8 actual=9>
+            "#
+        );
+
+        xml_test!(
+            test_nested_group,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-group tab-index=0>
+                        <tab-index=0 actual=2>
+                        <tab-index=1 actual=3>
+                    </tab-group>
+                </tab-group>
+                <tab-index=3 actual=4>
+                <tab-index=4 actual=5>
+            "#
+        );
+
+        xml_test!(
+            test_sibling_nested_groups,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-index=1 actual=1>
+                <tab-group tab-index=2>
+                    <tab-index=0 actual=2>
+                    <tab-group tab-index=1>
+                        <tab-index=0 actual=3>
+                        <tab-index=1 actual=4>
+                    </tab-group>
+                    <tab-index=2 actual=5>
+                    <tab-group tab-index=3>
+                        <tab-index=0 actual=6>
+                        <tab-index=1 actual=7>
+                    </tab-group>
+                </tab-group>
+                <tab-index=3 actual=8>
+                <tab-index=4 actual=9>
+            "#
+        );
     }
 
-    #[test]
-    #[should_panic(
-        expected = "Non-tab stop (tab-stop=false) should not have an 'actual' attribute"
-    )]
-    fn test_non_tab_stop_with_actual_panics() {
-        // Non-tab stops should not have an actual value
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-index=1 tab-stop=false actual=1>
-            <tab-index=2 actual=2>
-        "#;
-        check(xml);
-    }
+    mod focus_trap {
+        use super::*;
 
-    #[test]
-    #[should_panic(expected = "Tab order mismatch at position")]
-    fn test_incorrect_tab_order_shows_xml_format() {
-        // This test intentionally has wrong expected order to demonstrate error reporting
-        // The actual tab order will be: tab-index=-1, 0, 1, 2 (positions 0, 1, 2, 3)
-        // But we're expecting them at wrong positions
-        let xml = r#"
-            <tab-index=0 actual=0>
-            <tab-index=-1 actual=1>
-            <tab-index=2 actual=2>
-            <tab-index=1 actual=3>
-        "#;
-        check(xml);
+        xml_test!(
+            test_focus_trap_in_group,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-group tab-index=1>
+                    <tab-index=0 actual=1>
+                    <focus-trap>
+                        <tab-index=0 actual=2>
+                        <tab-index=1 actual=3>
+                    </focus-trap>
+                    <tab-index=1 actual=4>
+                </tab-group>
+                <tab-index=2 actual=5>
+            "#
+        );
+
+        // This test defines the expected behavior for focus-trap
+        // Focus-trap should trap navigation within its boundaries
+        xml_test!(
+            test_focus_trap_functionality,
+            r#"
+                <tab-index=0 actual=0>
+                <focus-trap tab-index=1>
+                    <tab-index=0 actual=1>
+                    <tab-index=1 actual=2>
+                </focus-trap>
+                <tab-index=2 actual=3>
+            "#
+        );
+
+        xml_test!(
+            test_nested_groups_and_traps,
+            r#"
+                <tab-index=0 actual=0>
+                <tab-group tab-index=1>
+                    <tab-index=0 actual=1>
+                    <focus-trap tab-index=1>
+                        <tab-index=0 actual=2>
+                        <tab-index=1 actual=3>
+                    </focus-trap>
+                    <tab-index=2 actual=4>
+                </tab-group>
+                <tab-index=2 actual=5>
+            "#
+        );
     }
 
     #[test]
