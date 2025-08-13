@@ -1,5 +1,6 @@
 use agent::ThreadId;
 use anyhow::{Context as _, Result, bail};
+use gpui::ImageId;
 use prompt_store::{PromptId, UserPromptId};
 use std::{
     fmt,

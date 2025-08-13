@@ -5,27 +5,31 @@ use acp_thread::{
 use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent::{TextThreadStore, ThreadStore};
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, BlobResourceContents};
 use agent_servers::AgentServer;
 use agent_settings::{AgentSettings, NotifyWhenAgentWaiting};
+use anyhow::{Context as _, Result};
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use collections::{HashMap, HashSet};
+use editor::actions::Paste;
 use editor::scroll::Autoscroll;
 use editor::{
     AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement, EditorMode,
-    EditorStyle, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
+    EditorStyle, ExcerptId, MinimapVisibility, MultiBuffer, PathKey, SelectionEffects,
 };
 use file_icons::FileIcons;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
-    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
-    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, App, BorderStyle, ClipboardEntry, EdgesRefinement, Empty,
+    Entity, EntityId, FocusHandle, Focusable, Hsla, Image, Length, ListOffset, ListState,
+    MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window,
+    WindowHandle, div, linear_color_stop, linear_gradient, list, percentage, point, prelude::*,
+    pulsating_between,
 };
 use language::language_settings::SoftWrap;
 use language::{Buffer, Language};
+use language_model::LanguageModelImage;
 use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
@@ -51,9 +55,12 @@ use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage, Toggl
 use zed_actions::assistant::OpenRulesLibrary;
 
 use crate::acp::AcpModelSelectorPopover;
-use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
+use crate::acp::completion_provider::{
+    ContextPickerCompletionProvider, Mention, MentionImage, MentionSet,
+};
 use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
+use crate::context_picker::insert_crease_for_mention;
 use crate::message_editor::{MAX_EDITOR_LINES, MIN_EDITOR_LINES};
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
@@ -446,24 +453,43 @@ impl AcpThreadView {
                                 continue;
                             }
 
-                            if let Some(mention) = contents.get(&crease_id) {
-                                let crease_range =
-                                    crease.range().to_offset(&snapshot.buffer_snapshot);
-                                if crease_range.start > ix {
-                                    chunks.push(text[ix..crease_range.start].into());
-                                }
-                                chunks.push(acp::ContentBlock::Resource(acp::EmbeddedResource {
-                                    annotations: None,
-                                    resource: acp::EmbeddedResourceResource::TextResourceContents(
-                                        acp::TextResourceContents {
-                                            mime_type: None,
-                                            text: mention.content.clone(),
-                                            uri: mention.uri.to_uri().to_string(),
-                                        },
-                                    ),
-                                }));
-                                ix = crease_range.end;
+                            let Some(mention) = contents.get(&crease_id) else {
+                                continue;
+                            };
+                            let crease_range = crease.range().to_offset(&snapshot.buffer_snapshot);
+                            if crease_range.start > ix {
+                                chunks.push(text[ix..crease_range.start].into());
                             }
+
+                            let chunk = match mention {
+                                Mention::Text { uri, content } => {
+                                    acp::ContentBlock::Resource(acp::EmbeddedResource {
+                                        annotations: None,
+                                        resource:
+                                            acp::EmbeddedResourceResource::TextResourceContents(
+                                                acp::TextResourceContents {
+                                                    mime_type: None,
+                                                    text: content.clone(),
+                                                    uri: uri.to_uri().to_string(),
+                                                },
+                                            ),
+                                    })
+                                }
+                                Mention::Image(MentionImage {
+                                    abs_path: _,
+                                    data,
+                                    format,
+                                }) => {
+                                    acp::ContentBlock::Image(acp::ImageContent {
+                                        annotations: None,
+                                        // FIXME can we drain mentions here to avoid this allocation?
+                                        data: data.to_string(),
+                                        mime_type: format.mime_type().into(),
+                                    })
+                                }
+                            };
+                            chunks.push(chunk);
+                            ix = crease_range.end;
                         }
 
                         if ix < text.len() {
@@ -585,6 +611,58 @@ impl AcpThreadView {
         }
     }
 
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        if images.is_empty() {
+            return;
+        }
+        cx.stop_propagation();
+
+        let replacement_text = "image";
+        for image in images {
+            let (excerpt_id, anchor) = self.message_editor.update(cx, |message_editor, cx| {
+                let snapshot = message_editor.snapshot(window, cx);
+                let (excerpt_id, _, snapshot) = snapshot.buffer_snapshot.as_singleton().unwrap();
+
+                let anchor = snapshot.anchor_before(snapshot.len());
+                message_editor.edit(
+                    [(
+                        multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
+                        format!("{replacement_text} "),
+                    )],
+                    cx,
+                );
+                (*excerpt_id, anchor)
+            });
+
+            insert_image(
+                excerpt_id,
+                anchor,
+                replacement_text.len(),
+                self.message_editor.clone(),
+                self.mention_set.clone(),
+                Arc::new(image),
+                None,
+                window,
+                cx,
+            );
+        }
+    }
+
     fn open_edited_buffer(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -683,7 +761,7 @@ impl AcpThreadView {
                 if let Some(crease_id) = crease_id {
                     mention_set
                         .lock()
-                        .insert(crease_id, MentionUri::File(project_path));
+                        .insert_uri(crease_id, MentionUri::File(project_path));
                 }
             }
         }
@@ -3145,6 +3223,7 @@ impl AcpThreadView {
         }
     }
 
+    // FIXME needs an update
     pub(crate) fn insert_dragged_files(
         &self,
         paths: Vec<project::ProjectPath>,
@@ -3221,6 +3300,7 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::previous_history_message))
             .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::open_agent_diff))
+            .capture_action(cx.listener(Self::paste))
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {
                 ThreadState::Unauthenticated { connection } => v_flex()
@@ -3512,6 +3592,53 @@ fn terminal_command_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
         selection_background_color: cx.theme().colors().element_selection_background,
         ..Default::default()
     }
+}
+
+// this will be called;
+// - in the paste handler (in this file)
+// - in the completion thingy for if it's an image
+// FIXME report errors
+fn insert_image(
+    excerpt_id: ExcerptId,
+    crease_start: text::Anchor,
+    content_len: usize,
+    editor: Entity<Editor>,
+    mention_set: Arc<Mutex<MentionSet>>,
+    image: Arc<Image>,
+    abs_path: Option<Arc<Path>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    // FIXME
+    let Some(crease_id) = insert_crease_for_mention(
+        excerpt_id,
+        crease_start,
+        content_len,
+        "Image".into(),
+        IconName::Image.path().into(),
+        editor.clone(),
+        window,
+        cx,
+    ) else {
+        return;
+    };
+    editor.update(cx, |editor, cx| {
+        let format = image.format;
+        let convert = LanguageModelImage::from_image(image, cx);
+        cx.spawn(async move |editor, cx| {
+            match convert.await {
+                Some(image) => {
+                    mention_set
+                        .lock()
+                        .insert_image(crease_id, abs_path, image.source, format);
+                }
+                None => {
+                    // FIXME workspace notify
+                }
+            }
+        })
+        .detach();
+    });
 }
 
 #[cfg(test)]
