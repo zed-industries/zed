@@ -307,7 +307,7 @@ impl Tool for EditFileTool {
             let mut ambiguous_ranges = Vec::new();
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {
+                    EditAgentOutputEvent::Edited { .. } => {
                         if let Some(card) = card_clone.as_ref() {
                             card.update(cx, |card, cx| card.update_diff(cx))?;
                         }
