@@ -6,4 +6,6 @@ Zed's Helix mode is an emulation layer that brings Helix-style keybindings and m
 
 For a guide on Vim-related features that are also available in Helix mode, please refer to our [Vim mode documentation](./vim.md).
 
+To check the current status of Helix mode, or to request a missing Helix feature, checkout out the ["Are we Helix yet?" discussion](https://github.com/zed-industries/zed/discussions/33580).
+
 For a detailed list of Helix's default keybindings, please visit the [official Helix documentation](https://docs.helix-editor.com/keymap.html).
