@@ -9,7 +9,7 @@ pub use terminal::*;
 
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
 use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
@@ -19,7 +19,7 @@ use markdown::Markdown;
 use project::{AgentLocation, Project};
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt::Formatter;
+use std::fmt::{Formatter, Write};
 use std::process::ExitStatus;
 use std::rc::Rc;
 use std::{
@@ -29,17 +29,37 @@ use std::{
     sync::Arc,
 };
 use ui::App;
-use util::ResultExt;
+use util::{ResultExt, debug_panic};
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserMessageId(Arc<str>);
+
+impl UserMessageId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
 
 #[derive(Debug)]
 pub struct UserMessage {
+    pub id: Option<UserMessageId>,
     pub content: ContentBlock,
     pub checkpoint: Option<GitStoreCheckpoint>,
 }
 
 impl UserMessage {
     fn to_markdown(&self, cx: &App) -> String {
-        format!("## User\n\n{}\n\n", self.content.to_markdown(cx))
+        let mut markdown = String::new();
+        if let Some(_) = self.checkpoint {
+            writeln!(markdown, "## User (checkpoint)").unwrap();
+        } else {
+            writeln!(markdown, "## User").unwrap();
+        }
+        writeln!(markdown).unwrap();
+        writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
+        writeln!(markdown).unwrap();
+        markdown
     }
 }
 
@@ -691,7 +711,8 @@ impl AcpThread {
     ) -> Result<()> {
         match update {
             acp::SessionUpdate::UserMessageChunk { content } => {
-                self.push_user_content_block(content, cx);
+                // todo!(take an optional user_id)
+                self.push_user_content_block(None, content, cx);
             }
             acp::SessionUpdate::AgentMessageChunk { content } => {
                 self.push_assistant_content_block(content, false, cx);
@@ -712,19 +733,26 @@ impl AcpThread {
         Ok(())
     }
 
-    pub fn push_user_content_block(&mut self, chunk: acp::ContentBlock, cx: &mut Context<Self>) {
+    pub fn push_user_content_block(
+        &mut self,
+        new_id: Option<UserMessageId>,
+        chunk: acp::ContentBlock,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::UserMessage(UserMessage { content, .. }) = last_entry
+            && let AgentThreadEntry::UserMessage(UserMessage { id, content, .. }) = last_entry
         {
+            *id = new_id.or(id.take());
             content.append(chunk, &language_registry, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
         } else {
             let content = ContentBlock::new(chunk, &language_registry, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
+                    id: new_id,
                     content,
                     checkpoint: None,
                 }),
@@ -1031,8 +1059,14 @@ impl AcpThread {
 
         let old_checkpoint = git_store.update(cx, |git, cx| git.checkpoint(cx));
         let entry_ix = self.entries.len();
+        let message_id = if self.connection.session_editor(&self.session_id).is_some() {
+            Some(UserMessageId::new())
+        } else {
+            None
+        };
         self.push_entry(
             AgentThreadEntry::UserMessage(UserMessage {
+                id: message_id.clone(),
                 content: block,
                 checkpoint: None,
             }),
@@ -1040,6 +1074,7 @@ impl AcpThread {
         );
         self.clear_completed_plan_entries(cx);
 
+        let (old_checkpoint_tx, old_checkpoint_rx) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
 
@@ -1047,6 +1082,7 @@ impl AcpThread {
             async {
                 cancel_task.await;
 
+                old_checkpoint_tx.send(old_checkpoint.await).ok();
                 let result = this
                     .update(cx, |this, cx| {
                         this.connection.prompt(
@@ -1068,12 +1104,15 @@ impl AcpThread {
         }));
 
         cx.spawn(async move |this, cx| {
-            let response = rx.await;
-
-            let old_checkpoint = old_checkpoint
+            let old_checkpoint = old_checkpoint_rx
                 .await
+                .map_err(|_| anyhow!("send canceled"))
+                .flatten()
                 .context("failed to get old checkpoint")
                 .log_err();
+
+            let response = rx.await;
+
             let new_checkpoint = git_store
                 .update(cx, |git, cx| git.checkpoint(cx))?
                 .await
@@ -1156,6 +1195,45 @@ impl AcpThread {
 
         // Wait for the send task to complete
         cx.foreground_executor().spawn(send_task)
+    }
+
+    /// Rewinds this thread to before the entry at `index`, removing it and all
+    /// subsequent entries while reverting any changes made from that point.
+    pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let Some(session_editor) = self.connection.session_editor(&self.session_id) else {
+            debug_panic!("id should have been absent because session editing is not supported");
+            return Task::ready(Err(anyhow!("not supported")));
+        };
+        let Some((ix, message)) = self.entries.iter().enumerate().find_map(|(ix, entry)| {
+            if let AgentThreadEntry::UserMessage(message) = entry {
+                if message.id.as_ref() == Some(&id) {
+                    Some((ix, message))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }) else {
+            return Task::ready(Err(anyhow!("message not found")));
+        };
+
+        let checkpoint = message.checkpoint.clone();
+
+        let git_store = self.project.read(cx).git_store().clone();
+        cx.spawn(async move |this, cx| {
+            if let Some(checkpoint) = checkpoint {
+                git_store
+                    .update(cx, |git, cx| git.restore_checkpoint(checkpoint, cx))?
+                    .await?;
+            }
+
+            cx.update(|cx| session_editor.truncate(id, cx))?.await?;
+            this.update(cx, |this, cx| {
+                this.entries.truncate(ix);
+                // todo!(emit event)
+            })
+        })
     }
 
     pub fn read_text_file(
@@ -1365,7 +1443,12 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt as _;
-    use std::{cell::RefCell, rc::Rc, time::Duration};
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        time::Duration,
+    };
 
     use util::path;
 
@@ -1398,6 +1481,7 @@ mod tests {
         // Test creating a new user message
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                None,
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "Hello, ".to_string(),
@@ -1409,6 +1493,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.id, None);
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
             } else {
                 panic!("Expected UserMessage");
@@ -1416,8 +1501,10 @@ mod tests {
         });
 
         // Test appending to existing user message
+        let message_1_id = UserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                Some(message_1_id.clone()),
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "world!".to_string(),
@@ -1429,6 +1516,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
+                assert_eq!(user_msg.id, Some(message_1_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
             } else {
                 panic!("Expected UserMessage");
@@ -1447,8 +1535,10 @@ mod tests {
             );
         });
 
+        let message_2_id = UserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
+                Some(message_2_id.clone()),
                 acp::ContentBlock::Text(acp::TextContent {
                     annotations: None,
                     text: "New user message".to_string(),
@@ -1460,6 +1550,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
+                assert_eq!(user_msg.id, Some(message_2_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "New user message");
             } else {
                 panic!("Expected UserMessage at index 2");
@@ -1776,7 +1867,7 @@ mod tests {
         assert!(cx.read(|cx| !thread.read(cx).has_pending_edit_tool_calls()));
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_checkpoints(cx: &mut TestAppContext) {
         init_test(cx);
         let fs = FakeFs::new(cx.background_executor.clone());
@@ -1787,20 +1878,31 @@ mod tests {
             }),
         )
         .await;
-        fs.with_git_state(Path::new("/test/.git"), true, |git| {
-            dbg!();
-        })
-        .unwrap();
-        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [path!("/test").as_ref()], cx).await;
 
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
-            |_, thread, mut cx| {
+        let simulate_changes = Arc::new(AtomicBool::new(true));
+        let next_filename = Arc::new(AtomicUsize::new(0));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let simulate_changes = simulate_changes.clone();
+            let next_filename = next_filename.clone();
+            move |request, thread, mut cx| {
+                let fs = fs.clone();
+                let simulate_changes = simulate_changes.clone();
+                let next_filename = next_filename.clone();
                 async move {
+                    if simulate_changes.load(SeqCst) {
+                        let filename = format!("/test/file-{}", next_filename.fetch_add(1, SeqCst));
+                        fs.write(Path::new(&filename), b"bar").await?;
+                    }
+
+                    let acp::ContentBlock::Text(content) = &request.prompt[0] else {
+                        panic!("expected text content block");
+                    };
                     thread.update(&mut cx, |thread, cx| {
                         thread
                             .handle_session_update(
                                 acp::SessionUpdate::AgentMessageChunk {
-                                    content: "Hey".into(),
+                                    content: content.text.to_uppercase().into(),
                                 },
                                 cx,
                             )
@@ -1811,13 +1913,14 @@ mod tests {
                     })
                 }
                 .boxed_local()
-            },
-        ));
+            }
+        }));
         let thread = connection
             .new_thread(project, Path::new(path!("/test")), &mut cx.to_async())
             .await
             .unwrap();
-        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Hi".into()], cx)))
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["Lorem".into()], cx)))
             .await
             .unwrap();
         thread.read_with(cx, |thread, cx| {
@@ -1826,15 +1929,85 @@ mod tests {
                 indoc! {"
                     ## User (checkpoint)
 
-                    Hi
+                    Lorem
 
                     ## Assistant
 
-                    Hey
+                    LOREM
 
                 "}
-            )
+            );
         });
+
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["ipsum".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                    ## User (checkpoint)
+
+                    ipsum
+
+                    ## Assistant
+
+                    IPSUM
+
+                "}
+            );
+        });
+
+        // Checkpoint isn't stored when there are no changes.
+        simulate_changes.store(false, SeqCst);
+        cx.update(|cx| thread.update(cx, |thread, cx| thread.send(vec!["dolor".into()], cx)))
+            .await
+            .unwrap();
+        thread.read_with(cx, |thread, cx| {
+            assert_eq!(
+                thread.to_markdown(cx),
+                indoc! {"
+                    ## User (checkpoint)
+
+                    Lorem
+
+                    ## Assistant
+
+                    LOREM
+
+                    ## User (checkpoint)
+
+                    ipsum
+
+                    ## Assistant
+
+                    IPSUM
+
+                    ## User
+
+                    dolor
+
+                    ## Assistant
+
+                    DOLOR
+
+                "}
+            );
+        });
+
+        // Rewinding the conversation truncates the history and restores the checkpoint.
+        // thread
+        //     .update(cx, |thread, cx| thread.rewind(entries[0].id))
+        //     .await
+        //     .unwrap();
     }
 
     async fn run_until_first_tool_call(

@@ -423,7 +423,7 @@ impl ClaudeAgentSession {
                             if !turn_state.borrow().is_cancelled() {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        thread.push_user_content_block(text.into(), cx)
+                                        thread.push_user_content_block(None, text.into(), cx)
                                     })
                                     .log_err();
                             }

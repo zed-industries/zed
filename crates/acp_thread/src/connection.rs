@@ -7,7 +7,7 @@ use language_model::LanguageModel;
 use project::Project;
 use ui::App;
 
-use crate::AcpThread;
+use crate::{AcpThread, UserMessageId};
 
 /// Trait for agents that support listing, selecting, and querying language models.
 ///
@@ -73,6 +73,10 @@ pub trait AgentConnection {
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 
+    fn session_editor(&self, _session_id: &acp::SessionId) -> Option<Rc<dyn SessionEditor>> {
+        None
+    }
+
     /// Returns this agent as an [Rc<dyn ModelSelector>] if the model selection capability is supported.
     ///
     /// If the agent does not support model selection, returns [None].
@@ -80,6 +84,10 @@ pub trait AgentConnection {
     fn model_selector(&self) -> Option<Rc<dyn ModelSelector>> {
         None // Default impl for agents that don't support it
     }
+}
+
+pub trait SessionEditor {
+    fn truncate(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
 #[derive(Debug)]

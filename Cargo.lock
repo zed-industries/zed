@@ -18,6 +18,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "language_model",
+ "log",
  "markdown",
  "parking_lot",
  "project",
@@ -30,6 +31,7 @@ dependencies = [
  "terminal",
  "ui",
  "util",
+ "uuid",
  "workspace-hack",
 ]
 
