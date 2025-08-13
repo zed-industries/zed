@@ -171,6 +171,7 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
