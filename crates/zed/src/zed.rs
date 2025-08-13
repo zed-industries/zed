@@ -4401,11 +4401,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
+                    .load("fonts/lilex/Lilex-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
+                    .load("fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])

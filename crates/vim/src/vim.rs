@@ -284,9 +284,7 @@ pub fn init(cx: &mut App) {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
-            let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
-                return;
-            };
+            let font_id = window.text_system().resolve_font(&theme.buffer_font);
             let Ok(width) = window
                 .text_system()
                 .advance(font_id, theme.buffer_font_size(cx), 'm')
@@ -300,9 +298,7 @@ pub fn init(cx: &mut App) {
             let count = Vim::take_count(cx).unwrap_or(1) as f32;
             Vim::take_forced_motion(cx);
             let theme = ThemeSettings::get_global(cx);
-            let Ok(font_id) = window.text_system().font_id(&theme.buffer_font) else {
-                return;
-            };
+            let font_id = window.text_system().resolve_font(&theme.buffer_font);
             let Ok(width) = window
                 .text_system()
                 .advance(font_id, theme.buffer_font_size(cx), 'm')
