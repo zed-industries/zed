@@ -6,7 +6,6 @@ mod terminal;
 pub use connection::*;
 pub use diff::*;
 pub use mention::*;
-use project::git_store::GitStoreCheckpoint;
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -18,7 +17,7 @@ use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Ta
 use itertools::Itertools;
 use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
 use markdown::Markdown;
-use project::{AgentLocation, Project};
+use project::{AgentLocation, Project, git_store::GitStoreCheckpoint};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};

@@ -43,7 +43,7 @@ async fn test_echo(cx: &mut TestAppContext) {
         .await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
-            thread.messages().last().unwrap().to_markdown(),
+            thread.last_message().unwrap().to_markdown(),
             indoc! {"
                 ## Assistant
 
@@ -76,7 +76,7 @@ async fn test_thinking(cx: &mut TestAppContext) {
         .await;
     thread.update(cx, |thread, _cx| {
         assert_eq!(
-            thread.messages().last().unwrap().to_markdown(),
+            thread.last_message().unwrap().to_markdown(),
             indoc! {"
                 ## Assistant
 
@@ -168,8 +168,7 @@ async fn test_basic_tool_calls(cx: &mut TestAppContext) {
     thread.update(cx, |thread, _cx| {
         assert!(
             thread
-                .messages()
-                .last()
+                .last_message()
                 .unwrap()
                 .as_agent_message()
                 .unwrap()
@@ -204,7 +203,8 @@ async fn test_streaming_tool_calls(cx: &mut TestAppContext) {
         if let Ok(AgentResponseEvent::ToolCall(tool_call)) = event {
             thread.update(cx, |thread, _cx| {
                 // Look for a tool use in the thread's last message
-                let agent_message = thread.pending_agent_message.clone().unwrap();
+                let message = thread.last_message().unwrap();
+                let agent_message = message.as_agent_message().unwrap();
                 let last_content = agent_message.content.last().unwrap();
                 if let AgentMessageContent::ToolUse(last_tool_use) = last_content {
                     assert_eq!(last_tool_use.name.as_ref(), "word_list");
@@ -482,7 +482,7 @@ async fn test_concurrent_tool_calls(cx: &mut TestAppContext) {
     assert_eq!(stop_reasons, vec![acp::StopReason::EndTurn]);
 
     thread.update(cx, |thread, _cx| {
-        let last_message = thread.messages().last().unwrap();
+        let last_message = thread.last_message().unwrap();
         let agent_message = last_message.as_agent_message().unwrap();
         let text = agent_message
             .content
@@ -640,7 +640,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
         .collect::<Vec<_>>()
         .await;
     thread.update(cx, |thread, _cx| {
-        let message = thread.messages().last().unwrap();
+        let message = thread.last_message().unwrap();
         let agent_message = message.as_agent_message().unwrap();
         assert_eq!(
             agent_message.content,

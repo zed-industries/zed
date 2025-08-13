@@ -360,7 +360,7 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<Task<()>>,
-    pub(crate) pending_agent_message: Option<AgentMessage>,
+    pending_agent_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
@@ -410,8 +410,13 @@ impl Thread {
         self.completion_mode = mode;
     }
 
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn last_message(&self) -> Option<Message> {
+        if let Some(message) = self.pending_agent_message.clone() {
+            Some(Message::Agent(message))
+        } else {
+            self.messages.last().cloned()
+        }
     }
 
     pub fn add_tool(&mut self, tool: impl AgentTool) {
