@@ -6,10 +6,11 @@ version = 4
 name = "acp_thread"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent-client-protocol",
  "anyhow",
- "assistant_tool",
  "buffer_diff",
+ "collections",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -17,7 +18,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "language_model",
  "markdown",
  "parking_lot",
  "project",
@@ -27,9 +27,39 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
+ "terminal",
  "ui",
+ "url",
  "util",
+ "uuid",
+ "watch",
  "workspace-hack",
+]
+
+[[package]]
+name = "action_log"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer_diff",
+ "clock",
+ "collections",
+ "ctor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "rand 0.8.5",
+ "serde_json",
+ "settings",
+ "text",
+ "util",
+ "watch",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -84,6 +114,7 @@ dependencies = [
 name = "agent"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_context",
@@ -156,23 +187,29 @@ name = "agent2"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent-client-protocol",
  "agent_servers",
  "agent_settings",
  "anyhow",
  "assistant_tool",
  "assistant_tools",
+ "chrono",
  "client",
  "clock",
  "cloud_llm_client",
  "collections",
+ "context_server",
  "ctor",
+ "editor",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
  "handlebars 4.5.0",
+ "html_to_markdown",
+ "http_client",
  "indoc",
  "itertools 0.14.0",
  "language",
@@ -180,7 +217,9 @@ dependencies = [
  "language_models",
  "log",
  "lsp",
+ "open",
  "paths",
+ "portable-pty",
  "pretty_assertions",
  "project",
  "prompt_store",
@@ -191,12 +230,22 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "task",
+ "tempfile",
+ "terminal",
+ "text",
+ "theme",
+ "tree-sitter-rust",
  "ui",
+ "unindent",
  "util",
  "uuid",
  "watch",
+ "web_search",
+ "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zlog",
 ]
 
 [[package]]
@@ -261,6 +310,7 @@ name = "agent_ui"
 version = "0.1.0"
 dependencies = [
  "acp_thread",
+ "action_log",
  "agent",
  "agent-client-protocol",
  "agent2",
@@ -842,13 +892,13 @@ dependencies = [
 name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "buffer_diff",
  "clock",
  "collections",
  "ctor",
  "derive_more 0.99.19",
- "futures 0.3.31",
  "gpui",
  "icons",
  "indoc",
@@ -865,7 +915,6 @@ dependencies = [
  "settings",
  "text",
  "util",
- "watch",
  "workspace",
  "workspace-hack",
  "zlog",
@@ -875,6 +924,7 @@ dependencies = [
 name = "assistant_tools"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "agent_settings",
  "anyhow",
  "assistant_tool",
@@ -4014,6 +4064,7 @@ dependencies = [
  "log",
  "minidumper",
  "paths",
+ "release_channel",
  "smol",
  "workspace-hack",
 ]
@@ -6396,6 +6447,7 @@ dependencies = [
  "log",
  "parking_lot",
  "pretty_assertions",
+ "rand 0.8.5",
  "regex",
  "rope",
  "schemars",
@@ -11100,14 +11152,13 @@ dependencies = [
  "ai_onboarding",
  "anyhow",
  "client",
- "command_palette_hooks",
  "component",
  "db",
  "documented",
  "editor",
- "feature_flags",
  "fs",
  "fuzzy",
+ "git",
  "gpui",
  "itertools 0.14.0",
  "language",
@@ -11119,6 +11170,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "telemetry",
  "theme",
  "ui",
  "util",
@@ -11194,6 +11246,7 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars",
  "serde",
  "serde_json",
@@ -13522,6 +13575,7 @@ dependencies = [
 name = "remote_server"
 version = "0.1.0"
 dependencies = [
+ "action_log",
  "anyhow",
  "askpass",
  "assistant_tool",
@@ -17978,6 +18032,7 @@ dependencies = [
  "command_palette_hooks",
  "db",
  "editor",
+ "env_logger 0.11.8",
  "futures 0.3.31",
  "git_ui",
  "gpui",
@@ -18830,33 +18885,6 @@ name = "weezl"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
-
-[[package]]
-name = "welcome"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "component",
- "db",
- "documented",
- "editor",
- "fuzzy",
- "gpui",
- "install_cli",
- "language",
- "picker",
- "project",
- "serde",
- "settings",
- "telemetry",
- "ui",
- "util",
- "vim_mode_setting",
- "workspace",
- "workspace-hack",
- "zed_actions",
-]
 
 [[package]]
 name = "which"
@@ -20472,7 +20500,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.200.0"
+version = "0.201.0"
 dependencies = [
  "activity_indicator",
  "agent",
@@ -20612,7 +20640,6 @@ dependencies = [
  "watch",
  "web_search",
  "web_search_providers",
- "welcome",
  "windows 0.61.1",
  "winresource",
  "workspace",
@@ -20636,7 +20663,7 @@ dependencies = [
 
 [[package]]
 name = "zed_emmet"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -20875,6 +20902,7 @@ dependencies = [
  "menu",
  "postage",
  "project",
+ "rand 0.8.5",
  "regex",
  "release_channel",
  "reqwest_client",

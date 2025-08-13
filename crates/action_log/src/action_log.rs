@@ -17,8 +17,6 @@ use util::{
 pub struct ActionLog {
     /// Buffers that we want to notify the model about when they change.
     tracked_buffers: BTreeMap<Entity<Buffer>, TrackedBuffer>,
-    /// Has the model edited a file since it last checked diagnostics?
-    edited_since_project_diagnostics_check: bool,
     /// The project this action log is associated with
     project: Entity<Project>,
 }
@@ -28,23 +26,12 @@ impl ActionLog {
     pub fn new(project: Entity<Project>) -> Self {
         Self {
             tracked_buffers: BTreeMap::default(),
-            edited_since_project_diagnostics_check: false,
             project,
         }
     }
 
     pub fn project(&self) -> &Entity<Project> {
         &self.project
-    }
-
-    /// Notifies a diagnostics check
-    pub fn checked_project_diagnostics(&mut self) {
-        self.edited_since_project_diagnostics_check = false;
-    }
-
-    /// Returns true if any files have been edited since the last project diagnostics check
-    pub fn has_edited_files_since_project_diagnostics_check(&self) -> bool {
-        self.edited_since_project_diagnostics_check
     }
 
     pub fn latest_snapshot(&self, buffer: &Entity<Buffer>) -> Option<text::BufferSnapshot> {
@@ -543,14 +530,11 @@ impl ActionLog {
 
     /// Mark a buffer as created by agent, so we can refresh it in the context
     pub fn buffer_created(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.edited_since_project_diagnostics_check = true;
         self.track_buffer_internal(buffer.clone(), true, cx);
     }
 
     /// Mark a buffer as edited by agent, so we can refresh it in the context
     pub fn buffer_edited(&mut self, buffer: Entity<Buffer>, cx: &mut Context<Self>) {
-        self.edited_since_project_diagnostics_check = true;
-
         let tracked_buffer = self.track_buffer_internal(buffer.clone(), false, cx);
         if let TrackedBufferStatus::Deleted = tracked_buffer.status {
             tracked_buffer.status = TrackedBufferStatus::Modified;

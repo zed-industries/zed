@@ -34,6 +34,8 @@ use image_viewer::ImageInfo;
 use language_tools::lsp_tool::{self, LspTool};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::{migrate_keymap, migrate_settings};
+use onboarding::DOCS_URL;
+use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
 use paths::{
@@ -67,7 +69,6 @@ use util::markdown::MarkdownString;
 use util::{ResultExt, asset_str};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
-use welcome::{DOCS_URL, MultibufferHint};
 use workspace::notifications::{NotificationId, dismiss_app_notification, show_app_notification};
 use workspace::{
     AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -3975,7 +3976,6 @@ mod tests {
             client::init(&app_state.client, cx);
             language::init(cx);
             workspace::init(app_state.clone(), cx);
-            welcome::init(cx);
             onboarding::init(cx);
             Project::init_settings(cx);
             app_state
@@ -4380,7 +4380,6 @@ mod tests {
                 "toolchain",
                 "variable_list",
                 "vim",
-                "welcome",
                 "workspace",
                 "zed",
                 "zed_predict_onboarding",
@@ -4402,11 +4401,11 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/plex-mono/ZedPlexMono-Regular.ttf")
+                    .load("fonts/lilex/Lilex-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/plex-sans/ZedPlexSans-Regular.ttf")
+                    .load("fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])

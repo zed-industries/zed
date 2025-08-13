@@ -210,6 +210,7 @@ impl AgentConnection for ClaudeAgentConnection {
 
     fn prompt(
         &self,
+        _id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -423,7 +424,7 @@ impl ClaudeAgentSession {
                             if !turn_state.borrow().is_cancelled() {
                                 thread
                                     .update(cx, |thread, cx| {
-                                        thread.push_user_content_block(text.into(), cx)
+                                        thread.push_user_content_block(None, text.into(), cx)
                                     })
                                     .log_err();
                             }

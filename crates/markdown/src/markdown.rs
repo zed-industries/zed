@@ -1084,7 +1084,9 @@ impl Element for MarkdownElement {
                                     self.markdown.clone(),
                                     cx,
                                 );
-                                el.child(div().absolute().top_1().right_1().w_5().child(codeblock))
+                                el.child(
+                                    div().absolute().top_1().right_0p5().w_5().child(codeblock),
+                                )
                             });
                         }
 
@@ -1312,6 +1314,7 @@ fn render_copy_code_block_button(
         },
     )
     .icon_color(Color::Muted)
+    .icon_size(IconSize::Small)
     .shape(ui::IconButtonShape::Square)
     .tooltip(Tooltip::text("Copy Code"))
     .on_click({

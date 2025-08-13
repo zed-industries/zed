@@ -116,6 +116,7 @@ impl LspAdapter for VtslsLspAdapter {
                 &server_path,
                 &container_dir,
                 &latest_version.server_version,
+                Default::default(),
             )
             .await
         {
@@ -129,6 +130,7 @@ impl LspAdapter for VtslsLspAdapter {
                 &container_dir.join(Self::TYPESCRIPT_TSDK_PATH),
                 &container_dir,
                 &latest_version.typescript_version,
+                Default::default(),
             )
             .await
         {
