@@ -250,6 +250,10 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
         // perimeter. This way each line starts and ends with a dash.
         bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
         float border_width = is_horizontal ? border.x : border.y;
+        // When border width of some side is 0, we need to use the other side width for dash velocity.
+        if (border_width == 0.0) {
+            border_width = is_horizontal ? border.y : border.x;
+        }
         dash_velocity = dv_numerator / border_width;
         t = is_horizontal ? point.x : point.y;
         t *= dash_velocity;
