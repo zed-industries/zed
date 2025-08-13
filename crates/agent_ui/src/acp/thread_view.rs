@@ -13,11 +13,11 @@ use collections::{HashMap, HashSet};
 use editor::{Editor, EditorMode, MinimapVisibility, MultiBuffer, PathKey};
 use file_icons::FileIcons;
 use gpui::{
-    Action, Animation, AnimationExt, App, BorderStyle, EdgesRefinement, Empty, Entity, EntityId,
-    FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton, PlatformDisplay,
-    SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle, TextStyleRefinement,
-    Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div, linear_color_stop,
-    linear_gradient, list, percentage, point, prelude::*, pulsating_between,
+    Action, Animation, AnimationExt, App, BorderStyle, ClickEvent, EdgesRefinement, Empty, Entity,
+    EntityId, FocusHandle, Focusable, Hsla, Length, ListOffset, ListState, MouseButton,
+    PlatformDisplay, SharedString, Stateful, StyleRefinement, Subscription, Task, TextStyle,
+    TextStyleRefinement, Transformation, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    linear_color_stop, linear_gradient, list, percentage, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 use language::language_settings::SoftWrap;
@@ -47,6 +47,9 @@ use crate::{
 
 const RESPONSE_PADDING_X: Pixels = px(19.);
 
+pub const MIN_EDITOR_LINES: usize = 4;
+pub const MAX_EDITOR_LINES: usize = 8;
+
 pub struct AcpThreadView {
     agent: Rc<dyn AgentServer>,
     workspace: WeakEntity<Workspace>,
@@ -68,8 +71,16 @@ pub struct AcpThreadView {
     plan_expanded: bool,
     editor_expanded: bool,
     terminal_expanded: bool,
+    editing_message: Option<EditingMessage>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
+}
+
+struct EditingMessage {
+    index: usize,
+    message_id: UserMessageId,
+    editor: Entity<MessageEditor>,
+    _subscription: Subscription,
 }
 
 enum ThreadState {
@@ -97,8 +108,18 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let message_editor =
-            cx.new(|cx| MessageEditor::new(workspace.clone(), project.clone(), window, cx));
+        let message_editor = cx.new(|cx| {
+            MessageEditor::new(
+                workspace.clone(),
+                project.clone(),
+                editor::EditorMode::AutoHeight {
+                    min_lines: MIN_EDITOR_LINES,
+                    max_lines: Some(MAX_EDITOR_LINES),
+                },
+                window,
+                cx,
+            )
+        });
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
@@ -124,6 +145,7 @@ impl AcpThreadView {
             auth_task: None,
             expanded_tool_calls: HashSet::default(),
             expanded_thinking_blocks: HashSet::default(),
+            editing_message: None,
             edits_expanded: false,
             plan_expanded: false,
             editor_expanded: false,
@@ -276,7 +298,7 @@ impl AcpThreadView {
         }
     }
 
-    pub fn cancel(&mut self, cx: &mut Context<Self>) {
+    pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.last_error.take();
 
         if let Some(thread) = self.thread() {
@@ -297,7 +319,24 @@ impl AcpThreadView {
     fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
         self.editor_expanded = is_expanded;
         self.message_editor.update(cx, |editor, cx| {
-            editor.set_expanded(is_expanded, cx);
+            if is_expanded {
+                editor.set_mode(
+                    EditorMode::Full {
+                        scale_ui_elements_with_buffer_font_size: false,
+                        show_active_line_background: false,
+                        sized_by_content: false,
+                    },
+                    cx,
+                )
+            } else {
+                editor.set_mode(
+                    EditorMode::AutoHeight {
+                        min_lines: MIN_EDITOR_LINES,
+                        max_lines: Some(MAX_EDITOR_LINES),
+                    },
+                    cx,
+                )
+            }
         });
         cx.notify();
     }
@@ -310,20 +349,30 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) {
         match event {
-            MessageEditorEvent::Chat => self.chat(window, cx),
+            MessageEditorEvent::Send => self.send(window, cx),
+            MessageEditorEvent::Cancel => self.cancel_generation(cx),
         }
     }
 
-    fn chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let contents = self
+            .message_editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
+        self.send_impl(contents, window, cx)
+    }
+
+    fn send_impl(
+        &mut self,
+        contents: Task<anyhow::Result<Vec<acp::ContentBlock>>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.last_error.take();
+        self.editing_message.take();
 
         let Some(thread) = self.thread().cloned() else {
             return;
         };
-
-        let contents = self
-            .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
         let task = cx.spawn_in(window, async move |this, cx| {
             let contents = contents.await?;
 
@@ -353,6 +402,34 @@ impl AcpThreadView {
             }
         })
         .detach();
+    }
+
+    fn cancel_editing(&mut self, _: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        self.editing_message.take();
+        cx.notify();
+    }
+
+    fn regenerate(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editing_message) = self.editing_message.take() else {
+            return;
+        };
+
+        let Some(thread) = self.thread().cloned() else {
+            return;
+        };
+
+        let rewind = thread.update(cx, |thread, cx| {
+            thread.rewind(editing_message.message_id, cx)
+        });
+
+        let contents = editing_message
+            .editor
+            .update(cx, |message_editor, cx| message_editor.contents(cx));
+        let task = cx.foreground_executor().spawn(async move {
+            rewind.await?;
+            contents.await
+        });
+        self.send_impl(task, window, cx);
     }
 
     fn open_agent_diff(&mut self, _: &OpenAgentDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -658,12 +735,28 @@ impl AcpThreadView {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .text_xs()
-                        .children(message.content.markdown().map(|md| {
-                            self.render_markdown(
-                                md.clone(),
-                                user_message_markdown_style(window, cx),
-                            )
-                        })),
+                        .id("message")
+                        .on_click(cx.listener({
+                            move |this, _, window, cx| this.start_editing_message(index, window, cx)
+                        }))
+                        .children(
+                            if let Some(editing) = self.editing_message.as_ref()
+                                && Some(&editing.message_id) == message.id.as_ref()
+                            {
+                                Some(
+                                    self.render_edit_message_editor(editing, cx)
+                                        .into_any_element(),
+                                )
+                            } else {
+                                message.content.markdown().map(|md| {
+                                    self.render_markdown(
+                                        md.clone(),
+                                        user_message_markdown_style(window, cx),
+                                    )
+                                    .into_any_element()
+                                })
+                            },
+                        ),
                 )
                 .into_any(),
             AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) => {
@@ -725,11 +818,33 @@ impl AcpThreadView {
         };
 
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
-        if index == total_entries - 1 && !is_generating {
+        let primary = if index == total_entries - 1 && !is_generating {
             v_flex()
                 .w_full()
                 .child(primary)
                 .child(self.render_thread_controls(cx))
+                .into_any_element()
+        } else {
+            primary
+        };
+
+        if let Some(editing) = self.editing_message.as_ref()
+            && editing.index < index
+        {
+            let backdrop = div()
+                .id(("backdrop", index))
+                .size_full()
+                .absolute()
+                .inset_0()
+                .bg(cx.theme().colors().panel_background)
+                .opacity(0.8)
+                .block_mouse_except_scroll()
+                .on_click(cx.listener(Self::cancel_editing));
+
+            div()
+                .relative()
+                .child(backdrop)
+                .child(primary)
                 .into_any_element()
         } else {
             primary
@@ -2296,6 +2411,127 @@ impl AcpThreadView {
             .into_any()
     }
 
+    fn start_editing_message(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.thread() else {
+            return;
+        };
+        let Some(AgentThreadEntry::UserMessage(message)) = thread.read(cx).entries().get(index)
+        else {
+            return;
+        };
+        let Some(message_id) = message.id.clone() else {
+            return;
+        };
+
+        self.list_state.scroll_to_reveal_item(index);
+
+        let chunks = message.chunks.clone();
+        let editor = cx.new(|cx| {
+            let mut editor = MessageEditor::new(
+                self.workspace.clone(),
+                self.project.clone(),
+                editor::EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: None,
+                },
+                window,
+                cx,
+            );
+            editor.set_message(&chunks, window, cx);
+            editor
+        });
+        let subscription =
+            cx.subscribe_in(&editor, window, |this, _, event, window, cx| match event {
+                MessageEditorEvent::Send => {
+                    this.regenerate(&Default::default(), window, cx);
+                }
+                MessageEditorEvent::Cancel => {
+                    this.cancel_editing(&Default::default(), window, cx);
+                }
+            });
+        editor.focus_handle(cx).focus(window);
+
+        self.editing_message.replace(EditingMessage {
+            index: index,
+            message_id: message_id.clone(),
+            editor,
+            _subscription: subscription,
+        });
+        cx.notify();
+    }
+
+    fn render_edit_message_editor(&self, editing: &EditingMessage, cx: &Context<Self>) -> Div {
+        v_flex()
+            .w_full()
+            .gap_2()
+            .child(editing.editor.clone())
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Warning)
+                            .color(Color::Warning)
+                            .size(IconSize::XSmall),
+                    )
+                    .child(
+                        Label::new("Editing will restart the thread from this point.")
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall),
+                    )
+                    .child(self.render_editing_message_editor_buttons(editing, cx)),
+            )
+    }
+
+    fn render_editing_message_editor_buttons(
+        &self,
+        editing: &EditingMessage,
+        cx: &Context<Self>,
+    ) -> Div {
+        h_flex()
+            .gap_0p5()
+            .flex_1()
+            .justify_end()
+            .child(
+                IconButton::new("cancel-edit-message", IconName::Close)
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_color(Color::Error)
+                    .icon_size(IconSize::Small)
+                    .tooltip({
+                        let focus_handle = editing.editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Cancel Edit",
+                                &menu::Cancel,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(Self::cancel_editing)),
+            )
+            .child(
+                IconButton::new("confirm-edit-message", IconName::Return)
+                    .disabled(editing.editor.read(cx).is_empty(cx))
+                    .shape(ui::IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::Small)
+                    .tooltip({
+                        let focus_handle = editing.editor.focus_handle(cx);
+                        move |window, cx| {
+                            Tooltip::for_action_in(
+                                "Regenerate",
+                                &menu::Confirm,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                        }
+                    })
+                    .on_click(cx.listener(Self::regenerate)),
+            )
+    }
+
     fn render_send_button(&self, cx: &mut Context<Self>) -> AnyElement {
         if self.thread().map_or(true, |thread| {
             thread.read(cx).status() == ThreadStatus::Idle
@@ -2312,7 +2548,7 @@ impl AcpThreadView {
                     button.tooltip(Tooltip::text("Type a message to submit"))
                 })
                 .on_click(cx.listener(|this, _, window, cx| {
-                    this.chat(window, cx);
+                    this.send(window, cx);
                 }))
                 .into_any_element()
         } else {
@@ -2322,7 +2558,7 @@ impl AcpThreadView {
                 .tooltip(move |window, cx| {
                     Tooltip::for_action("Stop Generation", &editor::actions::Cancel, window, cx)
                 })
-                .on_click(cx.listener(|this, _event, _, cx| this.cancel(cx)))
+                .on_click(cx.listener(|this, _event, _, cx| this.cancel_generation(cx)))
                 .into_any_element()
         }
     }
@@ -3129,7 +3365,7 @@ pub(crate) mod tests {
         cx.deactivate_window();
 
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.chat(window, cx);
+            thread_view.send(window, cx);
         });
 
         cx.run_until_parked();
@@ -3156,7 +3392,7 @@ pub(crate) mod tests {
         cx.deactivate_window();
 
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.chat(window, cx);
+            thread_view.send(window, cx);
         });
 
         cx.run_until_parked();
@@ -3202,7 +3438,7 @@ pub(crate) mod tests {
         cx.deactivate_window();
 
         thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.chat(window, cx);
+            thread_view.send(window, cx);
         });
 
         cx.run_until_parked();

@@ -12,8 +12,8 @@ use file_icons::FileIcons;
 use gpui::{
     AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Task, TextStyle, WeakEntity,
 };
+use language::Buffer;
 use language::Language;
-use language::{Buffer, BufferSnapshot};
 use parking_lot::Mutex;
 use project::{CompletionIntent, Project};
 use settings::Settings;
@@ -29,9 +29,6 @@ use util::ResultExt;
 use workspace::Workspace;
 use zed_actions::agent::Chat;
 
-pub const MIN_EDITOR_LINES: usize = 4;
-pub const MAX_EDITOR_LINES: usize = 8;
-
 pub struct MessageEditor {
     editor: Entity<Editor>,
     project: Entity<Project>,
@@ -39,7 +36,8 @@ pub struct MessageEditor {
 }
 
 pub enum MessageEditorEvent {
-    Chat,
+    Send,
+    Cancel,
 }
 
 impl EventEmitter<MessageEditorEvent> for MessageEditor {}
@@ -48,6 +46,7 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
+        mode: EditorMode,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -64,16 +63,7 @@ impl MessageEditor {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-            let mut editor = Editor::new(
-                editor::EditorMode::AutoHeight {
-                    min_lines: MIN_EDITOR_LINES,
-                    max_lines: Some(MAX_EDITOR_LINES),
-                },
-                buffer,
-                None,
-                window,
-                cx,
-            );
+            let mut editor = Editor::new(mode, buffer, None, window, cx);
             editor.set_placeholder_text("Message the agent － @ to include files", cx);
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
@@ -161,7 +151,11 @@ impl MessageEditor {
     }
 
     fn chat(&mut self, _: &Chat, _: &mut Window, cx: &mut Context<Self>) {
-        cx.emit(MessageEditorEvent::Chat)
+        cx.emit(MessageEditorEvent::Send)
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(MessageEditorEvent::Cancel)
     }
 
     pub fn insert_dragged_files(
@@ -219,37 +213,19 @@ impl MessageEditor {
         }
     }
 
-    pub fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+    pub fn set_mode(&mut self, mode: EditorMode, cx: &mut Context<Self>) {
         self.editor.update(cx, |editor, cx| {
-            if expanded {
-                editor.set_mode(EditorMode::Full {
-                    scale_ui_elements_with_buffer_font_size: false,
-                    show_active_line_background: false,
-                    sized_by_content: false,
-                })
-            } else {
-                editor.set_mode(EditorMode::AutoHeight {
-                    min_lines: MIN_EDITOR_LINES,
-                    max_lines: Some(MAX_EDITOR_LINES),
-                })
-            }
+            editor.set_mode(mode);
             cx.notify()
         });
     }
 
-    #[allow(unused)]
-    fn set_draft_message(
-        message_editor: Entity<Editor>,
-        mention_set: Arc<Mutex<MentionSet>>,
-        project: Entity<Project>,
-        message: Option<&[acp::ContentBlock]>,
+    pub fn set_message(
+        &mut self,
+        message: &[acp::ContentBlock],
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Option<BufferSnapshot> {
-        cx.notify();
-
-        let message = message?;
-
+    ) {
         let mut text = String::new();
         let mut mentions = Vec::new();
 
@@ -265,7 +241,8 @@ impl MessageEditor {
                     if let Some(ref mention @ MentionUri::File(ref abs_path)) =
                         MentionUri::parse(&resource.uri).log_err()
                     {
-                        let project_path = project
+                        let project_path = self
+                            .project
                             .read(cx)
                             .project_path_for_absolute_path(&abs_path, cx);
                         let start = text.len();
@@ -291,11 +268,12 @@ impl MessageEditor {
             }
         }
 
-        let snapshot = message_editor.update(cx, |editor, cx| {
+        let snapshot = self.editor.update(cx, |editor, cx| {
             editor.set_text(text, window, cx);
             editor.buffer().read(cx).snapshot(cx)
         });
 
+        self.mention_set.lock().clear();
         for (range, project_path, filename) in mentions {
             let crease_icon_path = if project_path.path.is_dir() {
                 FileIcons::get_folder_icon(false, cx)
@@ -306,26 +284,24 @@ impl MessageEditor {
             };
 
             let anchor = snapshot.anchor_before(range.start);
-            if let Some(project_path) = project.read(cx).absolute_path(&project_path, cx) {
+            if let Some(project_path) = self.project.read(cx).absolute_path(&project_path, cx) {
                 let crease_id = crate::context_picker::insert_crease_for_mention(
                     anchor.excerpt_id,
                     anchor.text_anchor,
                     range.end - range.start,
                     filename,
                     crease_icon_path,
-                    message_editor.clone(),
+                    self.editor.clone(),
                     window,
                     cx,
                 );
 
                 if let Some(crease_id) = crease_id {
-                    mention_set.lock().insert(crease_id, project_path);
+                    self.mention_set.lock().insert(crease_id, project_path);
                 }
             }
         }
-
-        let snapshot = snapshot.as_singleton().unwrap().2.clone();
-        Some(snapshot)
+        cx.notify();
     }
 
     #[cfg(test)]
@@ -347,6 +323,7 @@ impl Render for MessageEditor {
         div()
             .key_context("MessageEditor")
             .on_action(cx.listener(Self::chat))
+            .on_action(cx.listener(Self::cancel))
             .flex_1()
             .child({
                 let settings = ThemeSettings::get_global(cx);
@@ -384,6 +361,7 @@ mod tests {
     use std::path::Path;
 
     use agent_client_protocol as acp;
+    use editor::EditorMode;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use lsp::{CompletionContext, CompletionTriggerKind};
@@ -406,7 +384,18 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let message_editor = cx.update(|window, cx| {
-            cx.new(|cx| MessageEditor::new(workspace.downgrade(), project.clone(), window, cx))
+            cx.new(|cx| {
+                MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
         });
         let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
 
