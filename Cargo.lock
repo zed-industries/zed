@@ -10,6 +10,7 @@ dependencies = [
  "agent-client-protocol",
  "anyhow",
  "buffer_diff",
+ "collections",
  "editor",
  "env_logger 0.11.8",
  "futures 0.3.31",
@@ -17,7 +18,6 @@ dependencies = [
  "indoc",
  "itertools 0.14.0",
  "language",
- "language_model",
  "markdown",
  "parking_lot",
  "project",
@@ -31,6 +31,7 @@ dependencies = [
  "ui",
  "url",
  "util",
+ "watch",
  "workspace-hack",
 ]
 
