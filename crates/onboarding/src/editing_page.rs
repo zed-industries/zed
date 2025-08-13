@@ -231,12 +231,9 @@ fn render_setting_import_button(
                     }),
             )
             .on_click(move |_, window, cx| {
-                telemetry::event!(
-                    "Welcome Import Settings",
-                    import_source = label,
-                );
+                telemetry::event!("Welcome Import Settings", import_source = label,);
                 window.dispatch_action(action.boxed_clone(), cx);
-            })
+            }),
     )
 }
 

@@ -251,14 +251,16 @@ pub(crate) fn render_ai_setup_page(
                 },
                 |&toggle_state, _, cx| {
                     let enabled = match toggle_state {
-                        ToggleState::Indeterminate => {return;},
+                        ToggleState::Indeterminate => {
+                            return;
+                        }
                         ToggleState::Unselected => true,
                         ToggleState::Selected => false,
                     };
 
                     telemetry::event!(
                         "Welcome AI Enabled",
-                        toggle = if enabled {"on"} else {"off"},
+                        toggle = if enabled { "on" } else { "off" },
                     );
 
                     let fs = <dyn Fs>::global(cx);

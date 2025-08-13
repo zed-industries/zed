@@ -5,7 +5,9 @@ use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    actions, Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription, Task, WeakEntity, Window
+    Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
+    Task, WeakEntity, Window, actions,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
@@ -270,7 +272,12 @@ impl Onboarding {
         })
     }
 
-    fn set_page(&mut self, page: SelectedPage, clicked: Option<&'static str>, cx: &mut Context<Self>) {
+    fn set_page(
+        &mut self,
+        page: SelectedPage,
+        clicked: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(click) = clicked {
             telemetry::event!(
                 "Welcome Tab Clicked",
@@ -279,7 +286,6 @@ impl Onboarding {
                 clicked = click,
             );
         }
-
 
         self.selected_page = page;
         cx.notify();
