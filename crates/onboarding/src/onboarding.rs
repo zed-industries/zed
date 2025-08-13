@@ -189,6 +189,7 @@ pub fn init(cx: &mut App) {
     base_keymap_picker::init(cx);
 
     register_serializable_item::<Onboarding>(cx);
+    register_serializable_item::<WelcomePage>(cx);
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
