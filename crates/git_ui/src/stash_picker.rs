@@ -9,7 +9,9 @@ use gpui::{
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::{Repository, RepositoryEvent};
 use std::sync::Arc;
-use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, prelude::*};
+use time::OffsetDateTime;
+use time_format::format_local_timestamp;
+use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::notifications::DetachAndPromptErr;
 use workspace::{ModalView, Workspace};
@@ -220,6 +222,10 @@ impl StashListDelegate {
         }
     }
 
+    fn format_message(ix: usize, message: &String) -> String {
+        format!("#{}: {}", ix, message)
+    }
+
     fn drop_stash_at(&self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         let Some(entry_match) = self.matches.get(ix) else {
             return;
@@ -310,7 +316,12 @@ impl PickerDelegate for StashListDelegate {
                 let candidates = all_stash_entries
                     .iter()
                     .enumerate()
-                    .map(|(ix, entry)| StringMatchCandidate::new(ix, &entry.message))
+                    .map(|(ix, entry)| {
+                        StringMatchCandidate::new(
+                            ix,
+                            &Self::format_message(entry.index, &entry.message),
+                        )
+                    })
                     .collect::<Vec<StringMatchCandidate>>();
                 fuzzy::match_strings(
                     &candidates,
@@ -367,7 +378,8 @@ impl PickerDelegate for StashListDelegate {
     ) -> Option<Self::ListItem> {
         let entry_match = &self.matches[ix];
 
-        let mut stash_message = entry_match.entry.message.clone();
+        let mut stash_message =
+            Self::format_message(entry_match.entry.index, &entry_match.entry.message);
         let mut positions = entry_match.positions.clone();
 
         if stash_message.is_ascii() {
@@ -394,9 +406,27 @@ impl PickerDelegate for StashListDelegate {
 
         let stash_name = HighlightedLabel::new(stash_message, positions).into_any_element();
 
-        let stash_index_label = Label::new(format!("stash@{{{}}}", entry_match.entry.index))
-            .size(LabelSize::Small)
-            .color(Color::Muted);
+        let stash_index_label = Label::new(
+            entry_match
+                .entry
+                .branch
+                .clone()
+                .unwrap_or_default()
+                .to_string(),
+        )
+        .size(LabelSize::Small)
+        .color(Color::Muted);
+
+        let absolute_timestamp = format_local_timestamp(
+            OffsetDateTime::from_unix_timestamp(entry_match.entry.timestamp)
+                .unwrap_or(OffsetDateTime::now_utc()),
+            OffsetDateTime::now_utc(),
+            time_format::TimestampFormat::MediumAbsolute,
+        );
+        let tooltip_text = format!(
+            "stash@{{{}}} created {}",
+            entry_match.entry.index, absolute_timestamp
+        );
 
         Some(
             ListItem::new(SharedString::from(format!("stash-{ix}")))
@@ -412,7 +442,8 @@ impl PickerDelegate for StashListDelegate {
                             .child(stash_name)
                             .child(stash_index_label.into_element()),
                     ),
-                ),
+                )
+                .tooltip(Tooltip::text(tooltip_text)),
         )
     }
 
