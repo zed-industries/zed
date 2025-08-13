@@ -2504,7 +2504,7 @@ impl Window {
         &mut self,
         key: impl Into<ElementId>,
         cx: &mut App,
-        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
     ) -> Entity<S> {
         let current_view = self.current_view();
         self.with_global_id(key.into(), |global_id, window| {
@@ -2537,7 +2537,7 @@ impl Window {
     pub fn use_state<S: 'static>(
         &mut self,
         cx: &mut App,
-        init: impl FnOnce(&mut Self, &mut Context<S>) -> S,
+        init: impl FnOnce(&mut Self, &mut App) -> S,
     ) -> Entity<S> {
         self.use_keyed_state(
             ElementId::CodeLocation(*core::panic::Location::caller()),

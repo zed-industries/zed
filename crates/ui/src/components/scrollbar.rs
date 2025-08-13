@@ -1,13 +1,13 @@
 use std::{fmt::Debug, marker::PhantomData, ops::Not, time::Duration};
 
 use gpui::{
-    Along, App, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context, Corner, Corners,
-    CursorStyle, Div, Edges, Element, ElementId, Entity, EntityId, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero, LayoutId, ListState,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful, StatefulInteractiveElement,
-    Style, Styled, Task, UniformListScrollHandle, Window, prelude::FluentBuilder as _, px, quad,
-    relative, size,
+    Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
+    Corner, Corners, CursorStyle, Div, Edges, Element, ElementId, Entity, EntityId,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InteractiveElement, IntoElement, IsZero,
+    LayoutId, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Position, Render, ScrollHandle, ScrollWheelEvent, Size, Stateful,
+    StatefulInteractiveElement, Style, Styled, Task, UniformList, UniformListDecoration,
+    UniformListScrollHandle, Window, prelude::FluentBuilder as _, px, quad, relative, size,
 };
 use settings::SettingsStore;
 use smallvec::SmallVec;
@@ -92,6 +92,23 @@ pub mod scrollbars {
     impl Global for ScrollbarAutoHide {}
 }
 
+fn get_scrollbar_state<S, T>(
+    mut config: Scrollbars<S, T>,
+    caller_location: &'static std::panic::Location,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<ScrollbarStateWrapper<S, T>>
+where
+    S: ScrollbarVisibilitySetting,
+    T: ScrollableHandle,
+{
+    let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
+
+    window.use_keyed_state(element_id, cx, |window, cx| {
+        ScrollbarStateWrapper(cx.new(|cx| ScrollbarState::new_from_config(config, window, cx)))
+    })
+}
+
 pub trait WithScrollbar: Sized {
     type Output;
 
@@ -146,7 +163,7 @@ impl WithScrollbar for Stateful<Div> {
     #[track_caller]
     fn custom_scrollbars<S, T>(
         self,
-        mut config: Scrollbars<S, T>,
+        config: Scrollbars<S, T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output
@@ -154,16 +171,11 @@ impl WithScrollbar for Stateful<Div> {
         S: ScrollbarVisibilitySetting,
         T: ScrollableHandle,
     {
-        let element_id = config
-            .id
-            .take()
-            .unwrap_or_else(|| core::panic::Location::caller().into());
-
-        let scrollbar = window.use_keyed_state(element_id.clone(), cx, |window, cx| {
-            ScrollbarState::new_from_config(config, window, cx)
-        });
-
-        render_scrollbar(scrollbar, self, cx)
+        render_scrollbar(
+            get_scrollbar_state(config, std::panic::Location::caller(), window, cx),
+            self,
+            cx,
+        )
     }
 }
 
@@ -173,7 +185,7 @@ impl WithScrollbar for Div {
     #[track_caller]
     fn custom_scrollbars<S, T>(
         self,
-        mut config: Scrollbars<S, T>,
+        config: Scrollbars<S, T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output
@@ -181,14 +193,7 @@ impl WithScrollbar for Div {
         S: ScrollbarVisibilitySetting,
         T: ScrollableHandle,
     {
-        let element_id = config
-            .id
-            .take()
-            .unwrap_or_else(|| core::panic::Location::caller().into());
-
-        let scrollbar = window.use_keyed_state(element_id.clone(), cx, |window, cx| {
-            ScrollbarState::new_from_config(config, window, cx)
-        });
+        let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
         // We know this ID stays consistent as long as the element is rendered for
         // consecutive frames, which is sufficient for our use case here
         let scrollbar_entity_id = scrollbar.entity_id();
@@ -202,7 +207,7 @@ impl WithScrollbar for Div {
 }
 
 fn render_scrollbar<S, T>(
-    scrollbar: Entity<ScrollbarState<S, T>>,
+    scrollbar: Entity<ScrollbarStateWrapper<S, T>>,
     div: Stateful<Div>,
     cx: &App,
 ) -> Stateful<Div>
@@ -210,27 +215,62 @@ where
     S: ScrollbarVisibilitySetting,
     T: ScrollableHandle,
 {
-    if scrollbar.read(cx).disabled() {
+    let state = &scrollbar.read(cx).0;
+
+    if state.read(cx).disabled() {
         div
     } else {
-        div.when_some(scrollbar.read(cx).handle_to_track(), |this, handle| {
+        div.when_some(state.read(cx).handle_to_track(), |this, handle| {
             this.track_scroll(handle)
         })
         .when_some(
-            scrollbar
+            state
                 .read(cx)
                 .space_to_reserve_for(ScrollbarAxis::Horizontal),
             |this, space| this.pb(space),
         )
         .when_some(
-            scrollbar
-                .read(cx)
-                .space_to_reserve_for(ScrollbarAxis::Vertical),
+            state.read(cx).space_to_reserve_for(ScrollbarAxis::Vertical),
             |this, space| this.pr(space),
         )
-        .child(scrollbar)
+        .child(state.clone())
     }
 }
+
+// impl<S: ScrollbarVisibilitySetting, T: ScrollableHandle> UniformListDecoration
+//     for ScrollbarState<S, T>
+// {
+//     fn compute(
+//         &self,
+//         visible_range: Range<usize>,
+//         bounds: Bounds<Pixels>,
+//         scroll_offset: Point<Pixels>,
+//         item_height: Pixels,
+//         item_count: usize,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> gpui::AnyElement {
+//         let element = ScrollbarElement::new(self);
+//     }
+// }
+
+// impl WithScrollbar for UniformList {
+//     type Output = Self;
+
+//     fn custom_scrollbars<S, T>(
+//         self,
+//         config: Scrollbars<S, T>,
+//         window: &mut Window,
+//         cx: &mut App,
+//     ) -> Self::Output
+//     where
+//         S: ScrollbarVisibilitySetting,
+//         T: ScrollableHandle,
+//     {
+//         let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
+//         self.with_decoration(scrollbar)
+//     }
+// }
 
 #[derive(PartialEq, Eq)]
 pub enum ScrollAxes {
@@ -416,6 +456,12 @@ impl VisibilityState {
         matches!(self, VisibilityState::Disabled)
     }
 }
+
+/// This is used to ensure notifies within the state do not notify the parent
+/// unintentionally.
+struct ScrollbarStateWrapper<S: ScrollbarVisibilitySetting, T: ScrollableHandle>(
+    Entity<ScrollbarState<S, T>>,
+);
 
 /// A scrollbar state that should be persisted across frames.
 struct ScrollbarState<S: ScrollbarVisibilitySetting, T: ScrollableHandle = ScrollHandle> {
