@@ -589,6 +589,7 @@ impl LspAdapter for TypeScriptLspAdapter {
                 &server_path,
                 &container_dir,
                 version.typescript_version.as_str(),
+                Default::default(),
             )
             .await;
 
