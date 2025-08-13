@@ -25,7 +25,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::Project;
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::{cell::RefCell, collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
+use std::{collections::BTreeMap, process::ExitStatus, rc::Rc, time::Duration};
 use terminal_view::TerminalView;
 use text::Anchor;
 use theme::ThemeSettings;
@@ -39,7 +39,6 @@ use zed_actions::agent::{Chat, ToggleModelSelector};
 
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
-use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
 use crate::ui::{AgentNotification, AgentNotificationEvent};
 use crate::{
@@ -69,7 +68,6 @@ pub struct AcpThreadView {
     plan_expanded: bool,
     editor_expanded: bool,
     terminal_expanded: bool,
-    message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
     _cancel_task: Option<Task<()>>,
     _subscriptions: [Subscription; 2],
 }
@@ -96,19 +94,11 @@ impl AcpThreadView {
         agent: Rc<dyn AgentServer>,
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        message_history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let message_editor = cx.new(|cx| {
-            MessageEditor::new(
-                workspace.clone(),
-                project.clone(),
-                message_history.clone(),
-                window,
-                cx,
-            )
-        });
+        let message_editor =
+            cx.new(|cx| MessageEditor::new(workspace.clone(), project.clone(), window, cx));
 
         let list_state = ListState::new(0, gpui::ListAlignment::Bottom, px(2048.0));
 
@@ -138,7 +128,6 @@ impl AcpThreadView {
             plan_expanded: false,
             editor_expanded: false,
             terminal_expanded: true,
-            message_history,
             _subscriptions: subscriptions,
             _cancel_task: None,
         }
@@ -348,7 +337,6 @@ impl AcpThreadView {
                 this.message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
-                this.message_history.borrow_mut().push(contents.clone());
             })?;
             let send = thread.update(cx, |thread, cx| thread.send(contents, cx))?;
             send.await
@@ -3212,14 +3200,7 @@ pub(crate) mod tests {
 
         let thread_view = cx.update(|window, cx| {
             cx.new(|cx| {
-                AcpThreadView::new(
-                    Rc::new(agent),
-                    workspace.downgrade(),
-                    project,
-                    Rc::new(RefCell::new(MessageHistory::default())),
-                    window,
-                    cx,
-                )
+                AcpThreadView::new(Rc::new(agent), workspace.downgrade(), project, window, cx)
             })
         });
         cx.run_until_parked();

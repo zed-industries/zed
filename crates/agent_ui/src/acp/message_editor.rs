@@ -1,5 +1,5 @@
 use crate::acp::completion_provider::ContextPickerCompletionProvider;
-use crate::acp::{MessageHistory, completion_provider::MentionSet};
+use crate::acp::completion_provider::MentionSet;
 use acp_thread::MentionUri;
 use agent_client_protocol as acp;
 use anyhow::Result;
@@ -10,8 +10,7 @@ use editor::{
 };
 use file_icons::FileIcons;
 use gpui::{
-    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task,
-    TextStyle, WeakEntity,
+    AppContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Task, TextStyle, WeakEntity,
 };
 use language::Language;
 use language::{Buffer, BufferSnapshot};
@@ -20,7 +19,7 @@ use project::{CompletionIntent, Project};
 use settings::Settings;
 use std::path::Path;
 use std::rc::Rc;
-use std::{cell::RefCell, sync::Arc};
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, App, IconName, InteractiveElement, IntoElement, ParentElement, Render,
@@ -28,7 +27,7 @@ use ui::{
 };
 use util::ResultExt;
 use workspace::Workspace;
-use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
+use zed_actions::agent::Chat;
 
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
@@ -37,9 +36,6 @@ pub struct MessageEditor {
     editor: Entity<Editor>,
     project: Entity<Project>,
     mention_set: Arc<Mutex<MentionSet>>,
-    history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
-    message_set_from_history: Option<BufferSnapshot>,
-    _subscription: Subscription,
 }
 
 pub enum MessageEditorEvent {
@@ -52,7 +48,6 @@ impl MessageEditor {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         project: Entity<Project>,
-        history: Rc<RefCell<MessageHistory<Vec<acp::ContentBlock>>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -95,35 +90,11 @@ impl MessageEditor {
             });
             editor
         });
-        let message_editor_subscription = cx.subscribe(&editor, |this, editor, event, cx| {
-            if let editor::EditorEvent::BufferEdited = &event {
-                let buffer = editor
-                    .read(cx)
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .unwrap()
-                    .read(cx)
-                    .snapshot();
-                if let Some(message) = this.message_set_from_history.clone()
-                    && message.version() != buffer.version()
-                {
-                    this.message_set_from_history = None;
-                }
-
-                if this.message_set_from_history.is_none() {
-                    this.history.borrow_mut().reset_position();
-                }
-            }
-        });
 
         Self {
             editor,
             project,
             mention_set,
-            history,
-            message_set_from_history: None,
-            _subscription: message_editor_subscription,
         }
     }
 
@@ -266,69 +237,7 @@ impl MessageEditor {
         });
     }
 
-    fn previous_history_message(
-        &mut self,
-        _: &PreviousHistoryMessage,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.message_set_from_history.is_none() && !self.editor.read(cx).is_empty(cx) {
-            self.editor.update(cx, |editor, cx| {
-                editor.move_up(&Default::default(), window, cx);
-            });
-            return;
-        }
-
-        self.message_set_from_history = Self::set_draft_message(
-            self.editor.clone(),
-            self.mention_set.clone(),
-            self.project.clone(),
-            self.history
-                .borrow_mut()
-                .prev()
-                .map(|blocks| blocks.as_slice()),
-            window,
-            cx,
-        );
-    }
-
-    fn next_history_message(
-        &mut self,
-        _: &NextHistoryMessage,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.message_set_from_history.is_none() {
-            self.editor.update(cx, |editor, cx| {
-                editor.move_down(&Default::default(), window, cx);
-            });
-            return;
-        }
-
-        let mut history = self.history.borrow_mut();
-        let next_history = history.next();
-
-        let set_draft_message = Self::set_draft_message(
-            self.editor.clone(),
-            self.mention_set.clone(),
-            self.project.clone(),
-            Some(
-                next_history
-                    .map(|blocks| blocks.as_slice())
-                    .unwrap_or_else(|| &[]),
-            ),
-            window,
-            cx,
-        );
-        // If we reset the text to an empty string because we ran out of history,
-        // we don't want to mark it as coming from the history
-        self.message_set_from_history = if next_history.is_some() {
-            set_draft_message
-        } else {
-            None
-        };
-    }
-
+    #[allow(unused)]
     fn set_draft_message(
         message_editor: Entity<Editor>,
         mention_set: Arc<Mutex<MentionSet>>,
@@ -437,8 +346,6 @@ impl Render for MessageEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .key_context("MessageEditor")
-            .on_action(cx.listener(Self::previous_history_message))
-            .on_action(cx.listener(Self::next_history_message))
             .on_action(cx.listener(Self::chat))
             .flex_1()
             .child({
@@ -474,125 +381,23 @@ impl Render for MessageEditor {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, path::Path, rc::Rc};
+    use std::path::Path;
 
     use agent_client_protocol as acp;
     use fs::FakeFs;
     use gpui::{AppContext, TestAppContext};
     use lsp::{CompletionContext, CompletionTriggerKind};
-    use pretty_assertions::assert_matches;
     use project::{CompletionIntent, Project};
     use serde_json::json;
     use util::path;
     use workspace::Workspace;
 
-    use crate::acp::{
-        MessageHistory, message_editor::MessageEditor, thread_view::tests::init_test,
-    };
-
-    #[gpui::test]
-    async fn test_at_mention_history(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let history = Rc::new(RefCell::new(MessageHistory::default()));
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({"file": ""})).await;
-        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
-
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
-        let message_editor = cx.update(|window, cx| {
-            cx.new(|cx| {
-                MessageEditor::new(
-                    workspace.downgrade(),
-                    project.clone(),
-                    history.clone(),
-                    window,
-                    cx,
-                )
-            })
-        });
-        let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
-
-        cx.run_until_parked();
-
-        let excerpt_id = editor.update(cx, |editor, cx| {
-            editor
-                .buffer()
-                .read(cx)
-                .excerpt_ids()
-                .into_iter()
-                .next()
-                .unwrap()
-        });
-        let completions = editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Hello @", window, cx);
-            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-            let completion_provider = editor.completion_provider().unwrap();
-            completion_provider.completions(
-                excerpt_id,
-                &buffer,
-                text::Anchor::MAX,
-                CompletionContext {
-                    trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
-                    trigger_character: Some("@".into()),
-                },
-                window,
-                cx,
-            )
-        });
-        let [_, completion]: [_; 2] = completions
-            .await
-            .unwrap()
-            .into_iter()
-            .flat_map(|response| response.completions)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-
-        editor.update_in(cx, |editor, window, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
-                .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
-            (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
-        });
-
-        cx.run_until_parked();
-
-        let content = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
-            .await
-            .unwrap();
-        assert_eq!(content.len(), 2);
-        assert_matches!(&content[0], &acp::ContentBlock::Text(_));
-        assert_matches!(&content[1], &acp::ContentBlock::Resource(_));
-
-        history.borrow_mut().push(content);
-        message_editor.update_in(cx, |message_editor, window, cx| {
-            message_editor.clear(window, cx);
-            message_editor.previous_history_message(&Default::default(), window, cx);
-        });
-
-        let content = message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx))
-            .await
-            .unwrap();
-        assert_eq!(content.len(), 2);
-        assert_matches!(&content[0], &acp::ContentBlock::Text(_));
-        assert_matches!(&content[1], &acp::ContentBlock::Resource(_));
-    }
+    use crate::acp::{message_editor::MessageEditor, thread_view::tests::init_test};
 
     #[gpui::test]
     async fn test_at_mention_removal(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let history = Rc::new(RefCell::new(MessageHistory::default()));
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({"file": ""})).await;
         let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
@@ -601,15 +406,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let message_editor = cx.update(|window, cx| {
-            cx.new(|cx| {
-                MessageEditor::new(
-                    workspace.downgrade(),
-                    project.clone(),
-                    history.clone(),
-                    window,
-                    cx,
-                )
-            })
+            cx.new(|cx| MessageEditor::new(workspace.downgrade(), project.clone(), window, cx))
         });
         let editor = message_editor.update(cx, |message_editor, _| message_editor.editor.clone());
 
