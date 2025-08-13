@@ -36,8 +36,6 @@ use settings::watch_config_file;
 use smol::stream::StreamExt as _;
 use ui::Navigable;
 use ui::NavigableEntry;
-use ui::ScrollAxes;
-use ui::Scrollbars;
 use ui::WithScrollbar;
 use ui::{
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Section, Tooltip,
@@ -1581,12 +1579,7 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .custom_scrollbars(
-                            Scrollbars::new(ScrollAxes::Vertical)
-                                .tracked_scroll_handle(state.scroll_handle),
-                            window,
-                            cx,
-                        ),
+                        .vertical_scrollbar_for(state.scroll_handle.clone(), window, cx),
                 ),
             )
             .into_any_element()

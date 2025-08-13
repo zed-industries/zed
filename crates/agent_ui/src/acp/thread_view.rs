@@ -197,7 +197,7 @@ impl AcpThreadView {
             notification_subscriptions: HashMap::default(),
             diff_editors: Default::default(),
             terminal_views: Default::default(),
-            list_state: list_state.clone(),
+            list_state,
             last_error: None,
             auth_task: None,
             expanded_tool_calls: HashSet::default(),

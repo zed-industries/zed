@@ -799,7 +799,7 @@ impl ActiveThread {
             expanded_tool_uses: HashMap::default(),
             expanded_thinking_segments: HashMap::default(),
             expanded_code_blocks: HashMap::default(),
-            list_state: list_state.clone(),
+            list_state,
             editing_message: None,
             last_error: None,
             copied_code_block_ids: HashSet::default(),
