@@ -253,6 +253,8 @@ trait ToTaffy<Output> {
 
 impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
+        use taffy::style_helpers::{fr, length, minmax, repeat};
+
         taffy::style::Style {
             display: self.display.into(),
             overflow: self.overflow.into(),
@@ -278,33 +280,13 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_shrink: self.flex_shrink,
             // grid-template-rows: repeat(<number>, minmax(0, 1fr));
             grid_template_rows: if let Some(count) = self.grid_rows {
-                vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
-                    count: RepetitionCount::Count(count),
-                    tracks: (0..count)
-                        .into_iter()
-                        .map(|_| MinMax {
-                            min: MinTrackSizingFunction::ZERO,
-                            max: MaxTrackSizingFunction::fr(1.0),
-                        })
-                        .collect(),
-                    line_names: vec![],
-                })]
+                vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])]
             } else {
                 Default::default()
             },
             // grid-template-columns: repeat(<number>, minmax(0, 1fr));
             grid_template_columns: if let Some(count) = self.grid_cols {
-                vec![GridTemplateComponent::Repeat(GridTemplateRepetition {
-                    count: RepetitionCount::Count(count),
-                    tracks: (0..count)
-                        .into_iter()
-                        .map(|_| MinMax {
-                            min: MinTrackSizingFunction::ZERO,
-                            max: MaxTrackSizingFunction::fr(1.0),
-                        })
-                        .collect(),
-                    line_names: vec![],
-                })]
+                vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])]
             } else {
                 Default::default()
             },

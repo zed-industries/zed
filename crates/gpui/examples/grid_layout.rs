@@ -28,12 +28,13 @@ impl Render for HelloWorld {
 
         div()
             .gap_1()
+            // .grid()
             .bg(rgb(0x505050))
             .size(px(500.0))
             .shadow_lg()
             .border_1()
             .border_color(rgb(0x0000ff))
-            .grid_cols(2)
+            .grid_cols(3)
             .children(colors.map(block))
     }
 }
