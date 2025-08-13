@@ -7,7 +7,7 @@ use std::{
 use crate::{
     AbsoluteLength, App, Background, BackgroundTag, BorderStyle, Bounds, ContentMask, Corners,
     CornersRefinement, CursorStyle, DefiniteLength, DevicePixels, Edges, EdgesRefinement, Font,
-    FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Length, Pixels, Point,
+    FontFallbacks, FontFeatures, FontStyle, FontWeight, GridLocation, Hsla, Length, Pixels, Point,
     PointRefinement, Rgba, SharedString, Size, SizeRefinement, Styled, TextRun, Window, black, phi,
     point, quad, rems, size,
 };
@@ -264,15 +264,12 @@ pub struct Style {
     /// Equivalent to the Tailwind `grid-cols-<number>`
     pub grid_cols: Option<u16>,
 
-    /// The grid rows of this element
+    /// The row span of this element
     /// Equivalent to the Tailwind `grid-rows-<number>`
     pub grid_rows: Option<u16>,
 
-    /// The row span of this element
-    pub row_span: Option<Range<i16>>,
-
-    /// The column span of this element
-    pub col_span: Option<Range<i16>>,
+    /// The grid location of this element
+    pub grid_location: Option<GridLocation>,
 
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
@@ -286,6 +283,13 @@ pub struct Style {
 impl Styled for StyleRefinement {
     fn style(&mut self) -> &mut StyleRefinement {
         self
+    }
+}
+
+impl StyleRefinement {
+    /// The grid location of this element
+    pub fn grid_location_mut(&mut self) -> &mut GridLocation {
+        self.grid_location.get_or_insert_default()
     }
 }
 
@@ -772,9 +776,8 @@ impl Default for Style {
             mouse_cursor: None,
             opacity: None,
             grid_rows: None,
-            row_span: None,
             grid_cols: None,
-            col_span: None,
+            grid_location: None,
 
             #[cfg(debug_assertions)]
             debug: false,

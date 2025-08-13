@@ -3,11 +3,10 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
     geometry::{Point as TaffyPoint, Rect as TaffyRect, Size as TaffySize},
-    prelude::{TaffyGridLine, TaffyGridSpan},
     style::AvailableSpace as TaffyAvailableSpace,
     tree::NodeId,
 };
@@ -254,21 +253,16 @@ impl ToTaffy<taffy::style::Style> for Style {
     fn to_taffy(&self, rem_size: Pixels) -> taffy::style::Style {
         use taffy::style_helpers::{fr, length, minmax, repeat};
 
-        fn convert_range_to_grid_line(
-            span: &std::ops::Range<i16>,
+        fn to_grid_line(
+            placement: &Range<crate::GridPlacement>,
         ) -> taffy::Line<taffy::GridPlacement> {
-            if span.start == span.end {
-                taffy::Line::from_span(span.start as u16)
-            } else {
-                taffy::Line {
-                    start: span.start,
-                    end: span.end,
-                }
-                .map(taffy::GridPlacement::from_line_index)
+            taffy::Line {
+                start: placement.start.into(),
+                end: placement.end.into(),
             }
         }
 
-        fn grid_axis_repeat<T: taffy::style::CheapCloneStr>(
+        fn to_grid_repeat<T: taffy::style::CheapCloneStr>(
             unit: &Option<u16>,
         ) -> Vec<taffy::GridTemplateComponent<T>> {
             // grid-template-columns: repeat(<number>, minmax(0, 1fr));
@@ -299,19 +293,19 @@ impl ToTaffy<taffy::style::Style> for Style {
             flex_basis: self.flex_basis.to_taffy(rem_size),
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
-            grid_template_rows: grid_axis_repeat(&self.grid_rows),
-            grid_template_columns: grid_axis_repeat(&self.grid_cols),
+            grid_template_rows: to_grid_repeat(&self.grid_rows),
+            grid_template_columns: to_grid_repeat(&self.grid_cols),
             grid_row: self
-                .row_span
+                .grid_location
                 .as_ref()
-                .map(convert_range_to_grid_line)
+                .map(|location| to_grid_line(&location.row))
                 .unwrap_or_default(),
             grid_column: self
-                .col_span
+                .grid_location
                 .as_ref()
-                .map(convert_range_to_grid_line)
+                .map(|location| to_grid_line(&location.column))
                 .unwrap_or_default(),
-            ..Default::default() // Ignore grid properties for now
+            ..Default::default()
         }
     }
 }
