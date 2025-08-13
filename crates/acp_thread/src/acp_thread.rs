@@ -1,9 +1,11 @@
 mod connection;
 mod diff;
+mod mention;
 mod terminal;
 
 pub use connection::*;
 pub use diff::*;
+pub use mention::*;
 use project::git_store::GitStoreCheckpoint;
 pub use terminal::*;
 
@@ -12,9 +14,9 @@ use agent_client_protocol as acp;
 use anyhow::{Context as _, Result, anyhow};
 use editor::Bias;
 use futures::{FutureExt, channel::oneshot, future::BoxFuture};
-use gpui::{AppContext, Context, Entity, EventEmitter, SharedString, Task};
+use gpui::{AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity};
 use itertools::Itertools;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, text_diff};
+use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
 use markdown::Markdown;
 use project::{AgentLocation, Project};
 use std::collections::HashMap;
@@ -22,12 +24,7 @@ use std::error::Error;
 use std::fmt::{Formatter, Write};
 use std::process::ExitStatus;
 use std::rc::Rc;
-use std::{
-    fmt::Display,
-    mem,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::{ResultExt, debug_panic};
 use uuid::Uuid;
@@ -60,38 +57,6 @@ impl UserMessage {
         writeln!(markdown, "{}", self.content.to_markdown(cx)).unwrap();
         writeln!(markdown).unwrap();
         markdown
-    }
-}
-
-#[derive(Debug)]
-pub struct MentionPath<'a>(&'a Path);
-
-impl<'a> MentionPath<'a> {
-    const PREFIX: &'static str = "@file:";
-
-    pub fn new(path: &'a Path) -> Self {
-        MentionPath(path)
-    }
-
-    pub fn try_parse(url: &'a str) -> Option<Self> {
-        let path = url.strip_prefix(Self::PREFIX)?;
-        Some(MentionPath(Path::new(path)))
-    }
-
-    pub fn path(&self) -> &Path {
-        self.0
-    }
-}
-
-impl Display for MentionPath<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[@{}]({}{})",
-            self.0.file_name().unwrap_or_default().display(),
-            Self::PREFIX,
-            self.0.display()
-        )
     }
 }
 
@@ -167,9 +132,17 @@ impl AgentThreadEntry {
         }
     }
 
-    pub fn locations(&self) -> Option<&[acp::ToolCallLocation]> {
-        if let AgentThreadEntry::ToolCall(ToolCall { locations, .. }) = self {
-            Some(locations)
+    pub fn location(&self, ix: usize) -> Option<(acp::ToolCallLocation, AgentLocation)> {
+        if let AgentThreadEntry::ToolCall(ToolCall {
+            locations,
+            resolved_locations,
+            ..
+        }) = self
+        {
+            Some((
+                locations.get(ix)?.clone(),
+                resolved_locations.get(ix)?.clone()?,
+            ))
         } else {
             None
         }
@@ -184,6 +157,7 @@ pub struct ToolCall {
     pub content: Vec<ToolCallContent>,
     pub status: ToolCallStatus,
     pub locations: Vec<acp::ToolCallLocation>,
+    pub resolved_locations: Vec<Option<AgentLocation>>,
     pub raw_input: Option<serde_json::Value>,
     pub raw_output: Option<serde_json::Value>,
 }
@@ -212,6 +186,7 @@ impl ToolCall {
                 .map(|content| ToolCallContent::from_acp(content, language_registry.clone(), cx))
                 .collect(),
             locations: tool_call.locations,
+            resolved_locations: Vec::default(),
             status,
             raw_input: tool_call.raw_input,
             raw_output: tool_call.raw_output,
@@ -305,6 +280,57 @@ impl ToolCall {
         }
         markdown
     }
+
+    async fn resolve_location(
+        location: acp::ToolCallLocation,
+        project: WeakEntity<Project>,
+        cx: &mut AsyncApp,
+    ) -> Option<AgentLocation> {
+        let buffer = project
+            .update(cx, |project, cx| {
+                if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
+                    Some(project.open_buffer(path, cx))
+                } else {
+                    None
+                }
+            })
+            .ok()??;
+        let buffer = buffer.await.log_err()?;
+        let position = buffer
+            .update(cx, |buffer, _| {
+                if let Some(row) = location.line {
+                    let snapshot = buffer.snapshot();
+                    let column = snapshot.indent_size_for_line(row).len;
+                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
+                    snapshot.anchor_before(point)
+                } else {
+                    Anchor::MIN
+                }
+            })
+            .ok()?;
+
+        Some(AgentLocation {
+            buffer: buffer.downgrade(),
+            position,
+        })
+    }
+
+    fn resolve_locations(
+        &self,
+        project: Entity<Project>,
+        cx: &mut App,
+    ) -> Task<Vec<Option<AgentLocation>>> {
+        let locations = self.locations.clone();
+        project.update(cx, |_, cx| {
+            cx.spawn(async move |project, cx| {
+                let mut new_locations = Vec::new();
+                for location in locations {
+                    new_locations.push(Self::resolve_location(location, project.clone(), cx).await);
+                }
+                new_locations
+            })
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -344,6 +370,7 @@ impl Display for ToolCallStatus {
 pub enum ContentBlock {
     Empty,
     Markdown { markdown: Entity<Markdown> },
+    ResourceLink { resource_link: acp::ResourceLink },
 }
 
 impl ContentBlock {
@@ -375,36 +402,67 @@ impl ContentBlock {
         language_registry: &Arc<LanguageRegistry>,
         cx: &mut App,
     ) {
-        let new_content = match block {
-            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
-            acp::ContentBlock::ResourceLink(resource_link) => {
-                if let Some(path) = resource_link.uri.strip_prefix("file://") {
-                    format!("{}", MentionPath(path.as_ref()))
-                } else {
-                    resource_link.uri.clone()
-                }
+        if matches!(self, ContentBlock::Empty) {
+            if let acp::ContentBlock::ResourceLink(resource_link) = block {
+                *self = ContentBlock::ResourceLink { resource_link };
+                return;
             }
-            acp::ContentBlock::Image(_)
-            | acp::ContentBlock::Audio(_)
-            | acp::ContentBlock::Resource(_) => String::new(),
-        };
+        }
+
+        let new_content = self.extract_content_from_block(block);
 
         match self {
             ContentBlock::Empty => {
-                *self = ContentBlock::Markdown {
-                    markdown: cx.new(|cx| {
-                        Markdown::new(
-                            new_content.into(),
-                            Some(language_registry.clone()),
-                            None,
-                            cx,
-                        )
-                    }),
-                };
+                *self = Self::create_markdown_block(new_content, language_registry, cx);
             }
             ContentBlock::Markdown { markdown } => {
                 markdown.update(cx, |markdown, cx| markdown.append(&new_content, cx));
             }
+            ContentBlock::ResourceLink { resource_link } => {
+                let existing_content = Self::resource_link_to_content(&resource_link.uri);
+                let combined = format!("{}\n{}", existing_content, new_content);
+
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+        }
+    }
+
+    fn resource_link_to_content(uri: &str) -> String {
+        if let Some(uri) = MentionUri::parse(&uri).log_err() {
+            uri.to_link()
+        } else {
+            uri.to_string().clone()
+        }
+    }
+
+    fn create_markdown_block(
+        content: String,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> ContentBlock {
+        ContentBlock::Markdown {
+            markdown: cx
+                .new(|cx| Markdown::new(content.into(), Some(language_registry.clone()), None, cx)),
+        }
+    }
+
+    fn extract_content_from_block(&self, block: acp::ContentBlock) -> String {
+        match block {
+            acp::ContentBlock::Text(text_content) => text_content.text.clone(),
+            acp::ContentBlock::ResourceLink(resource_link) => {
+                Self::resource_link_to_content(&resource_link.uri)
+            }
+            acp::ContentBlock::Resource(acp::EmbeddedResource {
+                resource:
+                    acp::EmbeddedResourceResource::TextResourceContents(acp::TextResourceContents {
+                        uri,
+                        ..
+                    }),
+                ..
+            }) => Self::resource_link_to_content(&uri),
+            acp::ContentBlock::Image(_)
+            | acp::ContentBlock::Audio(_)
+            | acp::ContentBlock::Resource(_) => String::new(),
         }
     }
 
@@ -412,6 +470,7 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
         }
     }
 
@@ -419,6 +478,14 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::ResourceLink { .. } => None,
+        }
+    }
+
+    pub fn resource_link(&self) -> Option<&acp::ResourceLink> {
+        match self {
+            ContentBlock::ResourceLink { resource_link } => Some(resource_link),
+            _ => None,
         }
     }
 }
@@ -637,6 +704,10 @@ impl AcpThread {
         }
     }
 
+    pub fn connection(&self) -> &Rc<dyn AgentConnection> {
+        &self.connection
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
@@ -821,7 +892,11 @@ impl AcpThread {
             .context("Tool call not found")?;
         match update {
             ToolCallUpdate::UpdateFields(update) => {
+                let location_updated = update.fields.locations.is_some();
                 current_call.update_fields(update.fields, languages, cx);
+                if location_updated {
+                    self.resolve_locations(update.id.clone(), cx);
+                }
             }
             ToolCallUpdate::UpdateDiff(update) => {
                 current_call.content.clear();
@@ -858,8 +933,7 @@ impl AcpThread {
     ) {
         let language_registry = self.project.read(cx).languages().clone();
         let call = ToolCall::from_acp(tool_call, status, language_registry, cx);
-
-        let location = call.locations.last().cloned();
+        let id = call.id.clone();
 
         if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
             *current_call = call;
@@ -867,11 +941,9 @@ impl AcpThread {
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
-        }
+        };
 
-        if let Some(location) = location {
-            self.set_project_location(location, cx)
-        }
+        self.resolve_locations(id, cx);
     }
 
     fn tool_call_mut(&mut self, id: &acp::ToolCallId) -> Option<(usize, &mut ToolCall)> {
@@ -892,35 +964,50 @@ impl AcpThread {
             })
     }
 
-    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
-                return;
-            };
-            let buffer = project.open_buffer(path, cx);
-            cx.spawn(async move |project, cx| {
-                let buffer = buffer.await?;
-
-                project.update(cx, |project, cx| {
-                    let position = if let Some(line) = location.line {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
-                        snapshot.anchor_before(point)
-                    } else {
-                        Anchor::MIN
-                    };
-
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })
+    pub fn resolve_locations(&mut self, id: acp::ToolCallId, cx: &mut Context<Self>) {
+        let project = self.project.clone();
+        let Some((_, tool_call)) = self.tool_call_mut(&id) else {
+            return;
+        };
+        let task = tool_call.resolve_locations(project, cx);
+        cx.spawn(async move |this, cx| {
+            let resolved_locations = task.await;
+            this.update(cx, |this, cx| {
+                let project = this.project.clone();
+                let Some((ix, tool_call)) = this.tool_call_mut(&id) else {
+                    return;
+                };
+                if let Some(Some(location)) = resolved_locations.last() {
+                    project.update(cx, |project, cx| {
+                        if let Some(agent_location) = project.agent_location() {
+                            let should_ignore = agent_location.buffer == location.buffer
+                                && location
+                                    .buffer
+                                    .update(cx, |buffer, _| {
+                                        let snapshot = buffer.snapshot();
+                                        let old_position =
+                                            agent_location.position.to_point(&snapshot);
+                                        let new_position = location.position.to_point(&snapshot);
+                                        // ignore this so that when we get updates from the edit tool
+                                        // the position doesn't reset to the startof line
+                                        old_position.row == new_position.row
+                                            && old_position.column > new_position.column
+                                    })
+                                    .ok()
+                                    .unwrap_or_default();
+                            if !should_ignore {
+                                project.set_agent_location(Some(location.clone()), cx);
+                            }
+                        }
+                    });
+                }
+                if tool_call.resolved_locations != resolved_locations {
+                    tool_call.resolved_locations = resolved_locations;
+                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                }
             })
-            .detach_and_log_err(cx);
-        });
+        })
+        .detach();
     }
 
     pub fn request_tool_call_authorization(
@@ -1138,6 +1225,7 @@ impl AcpThread {
             this.update(cx, |this, cx| {
                 match response {
                     Ok(Err(e)) => {
+                        this.send_task.take();
                         cx.emit(AcpThreadEvent::Error);
                         Err(e)
                     }
@@ -1463,11 +1551,11 @@ mod tests {
     use smol::stream::StreamExt as _;
     use std::{
         cell::RefCell,
+        path::Path,
         rc::Rc,
         sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         time::Duration,
     };
-
     use util::path;
 
     fn init_test(cx: &mut TestAppContext) {

@@ -887,10 +887,10 @@ macro_rules! maybe {
         (|| $block)()
     };
     (async $block:block) => {
-        (|| async $block)()
+        (async || $block)()
     };
     (async move $block:block) => {
-        (|| async move $block)()
+        (async move || $block)()
     };
 }
 

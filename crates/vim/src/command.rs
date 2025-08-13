@@ -1175,8 +1175,10 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
         VimCommand::str(("ls", ""), "tab_switcher::ToggleAll"),
         VimCommand::new(("new", ""), workspace::NewFileSplitHorizontal),
         VimCommand::new(("vne", "w"), workspace::NewFileSplitVertical),
-        VimCommand::new(("tabe", "dit"), workspace::NewFile),
-        VimCommand::new(("tabnew", ""), workspace::NewFile),
+        VimCommand::new(("tabe", "dit"), workspace::NewFile)
+            .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone())),
+        VimCommand::new(("tabnew", ""), workspace::NewFile)
+            .args(|_action, args| Some(VimEdit { filename: args }.boxed_clone())),
         VimCommand::new(("tabn", "ext"), workspace::ActivateNextItem).count(),
         VimCommand::new(("tabp", "revious"), workspace::ActivatePreviousItem).count(),
         VimCommand::new(("tabN", "ext"), workspace::ActivatePreviousItem).count(),
@@ -2475,5 +2477,111 @@ mod test {
             the lazy dog
         "});
         // Once ctrl-v to input character literals is added there should be a test for redo
+    }
+
+    #[gpui::test]
+    async fn test_command_tabnew(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Create a new file to ensure that, when the filename is used with
+        // `:tabnew`, it opens the existing file in a new tab.
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path!("/root/dir/file_2.rs"), "file_2".as_bytes().to_vec())
+            .await;
+
+        cx.simulate_keystrokes(": tabnew");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+
+        // Assert that the new tab is empty and not associated with any file, as
+        // no file path was provided to the `:tabnew` command.
+        cx.workspace(|workspace, _window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let buffer = active_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            assert!(&buffer.read(cx).file().is_none());
+        });
+
+        // Leverage the filename as an argument to the `:tabnew` command,
+        // ensuring that the file, instead of an empty buffer, is opened in a
+        // new tab.
+        cx.simulate_keystrokes(": tabnew space dir/file_2.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file_2.rs"), "file_2", cx);
+        });
+
+        // If the `filename` argument provided to the `:tabnew` command is for a
+        // file that doesn't yet exist, it should still associate the buffer
+        // with that file path, so that when the buffer contents are saved, the
+        // file is created.
+        cx.simulate_keystrokes(": tabnew space dir/file_3.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_command_tabedit(cx: &mut TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Create a new file to ensure that, when the filename is used with
+        // `:tabedit`, it opens the existing file in a new tab.
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file(path!("/root/dir/file_2.rs"), "file_2".as_bytes().to_vec())
+            .await;
+
+        cx.simulate_keystrokes(": tabedit");
+        cx.simulate_keystrokes("enter");
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+
+        // Assert that the new tab is empty and not associated with any file, as
+        // no file path was provided to the `:tabedit` command.
+        cx.workspace(|workspace, _window, cx| {
+            let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
+            let buffer = active_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+
+            assert!(&buffer.read(cx).file().is_none());
+        });
+
+        // Leverage the filename as an argument to the `:tabedit` command,
+        // ensuring that the file, instead of an empty buffer, is opened in a
+        // new tab.
+        cx.simulate_keystrokes(": tabedit space dir/file_2.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file_2.rs"), "file_2", cx);
+        });
+
+        // If the `filename` argument provided to the `:tabedit` command is for a
+        // file that doesn't yet exist, it should still associate the buffer
+        // with that file path, so that when the buffer contents are saved, the
+        // file is created.
+        cx.simulate_keystrokes(": tabedit space dir/file_3.rs");
+        cx.simulate_keystrokes("enter");
+
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 4));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, path!("/root/dir/file_3.rs"), "", cx);
+        });
     }
 }

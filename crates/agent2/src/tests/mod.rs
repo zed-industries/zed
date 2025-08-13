@@ -1,5 +1,6 @@
 use super::*;
-use acp_thread::AgentConnection;
+use crate::MessageContent;
+use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -13,8 +14,8 @@ use gpui::{
 use indoc::indoc;
 use language_model::{
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
-    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
-    StopReason, fake_provider::FakeLanguageModel,
+    LanguageModelRegistry, LanguageModelToolResult, LanguageModelToolUse, Role, StopReason,
+    fake_provider::FakeLanguageModel,
 };
 use project::Project;
 use prompt_store::ProjectContext;
@@ -272,14 +273,14 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     assert_eq!(
         message.content,
         vec![
-            MessageContent::ToolResult(LanguageModelToolResult {
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_1.tool_call.id.0.to_string().into(),
                 tool_name: ToolRequiringPermission.name().into(),
                 is_error: false,
                 content: "Allowed".into(),
                 output: Some("Allowed".into())
             }),
-            MessageContent::ToolResult(LanguageModelToolResult {
+            language_model::MessageContent::ToolResult(LanguageModelToolResult {
                 tool_use_id: tool_call_auth_2.tool_call.id.0.to_string().into(),
                 tool_name: ToolRequiringPermission.name().into(),
                 is_error: true,
@@ -312,13 +313,15 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let message = completion.messages.last().unwrap();
     assert_eq!(
         message.content,
-        vec![MessageContent::ToolResult(LanguageModelToolResult {
-            tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
-            tool_name: ToolRequiringPermission.name().into(),
-            is_error: false,
-            content: "Allowed".into(),
-            output: Some("Allowed".into())
-        })]
+        vec![language_model::MessageContent::ToolResult(
+            LanguageModelToolResult {
+                tool_use_id: tool_call_auth_3.tool_call.id.0.to_string().into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: Some("Allowed".into())
+            }
+        )]
     );
 
     // Simulate a final tool call, ensuring we don't trigger authorization.
@@ -337,13 +340,15 @@ async fn test_tool_authorization(cx: &mut TestAppContext) {
     let message = completion.messages.last().unwrap();
     assert_eq!(
         message.content,
-        vec![MessageContent::ToolResult(LanguageModelToolResult {
-            tool_use_id: "tool_id_4".into(),
-            tool_name: ToolRequiringPermission.name().into(),
-            is_error: false,
-            content: "Allowed".into(),
-            output: Some("Allowed".into())
-        })]
+        vec![language_model::MessageContent::ToolResult(
+            LanguageModelToolResult {
+                tool_use_id: "tool_id_4".into(),
+                tool_name: ToolRequiringPermission.name().into(),
+                is_error: false,
+                content: "Allowed".into(),
+                output: Some("Allowed".into())
+            }
+        )]
     );
 }
 
@@ -681,13 +686,19 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create a project for new_thread
     let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
     fake_fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
+    let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
 
     // Create agent and connection
-    let agent = NativeAgent::new(project.clone(), templates.clone(), None, &mut cx.to_async())
-        .await
-        .unwrap();
+    let agent = NativeAgent::new(
+        project.clone(),
+        templates.clone(),
+        None,
+        fake_fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
@@ -700,22 +711,22 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     // Test list_models
     let listed_models = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.list_models(&mut async_cx)
-        })
+        .update(|cx| selector.list_models(cx))
         .await
         .expect("list_models should succeed");
+    let AgentModelList::Grouped(listed_models) = listed_models else {
+        panic!("Unexpected model list type");
+    };
     assert!(!listed_models.is_empty(), "should have at least one model");
-    assert_eq!(listed_models[0].id().0, "fake");
+    assert_eq!(
+        listed_models[&AgentModelGroupName("Fake".into())][0].id.0,
+        "fake/fake"
+    );
 
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            connection_rc.new_thread(project, cwd, &mut async_cx)
-        })
+        .update(|cx| connection_rc.new_thread(project, cwd, &mut cx.to_async()))
         .await
         .expect("new_thread should succeed");
 
@@ -724,12 +735,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     // Test selected_model returns the default
     let model = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.selected_model(&session_id, &mut async_cx)
-        })
+        .update(|cx| selector.selected_model(&session_id, cx))
         .await
         .expect("selected_model should succeed");
+    let model = cx
+        .update(|cx| agent.read(cx).models().model_from_id(&model.id))
+        .unwrap();
     let model = model.as_fake();
     assert_eq!(model.id().0, "fake", "should return default model");
 
