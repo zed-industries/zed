@@ -2,7 +2,6 @@ use crate::welcome::{ShowWelcome, WelcomePage};
 use client::{Client, UserStore, zed_urls};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -31,12 +30,6 @@ mod basics_page;
 mod editing_page;
 mod theme_preview;
 mod welcome;
-
-pub struct OnBoardingFeatureFlag {}
-
-impl FeatureFlag for OnBoardingFeatureFlag {
-    const NAME: &'static str = "onboarding";
-}
 
 /// Imports settings from Visual Studio Code.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Deserialize, JsonSchema, Action)]
@@ -182,32 +175,15 @@ pub fn init(cx: &mut App) {
     })
     .detach();
 
-    cx.observe_new::<Workspace>(|_, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-
+    cx.observe_new::<Workspace>(|_, _, cx| {
         let onboarding_actions = [
             std::any::TypeId::of::<OpenOnboarding>(),
             std::any::TypeId::of::<ShowWelcome>(),
         ];
 
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
-            filter.hide_action_types(&onboarding_actions);
-        });
-
-        cx.observe_flag::<OnBoardingFeatureFlag, _>(window, move |is_enabled, _, _, cx| {
-            if is_enabled {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.show_action_types(onboarding_actions.iter());
-                });
-            } else {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&onboarding_actions);
-                });
-            }
+            filter.show_action_types(onboarding_actions.iter());
         })
-        .detach();
     })
     .detach();
     register_serializable_item::<Onboarding>(cx);
