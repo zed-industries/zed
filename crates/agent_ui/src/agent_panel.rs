@@ -916,6 +916,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
         let message_history = self.acp_message_history.clone();
+        let fs = self.fs.clone();
 
         const LAST_USED_EXTERNAL_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 
@@ -939,7 +940,7 @@ impl AgentPanel {
                     })
                     .detach();
 
-                    agent.server()
+                    agent.server(fs)
                 }
                 None => cx
                     .background_spawn(async move {
@@ -953,7 +954,7 @@ impl AgentPanel {
                     })
                     .unwrap_or_default()
                     .agent
-                    .server(),
+                    .server(fs),
             };
 
             this.update_in(cx, |this, window, cx| {

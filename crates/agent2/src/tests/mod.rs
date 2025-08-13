@@ -1,6 +1,6 @@
 use super::*;
 use crate::MessageContent;
-use acp_thread::AgentConnection;
+use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelList};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp};
 use agent_settings::AgentProfileId;
@@ -686,13 +686,19 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     // Create a project for new_thread
     let fake_fs = cx.update(|cx| fs::FakeFs::new(cx.background_executor().clone()));
     fake_fs.insert_tree(path!("/test"), json!({})).await;
-    let project = Project::test(fake_fs, [Path::new("/test")], cx).await;
+    let project = Project::test(fake_fs.clone(), [Path::new("/test")], cx).await;
     let cwd = Path::new("/test");
 
     // Create agent and connection
-    let agent = NativeAgent::new(project.clone(), templates.clone(), None, &mut cx.to_async())
-        .await
-        .unwrap();
+    let agent = NativeAgent::new(
+        project.clone(),
+        templates.clone(),
+        None,
+        fake_fs.clone(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
     // Test model_selector returns Some
@@ -705,22 +711,22 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     // Test list_models
     let listed_models = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.list_models(&mut async_cx)
-        })
+        .update(|cx| selector.list_models(cx))
         .await
         .expect("list_models should succeed");
+    let AgentModelList::Grouped(listed_models) = listed_models else {
+        panic!("Unexpected model list type");
+    };
     assert!(!listed_models.is_empty(), "should have at least one model");
-    assert_eq!(listed_models[0].id().0, "fake");
+    assert_eq!(
+        listed_models[&AgentModelGroupName("Fake".into())][0].id.0,
+        "fake/fake"
+    );
 
     // Create a thread using new_thread
     let connection_rc = Rc::new(connection.clone());
     let acp_thread = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            connection_rc.new_thread(project, cwd, &mut async_cx)
-        })
+        .update(|cx| connection_rc.new_thread(project, cwd, &mut cx.to_async()))
         .await
         .expect("new_thread should succeed");
 
@@ -729,12 +735,12 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
 
     // Test selected_model returns the default
     let model = cx
-        .update(|cx| {
-            let mut async_cx = cx.to_async();
-            selector.selected_model(&session_id, &mut async_cx)
-        })
+        .update(|cx| selector.selected_model(&session_id, cx))
         .await
         .expect("selected_model should succeed");
+    let model = cx
+        .update(|cx| agent.read(cx).models().model_from_id(&model.id))
+        .unwrap();
     let model = model.as_fake();
     assert_eq!(model.id().0, "fake", "should return default model");
 

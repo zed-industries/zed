@@ -38,12 +38,14 @@ use terminal_view::TerminalView;
 use text::{Anchor, BufferSnapshot};
 use theme::ThemeSettings;
 use ui::{
-    Disclosure, Divider, DividerColor, KeyBinding, Scrollbar, ScrollbarState, Tooltip, prelude::*,
+    Disclosure, Divider, DividerColor, KeyBinding, PopoverMenuHandle, Scrollbar, ScrollbarState,
+    Tooltip, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
-use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage};
+use zed_actions::agent::{Chat, NextHistoryMessage, PreviousHistoryMessage, ToggleModelSelector};
 
+use crate::acp::AcpModelSelectorPopover;
 use crate::acp::completion_provider::{ContextPickerCompletionProvider, MentionSet};
 use crate::acp::message_history::MessageHistory;
 use crate::agent_diff::AgentDiff;
@@ -63,6 +65,7 @@ pub struct AcpThreadView {
     diff_editors: HashMap<EntityId, Entity<Editor>>,
     terminal_views: HashMap<EntityId, Entity<TerminalView>>,
     message_editor: Entity<Editor>,
+    model_selector: Option<Entity<AcpModelSelectorPopover>>,
     message_set_from_history: Option<BufferSnapshot>,
     _message_editor_subscription: Subscription,
     mention_set: Arc<Mutex<MentionSet>>,
@@ -187,6 +190,7 @@ impl AcpThreadView {
             project: project.clone(),
             thread_state: Self::initial_state(agent, workspace, project, window, cx),
             message_editor,
+            model_selector: None,
             message_set_from_history: None,
             _message_editor_subscription: message_editor_subscription,
             mention_set,
@@ -270,7 +274,7 @@ impl AcpThreadView {
                         Err(e)
                     }
                 }
-                Ok(session_id) => Ok(session_id),
+                Ok(thread) => Ok(thread),
             };
 
             this.update_in(cx, |this, window, cx| {
@@ -287,6 +291,24 @@ impl AcpThreadView {
                             .splice(0..0, thread.read(cx).entries().len());
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
+
+                        this.model_selector =
+                            thread
+                                .read(cx)
+                                .connection()
+                                .model_selector()
+                                .map(|selector| {
+                                    cx.new(|cx| {
+                                        AcpModelSelectorPopover::new(
+                                            thread.read(cx).session_id().clone(),
+                                            selector,
+                                            PopoverMenuHandle::default(),
+                                            this.focus_handle(cx),
+                                            window,
+                                            cx,
+                                        )
+                                    })
+                                });
 
                         this.thread_state = ThreadState::Ready {
                             thread,
@@ -2472,6 +2494,12 @@ impl AcpThreadView {
 
         v_flex()
             .on_action(cx.listener(Self::expand_message_editor))
+            .on_action(cx.listener(|this, _: &ToggleModelSelector, window, cx| {
+                if let Some(model_selector) = this.model_selector.as_ref() {
+                    model_selector
+                        .update(cx, |model_selector, cx| model_selector.toggle(window, cx));
+                }
+            }))
             .p_2()
             .gap_2()
             .border_t_1()
@@ -2548,7 +2576,12 @@ impl AcpThreadView {
                     .flex_none()
                     .justify_between()
                     .child(self.render_follow_toggle(cx))
-                    .child(self.render_send_button(cx)),
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .children(self.model_selector.clone())
+                            .child(self.render_send_button(cx)),
+                    ),
             )
             .into_any()
     }

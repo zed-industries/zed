@@ -694,6 +694,10 @@ impl AcpThread {
         }
     }
 
+    pub fn connection(&self) -> &Rc<dyn AgentConnection> {
+        &self.connection
+    }
+
     pub fn action_log(&self) -> &Entity<ActionLog> {
         &self.action_log
     }
