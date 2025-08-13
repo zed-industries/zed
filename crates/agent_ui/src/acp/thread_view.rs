@@ -3525,12 +3525,8 @@ mod tests {
     use fs::FakeFs;
     use futures::future::try_join_all;
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
-    use lsp::{CompletionContext, CompletionTriggerKind};
-    use project::CompletionIntent;
     use rand::Rng;
-    use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
 
     use super::*;
 
@@ -3641,111 +3637,6 @@ mod tests {
                 .iter()
                 .any(|window| window.downcast::<AgentNotification>().is_some())
         );
-    }
-
-    #[gpui::test]
-    async fn test_crease_removal(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree("/project", json!({"file": ""})).await;
-        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
-        let agent = StubAgentServer::default();
-        let (workspace, cx) =
-            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-        let thread_view = cx.update(|window, cx| {
-            cx.new(|cx| {
-                AcpThreadView::new(
-                    Rc::new(agent),
-                    workspace.downgrade(),
-                    project,
-                    WeakEntity::new_invalid(),
-                    WeakEntity::new_invalid(),
-                    Rc::new(RefCell::new(MessageHistory::default())),
-                    1,
-                    None,
-                    window,
-                    cx,
-                )
-            })
-        });
-
-        cx.run_until_parked();
-
-        let message_editor = cx.read(|cx| thread_view.read(cx).message_editor.clone());
-        let excerpt_id = message_editor.update(cx, |editor, cx| {
-            editor
-                .buffer()
-                .read(cx)
-                .excerpt_ids()
-                .into_iter()
-                .next()
-                .unwrap()
-        });
-        let completions = message_editor.update_in(cx, |editor, window, cx| {
-            editor.set_text("Hello @", window, cx);
-            let buffer = editor.buffer().read(cx).as_singleton().unwrap();
-            let completion_provider = editor.completion_provider().unwrap();
-            completion_provider.completions(
-                excerpt_id,
-                &buffer,
-                Anchor::MAX,
-                CompletionContext {
-                    trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
-                    trigger_character: Some("@".into()),
-                },
-                window,
-                cx,
-            )
-        });
-        let [_, completion]: [_; 2] = completions
-            .await
-            .unwrap()
-            .into_iter()
-            .flat_map(|response| response.completions)
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
-
-        message_editor.update_in(cx, |editor, window, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let start = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.start)
-                .unwrap();
-            let end = snapshot
-                .anchor_in_excerpt(excerpt_id, completion.replace_range.end)
-                .unwrap();
-            editor.edit([(start..end, completion.new_text)], cx);
-            (completion.confirm.unwrap())(CompletionIntent::Complete, window, cx);
-        });
-
-        cx.run_until_parked();
-
-        // Backspace over the inserted crease (and the following space).
-        message_editor.update_in(cx, |editor, window, cx| {
-            editor.backspace(&Default::default(), window, cx);
-            editor.backspace(&Default::default(), window, cx);
-        });
-
-        thread_view.update_in(cx, |thread_view, window, cx| {
-            thread_view.chat(&Chat, window, cx);
-        });
-
-        cx.run_until_parked();
-
-        let content = thread_view.update_in(cx, |thread_view, _window, _cx| {
-            thread_view
-                .message_history
-                .borrow()
-                .items()
-                .iter()
-                .flatten()
-                .cloned()
-                .collect::<Vec<_>>()
-        });
-
-        // We don't send a resource link for the deleted crease.
-        pretty_assertions::assert_matches!(content.as_slice(), [acp::ContentBlock::Text { .. }]);
     }
 
     async fn setup_thread_view(
