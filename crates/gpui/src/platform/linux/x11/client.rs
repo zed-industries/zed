@@ -428,7 +428,10 @@ impl X11Client {
         let xcb_connection = Rc::new(xcb_connection);
 
         // bug in ibus causes it to crash, which results in us not receiving xim callbacks, see #29083
-        let ximc = if get_package_version("ibus").as_deref() == Some("1.5.32~rc2-1") {
+        let ximc = if get_package_version("ibus")
+            .as_deref()
+            .map_or(false, |version| version.starts_with("1.5.32~rc2-1"))
+        {
             None
         } else {
             X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok()
@@ -2515,16 +2518,6 @@ fn get_package_version(name: &str) -> Option<String> {
         if output.status.success() {
             if let Ok(version) = std::str::from_utf8(&output.stdout) {
                 return Some(version.trim().to_string());
-            }
-        }
-    }
-
-    if let Ok(output) = new_std_command("pacman").args(["-Q", &name]).output() {
-        if output.status.success() {
-            if let Ok(stdout) = std::str::from_utf8(&output.stdout) {
-                if let Some(version) = stdout.trim().split_whitespace().nth(1) {
-                    return Some(version.to_string());
-                }
             }
         }
     }
