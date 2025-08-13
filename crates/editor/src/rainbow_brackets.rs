@@ -1,9 +1,115 @@
 use crate::Editor;
 use gpui::{Context, Hsla, Window};
-use language::Bias;
+use language::{Bias, BufferSnapshot};
 use std::collections::HashMap;
 use std::ops::Range;
-use text::{Anchor, ToOffset};
+use text::ToOffset;
+
+/// Compute rainbow bracket highlights for the visible range
+pub fn compute_rainbow_brackets_for_range(
+    buffer_snapshot: &BufferSnapshot,
+    range: Range<usize>,
+) -> Option<HashMap<usize, Vec<Range<usize>>>> {
+    let language = buffer_snapshot.language()?;
+    let rainbow_config = language.grammar()?.rainbow_config.as_ref()?;
+    
+    let mut highlights_by_level: HashMap<usize, Vec<Range<usize>>> = HashMap::new();
+    
+    // Similar to Helix's RainbowScope structure
+    #[derive(Debug)]
+    struct RainbowScope {
+        end_byte: usize,
+        node: Option<usize>, // node ID
+        level: usize,
+    }
+    
+    let mut scope_stack = Vec::<RainbowScope>::new();
+    
+    // Use the proper tree-sitter query matching API
+    let mut matches = buffer_snapshot.matches(range, |grammar| {
+        grammar.rainbow_config.as_ref().map(|c| &c.query)
+    });
+    
+    // Process all matches in order
+    while let Some(mat) = matches.peek() {
+        let byte_range = mat.captures[0].node.byte_range();
+        
+        // Pop any scopes that end before this capture begins
+        while scope_stack
+            .last()
+            .is_some_and(|scope| byte_range.start >= scope.end_byte)
+        {
+            scope_stack.pop();
+        }
+        
+        // Check which capture this is
+        let is_scope_capture = rainbow_config
+            .scope_capture_ix
+            .map_or(false, |ix| mat.captures.iter().any(|c| c.index == ix));
+        let is_bracket_capture = rainbow_config
+            .bracket_capture_ix
+            .map_or(false, |ix| mat.captures.iter().any(|c| c.index == ix));
+        
+        if is_scope_capture {
+            // Process scope capture
+            if let Some(scope_capture) = rainbow_config
+                .scope_capture_ix
+                .and_then(|ix| mat.captures.iter().find(|c| c.index == ix))
+            {
+                let node = scope_capture.node;
+                let byte_range = node.byte_range();
+                
+                scope_stack.push(RainbowScope {
+                    end_byte: byte_range.end,
+                    node: if rainbow_config
+                        .include_children_patterns
+                        .contains(&mat.pattern_index)
+                    {
+                        None
+                    } else {
+                        Some(node.id())
+                    },
+                    level: scope_stack.len(),
+                });
+            }
+        }
+        
+        if is_bracket_capture {
+            // Process bracket capture
+            if let Some(bracket_capture) = rainbow_config
+                .bracket_capture_ix
+                .and_then(|ix| mat.captures.iter().find(|c| c.index == ix))
+            {
+                let node = bracket_capture.node;
+                let byte_range = node.byte_range();
+                
+                if let Some(scope) = scope_stack.last() {
+                    // Check if this bracket should be highlighted
+                    let should_highlight = if let Some(scope_node_id) = scope.node {
+                        // Only highlight if bracket is a direct child of the scope node
+                        node.parent()
+                            .map_or(false, |parent| parent.id() == scope_node_id)
+                    } else {
+                        // include-children mode: highlight all brackets in this scope
+                        true
+                    };
+                    
+                    if should_highlight {
+                        let level = scope.level % 10;
+                        highlights_by_level
+                            .entry(level)
+                            .or_default()
+                            .push(byte_range);
+                    }
+                }
+            }
+        }
+        
+        matches.advance();
+    }
+    
+    Some(highlights_by_level)
+}
 
 /// Rainbow bracket highlighting uses multiple colors to distinguish bracket nesting levels
 pub fn refresh_rainbow_bracket_highlights(
@@ -19,26 +125,41 @@ pub fn refresh_rainbow_bracket_highlights(
 
     // For now, handle only singleton buffers
     if let Some((_, _, buffer_snapshot)) = multi_buffer_snapshot.as_singleton() {
-        let language = buffer_snapshot.language();
-
-        if let Some(rainbow_config) = language
-            .and_then(|lang| lang.grammar())
-            .and_then(|grammar| grammar.rainbow_config.as_ref())
-        {
-            let mut highlights_by_level: HashMap<usize, Vec<Range<Anchor>>> = HashMap::new();
-
-            collect_rainbow_highlights(buffer_snapshot, rainbow_config, &mut highlights_by_level);
-
+        // Compute only for the visible range
+        // Get the display map to find visible rows
+        let display_map = editor.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_position = editor.scroll_position(cx);
+        let height = editor.visible_line_count().unwrap_or(50.0);
+        
+        // Calculate visible display rows
+        let start_row = scroll_position.y.floor() as u32;
+        let end_row = ((scroll_position.y + height).ceil() as u32).min(display_map.max_point().row().0);
+        
+        // Convert display rows to buffer offsets
+        let start_point = display_map.display_point_to_point(
+            crate::DisplayPoint::new(crate::DisplayRow(start_row), 0),
+            crate::Bias::Left
+        );
+        let end_point = display_map.display_point_to_point(
+            crate::DisplayPoint::new(crate::DisplayRow(end_row), 0),
+            crate::Bias::Right
+        );
+        
+        let start_offset = start_point.to_offset(buffer_snapshot);
+        let end_offset = end_point.to_offset(buffer_snapshot);
+        
+        if let Some(highlights_by_level) = compute_rainbow_brackets_for_range(
+            buffer_snapshot,
+            start_offset..end_offset,
+        ) {
             // Apply highlights by level
             for (level, ranges) in highlights_by_level {
-                // Convert text anchors to multi-buffer anchors
+                // Convert text ranges to multi-buffer anchors
                 let multi_buffer_ranges: Vec<_> = ranges
                     .into_iter()
                     .map(|range| {
-                        let start_offset = range.start.to_offset(buffer_snapshot);
-                        let end_offset = range.end.to_offset(buffer_snapshot);
-                        let start = multi_buffer_snapshot.anchor_at(start_offset, Bias::Left);
-                        let end = multi_buffer_snapshot.anchor_at(end_offset, Bias::Right);
+                        let start = multi_buffer_snapshot.anchor_at(range.start, Bias::Left);
+                        let end = multi_buffer_snapshot.anchor_at(range.end, Bias::Right);
                         start..end
                     })
                     .collect();
@@ -103,6 +224,7 @@ pub fn refresh_rainbow_bracket_highlights(
 }
 
 fn clear_current_rainbow_highlights(editor: &mut Editor, cx: &mut Context<Editor>) {
+    editor.clear_background_highlights::<RainbowLevel0>(cx);
     editor.clear_background_highlights::<RainbowLevel1>(cx);
     editor.clear_background_highlights::<RainbowLevel2>(cx);
     editor.clear_background_highlights::<RainbowLevel3>(cx);
@@ -112,108 +234,6 @@ fn clear_current_rainbow_highlights(editor: &mut Editor, cx: &mut Context<Editor
     editor.clear_background_highlights::<RainbowLevel7>(cx);
     editor.clear_background_highlights::<RainbowLevel8>(cx);
     editor.clear_background_highlights::<RainbowLevel9>(cx);
-}
-
-// Similar to Helix's RainbowScope structure
-#[derive(Debug)]
-struct RainbowScope {
-    end_byte: usize,
-    node: Option<usize>, // node ID, similar to Helix's Option<Node>
-    level: usize,
-}
-
-fn collect_rainbow_highlights(
-    buffer: &language::BufferSnapshot,
-    rainbow_config: &language::RainbowConfig,
-    highlights_by_level: &mut HashMap<usize, Vec<Range<Anchor>>>,
-) {
-    let mut scope_stack = Vec::<RainbowScope>::new();
-
-    // Use the proper tree-sitter query matching API
-    let mut matches = buffer.matches(0..buffer.len(), |grammar| {
-        grammar.rainbow_config.as_ref().map(|c| &c.query)
-    });
-
-    // Process all matches in order
-    while let Some(mat) = matches.peek() {
-        let byte_range = mat.captures[0].node.byte_range();
-
-        // Pop any scopes that end before this capture begins
-        while scope_stack
-            .last()
-            .is_some_and(|scope| byte_range.start >= scope.end_byte)
-        {
-            scope_stack.pop();
-        }
-
-        // Check which capture this is
-        let is_scope_capture = rainbow_config
-            .scope_capture_ix
-            .map_or(false, |ix| mat.captures.iter().any(|c| c.index == ix));
-        let is_bracket_capture = rainbow_config
-            .bracket_capture_ix
-            .map_or(false, |ix| mat.captures.iter().any(|c| c.index == ix));
-
-        if is_scope_capture {
-            // Process scope capture
-            if let Some(scope_capture) = rainbow_config
-                .scope_capture_ix
-                .and_then(|ix| mat.captures.iter().find(|c| c.index == ix))
-            {
-                let node = scope_capture.node;
-                let byte_range = node.byte_range();
-
-                scope_stack.push(RainbowScope {
-                    end_byte: byte_range.end,
-                    node: if rainbow_config
-                        .include_children_patterns
-                        .contains(&mat.pattern_index)
-                    {
-                        None
-                    } else {
-                        Some(node.id())
-                    },
-                    level: scope_stack.len(),
-                });
-            }
-        }
-
-        if is_bracket_capture {
-            // Process bracket capture
-            if let Some(bracket_capture) = rainbow_config
-                .bracket_capture_ix
-                .and_then(|ix| mat.captures.iter().find(|c| c.index == ix))
-            {
-                let node = bracket_capture.node;
-                let byte_range = node.byte_range();
-
-                if let Some(scope) = scope_stack.last() {
-                    // Check if this bracket should be highlighted
-                    let should_highlight = if let Some(scope_node_id) = scope.node {
-                        // Only highlight if bracket is a direct child of the scope node
-                        node.parent()
-                            .map_or(false, |parent| parent.id() == scope_node_id)
-                    } else {
-                        // include-children mode: highlight all brackets in this scope
-                        true
-                    };
-
-                    if should_highlight {
-                        let start = buffer.anchor_after(byte_range.start);
-                        let end = buffer.anchor_before(byte_range.end);
-                        let range = start..end;
-
-                        highlights_by_level
-                            .entry(scope.level % 10)
-                            .or_default()
-                            .push(range);
-                    }
-                }
-            }
-        }
-
-        matches.advance();
-    }
 }
 
 // TODO! Make it configurable from settings
