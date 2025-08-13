@@ -206,6 +206,7 @@ impl LspAdapter for PythonLspAdapter {
                 &server_path,
                 &container_dir,
                 &version,
+                Default::default(),
             )
             .await;
 

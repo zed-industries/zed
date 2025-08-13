@@ -2105,7 +2105,7 @@ impl GitPanel {
                 Ok(_) => cx.update(|window, cx| {
                     window.prompt(
                         PromptLevel::Info,
-                        "Git Clone",
+                        &format!("Git Clone: {}", repo_name),
                         None,
                         &["Add repo to project", "Open repo in new project"],
                         cx,

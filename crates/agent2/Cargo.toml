@@ -23,6 +23,7 @@ assistant_tools.workspace = true
 chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
+context_server.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -48,6 +49,7 @@ settings.workspace = true
 smol.workspace = true
 task.workspace = true
 terminal.workspace = true
+text.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -60,6 +62,7 @@ workspace-hack.workspace = true
 ctor.workspace = true
 client = { workspace = true, "features" = ["test-support"] }
 clock = { workspace = true, "features" = ["test-support"] }
+context_server = { workspace = true, "features" = ["test-support"] }
 editor = { workspace = true, "features" = ["test-support"] }
 env_logger.workspace = true
 fs = { workspace = true, "features" = ["test-support"] }

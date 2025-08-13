@@ -408,7 +408,13 @@ impl TerminalBuilder {
         let terminal_title_override = shell_params.as_ref().and_then(|e| e.title_override.clone());
 
         #[cfg(windows)]
-        let shell_program = shell_params.as_ref().map(|params| params.program.clone());
+        let shell_program = shell_params.as_ref().map(|params| {
+            use util::ResultExt;
+
+            Self::resolve_path(&params.program)
+                .log_err()
+                .unwrap_or(params.program.clone())
+        });
 
         let pty_options = {
             let alac_shell = shell_params.map(|params| {
@@ -588,6 +594,24 @@ impl TerminalBuilder {
         .detach();
 
         self.terminal
+    }
+
+    #[cfg(windows)]
+    fn resolve_path(path: &str) -> Result<String> {
+        use windows::Win32::Storage::FileSystem::SearchPathW;
+        use windows::core::HSTRING;
+
+        let path = if path.starts_with(r"\\?\") || !path.contains(&['/', '\\']) {
+            path.to_string()
+        } else {
+            r"\\?\".to_string() + path
+        };
+
+        let required_length = unsafe { SearchPathW(None, &HSTRING::from(&path), None, None, None) };
+        let mut buf = vec![0u16; required_length as usize];
+        let size = unsafe { SearchPathW(None, &HSTRING::from(&path), None, Some(&mut buf), None) };
+
+        Ok(String::from_utf16(&buf[..size as usize])?)
     }
 }
 

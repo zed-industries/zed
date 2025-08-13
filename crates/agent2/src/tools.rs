@@ -1,3 +1,4 @@
+mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
 mod delete_path_tool;
@@ -15,6 +16,7 @@ mod terminal_tool;
 mod thinking_tool;
 mod web_search_tool;
 
+pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
 pub use delete_path_tool::*;

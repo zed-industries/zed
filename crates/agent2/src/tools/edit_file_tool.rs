@@ -1,12 +1,13 @@
 use crate::{AgentTool, Thread, ToolCallEventStream};
 use acp_thread::Diff;
-use agent_client_protocol as acp;
+use agent_client_protocol::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tools::edit_agent::{EditAgent, EditAgentOutput, EditAgentOutputEvent, EditFormat};
 use cloud_llm_client::CompletionIntent;
 use collections::HashSet;
 use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use indoc::formatdoc;
+use language::ToPoint;
 use language::language_settings::{self, FormatOnSave};
 use language_model::LanguageModelToolResultContent;
 use paths;
@@ -225,6 +226,16 @@ impl AgentTool for EditFileTool {
             Ok(path) => path,
             Err(err) => return Task::ready(Err(anyhow!(err))),
         };
+        let abs_path = project.read(cx).absolute_path(&project_path, cx);
+        if let Some(abs_path) = abs_path.clone() {
+            event_stream.update_fields(ToolCallUpdateFields {
+                locations: Some(vec![acp::ToolCallLocation {
+                    path: abs_path,
+                    line: None,
+                }]),
+                ..Default::default()
+            });
+        }
 
         let request = self.thread.update(cx, |thread, cx| {
             thread.build_completion_request(CompletionIntent::ToolResults, cx)
@@ -283,13 +294,38 @@ impl AgentTool for EditFileTool {
 
             let mut hallucinated_old_text = false;
             let mut ambiguous_ranges = Vec::new();
+            let mut emitted_location = false;
             while let Some(event) = events.next().await {
                 match event {
-                    EditAgentOutputEvent::Edited => {},
+                    EditAgentOutputEvent::Edited(range) => {
+                        if !emitted_location {
+                            let line = buffer.update(cx, |buffer, _cx| {
+                                range.start.to_point(&buffer.snapshot()).row
+                            }).ok();
+                            if let Some(abs_path) = abs_path.clone() {
+                                event_stream.update_fields(ToolCallUpdateFields {
+                                    locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
+                                    ..Default::default()
+                                });
+                            }
+                            emitted_location = true;
+                        }
+                    },
                     EditAgentOutputEvent::UnresolvedEditRange => hallucinated_old_text = true,
                     EditAgentOutputEvent::AmbiguousEditRange(ranges) => ambiguous_ranges = ranges,
                     EditAgentOutputEvent::ResolvingEditRange(range) => {
-                        diff.update(cx, |card, cx| card.reveal_range(range, cx))?;
+                        diff.update(cx, |card, cx| card.reveal_range(range.clone(), cx))?;
+                        // if !emitted_location {
+                        //     let line = buffer.update(cx, |buffer, _cx| {
+                        //         range.start.to_point(&buffer.snapshot()).row
+                        //     }).ok();
+                        //     if let Some(abs_path) = abs_path.clone() {
+                        //         event_stream.update_fields(ToolCallUpdateFields {
+                        //             locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
+                        //             ..Default::default()
+                        //         });
+                        //     }
+                        // }
                     }
                 }
             }
@@ -454,9 +490,8 @@ fn resolve_path(
 
 #[cfg(test)]
 mod tests {
-    use crate::Templates;
-
     use super::*;
+    use crate::{ContextServerRegistry, Templates};
     use action_log::ActionLog;
     use client::TelemetrySettings;
     use fs::Fs;
@@ -475,9 +510,20 @@ mod tests {
         fs.insert_tree("/root", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread =
-            cx.new(|_| Thread::new(project, Rc::default(), action_log, Templates::new(), model));
+        let thread = cx.new(|cx| {
+            Thread::new(
+                project,
+                Rc::default(),
+                context_server_registry,
+                action_log,
+                Templates::new(),
+                model,
+                cx,
+            )
+        });
         let result = cx
             .update(|cx| {
                 let input = EditFileToolInput {
@@ -661,14 +707,18 @@ mod tests {
         });
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -792,15 +842,19 @@ mod tests {
         .unwrap();
 
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
 
@@ -914,15 +968,19 @@ mod tests {
         init_test(cx);
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1041,15 +1099,19 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({})).await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project,
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1148,14 +1210,18 @@ mod tests {
         .await;
 
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1225,14 +1291,18 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1305,14 +1375,18 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry.clone(),
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
@@ -1382,14 +1456,18 @@ mod tests {
         let fs = project::FakeFs::new(cx.executor());
         let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
+        let context_server_registry =
+            cx.new(|cx| ContextServerRegistry::new(project.read(cx).context_server_store(), cx));
         let model = Arc::new(FakeLanguageModel::default());
-        let thread = cx.new(|_| {
+        let thread = cx.new(|cx| {
             Thread::new(
                 project.clone(),
                 Rc::default(),
+                context_server_registry,
                 action_log.clone(),
                 Templates::new(),
                 model.clone(),
+                cx,
             )
         });
         let tool = Arc::new(EditFileTool { thread });
