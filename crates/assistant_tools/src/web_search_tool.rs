@@ -174,7 +174,7 @@ impl ToolCard for WebSearchToolCard {
                         let title = result.title.clone();
                         let url = SharedString::from(result.url.clone());
 
-                        Button::new(("result", index), title)
+                        Button::new(("result", index), title, cx)
                             .label_size(LabelSize::Small)
                             .color(Color::Muted)
                             .icon(IconName::ArrowUpRight)

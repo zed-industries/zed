@@ -726,7 +726,7 @@ impl Render for AgentDiffPane {
                         .gap_2()
                         .child("No changes to review")
                         .child(
-                            Button::new("continue-iterating", "Continue Iterating")
+                            Button::new("continue-iterating", "Continue Iterating", cx)
                                 .style(ButtonStyle::Filled)
                                 .icon(IconName::ForwardArrow)
                                 .icon_position(IconPosition::Start)
@@ -806,7 +806,7 @@ fn render_diff_hunk_controls(
         .block_mouse_except_scroll()
         .shadow_md()
         .children(vec![
-            Button::new(("reject", row as u64), "Reject")
+            Button::new(("reject", row as u64), "Reject", cx)
                 .disabled(is_created_file)
                 .key_binding(
                     KeyBinding::for_action_in(
@@ -834,7 +834,7 @@ fn render_diff_hunk_controls(
                         })
                     }
                 }),
-            Button::new(("keep", row as u64), "Keep")
+            Button::new(("keep", row as u64), "Keep", cx)
                 .key_binding(
                     KeyBinding::for_action_in(&Keep, &editor.read(cx).focus_handle(cx), window, cx)
                         .map(|kb| kb.size(rems_from_px(12.))),
@@ -1147,7 +1147,7 @@ impl Render for AgentDiffToolbar {
                         h_flex()
                             .gap_0p5()
                             .child(
-                                Button::new("reject-all", "Reject All")
+                                Button::new("reject-all", "Reject All", cx)
                                     .key_binding({
                                         KeyBinding::for_action_in(
                                             &RejectAll,
@@ -1162,7 +1162,7 @@ impl Render for AgentDiffToolbar {
                                     })),
                             )
                             .child(
-                                Button::new("keep-all", "Keep All")
+                                Button::new("keep-all", "Keep All", cx)
                                     .key_binding({
                                         KeyBinding::for_action_in(
                                             &KeepAll,
@@ -1242,7 +1242,7 @@ impl Render for AgentDiffToolbar {
                     .child(
                         h_group_sm()
                             .child(
-                                Button::new("reject-all", "Reject All")
+                                Button::new("reject-all", "Reject All", cx)
                                     .key_binding({
                                         KeyBinding::for_action_in(
                                             &RejectAll,
@@ -1257,7 +1257,7 @@ impl Render for AgentDiffToolbar {
                                     })),
                             )
                             .child(
-                                Button::new("keep-all", "Keep All")
+                                Button::new("keep-all", "Keep All", cx)
                                     .key_binding({
                                         KeyBinding::for_action_in(
                                             &KeepAll,

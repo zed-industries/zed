@@ -1074,7 +1074,7 @@ impl MessageEditor {
                             )
                             .child(Divider::vertical().color(DividerColor::Border))
                             .child(
-                                Button::new("reject-all-changes", "Reject All")
+                                Button::new("reject-all-changes", "Reject All", cx)
                                     .label_size(LabelSize::Small)
                                     .disabled(pending_edits)
                                     .when(pending_edits, |this| {
@@ -1094,7 +1094,7 @@ impl MessageEditor {
                                     })),
                             )
                             .child(
-                                Button::new("accept-all-changes", "Accept All")
+                                Button::new("accept-all-changes", "Accept All", cx)
                                     .label_size(LabelSize::Small)
                                     .disabled(pending_edits)
                                     .when(pending_edits, |this| {
@@ -1204,7 +1204,7 @@ impl MessageEditor {
                                         .gap_1()
                                         .visible_on_hover("edited-code")
                                         .child(
-                                            Button::new("review", "Review")
+                                            Button::new("review", "Review", cx)
                                                 .label_size(LabelSize::Small)
                                                 .on_click({
                                                     let buffer = buffer.clone();
@@ -1221,7 +1221,7 @@ impl MessageEditor {
                                             Divider::vertical().color(DividerColor::BorderVariant),
                                         )
                                         .child(
-                                            Button::new("reject-file", "Reject")
+                                            Button::new("reject-file", "Reject", cx)
                                                 .label_size(LabelSize::Small)
                                                 .disabled(pending_edits)
                                                 .on_click({
@@ -1236,7 +1236,7 @@ impl MessageEditor {
                                                 }),
                                         )
                                         .child(
-                                            Button::new("accept-file", "Accept")
+                                            Button::new("accept-file", "Accept", cx)
                                                 .label_size(LabelSize::Small)
                                                 .disabled(pending_edits)
                                                 .on_click({
@@ -1332,7 +1332,7 @@ impl MessageEditor {
             .title(title)
             .description(description)
             .primary_action(
-                Button::new("start-new-thread", "Start New Thread")
+                Button::new("start-new-thread", "Start New Thread", cx)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
                         let from_thread_id = Some(this.thread.read(cx).id().clone());

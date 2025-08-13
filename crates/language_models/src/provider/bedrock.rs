@@ -1232,7 +1232,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-key", "Reset Key", cx)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
@@ -1257,6 +1257,7 @@ impl Render for ConfigurationView {
                 List::new()
                     .child(
                         InstructionListItem::new(
+                            cx,
                             "Grant permissions to the strategy you'll use according to the:",
                             Some("Prerequisites"),
                             Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
@@ -1264,6 +1265,7 @@ impl Render for ConfigurationView {
                     )
                     .child(
                         InstructionListItem::new(
+                            cx,
                             "Select the models you would like access to:",
                             Some("Bedrock Model Catalog"),
                             Some("https://us-east-1.console.aws.amazon.com/bedrock/home?region=us-east-1#/modelaccess"),
@@ -1365,19 +1367,23 @@ impl ConfigurationView {
             .child(
                 List::new()
                     .child(InstructionListItem::new(
+                        cx,
                         "Create an IAM user in the AWS console with programmatic access",
                         Some("IAM Console"),
                         Some("https://us-east-1.console.aws.amazon.com/iam/home?region=us-east-1#/users"),
                     ))
                     .child(InstructionListItem::new(
+                        cx,
                         "Attach the necessary Bedrock permissions to this ",
                         Some("user"),
                         Some("https://docs.aws.amazon.com/bedrock/latest/userguide/inference-prereq.html"),
                     ))
                     .child(InstructionListItem::text_only(
+                        cx,
                         "Copy the access key ID and secret access key when provided",
                     ))
                     .child(InstructionListItem::text_only(
+                        cx,
                         "Enter these credentials below",
                     )),
             )

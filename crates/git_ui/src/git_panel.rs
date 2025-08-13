@@ -3327,7 +3327,7 @@ impl GitPanel {
                 .px_2()
                 .justify_between()
                 .child(
-                    panel_button(change_string)
+                    panel_button(change_string, cx)
                         .color(Color::Muted)
                         .tooltip(Tooltip::for_action_title_in(
                             "Open Diff",
@@ -3345,7 +3345,7 @@ impl GitPanel {
                         .gap_1()
                         .child(self.render_overflow_menu("overflow_menu"))
                         .child(
-                            panel_filled_button(text)
+                            panel_filled_button(text, cx)
                                 .tooltip(Tooltip::for_action_title_in(
                                     tooltip,
                                     action.as_ref(),
@@ -3604,7 +3604,7 @@ impl GitPanel {
                     ),
             )
             .child(
-                panel_button("Cancel")
+                panel_button("Cancel", cx)
                     .size(ButtonSize::Default)
                     .on_click(cx.listener(|this, _, _, cx| this.set_amend_pending(false, cx))),
             )
@@ -3703,7 +3703,7 @@ impl GitPanel {
                     let worktree_count = self.project.read(cx).visible_worktrees(cx).count();
                     (worktree_count > 0 && self.active_repository.is_none()).then(|| {
                         h_flex().w_full().justify_around().child(
-                            panel_filled_button("Initialize Repository")
+                            panel_filled_button("Initialize Repository", cx)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "git init",
                                     &git::Init,
@@ -4841,7 +4841,7 @@ impl RenderOnce for PanelRepoFooter {
             util::truncate_and_trailoff(branch_name.trim_ascii(), branch_display_len)
         };
 
-        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
+        let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name, cx)
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
@@ -4862,7 +4862,7 @@ impl RenderOnce for PanelRepoFooter {
             .anchor(Corner::BottomLeft)
             .into_any_element();
 
-        let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
+        let branch_selector_button = Button::new("branch-selector", truncated_branch_name, cx)
             .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)

@@ -884,11 +884,13 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            cx,
                             "Create one by visiting",
                             Some("Google AI's console"),
                             Some("https://aistudio.google.com/app/apikey"),
                         ))
                         .child(InstructionListItem::text_only(
+                            cx,
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
@@ -931,7 +933,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-key", "Reset Key", cx)
                         .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)

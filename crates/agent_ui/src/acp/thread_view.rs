@@ -1415,7 +1415,7 @@ impl AcpThreadView {
             .text_color(cx.theme().colors().text_muted)
             .child(self.render_markdown(markdown, default_markdown_style(false, window, cx)))
             .child(
-                Button::new(button_id, "Collapse Output")
+                Button::new(button_id, "Collapse Output", cx)
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .label_size(LabelSize::Small)
@@ -1455,7 +1455,7 @@ impl AcpThreadView {
             .border_color(self.tool_card_border_color(cx))
             .overflow_hidden()
             .child(
-                Button::new(button_id, label)
+                Button::new(button_id, label, cx)
                     .label_size(LabelSize::Small)
                     .color(Color::Muted)
                     .icon(IconName::ArrowUpRight)
@@ -1498,7 +1498,7 @@ impl AcpThreadView {
             )
             .child(h_flex().gap_0p5().children(options.iter().map(|option| {
                 let option_id = SharedString::from(option.id.0.clone());
-                Button::new((option_id, entry_ix), option.name.clone())
+                Button::new((option_id, entry_ix), option.name.clone(), cx)
                     .map(|this| match option.kind {
                         acp::PermissionOptionKind::AllowOnce => {
                             this.icon(IconName::Check).icon_color(Color::Success)
@@ -1628,6 +1628,7 @@ impl AcpThreadView {
                         Button::new(
                             SharedString::from(format!("stop-terminal-{}", terminal.entity_id())),
                             "Stop",
+                            cx,
                         )
                         .icon(IconName::Stop)
                         .icon_position(IconPosition::Start)
@@ -1932,7 +1933,7 @@ impl AcpThreadView {
         {
             let upgrade_message = upgrade_message.clone();
             let upgrade_command = upgrade_command.clone();
-            container = container.child(Button::new("upgrade", upgrade_message).on_click(
+            container = container.child(Button::new("upgrade", upgrade_message, cx).on_click(
                 cx.listener(move |this, _, window, cx| {
                     this.workspace
                         .update(cx, |workspace, cx| {
@@ -2264,7 +2265,7 @@ impl AcpThreadView {
                     )
                     .child(Divider::vertical().color(DividerColor::Border))
                     .child(
-                        Button::new("reject-all-changes", "Reject All")
+                        Button::new("reject-all-changes", "Reject All", cx)
                             .label_size(LabelSize::Small)
                             .disabled(pending_edits)
                             .when(pending_edits, |this| {
@@ -2289,7 +2290,7 @@ impl AcpThreadView {
                             }),
                     )
                     .child(
-                        Button::new("keep-all-changes", "Keep All")
+                        Button::new("keep-all-changes", "Keep All", cx)
                             .label_size(LabelSize::Small)
                             .disabled(pending_edits)
                             .when(pending_edits, |this| {
@@ -2395,7 +2396,7 @@ impl AcpThreadView {
                             .gap_1()
                             .visible_on_hover("edited-code")
                             .child(
-                                Button::new("review", "Review")
+                                Button::new("review", "Review", cx)
                                     .label_size(LabelSize::Small)
                                     .on_click({
                                         let buffer = buffer.clone();
@@ -2406,7 +2407,7 @@ impl AcpThreadView {
                             )
                             .child(Divider::vertical().color(DividerColor::BorderVariant))
                             .child(
-                                Button::new("reject-file", "Reject")
+                                Button::new("reject-file", "Reject", cx)
                                     .label_size(LabelSize::Small)
                                     .disabled(pending_edits)
                                     .on_click({
@@ -2426,7 +2427,7 @@ impl AcpThreadView {
                                     }),
                             )
                             .child(
-                                Button::new("keep-file", "Keep")
+                                Button::new("keep-file", "Keep", cx)
                                     .label_size(LabelSize::Small)
                                     .disabled(pending_edits)
                                     .on_click({
@@ -3114,6 +3115,7 @@ impl Render for AcpThreadView {
                             Button::new(
                                 SharedString::from(method.id.0.clone()),
                                 method.name.clone(),
+                                cx,
                             )
                             .on_click({
                                 let method_id = method.id.clone();

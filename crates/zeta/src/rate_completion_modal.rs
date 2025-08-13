@@ -313,6 +313,7 @@ impl RateCompletionModal {
                 Button::new(
                     ElementId::Name("suggested-edits".into()),
                     RateCompletionView::SuggestedEdits.name(),
+                    cx,
                 )
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -325,6 +326,7 @@ impl RateCompletionModal {
                 Button::new(
                     ElementId::Name("raw-input".into()),
                     RateCompletionView::RawInput.name(),
+                    cx,
                 )
                 .label_size(LabelSize::Small)
                 .on_click(cx.listener(move |this, _, _window, cx| {
@@ -489,7 +491,7 @@ impl RateCompletionModal {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Button::new("bad", "Bad Completion")
+                                    Button::new("bad", "Bad Completion", cx)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
@@ -513,7 +515,7 @@ impl RateCompletionModal {
                                         })),
                                 )
                                 .child(
-                                    Button::new("good", "Good Completion")
+                                    Button::new("good", "Good Completion", cx)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)

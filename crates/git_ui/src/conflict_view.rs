@@ -394,7 +394,7 @@ fn render_conflict_buttons(
         .gap_1()
         .bg(cx.theme().colors().editor_background)
         .child(
-            Button::new("head", "Use HEAD")
+            Button::new("head", "Use HEAD", cx)
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -414,7 +414,7 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            Button::new("origin", "Use Origin")
+            Button::new("origin", "Use Origin", cx)
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();
@@ -434,7 +434,7 @@ fn render_conflict_buttons(
                 }),
         )
         .child(
-            Button::new("both", "Use Both")
+            Button::new("both", "Use Both", cx)
                 .label_size(LabelSize::Small)
                 .on_click({
                     let editor = editor.clone();

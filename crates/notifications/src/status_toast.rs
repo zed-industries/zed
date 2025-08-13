@@ -122,7 +122,7 @@ impl Render for StatusToast {
             .child(Label::new(self.text.clone()).color(Color::Default))
             .when_some(self.action.as_ref(), |this, action| {
                 this.child(
-                    Button::new(action.id.clone(), action.label.clone())
+                    Button::new(action.id.clone(), action.label.clone(), cx)
                         .tooltip(Tooltip::for_action_title(
                             action.label.clone(),
                             &toast::RunAction,

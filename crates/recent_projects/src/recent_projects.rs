@@ -479,7 +479,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("remote", "Open Remote Folder")
+                    Button::new("remote", "Open Remote Folder", cx)
                         .key_binding(KeyBinding::for_action(
                             &OpenRemote {
                                 from_existing_connection: false,
@@ -500,7 +500,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         }),
                 )
                 .child(
-                    Button::new("local", "Open Local Folder")
+                    Button::new("local", "Open Local Folder", cx)
                         .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(workspace::Open.boxed_clone(), cx)

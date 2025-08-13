@@ -345,7 +345,7 @@ impl Render for LanguageServerPrompt {
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.entity().clone();
-                        Button::new(ix, action.title.clone())
+                        Button::new(ix, action.title.clone(), cx)
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {
                                 let this_handle = this_handle.clone();
@@ -442,8 +442,12 @@ impl Render for ErrorMessagePrompt {
                     .when_some(self.label_and_url_button.clone(), |elm, (label, url)| {
                         elm.child(
                             div().mt_2().child(
-                                ui::Button::new("error_message_prompt_notification_button", label)
-                                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                                ui::Button::new(
+                                    "error_message_prompt_notification_button",
+                                    label,
+                                    cx,
+                                )
+                                .on_click(move |_, _, cx| cx.open_url(&url)),
                             ),
                         )
                     }),
@@ -715,7 +719,7 @@ pub mod simple_message_notification {
                     h_flex()
                         .gap_1()
                         .children(self.primary_message.iter().map(|message| {
-                            let mut button = Button::new(message.clone(), message.clone())
+                            let mut button = Button::new(message.clone(), message.clone(), cx)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.primary_on_click.as_ref() {
@@ -735,7 +739,7 @@ pub mod simple_message_notification {
                             button
                         }))
                         .children(self.secondary_message.iter().map(|message| {
-                            let mut button = Button::new(message.clone(), message.clone())
+                            let mut button = Button::new(message.clone(), message.clone(), cx)
                                 .label_size(LabelSize::Small)
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
@@ -761,7 +765,7 @@ pub mod simple_message_notification {
                                     .zip(self.more_info_url.iter())
                                     .map(|(message, url)| {
                                         let url = url.clone();
-                                        Button::new(message.clone(), message.clone())
+                                        Button::new(message.clone(), message.clone(), cx)
                                             .label_size(LabelSize::Small)
                                             .icon(IconName::ArrowUpRight)
                                             .icon_size(IconSize::Indicator)

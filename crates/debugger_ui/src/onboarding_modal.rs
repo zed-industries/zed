@@ -139,13 +139,13 @@ impl Render for DebuggerOnboardingModal {
                 )),
             ));
 
-        let open_panel_button = Button::new("open-panel", "Get Started with the Debugger")
+        let open_panel_button = Button::new("open-panel", "Get Started with the Debugger", cx)
             .icon_size(IconSize::Indicator)
             .style(ButtonStyle::Tinted(TintColor::Accent))
             .full_width()
             .on_click(cx.listener(Self::open_panel));
 
-        let blog_post_button = Button::new("view-blog", "Check out the Blog Post")
+        let blog_post_button = Button::new("view-blog", "Check out the Blog Post", cx)
             .icon(IconName::ArrowUpRight)
             .icon_size(IconSize::Indicator)
             .icon_color(Color::Muted)

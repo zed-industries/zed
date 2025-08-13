@@ -167,7 +167,7 @@ impl Component for Callout {
         )
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let callout_examples = vec![
             single_example(
                 "Simple with Title Only",
@@ -178,7 +178,9 @@ impl Component for Callout {
                             .size(IconSize::Small),
                     )
                     .title("System maintenance scheduled for tonight")
-                    .primary_action(Button::new("got-it", "Got it").label_size(LabelSize::Small))
+                    .primary_action(
+                        Button::new("got-it", "Got it", cx).label_size(LabelSize::Small),
+                    )
                     .into_any_element(),
             )
             .width(px(580.)),
@@ -195,10 +197,10 @@ impl Component for Callout {
                         "We'll backup your current settings and update them to the new format.",
                     )
                     .primary_action(
-                        Button::new("update", "Backup & Update").label_size(LabelSize::Small),
+                        Button::new("update", "Backup & Update", cx).label_size(LabelSize::Small),
                     )
                     .secondary_action(
-                        Button::new("dismiss", "Dismiss").label_size(LabelSize::Small),
+                        Button::new("dismiss", "Dismiss", cx).label_size(LabelSize::Small),
                     )
                     .into_any_element(),
             )
@@ -214,10 +216,12 @@ impl Component for Callout {
                     .title("Thread reached the token limit")
                     .description("Start a new thread from a summary to continue the conversation.")
                     .primary_action(
-                        Button::new("new-thread", "Start New Thread").label_size(LabelSize::Small),
+                        Button::new("new-thread", "Start New Thread", cx)
+                            .label_size(LabelSize::Small),
                     )
                     .secondary_action(
-                        Button::new("view-summary", "View Summary").label_size(LabelSize::Small),
+                        Button::new("view-summary", "View Summary", cx)
+                            .label_size(LabelSize::Small),
                     )
                     .into_any_element(),
             )
@@ -233,10 +237,10 @@ impl Component for Callout {
                     .title("Upgrade to Pro")
                     .description("• Unlimited threads\n• Priority support\n• Advanced analytics")
                     .primary_action(
-                        Button::new("upgrade", "Upgrade Now").label_size(LabelSize::Small),
+                        Button::new("upgrade", "Upgrade Now", cx).label_size(LabelSize::Small),
                     )
                     .secondary_action(
-                        Button::new("learn-more", "Learn More").label_size(LabelSize::Small),
+                        Button::new("learn-more", "Learn More", cx).label_size(LabelSize::Small),
                     )
                     .into_any_element(),
             )

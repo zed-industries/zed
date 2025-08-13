@@ -163,7 +163,7 @@ impl ApplicationMenu {
             )
     }
 
-    fn render_standard_menu(&self, entry: &MenuEntry) -> impl IntoElement {
+    fn render_standard_menu(&self, entry: &MenuEntry, cx: &App) -> impl IntoElement {
         let current_handle = entry.handle.clone();
 
         let menu_name = entry.menu.name.clone();
@@ -187,6 +187,7 @@ impl ApplicationMenu {
                         Button::new(
                             SharedString::from(format!("{}-menu-trigger", menu_name)),
                             menu_name.clone(),
+                            cx,
                         )
                         .style(ButtonStyle::Subtle)
                         .label_size(LabelSize::Small),
@@ -310,7 +311,7 @@ impl Render for ApplicationMenu {
                 this.children(
                     self.entries
                         .iter()
-                        .map(|entry| self.render_standard_menu(entry)),
+                        .map(|entry| self.render_standard_menu(entry, cx)),
                 )
             })
     }

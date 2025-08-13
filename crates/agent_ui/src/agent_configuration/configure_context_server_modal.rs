@@ -564,7 +564,7 @@ impl ConfigureContextServerModal {
                 } = &self.source
                 {
                     Some(
-                        Button::new("open-repository", "Open Repository")
+                        Button::new("open-repository", "Open Repository", cx)
                             .icon(IconName::ArrowUpRight)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
@@ -600,6 +600,7 @@ impl ConfigureContextServerModal {
                             } else {
                                 "Dismiss"
                             },
+                            cx,
                         )
                         .key_binding(
                             KeyBinding::for_action_in(&menu::Cancel, &focus_handle, window, cx)
@@ -617,6 +618,7 @@ impl ConfigureContextServerModal {
                             } else {
                                 "Configure Server"
                             },
+                            cx,
                         )
                         .disabled(is_connecting)
                         .key_binding(

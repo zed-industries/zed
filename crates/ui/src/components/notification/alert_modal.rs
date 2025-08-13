@@ -59,12 +59,17 @@ impl RenderOnce for AlertModal {
                             .items_center()
                             .gap_1()
                             .child(
-                                Button::new(self.dismiss_label.clone(), self.dismiss_label.clone())
-                                    .color(Color::Muted),
+                                Button::new(
+                                    self.dismiss_label.clone(),
+                                    self.dismiss_label.clone(),
+                                    cx,
+                                )
+                                .color(Color::Muted),
                             )
                             .child(Button::new(
                                 self.primary_action.clone(),
                                 self.primary_action.clone(),
+                                cx,
                             )),
                     ),
             )

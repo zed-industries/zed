@@ -135,6 +135,15 @@ impl ProjectIndexDebugView {
 
         let colors = cx.theme().colors();
         let chunk = &state.chunks[ix];
+        let chunk_count = state.chunks.len();
+
+        let prev_button = Button::new(("prev", ix), "prev", cx)
+            .disabled(ix == 0)
+            .on_click(cx.listener(move |this, _, _, _| this.scroll_to_chunk(ix.saturating_sub(1))));
+
+        let next_button = Button::new(("next", ix), "next", cx)
+            .disabled(ix + 1 == chunk_count)
+            .on_click(cx.listener(move |this, _, _, _| this.scroll_to_chunk(ix + 1)));
 
         div()
             .text_ui(cx)
@@ -146,26 +155,10 @@ impl ProjectIndexDebugView {
                     .child(format!(
                         "chunk {} of {}. length: {}",
                         ix + 1,
-                        state.chunks.len(),
+                        chunk_count,
                         chunk.len(),
                     ))
-                    .child(
-                        h_flex()
-                            .child(
-                                Button::new(("prev", ix), "prev")
-                                    .disabled(ix == 0)
-                                    .on_click(cx.listener(move |this, _, _, _| {
-                                        this.scroll_to_chunk(ix.saturating_sub(1))
-                                    })),
-                            )
-                            .child(
-                                Button::new(("next", ix), "next")
-                                    .disabled(ix + 1 == state.chunks.len())
-                                    .on_click(cx.listener(move |this, _, _, _| {
-                                        this.scroll_to_chunk(ix + 1)
-                                    })),
-                            ),
-                    ),
+                    .child(h_flex().child(prev_button).child(next_button)),
             )
             .child(
                 div()

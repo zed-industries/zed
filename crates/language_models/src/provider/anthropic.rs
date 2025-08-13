@@ -1017,13 +1017,14 @@ impl Render for ConfigurationView {
                     List::new()
                         .child(
                             InstructionListItem::new(
+                                cx,
                                 "Create one by visiting",
                                 Some("Anthropic's settings"),
                                 Some("https://console.anthropic.com/settings/keys")
                             )
                         )
                         .child(
-                            InstructionListItem::text_only("Paste your API key below and hit enter to start using the assistant")
+                            InstructionListItem::text_only(cx, "Paste your API key below and hit enter to start using the assistant")
                         )
                 )
                 .child(
@@ -1066,7 +1067,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-key", "Reset Key", cx)
                         .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)

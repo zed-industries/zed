@@ -35,7 +35,7 @@ impl RenderOnce for EndTrialUpsell {
             )
             .child(plan_definitions.pro_plan(false))
             .child(
-                Button::new("cta-button", "Upgrade to Zed Pro")
+                Button::new("cta-button", "Upgrade to Zed Pro", cx)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                     .on_click(move |_, _window, cx| {

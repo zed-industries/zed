@@ -505,7 +505,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-api-key", "Reset API Key")
+                    Button::new("reset-api-key", "Reset API Key",cx)
                         .label_size(LabelSize::Small)
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)

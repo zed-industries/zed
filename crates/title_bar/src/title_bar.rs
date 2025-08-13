@@ -390,7 +390,7 @@ impl TitleBar {
 
         if self.project.read(cx).is_disconnected(cx) {
             return Some(
-                Button::new("disconnected", "Disconnected")
+                Button::new("disconnected", "Disconnected", cx)
                     .disabled(true)
                     .color(Color::Disabled)
                     .style(ButtonStyle::Subtle)
@@ -407,7 +407,7 @@ impl TitleBar {
             .participant_indices()
             .get(&host_user.id)?;
         Some(
-            Button::new("project_owner_trigger", host_user.github_login.clone())
+            Button::new("project_owner_trigger", host_user.github_login.clone(), cx)
                 .color(Color::Player(participant_index.0))
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
@@ -445,7 +445,7 @@ impl TitleBar {
             "Open recent project".to_string()
         };
 
-        Button::new("project_name_trigger", name)
+        Button::new("project_name_trigger", name, cx)
             .when(!is_project_selected, |b| b.color(Color::Muted))
             .style(ButtonStyle::Subtle)
             .label_size(LabelSize::Small)
@@ -491,7 +491,7 @@ impl TitleBar {
         }?;
 
         Some(
-            Button::new("project_branch_trigger", branch_name)
+            Button::new("project_branch_trigger", branch_name, cx)
                 .color(Color::Muted)
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
@@ -590,7 +590,7 @@ impl TitleBar {
                 };
 
                 Some(
-                    Button::new("connection-status", label)
+                    Button::new("connection-status", label, cx)
                         .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
                             if let Some(auto_updater) = auto_update::AutoUpdater::get(cx) {
@@ -608,9 +608,9 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(&mut self, _: &mut Context<Self>) -> Button {
+    pub fn render_sign_in_button(&mut self, cx: &mut Context<Self>) -> Button {
         let client = self.client.clone();
-        Button::new("sign_in", "Sign in")
+        Button::new("sign_in", "Sign in", cx)
             .label_size(LabelSize::Small)
             .on_click(move |_, window, cx| {
                 let client = client.clone();

@@ -811,7 +811,7 @@ impl ContextMenu {
                 ListSubHeader::new(header.clone())
                     .inset(true)
                     .end_slot(
-                        Button::new(link_id, label.clone())
+                        Button::new(link_id, label.clone(), cx)
                             .color(Color::Muted)
                             .label_size(LabelSize::Small)
                             .size(ButtonSize::None)

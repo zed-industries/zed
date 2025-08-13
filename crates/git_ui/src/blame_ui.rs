@@ -301,6 +301,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                                 Button::new(
                                                                     "pull-request-button",
                                                                     format!("#{}", pr.number),
+                                                                    cx,
                                                                 )
                                                                 .color(Color::Muted)
                                                                 .icon(IconName::PullRequest)
@@ -318,6 +319,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                             Button::new(
                                                                 "commit-sha-button",
                                                                 short_commit_id.clone(),
+                                                                cx,
                                                             )
                                                             .style(ButtonStyle::Subtle)
                                                             .color(Color::Muted)

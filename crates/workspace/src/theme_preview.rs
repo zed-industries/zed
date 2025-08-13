@@ -401,7 +401,7 @@ impl ThemePreview {
             .py_2()
             .bg(Self::preview_bg(window, cx))
             .children(ThemePreviewPage::iter().map(|p| {
-                Button::new(ElementId::Name(p.name().into()), p.name())
+                Button::new(ElementId::Name(p.name().into()), p.name(), cx)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.current_page = p;
                         cx.notify();

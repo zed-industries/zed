@@ -535,6 +535,7 @@ impl Render for DapLogToolbarItemView {
                         ))
                     })
                     .unwrap_or_else(|| "No adapter selected".into()),
+                cx,
             ))
             .menu(move |mut window, cx| {
                 let log_view = log_view.clone();
@@ -632,7 +633,7 @@ impl Render for DapLogToolbarItemView {
             .child(
                 div()
                     .child(
-                        Button::new("clear_log_button", "Clear").on_click(cx.listener(
+                        Button::new("clear_log_button", "Clear", cx).on_click(cx.listener(
                             |this, _, window, cx| {
                                 if let Some(log_view) = this.log_view.as_ref() {
                                     log_view.update(cx, |log_view, cx| {

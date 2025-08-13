@@ -141,7 +141,7 @@ impl Render for WelcomePage {
                                         ),
                                     )
                                     .child(
-                                        Button::new("choose-theme", "Choose a Theme")
+                                        Button::new("choose-theme", "Choose a Theme", cx)
                                             .icon(IconName::SwatchBook)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -156,7 +156,7 @@ impl Render for WelcomePage {
                                             })),
                                     )
                                     .child(
-                                        Button::new("choose-keymap", "Choose a Keymap")
+                                        Button::new("choose-keymap", "Choose a Keymap", cx)
                                             .icon(IconName::Keyboard)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -179,6 +179,7 @@ impl Render for WelcomePage {
                                             Button::new(
                                                 "edit_prediction_onboarding",
                                                 edit_prediction_label,
+                                                cx,
                                             )
                                             .disabled(edit_prediction_provider_is_zed)
                                             .icon(IconName::ZedPredict)
@@ -194,7 +195,7 @@ impl Render for WelcomePage {
                                         )
                                     })
                                     .child(
-                                        Button::new("edit settings", "Edit Settings")
+                                        Button::new("edit settings", "Edit Settings", cx)
                                             .icon(IconName::Settings)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -220,7 +221,7 @@ impl Render for WelcomePage {
                                     )
                                     .when(cfg!(target_os = "macos"), |el| {
                                         el.child(
-                                            Button::new("install-cli", "Install the CLI")
+                                            Button::new("install-cli", "Install the CLI", cx)
                                                 .icon(IconName::Terminal)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
@@ -234,7 +235,7 @@ impl Render for WelcomePage {
                                         )
                                     })
                                     .child(
-                                        Button::new("view-docs", "View Documentation")
+                                        Button::new("view-docs", "View Documentation", cx)
                                             .icon(IconName::FileCode)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -245,7 +246,7 @@ impl Render for WelcomePage {
                                             })),
                                     )
                                     .child(
-                                        Button::new("explore-extensions", "Explore Extensions")
+                                        Button::new("explore-extensions", "Explore Extensions", cx)
                                             .icon(IconName::Blocks)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)

@@ -18,8 +18,8 @@ impl Render for CollabNotificationStory {
                     window_container(400., 72.).child(
                         CollabNotification::new(
                             "https://avatars.githubusercontent.com/u/1486634?v=4",
-                            Button::new("accept", "Accept"),
-                            Button::new("decline", "Decline"),
+                            Button::new("accept", "Accept", cx),
+                            Button::new("decline", "Decline", cx),
                         )
                         .child(
                             v_flex()
@@ -35,8 +35,8 @@ impl Render for CollabNotificationStory {
                     window_container(400., 72.).child(
                         CollabNotification::new(
                             "https://avatars.githubusercontent.com/u/1714999?v=4",
-                            Button::new("open", "Open"),
-                            Button::new("dismiss", "Dismiss"),
+                            Button::new("open", "Open", cx),
+                            Button::new("dismiss", "Dismiss", cx),
                         )
                         .child(Label::new("iamnbutler"))
                         .child(Label::new("is sharing a project in Zed:"))

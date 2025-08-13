@@ -2,27 +2,31 @@ use gpui::{AnyElement, IntoElement, ParentElement, SharedString};
 use ui::{ListItem, prelude::*};
 
 /// A reusable list item component for adding LLM provider configuration instructions
-pub struct InstructionListItem {
+pub struct InstructionListItem<'app> {
+    app: &'app App,
     label: SharedString,
     button_label: Option<SharedString>,
     button_link: Option<String>,
 }
 
-impl InstructionListItem {
+impl<'app> InstructionListItem<'app> {
     pub fn new(
+        app: &'app App,
         label: impl Into<SharedString>,
         button_label: Option<impl Into<SharedString>>,
         button_link: Option<impl Into<String>>,
     ) -> Self {
         Self {
+            app,
             label: label.into(),
             button_label: button_label.map(|l| l.into()),
             button_link: button_link.map(|l| l.into()),
         }
     }
 
-    pub fn text_only(label: impl Into<SharedString>) -> Self {
+    pub fn text_only(app: &'app App, label: impl Into<SharedString>) -> Self {
         Self {
+            app,
             label: label.into(),
             button_label: None,
             button_link: None,
@@ -30,7 +34,7 @@ impl InstructionListItem {
     }
 }
 
-impl IntoElement for InstructionListItem {
+impl IntoElement for InstructionListItem<'_> {
     type Element = AnyElement;
 
     fn into_element(self) -> Self::Element {
@@ -44,7 +48,7 @@ impl IntoElement for InstructionListItem {
                 .flex_wrap()
                 .child(Label::new(self.label))
                 .child(
-                    Button::new(unique_id, button_label)
+                    Button::new(unique_id, button_label, self.app)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::Small)

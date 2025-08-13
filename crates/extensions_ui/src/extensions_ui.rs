@@ -596,6 +596,7 @@ impl ExtensionsPage {
                                 Button::new(
                                     SharedString::from(format!("rebuild-{}", extension.id)),
                                     "Rebuild",
+                                    cx,
                                 )
                                 .color(Color::Accent)
                                 .disabled(matches!(status, ExtensionStatus::Upgrading))
@@ -609,7 +610,7 @@ impl ExtensionsPage {
                                 }),
                             )
                             .child(
-                                Button::new(SharedString::from(extension.id.clone()), "Uninstall")
+                                Button::new(SharedString::from(extension.id.clone()), "Uninstall", cx)
                                     .color(Color::Accent)
                                     .disabled(matches!(status, ExtensionStatus::Removing))
                                     .on_click({
@@ -626,6 +627,7 @@ impl ExtensionsPage {
                                     Button::new(
                                         SharedString::from(format!("configure-{}", extension.id)),
                                         "Configure",
+                                        cx,
                                     )
                                     .color(Color::Accent)
                                     .disabled(matches!(status, ExtensionStatus::Installing))
@@ -947,6 +949,7 @@ impl ExtensionsPage {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Install",
+                    cx,
                 ),
                 configure: None,
                 upgrade: None,
@@ -963,6 +966,7 @@ impl ExtensionsPage {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Install",
+                    cx,
                 )
                 .on_click({
                     let extension_id = extension.id.clone();
@@ -980,6 +984,7 @@ impl ExtensionsPage {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Install",
+                    cx,
                 )
                 .disabled(true),
                 configure: None,
@@ -989,23 +994,27 @@ impl ExtensionsPage {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
+                    cx,
                 )
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
+                        cx,
                     )
                     .disabled(true)
                 }),
                 upgrade: Some(
-                    Button::new(SharedString::from(extension.id.clone()), "Upgrade").disabled(true),
+                    Button::new(SharedString::from(extension.id.clone()), "Upgrade", cx)
+                        .disabled(true),
                 ),
             },
             ExtensionStatus::Installed(installed_version) => ExtensionCardButtons {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
+                    cx,
                 )
                 .on_click({
                     let extension_id = extension.id.clone();
@@ -1022,6 +1031,7 @@ impl ExtensionsPage {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
+                        cx,
                     )
                     .on_click({
                         let extension_id = extension.id.clone();
@@ -1047,7 +1057,7 @@ impl ExtensionsPage {
                     None
                 } else {
                     Some(
-                        Button::new(SharedString::from(extension.id.clone()), "Upgrade")
+                        Button::new(SharedString::from(extension.id.clone()), "Upgrade", cx)
                             .when(!is_compatible, |upgrade_button| {
                                 upgrade_button.disabled(true).tooltip({
                                     let version = extension.manifest.version.clone();
@@ -1085,12 +1095,14 @@ impl ExtensionsPage {
                 install_or_uninstall: Button::new(
                     SharedString::from(extension.id.clone()),
                     "Uninstall",
+                    cx,
                 )
                 .disabled(true),
                 configure: is_configurable.then(|| {
                     Button::new(
                         SharedString::from(format!("configure-{}", extension.id)),
                         "Configure",
+                        cx,
                     )
                     .disabled(true)
                 }),
@@ -1394,7 +1406,7 @@ impl Render for ExtensionsPage {
                             .justify_between()
                             .child(Headline::new("Extensions").size(HeadlineSize::XLarge))
                             .child(
-                                Button::new("install-dev-extension", "Install Dev Extension")
+                                Button::new("install-dev-extension", "Install Dev Extension", cx)
                                     .style(ButtonStyle::Filled)
                                     .size(ButtonSize::Large)
                                     .on_click(|_event, window, cx| {
@@ -1470,7 +1482,7 @@ impl Render for ExtensionsPage {
                     .border_color(cx.theme().colors().border_variant)
                     .overflow_x_scroll()
                     .child(
-                        Button::new("filter-all-categories", "All")
+                        Button::new("filter-all-categories", "All", cx)
                             .when(self.provides_filter.is_none(), |button| {
                                 button.style(ButtonStyle::Filled)
                             })
@@ -1493,7 +1505,7 @@ impl Render for ExtensionsPage {
                         let button_id = SharedString::from(format!("filter-category-{}", label));
 
                         Some(
-                            Button::new(button_id, label)
+                            Button::new(button_id, label, cx)
                                 .style(if self.provides_filter == Some(provides) {
                                     ButtonStyle::Filled
                                 } else {

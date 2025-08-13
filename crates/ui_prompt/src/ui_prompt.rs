@@ -177,7 +177,7 @@ impl Render for ZedPromptRenderer {
             }))
             .child(h_flex().justify_end().gap_2().children(
                 self.actions.iter().enumerate().rev().map(|(ix, action)| {
-                    ui::Button::new(ix, action.clone())
+                    ui::Button::new(ix, action.clone(), cx)
                         .label_size(LabelSize::Large)
                         .style(ButtonStyle::Filled)
                         .when(ix == self.active_action_id, |el| {

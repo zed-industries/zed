@@ -478,7 +478,7 @@ impl<T: 'static> PromptEditor<T> {
         match codegen_status {
             CodegenStatus::Idle => {
                 vec![
-                    Button::new("start", mode.start_label())
+                    Button::new("start", mode.start_label(), cx)
                         .label_size(LabelSize::Small)
                         .icon(IconName::Return)
                         .icon_size(IconSize::XSmall)
@@ -745,11 +745,11 @@ impl<T: 'static> PromptEditor<T> {
                             h_flex()
                                 .gap_2()
                                 .child(
-                                    Button::new("dismiss", "Dismiss")
+                                    Button::new("dismiss", "Dismiss", cx)
                                         .style(ButtonStyle::Transparent)
                                         .on_click(cx.listener(Self::toggle_rate_limit_notice)),
                                 )
-                                .child(Button::new("more-info", "More Info").on_click(
+                                .child(Button::new("more-info", "More Info", cx).on_click(
                                     |_event, window, cx| {
                                         window.dispatch_action(
                                             Box::new(zed_actions::OpenAccountSettings),

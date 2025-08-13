@@ -50,6 +50,7 @@ impl Render for EditPredictionOnboarding {
                     } else {
                         "Configure Copilot"
                     },
+                    cx,
                 )
                 .full_width()
                 .style(ButtonStyle::Outlined)

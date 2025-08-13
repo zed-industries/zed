@@ -5531,7 +5531,7 @@ impl Render for ProjectPanel {
                 .p_4()
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    Button::new("open_project", "Open a project")
+                    Button::new("open_project", "Open a project", cx)
                         .full_width()
                         .key_binding(KeyBinding::for_action_in(
                             &OpenRecent::default(),

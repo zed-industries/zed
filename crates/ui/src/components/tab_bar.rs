@@ -165,7 +165,7 @@ impl Component for TabBar {
         Some("A horizontal bar containing tabs for navigation between different views or sections.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -192,11 +192,11 @@ impl Component for TabBar {
                         vec![single_example(
                             "Full TabBar",
                             TabBar::new("full_tab_bar")
-                                .start_child(Button::new("start_button", "Start"))
+                                .start_child(Button::new("start_button", "Start", cx))
                                 .child(Tab::new("tab1"))
                                 .child(Tab::new("tab2"))
                                 .child(Tab::new("tab3"))
-                                .end_child(Button::new("end_button", "End"))
+                                .end_child(Button::new("end_button", "End", cx))
                                 .into_any_element(),
                         )],
                     ),

@@ -80,7 +80,7 @@ fn render_privacy_card(tab_index: &mut isize, disabled: bool, cx: &mut App) -> i
                                 .tooltip(move |_, cx| cx.new(|_| AiPrivacyTooltip::new()).into()),
                         )
                         .child(
-                            Button::new("learn_more", "Learn More")
+                            Button::new("learn_more", "Learn More", cx)
                                 .style(ButtonStyle::Outlined)
                                 .label_size(LabelSize::Small)
                                 .icon(IconName::ArrowUpRight)
@@ -206,7 +206,7 @@ fn render_llm_provider_card(
         ))
         .child(Divider::horizontal())
         .child(
-            Button::new("agent_settings", "Add Many Others")
+            Button::new("agent_settings", "Add Many Others", cx)
                 .size(ButtonSize::Large)
                 .icon(IconName::Plus)
                 .icon_position(IconPosition::Start)
@@ -363,7 +363,7 @@ impl Render for AiConfigurationModal {
                     .section(Section::new().child(self.configuration_view.clone()))
                     .footer(
                         ModalFooter::new().end_slot(
-                            Button::new("ai-onb-modal-Done", "Done")
+                            Button::new("ai-onb-modal-Done", "Done", cx)
                                 .key_binding(
                                     KeyBinding::for_action_in(
                                         &menu::Cancel,

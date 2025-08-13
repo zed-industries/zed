@@ -670,7 +670,7 @@ impl Render for ConfigurationView {
                         .child(Label::new("Authorized")),
                 )
                 .child(
-                    Button::new("sign_out", "Sign Out")
+                    Button::new("sign_out", "Sign Out", cx)
                         .label_size(LabelSize::Small)
                         .on_click(|_, window, cx| {
                             window.dispatch_action(copilot::SignOut.boxed_clone(), cx);
@@ -709,7 +709,7 @@ impl Render for ConfigurationView {
                         const LABEL: &str = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
 
                         v_flex().gap_2().child(Label::new(LABEL)).child(
-                            Button::new("sign_in", "Sign in to use GitHub Copilot")
+                            Button::new("sign_in", "Sign in to use GitHub Copilot", cx)
                                 .icon_color(Color::Muted)
                                 .icon(IconName::Github)
                                 .icon_position(IconPosition::Start)

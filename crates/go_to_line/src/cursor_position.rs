@@ -219,7 +219,7 @@ impl Render for CursorPosition {
             let context = self.context.clone();
 
             el.child(
-                Button::new("go-to-line-column", text)
+                Button::new("go-to-line-column", text, cx)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {

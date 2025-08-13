@@ -458,7 +458,7 @@ impl Onboarding {
                         )
                         .into_any_element()
                 } else {
-                    Button::new("sign_in", "Sign In")
+                    Button::new("sign_in", "Sign In", cx)
                         .full_width()
                         .style(ButtonStyle::Outlined)
                         .size(ButtonSize::Medium)

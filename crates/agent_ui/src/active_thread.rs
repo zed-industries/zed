@@ -2281,7 +2281,7 @@ impl ActiveThread {
                     }
 
                     let restore_checkpoint_button =
-                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint")
+                        Button::new(("restore-checkpoint", ix), "Restore Checkpoint", cx)
                             .icon(if error.is_some() {
                                 IconName::XCircle
                             } else {
@@ -2371,7 +2371,7 @@ impl ActiveThread {
                                         .gap_1()
                                         .justify_end()
                                         .child(
-                                            Button::new("dismiss-feedback-message", "Cancel")
+                                            Button::new("dismiss-feedback-message", "Cancel", cx)
                                                 .label_size(LabelSize::Small)
                                                 .key_binding(
                                                     KeyBinding::for_action_in(
@@ -2394,6 +2394,7 @@ impl ActiveThread {
                                             Button::new(
                                                 "submit-feedback-message",
                                                 "Share Feedback",
+                                                cx,
                                             )
                                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                             .label_size(LabelSize::Small)
@@ -3217,6 +3218,7 @@ impl ActiveThread {
                                             Button::new(
                                                 "always-allow-tool-action",
                                                 "Always Allow",
+                                                cx,
                                             )
                                             .label_size(LabelSize::Small)
                                             .icon(IconName::CheckDouble)
@@ -3254,7 +3256,7 @@ impl ActiveThread {
                                         })
                                         .child({
                                             let tool_id = tool_use.id.clone();
-                                            Button::new("allow-tool-action", "Allow")
+                                            Button::new("allow-tool-action", "Allow", cx)
                                                 .label_size(LabelSize::Small)
                                                 .icon(IconName::Check)
                                                 .icon_position(IconPosition::Start)
@@ -3274,7 +3276,7 @@ impl ActiveThread {
                                         .child({
                                             let tool_id = tool_use.id.clone();
                                             let tool_name: Arc<str> = tool_use.name.into();
-                                            Button::new("deny-tool", "Deny")
+                                            Button::new("deny-tool", "Deny", cx)
                                                 .label_size(LabelSize::Small)
                                                 .icon(IconName::Close)
                                                 .icon_position(IconPosition::Start)

@@ -281,6 +281,7 @@ impl AgentConfiguration {
                             Button::new(
                                 SharedString::from(format!("new-thread-{provider_id}")),
                                 "Start New Thread",
+                                cx,
                             )
                             .icon_position(IconPosition::Start)
                             .icon(IconName::Plus)
@@ -339,7 +340,7 @@ impl AgentConfiguration {
                                     .child(
                                         PopoverMenu::new("add-provider-popover")
                                             .trigger(
-                                                Button::new("add-provider", "Add Provider")
+                                                Button::new("add-provider", "Add Provider", cx)
                                                     .icon_position(IconPosition::Start)
                                                     .icon(IconName::Plus)
                                                     .icon_size(IconSize::Small)
@@ -552,7 +553,7 @@ impl AgentConfiguration {
                     .gap_2()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add Custom Server")
+                            Button::new("add-context-server", "Add Custom Server", cx)
                                 .style(ButtonStyle::Filled)
                                 .layer(ElevationIndex::ModalSurface)
                                 .full_width()
@@ -569,6 +570,7 @@ impl AgentConfiguration {
                             Button::new(
                                 "install-context-server-extensions",
                                 "Install MCP Extensions",
+                                cx,
                             )
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)

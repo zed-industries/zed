@@ -281,7 +281,7 @@ impl AddLlmProviderModal {
                     .justify_between()
                     .child(Label::new("Models").size(LabelSize::Small))
                     .child(
-                        Button::new("add-model", "Add Model")
+                        Button::new("add-model", "Add Model", cx)
                             .icon(IconName::Plus)
                             .icon_position(IconPosition::Start)
                             .icon_size(IconSize::XSmall)
@@ -324,7 +324,7 @@ impl AddLlmProviderModal {
             .child(model.max_tokens.clone())
             .when(has_more_than_one_model, |this| {
                 this.child(
-                    Button::new(("remove-model", ix), "Remove Model")
+                    Button::new(("remove-model", ix), "Remove Model", cx)
                         .icon(IconName::Trash)
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::XSmall)
@@ -400,7 +400,7 @@ impl Render for AddLlmProviderModal {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Button::new("cancel", "Cancel")
+                                    Button::new("cancel", "Cancel", cx)
                                         .key_binding(
                                             KeyBinding::for_action_in(
                                                 &menu::Cancel,
@@ -415,7 +415,7 @@ impl Render for AddLlmProviderModal {
                                         })),
                                 )
                                 .child(
-                                    Button::new("save-server", "Save Provider")
+                                    Button::new("save-server", "Save Provider", cx)
                                         .key_binding(
                                             KeyBinding::for_action_in(
                                                 &menu::Confirm,

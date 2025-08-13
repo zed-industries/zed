@@ -1715,7 +1715,7 @@ impl Render for DebugPanel {
                         .justify_center()
                         .gap_2()
                         .child(
-                            Button::new("spawn-new-session-empty-state", "New Session")
+                            Button::new("spawn-new-session-empty-state", "New Session", cx)
                                 .icon(IconName::Plus)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
@@ -1725,7 +1725,7 @@ impl Render for DebugPanel {
                                 }),
                         )
                         .child(
-                            Button::new("edit-debug-settings", "Edit debug.json")
+                            Button::new("edit-debug-settings", "Edit debug.json", cx)
                                 .icon(IconName::Code)
                                 .icon_size(IconSize::XSmall)
                                 .color(Color::Muted)
@@ -1739,7 +1739,7 @@ impl Render for DebugPanel {
                                 }),
                         )
                         .child(
-                            Button::new("open-debugger-docs", "Debugger Docs")
+                            Button::new("open-debugger-docs", "Debugger Docs", cx)
                                 .icon(IconName::Book)
                                 .color(Color::Muted)
                                 .icon_size(IconSize::XSmall)
@@ -1751,6 +1751,7 @@ impl Render for DebugPanel {
                             Button::new(
                                 "spawn-new-session-install-extensions",
                                 "Debugger Extensions",
+                                cx,
                             )
                             .icon(IconName::Blocks)
                             .color(Color::Muted)

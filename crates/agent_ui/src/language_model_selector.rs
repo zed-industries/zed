@@ -548,7 +548,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .justify_between()
                 .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
                     this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
+                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro", cx)
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
@@ -564,12 +564,13 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                             } else {
                                 "Try Pro"
                             },
+                            cx,
                         )
                         .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
                     })
                 })
                 .child(
-                    Button::new("configure", "Configure")
+                    Button::new("configure", "Configure", cx)
                         .icon(IconName::Settings)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)

@@ -812,14 +812,17 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            cx,
                             "Create one by visiting",
                             Some("OpenAI's console"),
                             Some("https://platform.openai.com/api-keys"),
                         ))
                         .child(InstructionListItem::text_only(
+                            cx,
                             "Ensure your OpenAI account has credits",
                         ))
                         .child(InstructionListItem::text_only(
+                            cx,
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
@@ -857,7 +860,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-api-key", "Reset API Key")
+                    Button::new("reset-api-key", "Reset API Key",cx)
                         .label_size(LabelSize::Small)
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)
@@ -891,7 +894,7 @@ impl Render for ConfigurationView {
                     .child(Label::new("Zed also supports OpenAI-compatible models.")),
             )
             .child(
-                Button::new("docs", "Learn More")
+                Button::new("docs", "Learn More", cx)
                     .icon(IconName::ArrowUpRight)
                     .icon_size(IconSize::Small)
                     .icon_color(Color::Muted)

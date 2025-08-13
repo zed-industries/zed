@@ -1439,7 +1439,7 @@ impl ProjectSearchView {
                     .mb_2(),
             )
             .child(
-                Button::new("filter-paths", "Include/exclude specific paths")
+                Button::new("filter-paths", "Include/exclude specific paths", cx)
                     .icon(IconName::Filter)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
@@ -1454,7 +1454,7 @@ impl ProjectSearchView {
                     }),
             )
             .child(
-                Button::new("find-replace", "Find and replace")
+                Button::new("find-replace", "Find and replace", cx)
                     .icon(IconName::Replace)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
@@ -1469,7 +1469,7 @@ impl ProjectSearchView {
                     }),
             )
             .child(
-                Button::new("regex", "Match with regex")
+                Button::new("regex", "Match with regex", cx)
                     .icon(IconName::Regex)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
@@ -1484,7 +1484,7 @@ impl ProjectSearchView {
                     }),
             )
             .child(
-                Button::new("match-case", "Match case")
+                Button::new("match-case", "Match case", cx)
                     .icon(IconName::CaseSensitive)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)
@@ -1499,7 +1499,7 @@ impl ProjectSearchView {
                     }),
             )
             .child(
-                Button::new("match-whole-words", "Match whole words")
+                Button::new("match-whole-words", "Match whole words", cx)
                     .icon(IconName::WholeWord)
                     .icon_position(IconPosition::Start)
                     .icon_size(IconSize::Small)

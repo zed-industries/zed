@@ -2469,7 +2469,7 @@ impl Render for KeybindingEditorModal {
                                                         .color(Color::Muted),
                                                 )
                                                 .child(
-                                                    Button::new("show_matching", "View")
+                                                    Button::new("show_matching", "View", cx)
                                                         .label_size(LabelSize::Small)
                                                         .icon(IconName::ArrowUpRight)
                                                         .icon_color(Color::Muted)
@@ -2508,10 +2508,10 @@ impl Render for KeybindingEditorModal {
                             h_flex()
                                 .gap_1()
                                 .child(
-                                    Button::new("cancel", "Cancel")
+                                    Button::new("cancel", "Cancel", cx)
                                         .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
                                 )
-                                .child(Button::new("save-btn", "Save").on_click(cx.listener(
+                                .child(Button::new("save-btn", "Save", cx).on_click(cx.listener(
                                     |this, _event, _window, cx| {
                                         this.save_or_display_error(cx);
                                     },

@@ -1318,19 +1318,21 @@ impl Render for RulesLibrary {
                                                             "Create your first rule:",
                                                         ))
                                                         .child(
-                                                            Button::new("create-rule", "New Rule")
-                                                                .full_width()
-                                                                .key_binding(
-                                                                    KeyBinding::for_action(
-                                                                        &NewRule, window, cx,
-                                                                    ),
+                                                            Button::new(
+                                                                "create-rule",
+                                                                "New Rule",
+                                                                cx,
+                                                            )
+                                                            .full_width()
+                                                            .key_binding(KeyBinding::for_action(
+                                                                &NewRule, window, cx,
+                                                            ))
+                                                            .on_click(|_, window, cx| {
+                                                                window.dispatch_action(
+                                                                    NewRule.boxed_clone(),
+                                                                    cx,
                                                                 )
-                                                                .on_click(|_, window, cx| {
-                                                                    window.dispatch_action(
-                                                                        NewRule.boxed_clone(),
-                                                                        cx,
-                                                                    )
-                                                                }),
+                                                            }),
                                                         ),
                                                 )
                                                 .child(h_flex()),

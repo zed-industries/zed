@@ -410,12 +410,17 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             return None;
         }
         Some(
-            render_accept_terms(view, state.accept_terms_of_service_task.is_some(), {
-                let state = self.state.clone();
-                move |_window, cx| {
-                    state.update(cx, |state, cx| state.accept_terms_of_service(cx));
-                }
-            })
+            render_accept_terms(
+                view,
+                state.accept_terms_of_service_task.is_some(),
+                {
+                    let state = self.state.clone();
+                    move |_window, cx| {
+                        state.update(cx, |state, cx| state.accept_terms_of_service(cx));
+                    }
+                },
+                cx,
+            )
             .into_any_element(),
         )
     }
@@ -429,11 +434,12 @@ fn render_accept_terms(
     view_kind: LanguageModelProviderTosView,
     accept_terms_of_service_in_progress: bool,
     accept_terms_callback: impl Fn(&mut Window, &mut App) + 'static,
+    app: &App,
 ) -> impl IntoElement {
     let thread_fresh_start = matches!(view_kind, LanguageModelProviderTosView::ThreadFreshStart);
     let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadEmptyState);
 
-    let terms_button = Button::new("terms_of_service", "Terms of Service")
+    let terms_button = Button::new("terms_of_service", "Terms of Service", app)
         .style(ButtonStyle::Subtle)
         .icon(IconName::ArrowUpRight)
         .icon_color(Color::Muted)
@@ -442,7 +448,7 @@ fn render_accept_terms(
         .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
     let button_container = h_flex().child(
-        Button::new("accept_terms", "I accept the Terms of Service")
+        Button::new("accept_terms", "I accept the Terms of Service", app)
             .when(!thread_empty_state, |this| {
                 this.full_width()
                     .style(ButtonStyle::Tinted(TintColor::Accent))
@@ -1135,19 +1141,19 @@ impl RenderOnce for ZedAiConfiguration {
         };
 
         let manage_subscription_buttons = if is_pro {
-            Button::new("manage_settings", "Manage Subscription")
+            Button::new("manage_settings", "Manage Subscription", _cx)
                 .full_width()
                 .style(ButtonStyle::Tinted(TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))
                 .into_any_element()
         } else if self.plan.is_none() || self.eligible_for_trial {
-            Button::new("start_trial", "Start 14-day Free Pro Trial")
+            Button::new("start_trial", "Start 14-day Free Pro Trial", _cx)
                 .full_width()
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::start_trial_url(cx)))
                 .into_any_element()
         } else {
-            Button::new("upgrade", "Upgrade to Pro")
+            Button::new("upgrade", "Upgrade to Pro", _cx)
                 .full_width()
                 .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                 .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx)))
@@ -1159,7 +1165,7 @@ impl RenderOnce for ZedAiConfiguration {
                 .gap_2()
                 .child(Label::new("Sign in to have access to Zed's complete agentic experience with hosted models."))
                 .child(
-                    Button::new("sign_in", "Sign In to use Zed AI")
+                    Button::new("sign_in", "Sign In to use Zed AI", _cx)
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
                         .icon_size(IconSize::Small)
@@ -1183,12 +1189,13 @@ impl RenderOnce for ZedAiConfiguration {
                         let callback = self.accept_terms_of_service_callback.clone();
                         move |window, cx| (callback)(window, cx)
                     },
+                    _cx,
                 ))
             })
             .map(|this| {
                 if self.has_accepted_terms_of_service && self.account_too_young {
                     this.child(young_account_banner).child(
-                        Button::new("upgrade", "Upgrade to Pro")
+                        Button::new("upgrade", "Upgrade to Pro", _cx)
                             .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
                             .full_width()
                             .on_click(|_, _, cx| {

@@ -2307,7 +2307,7 @@ impl CollabPanel {
                 v_flex()
                     .gap_2()
                     .child(
-                        Button::new("sign_in", "Sign in")
+                        Button::new("sign_in", "Sign in", cx)
                             .icon_color(Color::Muted)
                             .icon(IconName::Github)
                             .icon_position(IconPosition::Start)

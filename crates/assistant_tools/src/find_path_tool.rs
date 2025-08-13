@@ -256,7 +256,7 @@ impl ToolCard for FindPathToolCard {
                         let workspace_clone = workspace.clone();
                         let button_label = path.to_string_lossy().to_string();
 
-                        Button::new(("path", index), button_label)
+                        Button::new(("path", index), button_label, cx)
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)

@@ -186,7 +186,7 @@ impl RenderOnce for AiUpsellCard {
                                     )
                                     .child(plan_definitions.pro_plan(true))
                                     .child(
-                                        Button::new("pro", "Get Started")
+                                        Button::new("pro", "Get Started", cx)
                                             .full_width()
                                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                             .on_click(move |_, _window, cx| {
@@ -209,19 +209,25 @@ impl RenderOnce for AiUpsellCard {
                             .child(
                                 footer_container
                                     .child(
-                                        Button::new("start_trial", "Start 14-day Free Pro Trial")
-                                            .full_width()
-                                            .style(ButtonStyle::Tinted(ui::TintColor::Accent))
-                                            .when_some(self.tab_index, |this, tab_index| {
-                                                this.tab_index(tab_index)
-                                            })
-                                            .on_click(move |_, _window, cx| {
+                                        Button::new(
+                                            "start_trial",
+                                            "Start 14-day Free Pro Trial",
+                                            cx,
+                                        )
+                                        .full_width()
+                                        .style(ButtonStyle::Tinted(ui::TintColor::Accent))
+                                        .when_some(self.tab_index, |this, tab_index| {
+                                            this.tab_index(tab_index)
+                                        })
+                                        .on_click(
+                                            move |_, _window, cx| {
                                                 telemetry::event!(
                                                     "Start Trial Clicked",
                                                     state = "post-sign-in"
                                                 );
                                                 cx.open_url(&zed_urls::start_trial_url(cx))
-                                            }),
+                                            },
+                                        ),
                                     )
                                     .child(
                                         Label::new("No credit card required")
@@ -261,7 +267,7 @@ impl RenderOnce for AiUpsellCard {
                 )
                 .child(plans_section)
                 .child(
-                    Button::new("sign_in", "Sign In")
+                    Button::new("sign_in", "Sign In", cx)
                         .full_width()
                         .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                         .when_some(self.tab_index, |this, tab_index| this.tab_index(tab_index))

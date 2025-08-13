@@ -68,7 +68,7 @@ impl Render for FeedbackModal {
             )
             .child(Label::new("Thanks for using Zed! To share your experience with us, reach for the channel that's the most appropriate:"))
             .child(
-                Button::new("file-a-bug-report", "File a Bug Report")
+                Button::new("file-a-bug-report", "File a Bug Report", cx)
                     .full_width()
                     .icon(IconName::Debug)
                     .icon_size(IconSize::XSmall)
@@ -79,7 +79,7 @@ impl Render for FeedbackModal {
                     })),
             )
             .child(
-                Button::new("request-a-feature", "Request a Feature")
+                Button::new("request-a-feature", "Request a Feature", cx)
                     .full_width()
                     .icon(IconName::Sparkle)
                     .icon_size(IconSize::XSmall)
@@ -90,7 +90,7 @@ impl Render for FeedbackModal {
                     })),
             )
             .child(
-                Button::new("send-us_an-email", "Send an Email")
+                Button::new("send-us_an-email", "Send an Email", cx)
                     .full_width()
                     .icon(IconName::Envelope)
                     .icon_size(IconSize::XSmall)
@@ -101,7 +101,7 @@ impl Render for FeedbackModal {
                     })),
             )
             .child(
-                Button::new("zed_repository", "GitHub Repository")
+                Button::new("zed_repository", "GitHub Repository", cx)
                     .full_width()
                     .icon(IconName::Github)
                     .icon_size(IconSize::XSmall)

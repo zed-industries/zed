@@ -1200,7 +1200,7 @@ impl TextThreadEditor {
                             })
                             .children(match &message.status {
                                 MessageStatus::Error(error) => Some(
-                                    Button::new("show-error", "Error")
+                                    Button::new("show-error", "Error", cx)
                                         .color(Color::Error)
                                         .selected_label_color(Color::Error)
                                         .selected_icon_color(Color::Error)
@@ -1920,7 +1920,7 @@ impl TextThreadEditor {
             None => (ButtonStyle::Filled, None),
         };
 
-        Button::new("send_button", "Send")
+        Button::new("send_button", "Send", cx)
             .label_size(LabelSize::Small)
             .disabled(self.sending_disabled(cx))
             .style(style)
@@ -2124,14 +2124,16 @@ impl TextThreadEditor {
                 h_flex()
                     .justify_end()
                     .mt_1()
-                    .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.open_url(&zed_urls::account_url(cx));
-                            cx.notify();
-                        },
-                    )))
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                    .child(
+                        Button::new("subscribe", "Subscribe", cx).on_click(cx.listener(
+                            |this, _, _window, cx| {
+                                this.last_error = None;
+                                cx.open_url(&zed_urls::account_url(cx));
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(Button::new("dismiss", "Dismiss", cx).on_click(cx.listener(
                         |this, _, _window, cx| {
                             this.last_error = None;
                             cx.notify();
@@ -2165,17 +2167,14 @@ impl TextThreadEditor {
                     .overflow_y_scroll()
                     .child(Label::new(error_message.clone())),
             )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, _window, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
+            .child(h_flex().justify_end().mt_1().child(
+                Button::new("dismiss", "Dismiss", cx).on_click(cx.listener(
+                    |this, _, _window, cx| {
+                        this.last_error = None;
+                        cx.notify();
+                    },
+                )),
+            ))
             .into_any()
     }
 }

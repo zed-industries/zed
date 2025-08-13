@@ -366,6 +366,7 @@ impl TitleBar {
                 Button::new(
                     "toggle_sharing",
                     if is_shared { "Unshare" } else { "Share" },
+                    cx,
                 )
                 .tooltip(Tooltip::text(if is_shared {
                     "Stop sharing project with call participants"

@@ -99,7 +99,7 @@ impl RenderOnce for UsageCallout {
                     .title(title)
                     .description(message)
                     .primary_action(
-                        Button::new("upgrade", button_text)
+                        Button::new("upgrade", button_text, cx)
                             .label_size(LabelSize::Small)
                             .on_click(move |_, _, cx| {
                                 cx.open_url(&url);

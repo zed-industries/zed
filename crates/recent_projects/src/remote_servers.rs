@@ -1094,7 +1094,7 @@ impl RemoteServerProjects {
                                         .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Button::new("learn-more", "Learn more…")
+                                        Button::new("learn-more", "Learn more…", cx)
                                             .label_size(LabelSize::Small)
                                             .size(ButtonSize::None)
                                             .color(Color::Accent)

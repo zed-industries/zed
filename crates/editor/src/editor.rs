@@ -23754,10 +23754,10 @@ impl Render for MissingEditPredictionKeybindingTooltip {
                         .gap_1()
                         .items_end()
                         .w_full()
-                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
+                        .child(Button::new("see-key-binding", "See Keybinding", cx).size(ButtonSize::Compact).on_click(|_ev, window, cx| {
                             window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx)
                         }))
-                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
+                        .child(Button::new("learn-more", "Learn More", cx).size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
                             cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
                         })),
                 )
@@ -23804,7 +23804,7 @@ fn render_diff_hunk_controls(
         .block_mouse_except_scroll()
         .shadow_md()
         .child(if status.has_secondary_hunk() {
-            Button::new(("stage", row as u64), "Stage")
+            Button::new(("stage", row as u64), "Stage", cx)
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
@@ -23831,7 +23831,7 @@ fn render_diff_hunk_controls(
                     }
                 })
         } else {
-            Button::new(("unstage", row as u64), "Unstage")
+            Button::new(("unstage", row as u64), "Unstage", cx)
                 .alpha(if status.is_pending() { 0.66 } else { 1.0 })
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
@@ -23859,7 +23859,7 @@ fn render_diff_hunk_controls(
                 })
         })
         .child(
-            Button::new(("restore", row as u64), "Restore")
+            Button::new(("restore", row as u64), "Restore", cx)
                 .tooltip({
                     let focus_handle = editor.focus_handle(cx);
                     move |window, cx| {

@@ -668,9 +668,11 @@ impl Render for ConfigurationView {
                     v_flex().gap_1().child(Label::new(lmstudio_intro)).child(
                         List::new()
                             .child(InstructionListItem::text_only(
+                                cx,
                                 "LM Studio needs to be running with at least one model downloaded.",
                             ))
                             .child(InstructionListItem::text_only(
+                                cx,
                                 "To get your first model, try running `lms get qwen2.5-coder-7b`",
                             )),
                     ),
@@ -687,7 +689,7 @@ impl Render for ConfigurationView {
                                 .map(|this| {
                                     if is_authenticated {
                                         this.child(
-                                            Button::new("lmstudio-site", "LM Studio")
+                                            Button::new("lmstudio-site", "LM Studio", cx)
                                                 .style(ButtonStyle::Subtle)
                                                 .icon(IconName::ArrowUpRight)
                                                 .icon_size(IconSize::Small)
@@ -702,6 +704,7 @@ impl Render for ConfigurationView {
                                             Button::new(
                                                 "download_lmstudio_button",
                                                 "Download LM Studio",
+                                                cx,
                                             )
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
@@ -715,7 +718,7 @@ impl Render for ConfigurationView {
                                     }
                                 })
                                 .child(
-                                    Button::new("view-models", "Model Catalog")
+                                    Button::new("view-models", "Model Catalog", cx)
                                         .style(ButtonStyle::Subtle)
                                         .icon(IconName::ArrowUpRight)
                                         .icon_size(IconSize::Small)
@@ -741,7 +744,7 @@ impl Render for ConfigurationView {
                                 )
                             } else {
                                 this.child(
-                                    Button::new("retry_lmstudio_models", "Connect")
+                                    Button::new("retry_lmstudio_models", "Connect", cx)
                                         .icon_position(IconPosition::Start)
                                         .icon_size(IconSize::XSmall)
                                         .icon(IconName::PlayFilled)

@@ -1,5 +1,5 @@
 use crate::component_prelude::*;
-use gpui::{AnyElement, AnyView, DefiniteLength};
+use gpui::{AnyElement, AnyView, DefiniteLength, FocusHandle, Focusable};
 use ui_macros::RegisterComponent;
 
 use crate::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label};
@@ -79,6 +79,7 @@ use super::button_icon::ButtonIcon;
 ///
 #[derive(IntoElement, Documented, RegisterComponent)]
 pub struct Button {
+    focus_handle: FocusHandle,
     base: ButtonLike,
     label: SharedString,
     label_color: Option<Color>,
@@ -104,8 +105,9 @@ impl Button {
     /// the button with the provided identifier and label text, setting all other
     /// properties to their default values, which can be customized using the
     /// builder pattern methods provided by this struct.
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, app: &App) -> Self {
         Self {
+            focus_handle: app.focus_handle(),
             base: ButtonLike::new(id),
             label: label.into(),
             label_color: None,
@@ -213,6 +215,12 @@ impl Button {
     pub fn truncate(mut self, truncate: bool) -> Self {
         self.truncate = truncate;
         self
+    }
+}
+
+impl Focusable for Button {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -483,7 +491,7 @@ impl Component for Button {
         Some("A button triggers an event or action.")
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         Some(
             v_flex()
                 .gap_6()
@@ -493,29 +501,29 @@ impl Component for Button {
                         vec![
                             single_example(
                                 "Default",
-                                Button::new("default", "Default").into_any_element(),
+                                Button::new("default", "Default", cx).into_any_element(),
                             ),
                             single_example(
                                 "Filled",
-                                Button::new("filled", "Filled")
+                                Button::new("filled", "Filled", cx)
                                     .style(ButtonStyle::Filled)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Subtle",
-                                Button::new("outline", "Subtle")
+                                Button::new("outlined", "Outlined", cx)
                                     .style(ButtonStyle::Subtle)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Tinted",
-                                Button::new("tinted_accent_style", "Accent")
+                                Button::new("tinted_accent_style", "Accent", cx)
                                     .style(ButtonStyle::Tinted(TintColor::Accent))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Transparent",
-                                Button::new("transparent", "Transparent")
+                                Button::new("transparent", "Transparent", cx)
                                     .style(ButtonStyle::Transparent)
                                     .into_any_element(),
                             ),
@@ -526,25 +534,25 @@ impl Component for Button {
                         vec![
                             single_example(
                                 "Accent",
-                                Button::new("tinted_accent", "Accent")
+                                Button::new("color_accent", "Accent", cx)
                                     .style(ButtonStyle::Tinted(TintColor::Accent))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Error",
-                                Button::new("tinted_negative", "Error")
+                                Button::new("tinted_negative", "Error", cx)
                                     .style(ButtonStyle::Tinted(TintColor::Error))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Warning",
-                                Button::new("tinted_warning", "Warning")
+                                Button::new("tinted_warning", "Warning", cx)
                                     .style(ButtonStyle::Tinted(TintColor::Warning))
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Success",
-                                Button::new("tinted_positive", "Success")
+                                Button::new("tinted_positive", "Success", cx)
                                     .style(ButtonStyle::Tinted(TintColor::Success))
                                     .into_any_element(),
                             ),
@@ -555,17 +563,17 @@ impl Component for Button {
                         vec![
                             single_example(
                                 "Default",
-                                Button::new("default_state", "Default").into_any_element(),
+                                Button::new("default_state", "Default", cx).into_any_element(),
                             ),
                             single_example(
                                 "Disabled",
-                                Button::new("disabled", "Disabled")
+                                Button::new("disabled", "Disabled", cx)
                                     .disabled(true)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Selected",
-                                Button::new("selected", "Selected")
+                                Button::new("selected", "Selected", cx)
                                     .toggle_state(true)
                                     .into_any_element(),
                             ),
@@ -576,21 +584,21 @@ impl Component for Button {
                         vec![
                             single_example(
                                 "Icon Start",
-                                Button::new("icon_start", "Icon Start")
+                                Button::new("icon-start", "Icon Start", cx)
                                     .icon(IconName::Check)
                                     .icon_position(IconPosition::Start)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Icon End",
-                                Button::new("icon_end", "Icon End")
+                                Button::new("icon-end", "Icon End", cx)
                                     .icon(IconName::Check)
                                     .icon_position(IconPosition::End)
                                     .into_any_element(),
                             ),
                             single_example(
                                 "Icon Color",
-                                Button::new("icon_color", "Icon Color")
+                                Button::new("icon_color", "Icon Color", cx)
                                     .icon(IconName::Check)
                                     .icon_color(Color::Accent)
                                     .into_any_element(),

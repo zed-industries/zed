@@ -167,7 +167,7 @@ impl Render for ProfileSelector {
         if configured_model.model.supports_tools() {
             let this = cx.entity().clone();
             let focus_handle = self.focus_handle.clone();
-            let trigger_button = Button::new("profile-selector-model", selected_profile)
+            let trigger_button = Button::new("profile-selector-model", selected_profile, cx)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)
                 .icon(IconName::ChevronDown)
@@ -201,7 +201,7 @@ impl Render for ProfileSelector {
                 })
                 .into_any_element()
         } else {
-            Button::new("tools-not-supported-button", "Tools Unsupported")
+            Button::new("tools-not-supported-button", "Tools Unsupported", cx)
                 .disabled(true)
                 .label_size(LabelSize::Small)
                 .color(Color::Muted)

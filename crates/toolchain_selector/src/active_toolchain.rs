@@ -232,7 +232,7 @@ impl Render for ActiveToolchain {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             let term = self.term.clone();
             el.child(
-                Button::new("change-toolchain", active_toolchain.name.clone())
+                Button::new("change-toolchain", active_toolchain.name.clone(), cx)
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {

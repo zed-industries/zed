@@ -134,7 +134,7 @@ impl Component for Banner {
         ComponentScope::DataDisplay
     }
 
-    fn preview(_window: &mut Window, _cx: &mut App) -> Option<AnyElement> {
+    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
         let severity_examples = vec![
             single_example(
                 "Default",
@@ -148,7 +148,7 @@ impl Component for Banner {
                     .severity(Severity::Info)
                     .child(Label::new("This is an informational message"))
                     .action_slot(
-                        Button::new("learn-more", "Learn More")
+                        Button::new("learn-more", "Learn More", cx)
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End),
@@ -160,7 +160,7 @@ impl Component for Banner {
                 Banner::new()
                     .severity(Severity::Success)
                     .child(Label::new("Operation completed successfully"))
-                    .action_slot(Button::new("dismiss", "Dismiss"))
+                    .action_slot(Button::new("dismiss", "Dismiss", cx))
                     .into_any_element(),
             ),
             single_example(
@@ -168,7 +168,7 @@ impl Component for Banner {
                 Banner::new()
                     .severity(Severity::Warning)
                     .child(Label::new("Your settings file uses deprecated settings"))
-                    .action_slot(Button::new("update", "Update Settings"))
+                    .action_slot(Button::new("update", "Update Settings", cx))
                     .into_any_element(),
             ),
             single_example(
@@ -176,7 +176,7 @@ impl Component for Banner {
                 Banner::new()
                     .severity(Severity::Error)
                     .child(Label::new("Connection error: unable to connect to server"))
-                    .action_slot(Button::new("reconnect", "Retry"))
+                    .action_slot(Button::new("reconnect", "Retry", cx))
                     .into_any_element(),
             ),
         ];

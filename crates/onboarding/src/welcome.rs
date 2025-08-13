@@ -235,7 +235,7 @@ impl Render for WelcomePage {
                                             .border_color(cx.theme().colors().border.opacity(0.6))
                                             .border_dashed()
                                             .child(
-                                                    Button::new("welcome-exit", "Return to Setup")
+                                                    Button::new("welcome-exit", "Return to Setup", cx)
                                                         .tab_index(last_index as isize)
                                                         .full_width()
                                                         .label_size(LabelSize::XSmall)

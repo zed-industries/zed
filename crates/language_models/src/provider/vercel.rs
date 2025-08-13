@@ -517,11 +517,13 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            cx,
                             "Create one by visiting",
                             Some("Vercel v0's console"),
                             Some("https://v0.dev/chat/settings/keys"),
                         ))
                         .child(InstructionListItem::text_only(
+                            cx,
                             "Paste your API key below and hit enter to start using the agent",
                         )),
                 )
@@ -559,7 +561,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-api-key", "Reset API Key")
+                    Button::new("reset-api-key", "Reset API Key",cx)
                         .label_size(LabelSize::Small)
                         .icon(IconName::Undo)
                         .icon_size(IconSize::Small)

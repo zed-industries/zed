@@ -74,7 +74,7 @@ impl Render for DiagnosticIndicator {
         let status = if let Some(diagnostic) = &self.current_diagnostic {
             let message = diagnostic.message.split('\n').next().unwrap().to_string();
             Some(
-                Button::new("diagnostic_message", message)
+                Button::new("diagnostic_message", message, cx)
                     .label_size(LabelSize::Small)
                     .tooltip(|window, cx| {
                         Tooltip::for_action(

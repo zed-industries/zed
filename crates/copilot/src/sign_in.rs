@@ -264,7 +264,7 @@ impl CopilotCodeVerification {
                     .size(ui::LabelSize::Small),
             )
             .child(
-                Button::new("connect-button", connect_button_label)
+                Button::new("connect-button", connect_button_label, cx)
                     .on_click({
                         let verification_uri = data.verification_uri.clone();
                         cx.listener(move |this, _, _window, cx| {
@@ -276,7 +276,7 @@ impl CopilotCodeVerification {
                     .style(ButtonStyle::Filled),
             )
             .child(
-                Button::new("copilot-enable-cancel-button", "Cancel")
+                Button::new("copilot-enable-cancel-button", "Cancel", cx)
                     .full_width()
                     .on_click(cx.listener(|_, _, _, cx| {
                         cx.emit(DismissEvent);
@@ -292,7 +292,7 @@ impl CopilotCodeVerification {
                 "You can update your settings or sign out from the Copilot menu in the status bar.",
             ))
             .child(
-                Button::new("copilot-enabled-done-button", "Done")
+                Button::new("copilot-enabled-done-button", "Done", cx)
                     .full_width()
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
@@ -306,12 +306,12 @@ impl CopilotCodeVerification {
                 "You can enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.",
             ).color(Color::Warning))
             .child(
-                Button::new("copilot-subscribe-button", "Subscribe on GitHub")
+                Button::new("copilot-subscribe-button", "Subscribe on GitHub", cx)
                     .full_width()
                     .on_click(|_, _, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
             .child(
-                Button::new("copilot-subscribe-cancel-button", "Cancel")
+                Button::new("copilot-subscribe-cancel-button", "Cancel", cx)
                     .full_width()
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )

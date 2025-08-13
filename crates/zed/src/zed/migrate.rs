@@ -235,7 +235,7 @@ impl Render for MigrationBanner {
                     ),
             )
             .child(
-                Button::new("backup-and-migrate", "Backup and Update").on_click(
+                Button::new("backup-and-migrate", "Backup and Update", cx).on_click(
                     move |_, window, cx| {
                         let fs = <dyn Fs>::global(cx);
                         match migration_type {

@@ -772,7 +772,7 @@ impl Render for ComponentPreview {
                             .border_t_1()
                             .border_color(cx.theme().colors().border)
                             .child(
-                                Button::new("toast-test", "Launch Toast")
+                                Button::new("toast-test", "Launch Toast", cx)
                                     .full_width()
                                     .on_click(cx.listener({
                                         move |this, _, _window, cx| {

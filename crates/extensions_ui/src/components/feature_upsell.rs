@@ -56,7 +56,7 @@ impl RenderOnce for FeatureUpsell {
                 self.docs_url,
                 |el, docs_url| {
                     el.child(
-                        Button::new("open_docs", "View Documentation")
+                        Button::new("open_docs", "View Documentation", cx)
                             .icon(IconName::ArrowUpRight)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::End)

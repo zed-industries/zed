@@ -363,7 +363,7 @@ impl CommitModal {
             .map(|b| b.name().to_owned())
             .unwrap_or_else(|| "<no branch>".to_owned());
 
-        let branch_picker_button = panel_button(branch)
+        let branch_picker_button = panel_button(branch, cx)
             .icon(IconName::GitBranch)
             .icon_size(IconSize::Small)
             .icon_color(Color::Placeholder)

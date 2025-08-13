@@ -1779,7 +1779,7 @@ impl PickerDelegate for FileFinderDelegate {
                                 }),
                         )
                         .child(
-                            Button::new("open-selection", "Open")
+                            Button::new("open-selection", "Open", cx)
                                 .key_binding(
                                     KeyBinding::for_action_in(
                                         &menu::Confirm,

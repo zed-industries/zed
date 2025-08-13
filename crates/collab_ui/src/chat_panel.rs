@@ -987,7 +987,7 @@ impl Render for ChatPanel {
                             )
                             .child(
                                 div().pt_1().w_full().items_center().child(
-                                    Button::new("toggle-collab", "Open")
+                                    Button::new("toggle-collab", "Open", cx)
                                         .full_width()
                                         .key_binding(KeyBinding::for_action(
                                             &collab_panel::ToggleFocus,

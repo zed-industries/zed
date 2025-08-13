@@ -668,7 +668,7 @@ impl PickerDelegate for TasksModalDelegate {
                         .map(|(label, action)| {
                             let keybind = KeyBinding::for_action(&*action, window, cx);
 
-                            Button::new("edit-current-task", label)
+                            Button::new("edit-current-task", label, cx)
                                 .when_some(keybind, |this, keybind| this.key_binding(keybind))
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx);
@@ -691,7 +691,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 "Spawn Oneshot"
                             };
 
-                            Button::new("spawn-onehshot", spawn_oneshot_label)
+                            Button::new("spawn-onehshot", spawn_oneshot_label, cx)
                                 .key_binding(keybind)
                                 .on_click(move |_, window, cx| {
                                     window.dispatch_action(action.boxed_clone(), cx)
@@ -706,14 +706,14 @@ impl PickerDelegate for TasksModalDelegate {
                                     } else {
                                         "Spawn Without History"
                                     };
-                                    Button::new("spawn", label).key_binding(keybind).on_click(
-                                        move |_, window, cx| {
+                                    Button::new("spawn", label, cx)
+                                        .key_binding(keybind)
+                                        .on_click(move |_, window, cx| {
                                             window.dispatch_action(
                                                 menu::SecondaryConfirm.boxed_clone(),
                                                 cx,
                                             )
-                                        },
-                                    )
+                                        })
                                 },
                             ),
                         )
@@ -723,7 +723,7 @@ impl PickerDelegate for TasksModalDelegate {
                                 let run_entry_label =
                                     if is_recent_selected { "Rerun" } else { "Spawn" };
 
-                                Button::new("spawn", run_entry_label)
+                                Button::new("spawn", run_entry_label, cx)
                                     .key_binding(keybind)
                                     .on_click(|_, window, cx| {
                                         window.dispatch_action(menu::Confirm.boxed_clone(), cx);

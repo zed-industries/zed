@@ -128,12 +128,12 @@ impl Render for ProjectDiagnosticsEditor {
                         self.summary.warning_count, plural_suffix
                     );
                     this.child(
-                        Button::new("diagnostics-show-warning-label", label).on_click(cx.listener(
-                            |this, _, window, cx| {
+                        Button::new("diagnostics-show-warning-label", label, cx).on_click(
+                            cx.listener(|this, _, window, cx| {
                                 this.toggle_warnings(&Default::default(), window, cx);
                                 cx.notify();
-                            },
-                        )),
+                            }),
+                        ),
                     )
                 })
         } else {

@@ -679,11 +679,13 @@ impl Render for ConfigurationView {
                 .child(
                     List::new()
                         .child(InstructionListItem::new(
+                            cx,
                             "Get your API key from the",
                             Some("DeepSeek console"),
                             Some("https://platform.deepseek.com/api_keys"),
                         ))
                         .child(InstructionListItem::text_only(
+                            cx,
                             "Paste your API key below and hit enter to start using the assistant",
                         )),
                 )
@@ -728,7 +730,7 @@ impl Render for ConfigurationView {
                         })),
                 )
                 .child(
-                    Button::new("reset-key", "Reset Key")
+                    Button::new("reset-key", "Reset Key", cx)
                         .label_size(LabelSize::Small)
                         .icon(Some(IconName::Trash))
                         .icon_size(IconSize::Small)

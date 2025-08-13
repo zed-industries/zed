@@ -759,7 +759,7 @@ impl Render for ProjectDiff {
                         })
                         .child(
                             h_flex().justify_around().mt_1().child(
-                                Button::new("project-diff-close-button", "Close")
+                                Button::new("project-diff-close-button", "Close", cx)
                                     // .style(ButtonStyle::Transparent)
                                     .key_binding(KeyBinding::for_action_in(
                                         &CloseActiveItem::default(),
@@ -936,7 +936,7 @@ impl Render for ProjectDiffToolbar {
                 h_group_sm()
                     .when(button_states.selection, |el| {
                         el.child(
-                            Button::new("stage", "Toggle Staged")
+                            Button::new("stage", "Toggle Staged", cx)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Toggle Staged",
                                     &ToggleStaged,
@@ -950,7 +950,7 @@ impl Render for ProjectDiffToolbar {
                     })
                     .when(!button_states.selection, |el| {
                         el.child(
-                            Button::new("stage", "Stage")
+                            Button::new("stage", "Stage", cx)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Stage and go to next hunk",
                                     &StageAndNext,
@@ -961,7 +961,7 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                         .child(
-                            Button::new("unstage", "Unstage")
+                            Button::new("unstage", "Unstage", cx)
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage and go to next hunk",
                                     &UnstageAndNext,
@@ -1011,7 +1011,7 @@ impl Render for ProjectDiffToolbar {
                         button_states.unstage_all && !button_states.stage_all,
                         |el| {
                             el.child(
-                                Button::new("unstage-all", "Unstage All")
+                                Button::new("unstage-all", "Unstage All", cx)
                                     .tooltip(Tooltip::for_action_title_in(
                                         "Unstage all changes",
                                         &UnstageAll,
@@ -1030,7 +1030,7 @@ impl Render for ProjectDiffToolbar {
                                 // todo make it so that changing to say "Unstaged"
                                 // doesn't change the position.
                                 div().child(
-                                    Button::new("stage-all", "Stage All")
+                                    Button::new("stage-all", "Stage All", cx)
                                         .disabled(!button_states.stage_all)
                                         .tooltip(Tooltip::for_action_title_in(
                                             "Stage all changes",
@@ -1045,7 +1045,7 @@ impl Render for ProjectDiffToolbar {
                         },
                     )
                     .child(
-                        Button::new("commit", "Commit")
+                        Button::new("commit", "Commit", cx)
                             .tooltip(Tooltip::for_action_title_in(
                                 "Commit",
                                 &Commit,

@@ -234,7 +234,7 @@ impl PickerDelegate for KernelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .child(
-                    Button::new("kernel-docs", "Kernel Docs")
+                    Button::new("kernel-docs", "Kernel Docs", cx)
                         .icon(IconName::ArrowUpRight)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)

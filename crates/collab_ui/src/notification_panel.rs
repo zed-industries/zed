@@ -319,20 +319,22 @@ impl NotificationPanel {
                                         h_flex()
                                             .flex_grow()
                                             .justify_end()
-                                            .child(Button::new("decline", "Decline").on_click({
-                                                let notification = notification.clone();
-                                                let entity = cx.entity().clone();
-                                                move |_, _, cx| {
-                                                    entity.update(cx, |this, cx| {
-                                                        this.respond_to_notification(
-                                                            notification.clone(),
-                                                            false,
-                                                            cx,
-                                                        )
-                                                    });
-                                                }
-                                            }))
-                                            .child(Button::new("accept", "Accept").on_click({
+                                            .child(Button::new("decline", "Decline", cx).on_click(
+                                                {
+                                                    let notification = notification.clone();
+                                                    let entity = cx.entity().clone();
+                                                    move |_, _, cx| {
+                                                        entity.update(cx, |this, cx| {
+                                                            this.respond_to_notification(
+                                                                notification.clone(),
+                                                                false,
+                                                                cx,
+                                                            )
+                                                        });
+                                                    }
+                                                },
+                                            ))
+                                            .child(Button::new("accept", "Accept", cx).on_click({
                                                 let notification = notification.clone();
                                                 let entity = cx.entity().clone();
                                                 move |_, _, cx| {
@@ -631,7 +633,7 @@ impl Render for NotificationPanel {
                             .gap_2()
                             .p_4()
                             .child(
-                                Button::new("connect_prompt_button", "Connect")
+                                Button::new("connect_prompt_button", "Connect", cx)
                                     .icon_color(Color::Muted)
                                     .icon(IconName::Github)
                                     .icon_position(IconPosition::Start)

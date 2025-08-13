@@ -2444,7 +2444,7 @@ impl AgentPanel {
                                         .gap_1()
                                         .max_w_48()
                                         .child(
-                                            Button::new("context", "Add Context")
+                                            Button::new("context", "Add Context", cx)
                                                 .label_size(LabelSize::Small)
                                                 .icon(IconName::FileCode)
                                                 .icon_position(IconPosition::Start)
@@ -2465,7 +2465,7 @@ impl AgentPanel {
                                                 }),
                                         )
                                         .child(
-                                            Button::new("mode", "Switch Model")
+                                            Button::new("mode", "Switch Model", cx)
                                                 .label_size(LabelSize::Small)
                                                 .icon(IconName::DatabaseZap)
                                                 .icon_position(IconPosition::Start)
@@ -2486,7 +2486,7 @@ impl AgentPanel {
                                                 }),
                                         )
                                         .child(
-                                            Button::new("settings", "View Settings")
+                                            Button::new("settings", "View Settings", cx)
                                                 .label_size(LabelSize::Small)
                                                 .icon(IconName::Settings)
                                                 .icon_position(IconPosition::Start)
@@ -2529,7 +2529,7 @@ impl AgentPanel {
                         self.render_empty_state_section_header(
                             "Recent",
                             Some(
-                                Button::new("view-history", "View All")
+                                Button::new("view-history", "View All", cx)
                                     .style(ButtonStyle::Subtle)
                                     .label_size(LabelSize::Small)
                                     .key_binding(
@@ -2727,7 +2727,7 @@ impl AgentPanel {
                 .severity(ui::Severity::Warning)
                 .child(Label::new(configuration_error.to_string()))
                 .action_slot(
-                    Button::new("settings", "Configure Provider")
+                    Button::new("settings", "Configure Provider", cx)
                         .style(ButtonStyle::Tinted(ui::TintColor::Warning))
                         .label_size(LabelSize::Small)
                         .key_binding(
@@ -2784,7 +2784,7 @@ impl AgentPanel {
                 h_flex()
                     .gap_1()
                     .child(
-                        Button::new("continue-conversation", "Continue")
+                        Button::new("continue-conversation", "Continue", cx)
                             .layer(ElevationIndex::ModalSurface)
                             .label_size(LabelSize::Small)
                             .key_binding(
@@ -2802,7 +2802,7 @@ impl AgentPanel {
                     )
                     .when(model.supports_burn_mode(), |this| {
                         this.child(
-                            Button::new("continue-burn-mode", "Continue with Burn Mode")
+                            Button::new("continue-burn-mode", "Continue with Burn Mode", cx)
                                 .style(ButtonStyle::Filled)
                                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .layer(ElevationIndex::ModalSurface)
@@ -2873,7 +2873,7 @@ impl AgentPanel {
         thread: &Entity<ActiveThread>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        Button::new("upgrade", "Upgrade")
+        Button::new("upgrade", "Upgrade", cx)
             .label_size(LabelSize::Small)
             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
             .on_click(cx.listener({
@@ -2965,7 +2965,7 @@ impl AgentPanel {
             .size(IconSize::Small)
             .color(Color::Error);
 
-        let retry_button = Button::new("retry", "Retry")
+        let retry_button = Button::new("retry", "Retry", cx)
             .icon(IconName::RotateCw)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
@@ -3009,7 +3009,7 @@ impl AgentPanel {
             .size(IconSize::Small)
             .color(Color::Error);
 
-        let retry_button = Button::new("retry", "Retry")
+        let retry_button = Button::new("retry", "Retry", cx)
             .icon(IconName::RotateCw)
             .icon_position(IconPosition::Start)
             .icon_size(IconSize::Small)
@@ -3034,22 +3034,26 @@ impl AgentPanel {
             .primary_action(retry_button);
 
         if can_enable_burn_mode {
-            let burn_mode_button = Button::new("enable_burn_retry", "Enable Burn Mode and Retry")
-                .icon(IconName::ZedBurnMode)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::Small)
-                .label_size(LabelSize::Small)
-                .on_click({
-                    let thread = thread.clone();
-                    move |_, window, cx| {
-                        thread.update(cx, |thread, cx| {
-                            thread.clear_last_error();
-                            thread.thread().update(cx, |thread, cx| {
-                                thread.enable_burn_mode_and_retry(Some(window.window_handle()), cx);
+            let burn_mode_button =
+                Button::new("enable_burn_retry", "Enable Burn Mode and Retry", cx)
+                    .icon(IconName::ZedBurnMode)
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::Small)
+                    .label_size(LabelSize::Small)
+                    .on_click({
+                        let thread = thread.clone();
+                        move |_, window, cx| {
+                            thread.update(cx, |thread, cx| {
+                                thread.clear_last_error();
+                                thread.thread().update(cx, |thread, cx| {
+                                    thread.enable_burn_mode_and_retry(
+                                        Some(window.window_handle()),
+                                        cx,
+                                    );
+                                });
                             });
-                        });
-                    }
-                });
+                        }
+                    });
             callout = callout.secondary_action(burn_mode_button);
         }
 

@@ -373,7 +373,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    Button::new("docs", "View Theme Docs")
+                    Button::new("docs", "View Theme Docs", cx)
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
                         .icon_size(IconSize::Small)
@@ -383,7 +383,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                         })),
                 )
                 .child(
-                    Button::new("more-themes", "Install Themes").on_click(cx.listener({
+                    Button::new("more-themes", "Install Themes", cx).on_click(cx.listener({
                         move |_, _, window, cx| {
                             window.dispatch_action(
                                 Box::new(Extensions {

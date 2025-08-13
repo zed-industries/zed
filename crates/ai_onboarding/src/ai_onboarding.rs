@@ -94,7 +94,7 @@ impl ZedAiOnboarding {
         self
     }
 
-    fn render_accept_terms_of_service(&self) -> AnyElement {
+    fn render_accept_terms_of_service(&self, cx: &mut App) -> AnyElement {
         v_flex()
             .gap_1()
             .w_full()
@@ -105,7 +105,7 @@ impl ZedAiOnboarding {
                     .mb_2(),
             )
             .child(
-                Button::new("terms_of_service", "Review Terms of Service")
+                Button::new("terms_of_service", "Review Terms of Service", cx)
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .icon(IconName::ArrowUpRight)
@@ -117,7 +117,7 @@ impl ZedAiOnboarding {
                     }),
             )
             .child(
-                Button::new("accept_terms", "Accept")
+                Button::new("accept_terms", "Accept", cx)
                     .full_width()
                     .style(ButtonStyle::Tinted(TintColor::Accent))
                     .on_click({
@@ -130,7 +130,7 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
-    fn render_sign_in_disclaimer(&self, _cx: &mut App) -> AnyElement {
+    fn render_sign_in_disclaimer(&self, cx: &mut App) -> AnyElement {
         let signing_in = matches!(self.sign_in_status, SignInStatus::SigningIn);
         let plan_definitions = PlanDefinitions;
 
@@ -144,7 +144,7 @@ impl ZedAiOnboarding {
             )
             .child(plan_definitions.pro_plan(false))
             .child(
-                Button::new("sign_in", "Try Zed Pro for Free")
+                Button::new("sign_in", "Try Zed Pro for Free", cx)
                     .disabled(signing_in)
                     .full_width()
                     .style(ButtonStyle::Tinted(ui::TintColor::Accent))
@@ -187,7 +187,7 @@ impl ZedAiOnboarding {
                         )
                         .child(plan_definitions.pro_plan(true))
                         .child(
-                            Button::new("pro", "Get Started")
+                            Button::new("pro", "Get Started", cx)
                                 .full_width()
                                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .on_click(move |_, _window, cx| {
@@ -268,7 +268,7 @@ impl ZedAiOnboarding {
                         )
                         .child(plan_definitions.pro_trial(true))
                         .child(
-                            Button::new("pro", "Start Free Trial")
+                            Button::new("pro", "Start Free Trial", cx)
                                 .full_width()
                                 .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                 .on_click(move |_, _window, cx| {
@@ -320,7 +320,7 @@ impl ZedAiOnboarding {
             .into_any_element()
     }
 
-    fn render_pro_plan_state(&self, _cx: &mut App) -> AnyElement {
+    fn render_pro_plan_state(&self, cx: &mut App) -> AnyElement {
         let plan_definitions = PlanDefinitions;
 
         v_flex()
@@ -333,7 +333,7 @@ impl ZedAiOnboarding {
             )
             .child(plan_definitions.pro_plan(false))
             .child(
-                Button::new("pro", "Continue with Zed Pro")
+                Button::new("pro", "Continue with Zed Pro", cx)
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .on_click({
@@ -358,7 +358,7 @@ impl RenderOnce for ZedAiOnboarding {
                     Some(Plan::ZedPro) => self.render_pro_plan_state(cx),
                 }
             } else {
-                self.render_accept_terms_of_service()
+                self.render_accept_terms_of_service(cx)
             }
         } else {
             self.render_sign_in_disclaimer(cx)
