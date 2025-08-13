@@ -1,13 +1,21 @@
-use std::{error::Error, fmt, path::Path, rc::Rc};
-
+use crate::AcpThread;
 use agent_client_protocol::{self as acp};
 use anyhow::Result;
 use collections::IndexMap;
 use gpui::{AsyncApp, Entity, SharedString, Task};
 use project::Project;
+use std::{error::Error, fmt, path::Path, rc::Rc, sync::Arc};
 use ui::{App, IconName};
+use uuid::Uuid;
 
-use crate::{AcpThread, UserMessageId};
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserMessageId(Arc<str>);
+
+impl UserMessageId {
+    pub fn new() -> Self {
+        Self(Uuid::new_v4().to_string().into())
+    }
+}
 
 pub trait AgentConnection {
     fn new_thread(
@@ -21,8 +29,12 @@ pub trait AgentConnection {
 
     fn authenticate(&self, method: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>>;
 
-    fn prompt(&self, params: acp::PromptRequest, cx: &mut App)
-    -> Task<Result<acp::PromptResponse>>;
+    fn prompt(
+        &self,
+        user_message_id: Option<UserMessageId>,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>>;
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
 

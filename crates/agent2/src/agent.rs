@@ -637,9 +637,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn prompt(
         &self,
+        id: Option<acp_thread::UserMessageId>,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
+        let id = id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
         let agent = self.0.clone();
         log::info!("Received prompt request for session: {}", session_id);
@@ -660,13 +662,14 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
                 })?;
             log::debug!("Found session for: {}", session_id);
 
-            let message: Vec<MessageContent> = params
+            let content: Vec<MessageContent> = params
                 .prompt
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>();
-            log::info!("Converted prompt to message: {} chars", message.len());
-            log::debug!("Message content: {:?}", message);
+            log::info!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Message id: {:?}", id);
+            log::debug!("Message content: {:?}", content);
 
             // Get model using the ModelSelector capability (always available for agent2)
             // Get the selected model from the thread directly
@@ -674,7 +677,8 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
             // Send to thread
             log::info!("Sending message to thread with model: {:?}", model.name());
-            let mut response_stream = thread.update(cx, |thread, cx| thread.send(message, cx))?;
+            let mut response_stream =
+                thread.update(cx, |thread, cx| thread.send(id, content, cx))?;
 
             // Handle response stream and forward to session.acp_thread
             while let Some(result) = response_stream.next().await {

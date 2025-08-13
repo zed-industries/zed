@@ -3789,6 +3789,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<acp_thread::UserMessageId>,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -3873,6 +3874,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<acp_thread::UserMessageId>,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {

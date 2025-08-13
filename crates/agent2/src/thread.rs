@@ -235,14 +235,17 @@ impl Thread {
     /// Sending a message results in the model streaming a response, which could include tool calls.
     /// After calling tools, the model will stops and waits for any outstanding tool calls to be completed and their results sent.
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
-    pub fn send(
+    pub fn send<T>(
         &mut self,
-        content: impl Into<UserMessage>,
+        message_id: acp_thread::UserMessageId,
+        content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
-    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>> {
-        let content = content.into().0;
-
+    ) -> mpsc::UnboundedReceiver<Result<AgentResponseEvent, LanguageModelCompletionError>>
+    where
+        T: Into<MessageContent>,
+    {
         let model = self.selected_model.clone();
+        let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
         log::info!("Thread::send called with model: {:?}", model.name());
         log::debug!("Thread::send content: {:?}", content);
 
@@ -737,20 +740,6 @@ impl Thread {
             markdown.push_str(&message.to_markdown());
         }
         markdown
-    }
-}
-
-pub struct UserMessage(Vec<MessageContent>);
-
-impl From<Vec<MessageContent>> for UserMessage {
-    fn from(content: Vec<MessageContent>) -> Self {
-        UserMessage(content)
-    }
-}
-
-impl<T: Into<MessageContent>> From<T> for UserMessage {
-    fn from(content: T) -> Self {
-        UserMessage(vec![content.into()])
     }
 }
 

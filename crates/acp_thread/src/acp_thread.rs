@@ -27,16 +27,6 @@ use std::rc::Rc;
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
 use util::{ResultExt, debug_panic};
-use uuid::Uuid;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UserMessageId(Arc<str>);
-
-impl UserMessageId {
-    pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string().into())
-    }
-}
 
 #[derive(Debug)]
 pub struct UserMessage {
@@ -1162,30 +1152,23 @@ impl AcpThread {
         let (old_checkpoint_tx, old_checkpoint_rx) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
         let cancel_task = self.cancel(cx);
+        let request = acp::PromptRequest {
+            prompt: message,
+            session_id: self.session_id.clone(),
+        };
 
-        self.send_task = Some(cx.spawn(async move |this, cx| {
-            async {
+        self.send_task = Some(cx.spawn({
+            let message_id = message_id.clone();
+            async move |this, cx| {
                 cancel_task.await;
 
                 old_checkpoint_tx.send(old_checkpoint.await).ok();
-                let result = this
-                    .update(cx, |this, cx| {
-                        this.connection.prompt(
-                            acp::PromptRequest {
-                                prompt: message,
-                                session_id: this.session_id.clone(),
-                            },
-                            cx,
-                        )
-                    })?
-                    .await;
-
-                tx.send(result).log_err();
-
-                anyhow::Ok(())
+                if let Ok(result) = this.update(cx, |this, cx| {
+                    this.connection.prompt(message_id, request, cx)
+                }) {
+                    tx.send(result.await).log_err();
+                }
             }
-            .await
-            .log_err();
         }));
 
         cx.spawn(async move |this, cx| {
@@ -2255,6 +2238,7 @@ mod tests {
 
         fn prompt(
             &self,
+            _id: Option<UserMessageId>,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
