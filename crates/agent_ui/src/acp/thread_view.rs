@@ -2670,9 +2670,9 @@ impl AcpThreadView {
                             selections.select_anchor_ranges([anchor..anchor]);
                         })
                     } else {
-                        let line = tool_call_location.line.unwrap_or_default();
+                        let row = tool_call_location.line.unwrap_or_default();
                         editor.change_selections(Default::default(), window, cx, |selections| {
-                            selections.select_ranges([Point::new(line, 0)..Point::new(line, 0)]);
+                            selections.select_ranges([Point::new(row, 0)..Point::new(row, 0)]);
                         })
                     }
                 })?;

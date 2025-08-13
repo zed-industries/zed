@@ -231,6 +231,7 @@ dependencies = [
  "task",
  "tempfile",
  "terminal",
+ "text",
  "theme",
  "tree-sitter-rust",
  "ui",

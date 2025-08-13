@@ -6,7 +6,7 @@ use gpui::{App, Entity, SharedString, Task};
 use indoc::formatdoc;
 use language::Point;
 use language_model::{LanguageModelImage, LanguageModelToolResultContent};
-use project::{ImageItem, Project, WorktreeSettings, image_store};
+use project::{AgentLocation, ImageItem, Project, WorktreeSettings, image_store};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -180,9 +180,10 @@ impl AgentTool for ReadFileTool {
                 anyhow::bail!("{file_path} not found");
             }
 
+            let mut anchor = None;
+
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
-                let mut anchor = None;
                 let result = buffer.read_with(cx, |buffer, _cx| {
                     let text = buffer.text();
                     // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
@@ -216,7 +217,7 @@ impl AgentTool for ReadFileTool {
                     let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
 
                     action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer, cx);
+                        log.buffer_read(buffer.clone(), cx);
                     })?;
 
                     Ok(result.into())
@@ -246,10 +247,17 @@ impl AgentTool for ReadFileTool {
 
             project.update(cx, |project, cx| {
                 if let Some(abs_path) = project.absolute_path(&project_path, cx) {
+                    project.set_agent_location(
+                        Some(AgentLocation {
+                            buffer: buffer.downgrade(),
+                            position: anchor.unwrap_or(text::Anchor::MIN),
+                        }),
+                        cx,
+                    );
                     event_stream.update_fields(ToolCallUpdateFields {
                         locations: Some(vec![acp::ToolCallLocation {
                             path: abs_path,
-                            line: input.start_line,
+                            line: input.start_line.map(|line| line.saturating_sub(1)),
                         }]),
                         ..Default::default()
                     });

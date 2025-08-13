@@ -288,10 +288,10 @@ impl ToolCall {
         let buffer = buffer.await.log_err()?;
         let position = buffer
             .update(cx, |buffer, _| {
-                if let Some(line) = location.line {
+                if let Some(row) = location.line {
                     let snapshot = buffer.snapshot();
-                    let column = snapshot.indent_size_for_line(line).len;
-                    let point = snapshot.clip_point(Point::new(line, column), Bias::Left);
+                    let column = snapshot.indent_size_for_line(row).len;
+                    let point = snapshot.clip_point(Point::new(row, column), Bias::Left);
                     snapshot.anchor_before(point)
                 } else {
                     Anchor::MIN
@@ -948,37 +948,6 @@ impl AcpThread {
             })
         })
         .detach();
-    }
-
-    pub fn set_project_location(&self, location: acp::ToolCallLocation, cx: &mut Context<Self>) {
-        self.project.update(cx, |project, cx| {
-            let Some(path) = project.project_path_for_absolute_path(&location.path, cx) else {
-                return;
-            };
-            let buffer = project.open_buffer(path, cx);
-            cx.spawn(async move |project, cx| {
-                let buffer = buffer.await?;
-
-                project.update(cx, |project, cx| {
-                    let position = if let Some(line) = location.line {
-                        let snapshot = buffer.read(cx).snapshot();
-                        let point = snapshot.clip_point(Point::new(line, 0), Bias::Left);
-                        snapshot.anchor_before(point)
-                    } else {
-                        Anchor::MIN
-                    };
-
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })
-            })
-            .detach_and_log_err(cx);
-        });
     }
 
     pub fn request_tool_call_authorization(
