@@ -22,6 +22,7 @@ use project::{AgentLocation, Project};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Formatter, Write};
+use std::ops::Range;
 use std::process::ExitStatus;
 use std::rc::Rc;
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
@@ -631,8 +632,8 @@ pub struct AcpThread {
 }
 
 pub enum AcpThreadEvent {
-    NewEntry,
-    EntryUpdated(usize),
+    EntriesUpdated(Range<usize>),
+    EntriesRemoved(Range<usize>),
     ToolAuthorizationRequired,
     Stopped,
     Error,
@@ -807,7 +808,8 @@ impl AcpThread {
         {
             *id = message_id.or(id.take());
             content.append(chunk, &language_registry, cx);
-            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+            let idx = entries_len - 1;
+            cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
         } else {
             let content = ContentBlock::new(chunk, &language_registry, cx);
             self.push_entry(
@@ -832,7 +834,8 @@ impl AcpThread {
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::AssistantMessage(AssistantMessage { chunks }) = last_entry
         {
-            cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
+            let idx = entries_len - 1;
+            cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
             match (chunks.last_mut(), is_thought) {
                 (Some(AssistantMessageChunk::Message { block }), false)
                 | (Some(AssistantMessageChunk::Thought { block }), true) => {
@@ -865,8 +868,9 @@ impl AcpThread {
     }
 
     fn push_entry(&mut self, entry: AgentThreadEntry, cx: &mut Context<Self>) {
+        let idx = self.entries.len();
         self.entries.push(entry);
-        cx.emit(AcpThreadEvent::NewEntry);
+        cx.emit(AcpThreadEvent::EntriesUpdated(idx..idx + 1));
     }
 
     pub fn update_tool_call(
@@ -902,7 +906,7 @@ impl AcpThread {
             }
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
 
         Ok(())
     }
@@ -928,7 +932,7 @@ impl AcpThread {
         if let Some((ix, current_call)) = self.tool_call_mut(&call.id) {
             *current_call = call;
 
-            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+            cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
         } else {
             self.push_entry(AgentThreadEntry::ToolCall(call), cx);
         };
@@ -993,7 +997,7 @@ impl AcpThread {
                 }
                 if tool_call.resolved_locations != resolved_locations {
                     tool_call.resolved_locations = resolved_locations;
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
                 }
             })
         })
@@ -1048,7 +1052,7 @@ impl AcpThread {
             panic!("tried to authorize an already authorized tool call");
         }
 
-        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
     }
 
     /// Returns true if the last turn is awaiting tool authorization
@@ -1202,7 +1206,7 @@ impl AcpThread {
                         this.update(cx, |this, cx| {
                             if let Some((ix, message)) = this.user_message_mut(&message_id) {
                                 message.checkpoint = Some(old_checkpoint);
-                                cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                                cx.emit(AcpThreadEvent::EntriesUpdated(ix..ix + 1));
                             }
                         })?;
                     }
@@ -1294,8 +1298,9 @@ impl AcpThread {
                 .await?;
             this.update(cx, |this, cx| {
                 if let Some((ix, _)) = this.user_message_mut(&id) {
+                    let range = ix..this.entries.len();
                     this.entries.truncate(ix);
-                    // todo!(emit event)
+                    cx.emit(AcpThreadEvent::EntriesRemoved(range));
                 }
             })
         })

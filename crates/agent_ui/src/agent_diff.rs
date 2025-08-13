@@ -1501,27 +1501,20 @@ impl AgentDiff {
         cx: &mut Context<Self>,
     ) {
         match event {
-            AcpThreadEvent::NewEntry => {
-                if thread
-                    .read(cx)
-                    .entries()
-                    .last()
-                    .map_or(false, |entry| entry.diffs().next().is_some())
-                {
-                    self.update_reviewing_editors(workspace, window, cx);
+            AcpThreadEvent::EntriesUpdated(range) => {
+                for ix in range.clone() {
+                    if thread
+                        .read(cx)
+                        .entries()
+                        .get(ix)
+                        .map_or(false, |entry| entry.diffs().next().is_some())
+                    {
+                        self.update_reviewing_editors(workspace, window, cx);
+                    }
                 }
             }
-            AcpThreadEvent::EntryUpdated(ix) => {
-                if thread
-                    .read(cx)
-                    .entries()
-                    .get(*ix)
-                    .map_or(false, |entry| entry.diffs().next().is_some())
-                {
-                    self.update_reviewing_editors(workspace, window, cx);
-                }
-            }
-            AcpThreadEvent::Stopped
+            AcpThreadEvent::EntriesRemoved(_)
+            | AcpThreadEvent::Stopped
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::Error
             | AcpThreadEvent::ServerExited(_) => {}
