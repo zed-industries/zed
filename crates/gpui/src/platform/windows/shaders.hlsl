@@ -1,6 +1,6 @@
 cbuffer GlobalParams: register(b0) {
     float2 global_viewport_size;
-    uint2 _global_pad;
+    uint2 _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -23,11 +23,6 @@ struct Edges {
     float right;
     float bottom;
     float left;
-};
-
-struct ContentMask {
-    Bounds bounds;
-    Corners corner_radii;
 };
 
 struct Hsla {
@@ -261,15 +256,6 @@ float pick_corner_radius(float2 center_to_point, Corners corner_radii) {
     }
 }
 
-Corners max_corner_radii(Corners a, Corners b) {
-    Corners output;
-    output.top_left = max(a.top_left, b.top_left);
-    output.top_right = max(a.top_right, b.top_right);
-    output.bottom_right = max(a.bottom_right, b.bottom_right);
-    output.bottom_left = max(a.bottom_left, b.bottom_left);
-    return output;
-}
-
 float4 to_device_position_transformed(float2 unit_vertex, Bounds bounds,
                                       TransformationMatrix transformation) {
     float2 position = unit_vertex * bounds.size + bounds.origin;
@@ -463,6 +449,11 @@ float quarter_ellipse_sdf(float2 pt, float2 radii) {
 **
 */
 
+struct ContentMask {
+    Bounds bounds;
+    Corners corner_radii;
+}
+
 struct Quad {
     uint order;
     uint border_style;
@@ -522,11 +513,21 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint quad_id: SV_Insta
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
     Quad quad = quads[input.quad_id];
-    float4 background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
 
-    // Apply content_mask's corner radii to the quad's corner radii.
-    quad.corner_radii = max_corner_radii(quad.corner_radii, quad.content_mask.corner_radii);
+    // Signed distance field threshold for inclusion of pixels. 0.5 is the
+    // minimum distance between the center of the pixel and the edge.
+    const float antialias_threshold = 0.5;
+
+    float4 background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+        input.background_solid, input.background_color0, input.background_color1);
+    float4 border_color = input.border_color;
+
+    // Apply content_mask corner radii clipping
+    float clip_sdf = quad_sdf(input.position.xy, quad.content_mask.bounds,
+        quad.content_mask.corner_radii);
+    float clip_alpha = saturate(antialias_threshold - clip_sdf);
+    background_color.a *= clip_alpha;
+    border_color *= clip_alpha;
 
     bool unrounded = quad.corner_radii.top_left == 0.0 &&
         quad.corner_radii.top_right == 0.0 &&
@@ -546,10 +547,6 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     float2 half_size = size / 2.;
     float2 the_point = input.position.xy - quad.bounds.origin;
     float2 center_to_point = the_point - half_size;
-
-    // Signed distance field threshold for inclusion of pixels. 0.5 is the
-    // minimum distance between the center of the pixel and the edge.
-    const float antialias_threshold = 0.5;
 
     // Radius of the nearest corner
     float corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
@@ -633,7 +630,6 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
 
     float4 color = background_color;
     if (border_sdf < antialias_threshold) {
-        float4 border_color = input.border_color;
         // Dashed border logic when border_style == 1
         if (quad.border_style == 1) {
             // Position along the perimeter in "dash space", where each dash
@@ -668,6 +664,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
                 float border_width = is_horizontal ? border.x : border.y;
+                // When border width of some side is 0, we need to use the other side width for dash velocity.
+                if (border_width == 0.0) {
+                    border_width = is_horizontal ? border.y : border.x;
+                }
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;
@@ -1038,13 +1038,18 @@ UnderlineVertexOutput underline_vertex(uint vertex_id: SV_VertexID, uint underli
 }
 
 float4 underline_fragment(UnderlineFragmentInput input): SV_Target {
+    const float WAVE_FREQUENCY = 2.0;
+    const float WAVE_HEIGHT_RATIO = 0.8;
+
     Underline underline = underlines[input.underline_id];
     if (underline.wavy) {
         float half_thickness = underline.thickness * 0.5;
         float2 origin = underline.bounds.origin;
+
         float2 st = ((input.position.xy - origin) / underline.bounds.size.y) - float2(0., 0.5);
-        float frequency = (M_PI_F * (3. * underline.thickness)) / 8.;
-        float amplitude = 1. / (2. * underline.thickness);
+        float frequency = (M_PI_F * WAVE_FREQUENCY * underline.thickness) / underline.bounds.size.y;
+        float amplitude = (underline.thickness * WAVE_HEIGHT_RATIO) / underline.bounds.size.y;
+
         float sine = sin(st.x * frequency) * amplitude;
         float dSine = cos(st.x * frequency) * amplitude * frequency;
         float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
@@ -1086,6 +1091,7 @@ struct MonochromeSpriteFragmentInput {
     float4 position: SV_Position;
     float2 tile_position: POSITION;
     nointerpolation float4 color: COLOR;
+    float4 clip_distance: SV_ClipDistance;
 };
 
 StructuredBuffer<MonochromeSprite> mono_sprites: register(t1);
@@ -1108,10 +1114,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 }
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
-    float4 sample = t_sprite.Sample(s_sprite, input.tile_position);
-    float4 color = input.color;
-    color.a *= sample.a;
-    return color;
+    float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
+    return float4(input.color.rgb, input.color.a * sample);
 }
 
 /*
