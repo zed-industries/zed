@@ -15,7 +15,7 @@ use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyView, App, Corner, Entity, EventEmitter, FocusHandle,
-    Focusable, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
+    Focusable, Hsla, ScrollHandle, Subscription, Task, Transformation, WeakEntity, percentage,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -377,7 +377,7 @@ impl AgentConfiguration {
                                     ),
                             )
                             .child(
-                                Label::new("Add at least one provider to use AI-powered features.")
+                                Label::new("Add at least one provider to use AI-powered features with Zed's native agent.")
                                     .color(Color::Muted),
                             ),
                     ),
@@ -518,6 +518,14 @@ impl AgentConfiguration {
         }
     }
 
+    fn card_item_bg_color(&self, cx: &mut Context<Self>) -> Hsla {
+        cx.theme().colors().background.opacity(0.25)
+    }
+
+    fn card_item_border_color(&self, cx: &mut Context<Self>) -> Hsla {
+        cx.theme().colors().border.opacity(0.6)
+    }
+
     fn render_context_servers_section(
         &mut self,
         window: &mut Window,
@@ -535,7 +543,12 @@ impl AgentConfiguration {
                 v_flex()
                     .gap_0p5()
                     .child(Headline::new("Model Context Protocol (MCP) Servers"))
-                    .child(Label::new("Connect to context servers through the Model Context Protocol, either using Zed extensions or directly.").color(Color::Muted)),
+                    .child(
+                        Label::new(
+                            "All context servers connected through the Model Context Protocol.",
+                        )
+                        .color(Color::Muted),
+                    ),
             )
             .children(
                 context_server_ids.into_iter().map(|context_server_id| {
@@ -545,7 +558,7 @@ impl AgentConfiguration {
             .child(
                 h_flex()
                     .justify_between()
-                    .gap_2()
+                    .gap_1p5()
                     .child(
                         h_flex().w_full().child(
                             Button::new("add-context-server", "Add Custom Server")
@@ -635,8 +648,6 @@ impl AgentConfiguration {
             })
             .map_or([].as_slice(), |tools| tools.as_slice());
         let tool_count = tools.len();
-
-        let border_color = cx.theme().colors().border.opacity(0.6);
 
         let (source_icon, source_tooltip) = if is_from_extension {
             (
@@ -780,8 +791,8 @@ impl AgentConfiguration {
             .id(item_id.clone())
             .border_1()
             .rounded_md()
-            .border_color(border_color)
-            .bg(cx.theme().colors().background.opacity(0.2))
+            .border_color(self.card_item_border_color(cx))
+            .bg(self.card_item_bg_color(cx))
             .overflow_hidden()
             .child(
                 h_flex()
@@ -789,7 +800,11 @@ impl AgentConfiguration {
                     .justify_between()
                     .when(
                         error.is_some() || are_tools_expanded && tool_count >= 1,
-                        |element| element.border_b_1().border_color(border_color),
+                        |element| {
+                            element
+                                .border_b_1()
+                                .border_color(self.card_item_border_color(cx))
+                        },
                     )
                     .child(
                         h_flex()
@@ -973,11 +988,7 @@ impl AgentConfiguration {
             })
     }
 
-    fn render_agent_servers_section(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .border_b_1()
             .border_color(cx.theme().colors().border)
@@ -985,110 +996,76 @@ impl AgentConfiguration {
                 v_flex()
                     .p(DynamicSpacing::Base16.rems(cx))
                     .pr(DynamicSpacing::Base20.rems(cx))
-                    .pb_0()
-                    .gap_0p5()
-                    .child(Headline::new("Agent Client Protocol (ACP) Servers"))
-                    .child(Label::new("TODO: Connect to context servers via the Model Context Protocol either via Zed extensions or directly.").color(Color::Muted)),
+                    .gap_2()
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(Headline::new("External Agents"))
+                            .child(
+                                Label::new(
+                                    "Use the full power of Zed's UI with your favorite agent.",
+                                )
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(self.render_agent_server(IconName::AiGemini, "Gemini", true, cx))
+                    .child(self.render_agent_server(IconName::AiZed, "Agent Take 2", true, cx))
+                    .child(self.render_agent_server(IconName::AiClaude, "Claude Code", false, cx)),
             )
-            .child(self.render_agent_server(window, cx))
     }
 
     fn render_agent_server(
         &self,
-        _window: &mut Window,
+        icon: IconName,
+        name: impl Into<SharedString>,
+        connected: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        v_flex()
-            .pl(DynamicSpacing::Base08.rems(cx))
-            .pr(DynamicSpacing::Base20.rems(cx))
-            .pb(DynamicSpacing::Base08.rems(cx))
+        h_flex()
+            .p_1()
+            .pl_2()
+            .gap_1p5()
+            .justify_between()
+            .border_1()
+            .rounded_md()
+            .border_color(self.card_item_border_color(cx))
+            .bg(self.card_item_bg_color(cx))
+            .overflow_hidden()
             .child(
-                v_flex().py_1().child(
-                    h_flex()
-                        .p_1()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::AiClaude)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("Claude Code"))
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success),
-                                ),
-                        )
-                        .child(
-                            Button::new("start_acp_thread", "Start New Thread")
-                                .label_size(LabelSize::Small)
-                                .icon(IconName::Thread)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted),
-                        ),
-                ),
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                    .child(Label::new(name)),
             )
-            .child(Divider::horizontal())
-            .child(
-                v_flex().py_1().child(
-                    h_flex()
-                        .p_1()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::AiGemini)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("Google Gemini"))
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success),
-                                ),
-                        )
-                        .child(
-                            Button::new("start_acp_thread", "Start New Thread")
-                                .label_size(LabelSize::Small)
-                                .icon(IconName::Thread)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted),
-                        ),
-                ),
-            )
-            .child(Divider::horizontal())
-            .child(
-                v_flex().py_1().child(
-                    h_flex()
-                        .p_1()
-                        .justify_between()
-                        .child(
-                            h_flex()
-                                .gap_1p5()
-                                .child(
-                                    Icon::new(IconName::AiOpenAi)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(Label::new("OpenAI Codex")),
-                        )
-                        .child(
-                            Button::new("start_acp_thread", "Install Agent")
-                                .label_size(LabelSize::Small)
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted),
-                        ),
-                ),
-            )
+            .map(|this| {
+                if connected {
+                    this.child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Button::new("start_acp_thread", "Start New Thread")
+                                    .label_size(LabelSize::Small)
+                                    .icon(IconName::Thread)
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted),
+                            )
+                            .child(
+                                Switch::new("agent-switch", ToggleState::Selected)
+                                    .color(SwitchColor::Accent),
+                            ),
+                    )
+                } else {
+                    this.child(
+                        Button::new("start_acp_thread", "Install Agent")
+                            .label_size(LabelSize::Small)
+                            .icon(IconName::Plus)
+                            .icon_position(IconPosition::Start)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted),
+                    )
+                }
+            })
     }
 }
 
@@ -1109,7 +1086,7 @@ impl Render for AgentConfiguration {
                     .size_full()
                     .overflow_y_scroll()
                     .child(self.render_general_settings_section(cx))
-                    .child(self.render_agent_servers_section(window, cx))
+                    .child(self.render_agent_servers_section(cx))
                     .child(self.render_context_servers_section(window, cx))
                     .child(self.render_provider_configuration_section(cx)),
             )
