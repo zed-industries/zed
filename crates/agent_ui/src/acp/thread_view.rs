@@ -925,9 +925,7 @@ impl AcpThreadView {
                 .py_4()
                 .px_2()
                 .children(message.id.clone().and_then(|message_id| {
-                    if message.checkpoint.is_none() {
-                        return None;
-                    }
+                    message.checkpoint.as_ref()?;
 
                     Some(
                         Button::new("restore-checkpoint", "Restore Checkpoint")
