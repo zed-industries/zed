@@ -666,10 +666,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the column start of this element to auto.
+    fn col_start_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.start = GridPlacement::Auto;
+        self
+    }
+
     /// Sets the column end of this element.
     fn col_end(mut self, end: i16) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.column.end = GridPlacement::Line(end);
+        self
+    }
+
+    /// Sets the column end of this element to auto.
+    fn col_end_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.end = GridPlacement::Auto;
         self
     }
 
@@ -694,10 +708,24 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the row start of this element to "auto"
+    fn row_start_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.start = GridPlacement::Auto;
+        self
+    }
+
     /// Sets the row end of this element.
     fn row_end(mut self, end: i16) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row.end = GridPlacement::Line(end);
+        self
+    }
+
+    /// Sets the row end of this element to "auto"
+    fn row_end_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.end = GridPlacement::Auto;
         self
     }
 
