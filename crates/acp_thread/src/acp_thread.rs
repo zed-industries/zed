@@ -32,6 +32,7 @@ use util::ResultExt;
 pub struct UserMessage {
     pub id: Option<UserMessageId>,
     pub content: ContentBlock,
+    pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<GitStoreCheckpoint>,
 }
 
@@ -419,9 +420,9 @@ impl ContentBlock {
 
     fn resource_link_to_content(uri: &str) -> String {
         if let Some(uri) = MentionUri::parse(&uri).log_err() {
-            uri.to_link()
+            uri.as_link().to_string()
         } else {
-            uri.to_string().clone()
+            uri.to_string()
         }
     }
 
@@ -804,18 +805,25 @@ impl AcpThread {
         let entries_len = self.entries.len();
 
         if let Some(last_entry) = self.entries.last_mut()
-            && let AgentThreadEntry::UserMessage(UserMessage { id, content, .. }) = last_entry
+            && let AgentThreadEntry::UserMessage(UserMessage {
+                id,
+                content,
+                chunks,
+                ..
+            }) = last_entry
         {
             *id = message_id.or(id.take());
-            content.append(chunk, &language_registry, cx);
+            content.append(chunk.clone(), &language_registry, cx);
+            chunks.push(chunk);
             let idx = entries_len - 1;
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
         } else {
-            let content = ContentBlock::new(chunk, &language_registry, cx);
+            let content = ContentBlock::new(chunk.clone(), &language_registry, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
                     id: message_id,
                     content,
+                    chunks: vec![chunk],
                     checkpoint: None,
                 }),
                 cx,
@@ -1150,6 +1158,7 @@ impl AcpThread {
             AgentThreadEntry::UserMessage(UserMessage {
                 id: message_id.clone(),
                 content: block,
+                chunks: message.clone(),
                 checkpoint: None,
             }),
             cx,

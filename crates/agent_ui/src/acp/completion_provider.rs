@@ -38,6 +38,10 @@ impl MentionSet {
         self.paths_by_crease_id.drain().map(|(id, _)| id)
     }
 
+    pub fn clear(&mut self) {
+        self.paths_by_crease_id.clear();
+    }
+
     pub fn contents(
         &self,
         project: Entity<Project>,
