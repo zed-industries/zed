@@ -414,11 +414,70 @@ impl Vim {
                             );
                         }
 
-                        if let Some(range) = object.range(map, mut_selection, around, count) {
-                            if !range.is_empty() {
-                                let expand_both_ways = object.always_expands_both_ways()
-                                    || selection.is_empty()
-                                    || movement::right(map, selection.start) == selection.end;
+                        if let Some(range) = object.range(map, mut_selection.clone(), around, count)
+                        {
+                            if object == Object::Paragraph {
+                                let range_start_buffer = range.start.to_point(map);
+                                let range_end_buffer = range.end.to_point(map);
+
+                                let is_all_blank_lines = if range.is_empty() {
+                                    // For empty ranges, check if the current line is blank
+                                    let current_row = range_start_buffer.row;
+                                    map.buffer_snapshot
+                                        .is_line_blank(MultiBufferRow(current_row))
+                                } else {
+                                    // For non-empty ranges, check all lines in the range
+                                    let mut all_blank = true;
+                                    for row in range_start_buffer.row..=range_end_buffer.row {
+                                        let is_blank =
+                                            map.buffer_snapshot.is_line_blank(MultiBufferRow(row));
+
+                                        if !is_blank {
+                                            all_blank = false;
+                                            break;
+                                        }
+                                    }
+                                    all_blank
+                                };
+
+                                let is_single_blank_line = range.is_empty() && is_all_blank_lines;
+                                if !around && is_single_blank_line {
+                                    // Inner paragraph on single blank line: cursor at start
+                                    selection.reversed = true;
+                                } else {
+                                    // All other cases: cursor at end
+                                    selection.reversed = false;
+                                }
+
+                                // For paragraph objects, always apply the range even if empty
+                                selection.start = range.start;
+                                selection.end = range.end;
+
+                                // For paragraph objects in visual line mode, ensure we select at least one full line
+                                // and include the newline by moving to the start of the next line
+                                let range_start_buffer = range.start.to_point(map);
+                                let range_end_buffer = range.end.to_point(map);
+
+                                // For empty ranges (single line paragraphs), ensure we select the full line
+                                if range.is_empty() {
+                                    // Select from start of line to start of next line
+                                    selection.start =
+                                        Point::new(range_start_buffer.row, 0).to_display_point(map);
+                                    selection.end = Point::new(range_start_buffer.row + 1, 0)
+                                        .to_display_point(map);
+                                } else {
+                                    // For non-empty ranges, include the newline by moving to start of next line
+                                    let new_selection_end = Point::new(range_end_buffer.row + 1, 0);
+                                    let new_display_end = new_selection_end.to_display_point(map);
+                                    selection.end = new_display_end;
+                                }
+                            } else if !range.is_empty() {
+                                let always_expands = object.always_expands_both_ways();
+                                let is_empty = selection.is_empty();
+                                let is_single_char =
+                                    movement::right(map, selection.start) == selection.end;
+
+                                let expand_both_ways = always_expands || is_empty || is_single_char;
 
                                 if expand_both_ways {
                                     if selection.start == range.start
@@ -440,27 +499,6 @@ impl Vim {
                                 } else {
                                     selection.end = range.end;
                                 }
-                            }
-
-                            // In the visual selection result of a paragraph object, the cursor is
-                            // placed at the start of the last line. And in the visual mode, the
-                            // selection end is located after the end character. So, adjustment of
-                            // selection end is needed.
-                            //
-                            // We don't do this adjustment for a one-line blank paragraph since the
-                            // trailing newline is included in its selection from the beginning.
-                            if object == Object::Paragraph && range.start != range.end {
-                                let row_of_selection_end_line = selection.end.to_point(map).row;
-                                let new_selection_end = if map
-                                    .buffer_snapshot
-                                    .line_len(MultiBufferRow(row_of_selection_end_line))
-                                    == 0
-                                {
-                                    Point::new(row_of_selection_end_line + 1, 0)
-                                } else {
-                                    Point::new(row_of_selection_end_line, 1)
-                                };
-                                selection.end = new_selection_end.to_display_point(map);
                             }
                         }
                     });
@@ -1804,7 +1842,7 @@ mod test {
             quick
 
             brown
-            fˇ»ox"
+            foxˇ»"
         });
     }
 }

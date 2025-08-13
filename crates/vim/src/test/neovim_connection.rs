@@ -379,6 +379,38 @@ impl NeovimConnection {
         };
 
         let mut selections = Vec::new();
+        // For visual modes, we need to get the actual selection bounds, not just
+        // the cursor and visual mark positions. We'll temporarily exit visual mode
+        // to capture the '< and '> marks which represent the actual selection.
+        let mut actual_selection_start_row = selection_row;
+        let mut actual_selection_start_col = selection_col;
+        let mut actual_selection_end_row = cursor_row;
+        let mut actual_selection_end_col = cursor_col;
+
+        if matches!(mode, Mode::Visual | Mode::VisualLine | Mode::VisualBlock) {
+            // Temporarily exit visual mode to capture selection bounds
+            self.nvim
+                .input("<Esc>")
+                .await
+                .expect("Could not exit visual mode");
+
+            // Get the actual selection bounds from '< and '> marks
+            actual_selection_start_row = self.read_position("echo line(\"'<\")").await - 1;
+            actual_selection_start_col = self.read_position("echo col(\"'<\")").await - 1;
+            actual_selection_end_row = self.read_position("echo line(\"'>\")").await - 1;
+            actual_selection_end_col = self.read_position("echo col(\"'>\")").await - 1;
+
+            // Re-enter visual mode to restore state for cursor position detection
+            self.nvim
+                .input("gv")
+                .await
+                .expect("Could not re-enter visual mode");
+
+            // Re-read cursor position which may have changed
+            cursor_row = self.read_position("echo line('.')").await - 1;
+            cursor_col = self.read_position("echo col('.')").await - 1;
+        }
+
         // Vim uses the index of the first and last character in the selection
         // Zed uses the index of the positions between the characters, so we need
         // to add one to the end in visual mode.
@@ -417,28 +449,36 @@ impl NeovimConnection {
                 }
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                if (selection_row, selection_col) > (cursor_row, cursor_col) {
-                    let selection_line_length =
-                        self.read_position("echo strlen(getline(line('v')))").await;
-                    if selection_line_length > selection_col {
-                        selection_col += 1;
-                    } else if selection_row < total_rows {
-                        selection_col = 0;
-                        selection_row += 1;
+                // Use the actual selection bounds from '< and '> marks
+                let mut start_row = actual_selection_start_row;
+                let mut start_col = actual_selection_start_col;
+                let mut end_row = actual_selection_end_row;
+                let mut end_col = actual_selection_end_col;
+
+                // Apply the same adjustment logic as before, but to the actual selection bounds
+                if (end_row, end_col) > (start_row, start_col) {
+                    let end_line_length = self
+                        .read_position(&format!("echo strlen(getline({}))", end_row + 1))
+                        .await;
+                    if end_line_length > end_col {
+                        end_col += 1;
+                    } else if end_row < total_rows {
+                        end_col = 0;
+                        end_row += 1;
                     }
                 } else {
-                    let cursor_line_length =
-                        self.read_position("echo strlen(getline(line('.')))").await;
-                    if cursor_line_length > cursor_col {
-                        cursor_col += 1;
-                    } else if cursor_row < total_rows {
-                        cursor_col = 0;
-                        cursor_row += 1;
+                    let start_line_length = self
+                        .read_position(&format!("echo strlen(getline({}))", start_row + 1))
+                        .await;
+                    if start_line_length > start_col {
+                        start_col += 1;
+                    } else if start_row < total_rows {
+                        start_col = 0;
+                        start_row += 1;
                     }
                 }
-                selections.push(
-                    Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col),
-                )
+
+                selections.push(Point::new(start_row, start_col)..Point::new(end_row, end_col))
             }
             Mode::Insert | Mode::Normal | Mode::Replace => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),

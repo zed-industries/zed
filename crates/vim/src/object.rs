@@ -1950,6 +1950,29 @@ mod test {
             .assert_matches();
     }
 
+    #[gpui::test]
+    async fn test_visual_paragraph_object_with_soft_wrap(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // Test paragraphs that will wrap when soft wrap is enabled
+        const WRAPPING_EXAMPLE: &str = indoc! {"
+            ˇFirst paragraph with very long text that will wrap when soft wrap is enabled and line length is ˇlimited making it span multiple display lines.
+
+            ˇSecond paragraph that is also quite long and will definitely wrap under soft wrap conditions and ˇshould be handled correctly.
+
+            ˇThird paragraph with additional long text content that will also wrap when line length is constrained by the wrapping ˇsettings.ˇ
+        "};
+
+        cx.set_shared_wrap(20).await;
+
+        cx.simulate_at_each_offset("v i p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+        cx.simulate_at_each_offset("v a p", WRAPPING_EXAMPLE)
+            .await
+            .assert_matches();
+    }
+
     // Test string with "`" for opening surrounders and "'" for closing surrounders
     const SURROUNDING_MARKER_STRING: &str = indoc! {"
         ˇTh'ˇe ˇ`ˇ'ˇquˇi`ˇck broˇ'wn`
