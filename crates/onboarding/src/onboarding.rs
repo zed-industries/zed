@@ -5,9 +5,7 @@ use db::kvp::KEY_VALUE_STORE;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use gpui::{
-    Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
-    Task, WeakEntity, Window, actions,
+    actions, Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription, Task, WeakEntity, Window
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
@@ -214,6 +212,7 @@ pub fn init(cx: &mut App) {
 }
 
 pub fn show_onboarding_view(app_state: Arc<AppState>, cx: &mut App) -> Task<anyhow::Result<()>> {
+    telemetry::event!("Onboarding Page Open");
     open_new(
         Default::default(),
         app_state,
@@ -242,6 +241,16 @@ enum SelectedPage {
     AiSetup,
 }
 
+impl SelectedPage {
+    fn name(&self) -> &'static str {
+        match self {
+            SelectedPage::Basics => "Basics",
+            SelectedPage::Editing => "Editing",
+            SelectedPage::AiSetup => "AI Setup",
+        }
+    }
+}
+
 struct Onboarding {
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -261,7 +270,17 @@ impl Onboarding {
         })
     }
 
-    fn set_page(&mut self, page: SelectedPage, cx: &mut Context<Self>) {
+    fn set_page(&mut self, page: SelectedPage, clicked: Option<&'static str>, cx: &mut Context<Self>) {
+        if let Some(click) = clicked {
+            telemetry::event!(
+                "Welcome tab clicked",
+                from = self.selected_page.name(),
+                to = page.name(),
+                clicked = click,
+            );
+        }
+
+
         self.selected_page = page;
         cx.notify();
         cx.emit(ItemEvent::UpdateTab);
@@ -325,8 +344,13 @@ impl Onboarding {
                     gpui::Empty.into_any_element(),
                     IntoElement::into_any_element,
                 ))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.set_page(page, cx);
+                .on_click(cx.listener(move |this, click_event, _, cx| {
+                    let click = match click_event {
+                        gpui::ClickEvent::Mouse(_) => "mouse",
+                        gpui::ClickEvent::Keyboard(_) => "keyboard",
+                    };
+
+                    this.set_page(page, Some(click), cx);
                 }))
         })
     }
@@ -475,6 +499,7 @@ impl Onboarding {
     }
 
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
+        telemetry::event!("Welcome Skip Clicked");
         go_to_welcome_page(cx);
     }
 
@@ -532,13 +557,13 @@ impl Render for Onboarding {
             .on_action(Self::handle_sign_in)
             .on_action(Self::handle_open_account)
             .on_action(cx.listener(|this, _: &ActivateBasicsPage, _, cx| {
-                this.set_page(SelectedPage::Basics, cx);
+                this.set_page(SelectedPage::Basics, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateEditingPage, _, cx| {
-                this.set_page(SelectedPage::Editing, cx);
+                this.set_page(SelectedPage::Editing, Some("action"), cx);
             }))
             .on_action(cx.listener(|this, _: &ActivateAISetupPage, _, cx| {
-                this.set_page(SelectedPage::AiSetup, cx);
+                this.set_page(SelectedPage::AiSetup, Some("action"), cx);
             }))
             .on_action(cx.listener(|_, _: &menu::SelectNext, window, cx| {
                 window.focus_next();
@@ -803,7 +828,7 @@ impl workspace::SerializableItem for Onboarding {
                     if let Some(page) = page {
                         zlog::info!("Onboarding page {page:?} loaded");
                         onboarding_page.update(cx, |onboarding_page, cx| {
-                            onboarding_page.set_page(page, cx);
+                            onboarding_page.set_page(page, None, cx);
                         })
                     }
                     onboarding_page
