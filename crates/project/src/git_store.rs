@@ -2894,7 +2894,9 @@ pub fn stash_to_proto(entry: &StashEntry) -> proto::StashEntry {
     proto::StashEntry {
         oid: entry.oid.as_bytes().to_vec(),
         message: entry.message.clone(),
-        index: entry.index as i64,
+        branch: entry.branch.clone(),
+        index: entry.index as u64,
+        timestamp: entry.timestamp,
     }
 }
 
@@ -2903,6 +2905,8 @@ pub fn proto_to_stash(entry: &proto::StashEntry) -> Result<StashEntry> {
         oid: Oid::from_bytes(&entry.oid)?,
         message: entry.message.clone(),
         index: entry.index as usize,
+        branch: entry.branch.clone(),
+        timestamp: entry.timestamp,
     })
 }
 
